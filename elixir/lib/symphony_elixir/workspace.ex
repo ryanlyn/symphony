@@ -298,7 +298,8 @@ defmodule SymphonyElixir.Workspace do
 
     task =
       Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
+        {shell, shell_args} = local_shell_command(command)
+        System.cmd(shell, shell_args, cd: workspace, stderr_to_stdout: true)
       end)
 
     case Task.yield(task, timeout_ms) do
@@ -479,5 +480,12 @@ defmodule SymphonyElixir.Workspace do
 
   defp issue_log_context(%{issue_id: issue_id, issue_identifier: issue_identifier}) do
     "issue_id=#{issue_id || "n/a"} issue_identifier=#{issue_identifier || "issue"}"
+  end
+
+  defp local_shell_command(command) when is_binary(command) do
+    case System.find_executable("bash") do
+      nil -> {"sh", ["-lc", command]}
+      bash_path -> {bash_path, ["-lc", command]}
+    end
   end
 end
