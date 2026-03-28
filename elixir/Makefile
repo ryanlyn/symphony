@@ -1,6 +1,9 @@
 .PHONY: help all setup deps build fmt fmt-check lint test coverage ci dialyzer e2e
 
-MIX ?= mix
+MIX ?= $(shell command -v mix 2>/dev/null || mise which mix 2>/dev/null || printf '%s' mix)
+ELIXIR ?= $(shell command -v elixir 2>/dev/null || mise which elixir 2>/dev/null || printf '%s' elixir)
+ERL ?= $(shell command -v erl 2>/dev/null || mise which erl 2>/dev/null || printf '%s' erl)
+export PATH := $(dir $(MIX)):$(dir $(ELIXIR)):$(dir $(ERL)):$(PATH)
 
 help:
 	@echo "Targets: setup, deps, fmt, fmt-check, lint, test, coverage, dialyzer, e2e, ci"
