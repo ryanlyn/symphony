@@ -200,6 +200,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :exit_status,
             :stderr_to_stdout,
             args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+            env: inherited_env(),
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -220,6 +221,13 @@ defmodule SymphonyElixir.Codex.AppServer do
       "exec #{Config.settings!().codex.command}"
     ]
     |> Enum.join(" && ")
+  end
+
+  defp inherited_env do
+    System.get_env()
+    |> Enum.map(fn {key, value} ->
+      {String.to_charlist(key), String.to_charlist(value)}
+    end)
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do
