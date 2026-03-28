@@ -1,4 +1,4 @@
-# Symphony (Fork)
+# Symphony
 
 This is a fork of [openai/symphony](https://github.com/openai/symphony) — a long-running
 orchestration service that polls Linear for work, creates isolated workspaces per issue, and runs
@@ -20,7 +20,7 @@ Distribute coding agent runs across multiple remote machines via SSH:
 - Per-host concurrency limits via `worker.max_concurrent_agents_per_host`
 - Full Docker-based E2E testing with disposable SSH workers for deterministic CI
 
-### Operational Improvements
+### Smaller Differences
 
 - **Environment inheritance** — local Codex launches inherit the parent process environment, so auth
   tokens and config pass through correctly in containerized setups
@@ -31,18 +31,6 @@ Distribute coding agent runs across multiple remote machines via SSH:
 - **Skill naming convention** — all `.codex/skills/` directories use `symphony-*` prefixes
   (`symphony-commit`, `symphony-push`, `symphony-pull`, `symphony-land`, `symphony-linear`,
   `symphony-debug`)
-
-### Build System
-
-- **Mise integration** — Makefile resolves Elixir/Mix tools via `PATH` or `mise`, so nested `make`
-  calls inherit the full BEAM toolchain without explicit overrides
-
-### Testing & Quality
-
-- 100% test coverage target configured in `mix.exs`
-- Strict Credo linting (`--strict`)
-- Dialyzer static analysis
-- Expanded live E2E test suite covering both local and SSH worker execution
 
 ## Running Symphony
 
@@ -64,13 +52,6 @@ mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
 
 See [elixir/README.md](elixir/README.md) for detailed setup, configuration, and usage instructions.
-
-### Implementing Your Own
-
-You can also implement Symphony in any language from the spec:
-
-> Implement Symphony according to the following spec:
-> https://github.com/openai/symphony/blob/main/SPEC.md
 
 ## License
 
