@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  project_slug: "symphony-414bf2e49ff2"
   active_states:
     - Todo
     - In Progress
@@ -16,7 +16,7 @@ tracker:
 polling:
   interval_ms: 5000
 workspace:
-  root: ~/code/symphony-workspaces
+  root: ~/dev/symphony-workspaces
 hooks:
   after_create: |
     git clone --depth 1 https://github.com/openai/symphony .
@@ -29,11 +29,16 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=high --config service_tier=fast --model gpt-5.4 app-server
+  command: >
+    codex --config shell_environment_policy.inherit=all --config
+    model_reasoning_effort=high --config service_tier=fast --model
+    gpt-5.4 app-server
   approval_policy: never
-  thread_sandbox: danger-full-access
+  thread_sandbox: workspace-write
   turn_sandbox_policy:
-    type: dangerFullAccess
+    type: workspaceWrite
+    writableRoots:
+      - /Users/ryan/dev/symphony-workspaces
     networkAccess: true
 ---
 

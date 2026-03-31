@@ -18,7 +18,11 @@
       "Bash(mv debug:*)",
       "Bash(mv land:*)",
       "Bash(mv linear:*)",
-      "Bash(mv pull:*)"
+      "Bash(mv pull:*)",
+      "mcp__linear-server__get_authenticated_user",
+      "mcp__linear-server__list_projects",
+      "mcp__linear-server__save_issue",
+      "mcp__linear-server__get_project"
     ]
   }
 }
