@@ -203,6 +203,17 @@ The live test creates a temporary Linear project and issue, writes a temporary `
 a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
 Linear issue, then marks the project completed so the run remains visible in Linear.
 
+To exercise only the local resume flow against a real `codex app-server`, run:
+
+```bash
+cd elixir
+SYMPHONY_RUN_REAL_CODEX_RESUME_E2E=1 mise exec -- mix test test/symphony_elixir/live_resume_e2e_test.exs
+```
+
+That scenario does not require live Linear resources. It verifies that Symphony resumes a saved
+local Codex thread when possible and starts a fresh thread when resume metadata is missing or has
+been invalidated.
+
 ## FAQ
 
 ### Why Elixir?

@@ -567,33 +567,56 @@ defmodule SymphonyElixir.CoreTest do
       end
     end)
 
-    initial_state = :sys.get_state(pid)
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-crash-retry-resume-delete-#{System.unique_integer([:positive])}"
+      )
 
-    running_entry = %{
-      pid: self(),
-      ref: ref,
-      identifier: "MT-559",
-      retry_attempt: 2,
-      issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
-      started_at: DateTime.utc_now()
-    }
+    try do
+      initial_state = :sys.get_state(pid)
+      %{workspace: workspace} = create_git_workspace!(test_root, "MT-559")
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
-    :sys.replace_state(pid, fn _ ->
-      initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.new([issue_id]))
-      |> Map.put(:retry_attempts, %{})
-    end)
+      assert :ok =
+               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+                 thread_id: "thread-crash",
+                 issue_id: issue_id,
+                 issue_identifier: "MT-559",
+                 issue_state: "In Progress",
+                 workspace_path: workspace
+               })
 
-    down_sent_at_ms = System.monotonic_time(:millisecond)
-    send(pid, {:DOWN, ref, :process, self(), :boom})
-    Process.sleep(50)
-    state = :sys.get_state(pid)
+      running_entry = %{
+        pid: self(),
+        ref: ref,
+        identifier: "MT-559",
+        retry_attempt: 2,
+        issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
+        workspace_path: workspace,
+        started_at: DateTime.utc_now()
+      }
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
-             state.retry_attempts[issue_id]
+      :sys.replace_state(pid, fn _ ->
+        initial_state
+        |> Map.put(:running, %{issue_id => running_entry})
+        |> Map.put(:claimed, MapSet.new([issue_id]))
+        |> Map.put(:retry_attempts, %{})
+      end)
 
-    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 40_000, 40_100)
+      down_sent_at_ms = System.monotonic_time(:millisecond)
+      send(pid, {:DOWN, ref, :process, self(), :boom})
+      Process.sleep(50)
+      state = :sys.get_state(pid)
+
+      assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+               state.retry_attempts[issue_id]
+
+      assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 40_000, 40_100)
+      refute File.exists?(resume_path)
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -1465,6 +1488,258 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "agent runner resumes from persisted workspace resume state" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-resume-state-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-301")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-resume.trace")
+
+      write_resume_state_fixture!(
+        resume_path,
+        %{
+          "thread_id" => "thread-saved",
+          "issue_id" => "issue-resume-state",
+          "issue_identifier" => "MT-301",
+          "issue_state" => "In Progress",
+          "workspace_path" => canonical_workspace
+        }
+      )
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-resume.trace}"
+      printf 'RUN\\n' >> "$trace_file"
+
+      while IFS= read -r line; do
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"method":"thread/resume"'*)
+            printf '%s\\n' '{"id":4,"result":{"thread":{"id":"thread-saved"}}}'
+            ;;
+          *'"method":"turn/start"'*)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-saved"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-resume-state",
+        identifier: "MT-301",
+        title: "Resume persisted thread",
+        description: "Use the stored thread id for the next run",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-301",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      assert length(Regex.scan(~r/"method":"thread\/resume"/, trace)) == 1
+      refute String.contains?(trace, "\"method\":\"thread/start\"")
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["thread_id"] == "thread-saved"
+      assert persisted["issue_state"] == "In Progress"
+      assert is_nil(persisted["session_id"])
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner surfaces resume failures for orchestrator-owned retries" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-resume-fallback-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-302")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-resume-fallback.trace")
+
+      write_resume_state_fixture!(
+        resume_path,
+        %{
+          "thread_id" => "thread-stale",
+          "issue_id" => "issue-resume-fallback",
+          "issue_identifier" => "MT-302",
+          "issue_state" => "In Progress",
+          "workspace_path" => canonical_workspace
+        }
+      )
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-resume-fallback.trace}"
+      printf 'RUN\\n' >> "$trace_file"
+
+      while IFS= read -r line; do
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"method":"thread/resume"'*)
+            printf '%s\\n' '{"id":4,"error":{"code":-32000,"message":"no rollout found"}}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-resume-fallback",
+        identifier: "MT-302",
+        title: "Surface resume failure",
+        description: "Let the orchestrator own retries after a resume failure",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-302",
+        labels: []
+      }
+
+      assert_raise RuntimeError, ~r/Agent run failed/, fn ->
+        AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+      end
+
+      trace = File.read!(trace_file)
+      assert length(Regex.scan(~r/^RUN$/m, trace)) == 1
+      assert length(Regex.scan(~r/"method":"thread\/resume"/, trace)) == 1
+      refute String.contains?(trace, "\"method\":\"thread/start\"")
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["thread_id"] == "thread-stale"
+      assert persisted["issue_state"] == "In Progress"
+      assert is_nil(persisted["session_id"])
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner starts fresh when the persisted issue state changed" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-status-fresh-start-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-303")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-status-fresh.trace")
+
+      write_resume_state_fixture!(
+        resume_path,
+        %{
+          "thread_id" => "thread-human-review",
+          "issue_id" => "issue-status-fresh",
+          "issue_identifier" => "MT-303",
+          "issue_state" => "Human Review",
+          "workspace_path" => canonical_workspace
+        }
+      )
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-status-fresh.trace}"
+      printf 'RUN\\n' >> "$trace_file"
+
+      while IFS= read -r line; do
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$line" in
+          *'"id":1'*)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          *'"method":"thread/start"'*)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-new-status"}}}'
+            ;;
+          *'"method":"turn/start"'*)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-new-status"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-status-fresh",
+        identifier: "MT-303",
+        title: "Fresh session on status change",
+        description: "A status transition should force a new Codex thread",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-303",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      refute String.contains?(trace, "\"method\":\"thread/resume\"")
+      assert length(Regex.scan(~r/"method":"thread\/start"/, trace)) == 1
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["thread_id"] == "thread-new-status"
+      assert persisted["issue_state"] == "In Progress"
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server starts with workspace cwd and expected startup command" do
     test_root =
       Path.join(
@@ -1908,5 +2183,10 @@ defmodule SymphonyElixir.CoreTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  defp write_resume_state_fixture!(resume_path, state) do
+    File.mkdir_p!(Path.dirname(resume_path))
+    File.write!(resume_path, Jason.encode!(state))
   end
 end

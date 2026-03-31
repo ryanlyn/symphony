@@ -22,7 +22,13 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Workspace
 
       import SymphonyElixir.TestSupport,
-        only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
+        only: [
+          write_workflow_file!: 1,
+          write_workflow_file!: 2,
+          restore_env: 2,
+          stop_default_http_server: 0,
+          create_git_workspace!: 2
+        ]
 
       setup do
         workflow_root =
@@ -86,6 +92,29 @@ defmodule SymphonyElixir.TestSupport do
       _ ->
         :ok
     end
+  end
+
+  def create_git_workspace!(test_root, issue_identifier) do
+    template_repo = Path.join(test_root, "source")
+    workspace_root = Path.join(test_root, "workspaces")
+    workspace = Path.join(workspace_root, issue_identifier)
+
+    File.mkdir_p!(template_repo)
+    File.write!(Path.join(template_repo, "README.md"), "# test")
+    {_output, 0} = System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+    {_output, 0} = System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+    {_output, 0} = System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+    {_output, 0} = System.cmd("git", ["-C", template_repo, "add", "README.md"])
+    {_output, 0} = System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+    File.mkdir_p!(workspace_root)
+    {_output, 0} = System.cmd("git", ["clone", template_repo, workspace])
+    {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+    %{
+      workspace_root: workspace_root,
+      workspace: workspace,
+      canonical_workspace: canonical_workspace
+    }
   end
 
   defp workflow_content(overrides) do

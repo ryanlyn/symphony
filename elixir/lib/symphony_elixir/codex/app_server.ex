@@ -9,6 +9,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
+  @thread_resume_id 4
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
@@ -45,7 +46,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       metadata = port_metadata(port, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies) do
+           {:ok, thread_id} <- do_open_or_resume_session(port, expanded_workspace, session_policies, opts) do
         {:ok,
          %{
            port: port,
@@ -278,10 +279,20 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies) do
+  defp do_open_or_resume_session(port, workspace, session_policies, opts) do
     case send_initialize(port) do
-      :ok -> start_thread(port, workspace, session_policies)
+      :ok -> open_or_resume_thread(port, workspace, session_policies, opts)
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp open_or_resume_thread(port, workspace, session_policies, opts) do
+    case Keyword.get(opts, :resume_thread_id) do
+      thread_id when is_binary(thread_id) and thread_id != "" ->
+        resume_thread(port, workspace, session_policies, thread_id)
+
+      _ ->
+        start_thread(port, workspace, session_policies)
     end
   end
 
@@ -297,17 +308,37 @@ defmodule SymphonyElixir.Codex.AppServer do
       }
     })
 
-    case await_response(port, @thread_start_id) do
-      {:ok, %{"thread" => thread_payload}} ->
-        case thread_payload do
-          %{"id" => thread_id} -> {:ok, thread_id}
-          _ -> {:error, {:invalid_thread_payload, thread_payload}}
-        end
-
-      other ->
-        other
-    end
+    port
+    |> await_response(@thread_start_id)
+    |> decode_thread_response()
   end
+
+  defp resume_thread(
+         port,
+         workspace,
+         %{approval_policy: approval_policy, thread_sandbox: thread_sandbox},
+         thread_id
+       ) do
+    send_message(port, %{
+      "method" => "thread/resume",
+      "id" => @thread_resume_id,
+      "params" => %{
+        "threadId" => thread_id,
+        "cwd" => workspace,
+        "approvalPolicy" => approval_policy,
+        "sandbox" => thread_sandbox,
+        "persistExtendedHistory" => true
+      }
+    })
+
+    port
+    |> await_response(@thread_resume_id)
+    |> decode_thread_response()
+  end
+
+  defp decode_thread_response({:ok, %{"thread" => %{"id" => thread_id}}}), do: {:ok, thread_id}
+  defp decode_thread_response({:ok, %{"thread" => thread_payload}}), do: {:error, {:invalid_thread_payload, thread_payload}}
+  defp decode_thread_response(other), do: other
 
   defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
     send_message(port, %{

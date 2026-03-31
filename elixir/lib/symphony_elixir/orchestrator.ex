@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
+  alias SymphonyElixir.Codex.ResumeState
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
@@ -147,6 +148,7 @@ defmodule SymphonyElixir.Orchestrator do
               Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
               next_attempt = next_retry_attempt_from_running(running_entry)
+              maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
               schedule_issue_retry(state, issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
@@ -474,6 +476,7 @@ defmodule SymphonyElixir.Orchestrator do
       Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
 
       next_attempt = next_retry_attempt_from_running(running_entry)
+      maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
       state
       |> terminate_running_issue(issue_id, false)
@@ -959,6 +962,20 @@ defmodule SymphonyElixir.Orchestrator do
   defp pick_retry_worker_host(previous_retry, metadata) do
     metadata[:worker_host] || Map.get(previous_retry, :worker_host)
   end
+
+  defp maybe_delete_resume_state(workspace, worker_host, issue_id)
+       when is_binary(workspace) and workspace != "" do
+    case ResumeState.delete(workspace, worker_host) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to delete resume state for issue_id=#{issue_id} workspace=#{workspace}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp maybe_delete_resume_state(_workspace, _worker_host, _issue_id), do: :ok
 
   defp pick_retry_workspace_path(previous_retry, metadata) do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)

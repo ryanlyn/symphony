@@ -920,46 +920,70 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         end
       end)
 
-    stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
-    initial_state = :sys.get_state(pid)
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-stall-retry-resume-delete-#{System.unique_integer([:positive])}"
+      )
 
-    running_entry = %{
-      pid: worker_pid,
-      ref: make_ref(),
-      identifier: "MT-STALL",
-      issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
-      session_id: "thread-stall-turn-stall",
-      last_codex_message: nil,
-      last_codex_timestamp: stale_activity_at,
-      last_codex_event: :notification,
-      started_at: stale_activity_at
-    }
+    try do
+      %{workspace: workspace} = create_git_workspace!(test_root, "MT-STALL")
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
-    :sys.replace_state(pid, fn _ ->
-      initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
-    end)
+      assert :ok =
+               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+                 thread_id: "thread-stall",
+                 issue_id: issue_id,
+                 issue_identifier: "MT-STALL",
+                 issue_state: "In Progress",
+                 workspace_path: workspace
+               })
 
-    tick_sent_at_ms = System.monotonic_time(:millisecond)
-    send(pid, :tick)
-    Process.sleep(100)
-    state = :sys.get_state(pid)
+      stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
+      initial_state = :sys.get_state(pid)
 
-    refute Process.alive?(worker_pid)
-    refute Map.has_key?(state.running, issue_id)
+      running_entry = %{
+        pid: worker_pid,
+        ref: make_ref(),
+        identifier: "MT-STALL",
+        issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
+        session_id: "thread-stall-turn-stall",
+        workspace_path: workspace,
+        last_codex_message: nil,
+        last_codex_timestamp: stale_activity_at,
+        last_codex_event: :notification,
+        started_at: stale_activity_at
+      }
 
-    assert %{
-             attempt: 1,
-             due_at_ms: due_at_ms,
-             identifier: "MT-STALL",
-             error: "stalled for " <> _
-           } = state.retry_attempts[issue_id]
+      :sys.replace_state(pid, fn _ ->
+        initial_state
+        |> Map.put(:running, %{issue_id => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      end)
 
-    assert is_integer(due_at_ms)
-    scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-    assert scheduled_delay_ms >= 10_000
-    assert scheduled_delay_ms <= 10_150
+      tick_sent_at_ms = System.monotonic_time(:millisecond)
+      send(pid, :tick)
+      Process.sleep(100)
+      state = :sys.get_state(pid)
+
+      refute Process.alive?(worker_pid)
+      refute Map.has_key?(state.running, issue_id)
+
+      assert %{
+               attempt: 1,
+               due_at_ms: due_at_ms,
+               identifier: "MT-STALL",
+               error: "stalled for " <> _
+             } = state.retry_attempts[issue_id]
+
+      assert is_integer(due_at_ms)
+      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
+      assert scheduled_delay_ms >= 10_000
+      assert scheduled_delay_ms <= 10_150
+      refute File.exists?(resume_path)
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "status dashboard renders offline marker to terminal" do

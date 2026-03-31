@@ -4,7 +4,7 @@ defmodule SymphonyElixir.AgentRunner do
   """
 
   require Logger
-  alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.Codex.{AppServer, ResumeState}
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @type worker_host :: String.t() | nil
@@ -46,11 +46,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp codex_message_handler(recipient, issue) do
-    fn message ->
-      send_codex_update(recipient, issue, message)
-    end
-  end
+  defp codex_message_handler(recipient, issue), do: &send_codex_update(recipient, issue, &1)
 
   defp send_codex_update(recipient, %Issue{id: issue_id}, message)
        when is_binary(issue_id) and is_pid(recipient) do
@@ -80,7 +76,7 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+    with {:ok, session} <- start_session(workspace, issue, worker_host) do
       try do
         do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
       after
@@ -92,41 +88,44 @@ defmodule SymphonyElixir.AgentRunner do
   defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
-    with {:ok, turn_session} <-
-           AppServer.run_turn(
-             app_session,
-             prompt,
-             issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
-           ) do
-      Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+    case AppServer.run_turn(
+           app_session,
+           prompt,
+           issue,
+           on_message: codex_message_handler(codex_update_recipient, issue)
+         ) do
+      {:ok, turn_session} ->
+        Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
-        {:continue, refreshed_issue} when turn_number < max_turns ->
-          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+        case continue_with_issue?(issue, issue_state_fetcher) do
+          {:continue, refreshed_issue} when turn_number < max_turns ->
+            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-          do_run_codex_turns(
-            app_session,
-            workspace,
-            refreshed_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            turn_number + 1,
-            max_turns
-          )
+            do_run_codex_turns(
+              app_session,
+              workspace,
+              refreshed_issue,
+              codex_update_recipient,
+              opts,
+              issue_state_fetcher,
+              turn_number + 1,
+              max_turns
+            )
 
-        {:continue, refreshed_issue} ->
-          Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
+          {:continue, refreshed_issue} ->
+            Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
-          :ok
+            :ok
 
-        {:done, _refreshed_issue} ->
-          :ok
+          {:done, _refreshed_issue} ->
+            :ok
 
-        {:error, reason} ->
-          {:error, reason}
-      end
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -162,6 +161,79 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
+
+  defp start_session(workspace, %Issue{} = issue, worker_host) do
+    resume_thread_id = resume_thread_id(workspace, issue, worker_host)
+
+    case AppServer.start_session(
+           workspace,
+           worker_host: worker_host,
+           resume_thread_id: resume_thread_id
+         ) do
+      {:ok, session} ->
+        persist_resume_state(workspace, worker_host, issue, session.thread_id)
+        {:ok, session}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp resume_thread_id(workspace, %Issue{} = issue, worker_host) do
+    case ResumeState.read(workspace, worker_host) do
+      {:ok, resume_state} ->
+        if resume_state_matches_issue?(resume_state, issue, workspace, worker_host) do
+          Logger.info("Resuming Codex thread for #{issue_context(issue)} thread_id=#{resume_state.thread_id}")
+          resume_state.thread_id
+        else
+          nil
+        end
+
+      :missing ->
+        nil
+
+      {:error, reason} ->
+        Logger.warning("Failed to read resume state for #{issue_context(issue)}: #{inspect(reason)}; not resuming thread")
+        nil
+    end
+  end
+
+  defp persist_resume_state(workspace, worker_host, %Issue{} = issue, thread_id)
+       when is_binary(workspace) and is_binary(thread_id) do
+    attrs = %{
+      issue_id: issue.id,
+      issue_identifier: issue.identifier,
+      issue_state: issue.state,
+      thread_id: thread_id,
+      session_id: nil,
+      workspace_path: workspace,
+      worker_host: worker_host,
+      updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    case ResumeState.write(workspace, attrs, worker_host) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Failed to persist resume state for #{issue_context(issue)}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp resume_state_matches_issue?(resume_state, %Issue{} = issue, workspace, worker_host) when is_map(resume_state) do
+    stored_value_matches?(resume_state.issue_id, issue.id) and
+      stored_value_matches?(resume_state.issue_state, issue.state) and
+      stored_value_matches?(resume_state.workspace_path, workspace) and
+      worker_host_matches?(resume_state.worker_host, worker_host)
+  end
+
+  defp stored_value_matches?(nil, _current_value), do: true
+  defp stored_value_matches?(stored_value, current_value), do: stored_value == current_value
+
+  defp worker_host_matches?(nil, nil), do: true
+  defp worker_host_matches?(nil, _worker_host), do: false
+  defp worker_host_matches?(stored_worker_host, worker_host), do: stored_worker_host == worker_host
 
   defp active_issue_state?(state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
