@@ -1,0 +1,3 @@
+approval_policy = "on-failure"
+
+sandbox_mode = "danger-full-access"
