@@ -199,6 +199,127 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert is_integer(completed_state.codex_totals.seconds_running)
   end
 
+  test "orchestrator snapshot tracks Claude usage totals and agent metadata" do
+    issue_id = "issue-claude-usage-snapshot"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-CLAUDE-201",
+      title: "Claude usage snapshot test",
+      description: "Collect usage stats from generic agent updates",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-CLAUDE-201"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :ClaudeUsageOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      agent_kind: "claude",
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      executor_pid: nil,
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      usage_last_reported_input_tokens: 0,
+      usage_last_reported_output_tokens: 0,
+      usage_last_reported_total_tokens: 0,
+      last_agent_message: nil,
+      last_agent_timestamp: nil,
+      last_agent_event: nil,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %{
+         agent_kind: "claude",
+         event: :session_started,
+         session_id: "claude-session-usage",
+         executor_pid: "9999",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %{
+         agent_kind: "claude",
+         event: :assistant_message,
+         usage: %{input_tokens: 7, output_tokens: 2, total_tokens: 9},
+         payload: %{"type" => "assistant"},
+         session_id: "claude-session-usage",
+         executor_pid: "9999",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:agent_worker_update, issue_id,
+       %{
+         agent_kind: "claude",
+         event: :turn_completed,
+         usage: %{input_tokens: 10, output_tokens: 3, total_tokens: 13},
+         payload: %{"type" => "result", "result" => "Done."},
+         session_id: "claude-session-usage",
+         executor_pid: "9999",
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry], usage_totals: usage_totals} = snapshot
+    assert snapshot_entry.agent_kind == "claude"
+    assert snapshot_entry.executor_pid == "9999"
+    assert snapshot_entry.session_id == "claude-session-usage"
+    assert snapshot_entry.last_agent_event == :turn_completed
+    assert snapshot_entry.codex_input_tokens == 10
+    assert snapshot_entry.codex_output_tokens == 3
+    assert snapshot_entry.codex_total_tokens == 13
+    assert usage_totals.input_tokens == 10
+    assert usage_totals.output_tokens == 3
+    assert usage_totals.total_tokens == 13
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    completed_state = :sys.get_state(pid)
+    assert completed_state.usage_totals.input_tokens == 10
+    assert completed_state.usage_totals.output_tokens == 3
+    assert completed_state.usage_totals.total_tokens == 13
+    assert completed_state.codex_totals.total_tokens == 13
+  end
+
   test "orchestrator snapshot tracks turn completed usage when present" do
     issue_id = "issue-turn-completed-usage"
 
@@ -986,6 +1107,97 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     end
   end
 
+  test "orchestrator applies Claude-specific stall timeouts when restarting stalled workers" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 60_000,
+      claude_stall_timeout_ms: 1_000
+    )
+
+    issue_id = "issue-claude-stall"
+    orchestrator_name = Module.concat(__MODULE__, :ClaudeStallOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-stall-retry-resume-delete-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-STALL")
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+
+      assert :ok =
+               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+                 agent_kind: "claude",
+                 resume_id: "claude-stall",
+                 issue_id: issue_id,
+                 issue_identifier: "MT-CLAUDE-STALL",
+                 issue_state: "In Progress",
+                 workspace_path: workspace
+               })
+
+      stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
+      initial_state = :sys.get_state(pid)
+
+      running_entry = %{
+        pid: worker_pid,
+        ref: make_ref(),
+        agent_kind: "claude",
+        identifier: "MT-CLAUDE-STALL",
+        issue: %Issue{id: issue_id, identifier: "MT-CLAUDE-STALL", state: "In Progress"},
+        session_id: "claude-stall",
+        workspace_path: workspace,
+        last_agent_message: nil,
+        last_agent_timestamp: stale_activity_at,
+        last_agent_event: :assistant_message,
+        started_at: stale_activity_at
+      }
+
+      :sys.replace_state(pid, fn _ ->
+        initial_state
+        |> Map.put(:running, %{issue_id => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      end)
+
+      tick_sent_at_ms = System.monotonic_time(:millisecond)
+      send(pid, :tick)
+      Process.sleep(100)
+      state = :sys.get_state(pid)
+
+      refute Process.alive?(worker_pid)
+      refute Map.has_key?(state.running, issue_id)
+
+      assert %{
+               attempt: 1,
+               due_at_ms: due_at_ms,
+               identifier: "MT-CLAUDE-STALL",
+               error: "stalled for " <> _
+             } = state.retry_attempts[issue_id]
+
+      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
+      assert scheduled_delay_ms >= 10_000
+      assert scheduled_delay_ms <= 10_250
+      refute File.exists?(resume_path)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "status dashboard renders offline marker to terminal" do
     rendered =
       ExUnit.CaptureIO.capture_io(fn ->
@@ -1321,6 +1533,26 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert plain =~ "turn completed (completed)"
     assert (String.split(plain, "turn completed (completed)") |> length()) - 1 == 1
     refute plain =~ " notification "
+  end
+
+  test "status dashboard surfaces agent kind in the running row" do
+    row =
+      StatusDashboard.format_running_summary_for_test(%{
+        identifier: "MT-CLAUDE",
+        agent_kind: "claude",
+        state: "running",
+        session_id: "session-1234567890",
+        executor_pid: "9999",
+        codex_total_tokens: 12,
+        runtime_seconds: 15,
+        last_agent_event: :turn_completed,
+        last_agent_message: %{agent_kind: "claude", event: :turn_completed, message: %{"type" => "result", "result" => "Done."}}
+      })
+
+    plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
+
+    assert plain =~ "claude/running"
+    assert plain =~ "9999"
   end
 
   test "status dashboard strips ANSI and control bytes from last codex message" do

@@ -590,15 +590,31 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
     state = running_entry.state || "unknown"
-    state_display = format_cell(to_string(state), @running_stage_width)
+    agent_kind = Map.get(running_entry, :agent_kind)
+
+    state_display =
+      agent_state_label(agent_kind, state)
+      |> format_cell(@running_stage_width)
+
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
-    pid = format_cell(running_entry.codex_app_server_pid || "n/a", @running_pid_width)
+
+    pid =
+      format_cell(
+        Map.get(running_entry, :executor_pid) || running_entry.codex_app_server_pid || "n/a",
+        @running_pid_width
+      )
+
     total_tokens = running_entry.codex_total_tokens || 0
     runtime_seconds = running_entry.runtime_seconds || 0
     turn_count = Map.get(running_entry, :turn_count, 0)
     age = format_cell(format_runtime_and_turns(runtime_seconds, turn_count), @running_age_width)
-    event = running_entry.last_codex_event || "none"
-    event_label = format_cell(summarize_message(running_entry.last_codex_message), running_event_width)
+    event = Map.get(running_entry, :last_agent_event) || running_entry.last_codex_event || "none"
+
+    event_label =
+      format_cell(
+        summarize_message(Map.get(running_entry, :last_agent_message) || running_entry.last_codex_message),
+        running_event_width
+      )
 
     tokens = format_count(total_tokens) |> format_cell(@running_tokens_width, :right)
 
@@ -636,6 +652,10 @@ defmodule SymphonyElixir.StatusDashboard do
   @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
   def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
     do: format_running_summary(running_entry, running_event_width(terminal_columns))
+
+  defp agent_state_label(nil, state), do: to_string(state)
+  defp agent_state_label("", state), do: to_string(state)
+  defp agent_state_label(agent_kind, state), do: "#{agent_kind}/#{state}"
 
   @doc false
   @spec format_tps_for_test(number()) :: String.t()
@@ -1068,6 +1088,22 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   @doc false
+  @spec humanize_agent_message(term()) :: String.t()
+  def humanize_agent_message(nil), do: "no agent message yet"
+
+  def humanize_agent_message(%{agent_kind: "claude"} = message) do
+    (humanize_claude_message(message) || humanize_codex_message(Map.delete(message, :agent_kind)))
+    |> truncate(140)
+  end
+
+  def humanize_agent_message(%{message: %{"type" => _type}} = message) do
+    (humanize_claude_message(message) || humanize_codex_message(message))
+    |> truncate(140)
+  end
+
+  def humanize_agent_message(message), do: humanize_codex_message(message)
+
+  @doc false
   @spec humanize_codex_message(term()) :: String.t()
   def humanize_codex_message(nil), do: "no codex message yet"
 
@@ -1092,7 +1128,73 @@ defmodule SymphonyElixir.StatusDashboard do
     |> truncate(140)
   end
 
-  defp summarize_message(message), do: humanize_codex_message(message)
+  defp summarize_message(message), do: humanize_agent_message(message)
+
+  defp humanize_claude_message(%{event: event, message: message}) do
+    payload = unwrap_codex_message_payload(message)
+    humanize_claude_event(event, payload)
+  end
+
+  defp humanize_claude_message(%{message: message}) do
+    humanize_claude_event(nil, unwrap_codex_message_payload(message))
+  end
+
+  defp humanize_claude_message(message) do
+    humanize_claude_event(nil, unwrap_codex_message_payload(message))
+  end
+
+  defp humanize_claude_event(:session_started, payload) do
+    session_id = map_value(payload, ["session_id", :session_id])
+    if is_binary(session_id), do: "claude session started (#{session_id})", else: "claude session started"
+  end
+
+  defp humanize_claude_event(:assistant_message, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:tool_use_requested, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:tool_result, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:rate_limit, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:turn_started, _payload), do: "claude turn started"
+  defp humanize_claude_event(:turn_completed, _payload), do: "claude turn completed"
+  defp humanize_claude_event(:permission_denied, _payload), do: "claude permission denied"
+  defp humanize_claude_event(:turn_failed, payload), do: "claude turn failed: #{format_reason(payload)}"
+  defp humanize_claude_event(:malformed, _payload), do: "malformed JSON event from claude"
+  defp humanize_claude_event(_event, payload), do: humanize_claude_payload(payload)
+
+  defp humanize_claude_payload(%{"type" => "assistant", "message" => %{"content" => contents}})
+       when is_list(contents) do
+    Enum.find_value(contents, fn
+      %{"type" => "text", "text" => text} when is_binary(text) ->
+        inline_text(text)
+
+      %{"type" => "thinking"} ->
+        "claude thinking"
+
+      %{"type" => "tool_use", "name" => name} when is_binary(name) ->
+        "tool requested (#{name})"
+
+      _ ->
+        nil
+    end) || "assistant update"
+  end
+
+  defp humanize_claude_payload(%{"type" => "user", "tool_use_result" => result}) when is_map(result) do
+    tool_name =
+      Map.get(result, "tool_name") ||
+        map_path(result, ["tool", "name"]) ||
+        map_path(result, [:tool, :name])
+
+    if is_binary(tool_name), do: "tool completed (#{tool_name})", else: "tool completed"
+  end
+
+  defp humanize_claude_payload(%{"type" => "rate_limit_event", "rate_limit_info" => info}) when is_map(info) do
+    status = Map.get(info, "status")
+    if is_binary(status), do: "rate limit status: #{status}", else: "rate limit update"
+  end
+
+  defp humanize_claude_payload(%{"type" => "result", "result" => result}) when is_binary(result) do
+    inline_text(result)
+  end
+
+  defp humanize_claude_payload(_payload), do: nil
 
   defp humanize_codex_event(:session_started, _message, payload) do
     session_id = map_value(payload, ["session_id", :session_id])

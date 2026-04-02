@@ -743,8 +743,15 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.project_slug == nil
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.worker.max_concurrent_agents_per_host == nil
+    assert config.agent.kind == "codex"
     assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
+    assert config.claude.command == "claude"
+    assert config.claude.permission_mode == "dontAsk"
+    assert config.claude.turn_timeout_ms == 3_600_000
+    assert config.claude.stall_timeout_ms == 300_000
+    assert config.claude.strict_mcp_config == true
+    assert config.claude.mcp_server_python == "python3"
 
     assert config.codex.approval_policy == %{
              "reject" => %{
@@ -814,6 +821,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "agent.max_concurrent_agents"
 
+    write_workflow_file!(Workflow.workflow_file_path(), agent_kind: "bad")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.kind"
+
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 0)
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "worker.max_concurrent_agents_per_host"
@@ -829,6 +840,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_stall_timeout_ms: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.stall_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_turn_timeout_ms: "bad")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.turn_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_stall_timeout_ms: "bad")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_active_states: %{todo: true},
@@ -964,6 +983,35 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
     assert :ok = Config.validate!()
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
+  end
+
+  test "config exposes claude runtime settings and executor selection" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      agent_kind: "claude",
+      claude_command: "/tmp/fake-claude",
+      claude_model: "claude-sonnet-4-6",
+      claude_permission_mode: "dontAsk",
+      claude_turn_timeout_ms: 12_345,
+      claude_stall_timeout_ms: 9_876,
+      claude_strict_mcp_config: false,
+      claude_mcp_server_python: "/usr/bin/python3"
+    )
+
+    assert Config.agent_kind() == "claude"
+    assert Config.agent_executor() == SymphonyElixir.Claude.Subprocess
+    assert Config.agent_stall_timeout_ms("claude") == 9_876
+
+    assert {:ok, claude_settings} = Config.claude_runtime_settings()
+
+    assert claude_settings == %{
+             command: "/tmp/fake-claude",
+             model: "claude-sonnet-4-6",
+             permission_mode: "dontAsk",
+             turn_timeout_ms: 12_345,
+             stall_timeout_ms: 9_876,
+             strict_mcp_config: false,
+             mcp_server_python: "/usr/bin/python3"
+           }
   end
 
   test "schema helpers cover custom type and state limit validation" do
@@ -1259,11 +1307,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
-      case "$*" in
-        *"__SYMPHONY_WORKSPACE__"*)
-          printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '#{workspace_path}'
-          ;;
-      esac
+      if printf '%s' "$*" | grep -q "__SYMPHONY_WORKSPACE__"; then
+        printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '#{workspace_path}'
+      elif printf '%s' "$*" | grep -q '\\$HOME'; then
+        printf '%s\\n' '/remote/home'
+      fi
 
       exit 0
       """)
@@ -1288,8 +1336,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       trace = File.read!(trace_file)
       assert trace =~ "-p 2200 worker-01 bash -lc"
       assert trace =~ "__SYMPHONY_WORKSPACE__"
-      assert trace =~ "~/.symphony-remote-workspaces/MT-SSH-WS"
-      assert trace =~ "${workspace#~/}"
+      assert trace =~ "$HOME"
+      assert trace =~ "/remote/home/.symphony-remote-workspaces/MT-SSH-WS"
       assert trace =~ "echo before-run"
       assert trace =~ "echo after-run"
       assert trace =~ "echo before-remove"

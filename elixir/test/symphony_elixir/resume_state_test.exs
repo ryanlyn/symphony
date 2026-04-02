@@ -1,7 +1,8 @@
 defmodule SymphonyElixir.ResumeStateTest do
   use ExUnit.Case, async: false
+  import SymphonyElixir.TestSupport, only: [restore_env: 2]
 
-  alias SymphonyElixir.Codex.ResumeState
+  alias SymphonyElixir.{AgentResumeState, Codex.ResumeState}
 
   test "write, read, and delete round-trip resume state in a git workspace" do
     test_root =
@@ -14,7 +15,8 @@ defmodule SymphonyElixir.ResumeStateTest do
       workspace = create_git_workspace!(test_root)
 
       attrs = %{
-        thread_id: "thread-1",
+        agent_kind: "codex",
+        resume_id: "thread-1",
         session_id: "thread-1-turn-1",
         issue_id: "issue-1",
         issue_identifier: "MT-1",
@@ -26,6 +28,8 @@ defmodule SymphonyElixir.ResumeStateTest do
       assert :ok = ResumeState.write(workspace, attrs)
 
       assert {:ok, state} = ResumeState.read(workspace)
+      assert state.agent_kind == "codex"
+      assert state.resume_id == "thread-1"
       assert state.thread_id == "thread-1"
       assert state.session_id == "thread-1-turn-1"
       assert state.issue_id == "issue-1"
@@ -197,19 +201,59 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.mkdir_p!(workspace)
 
       assert :missing = ResumeState.read(workspace)
-      assert :ok = ResumeState.write(workspace, %{thread_id: "thread-2"})
+      assert :ok = ResumeState.write(workspace, %{agent_kind: "codex", resume_id: "thread-2"})
       assert :ok = ResumeState.delete(workspace)
     after
       File.rm_rf(test_root)
     end
   end
 
-  test "remote workspaces are currently treated as non-resumable" do
-    workspace = "/tmp/remote-workspace"
+  test "remote workspaces round-trip generic resume metadata over ssh" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-resume-state-remote-#{System.unique_integer([:positive])}")
+    fake_bin = Path.join(test_root, "bin")
+    fake_ssh = Path.join(fake_bin, "ssh")
+    previous_path = System.get_env("PATH")
 
-    assert :missing = ResumeState.read(workspace, "worker-a")
-    assert :ok = ResumeState.write(workspace, %{thread_id: "thread-3"}, "worker-a")
-    assert :ok = ResumeState.delete(workspace, "worker-a")
+    on_exit(fn -> restore_env("PATH", previous_path) end)
+
+    try do
+      workspace = create_git_workspace!(test_root)
+      File.mkdir_p!(fake_bin)
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      last_arg=""
+      for arg in "$@"; do
+        last_arg="$arg"
+      done
+      exec /bin/sh -lc "$last_arg"
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+      System.put_env("PATH", fake_bin <> ":" <> (previous_path || ""))
+
+      attrs = %{
+        agent_kind: "claude",
+        resume_id: "session-3",
+        session_id: "session-3",
+        issue_id: "issue-3",
+        issue_identifier: "MT-3",
+        workspace_path: workspace,
+        worker_host: "worker-a",
+        updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+
+      assert :ok = AgentResumeState.write(workspace, attrs, "worker-a")
+      assert {:ok, state} = AgentResumeState.read(workspace, "worker-a")
+      assert state.agent_kind == "claude"
+      assert state.resume_id == "session-3"
+      assert state.session_id == "session-3"
+      assert state.thread_id == nil
+      assert :ok = AgentResumeState.delete(workspace, "worker-a")
+      assert :missing = AgentResumeState.read(workspace, "worker-a")
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   defp create_git_workspace!(test_root) do

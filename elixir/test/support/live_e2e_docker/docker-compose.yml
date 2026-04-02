@@ -8,6 +8,8 @@ services:
     volumes:
       - ${SYMPHONY_LIVE_DOCKER_AUTHORIZED_KEY}:/run/symphony/ssh/authorized_key.pub:ro
       - ${SYMPHONY_LIVE_DOCKER_AUTH_JSON}:/root/.codex/auth.json:ro
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN}
 
   worker2:
     build:
@@ -18,3 +20,5 @@ services:
     volumes:
       - ${SYMPHONY_LIVE_DOCKER_AUTHORIZED_KEY}:/run/symphony/ssh/authorized_key.pub:ro
       - ${SYMPHONY_LIVE_DOCKER_AUTH_JSON}:/root/.codex/auth.json:ro
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: ${SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN}

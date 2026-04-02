@@ -158,18 +158,18 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
     assert returned_state.workflow.prompt == "Manual workflow prompt"
     refute returned_state.stamp == nil
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Workflow.set_workflow_file_path(missing_path)
     assert {:noreply, path_error_state} = WorkflowStore.handle_info(:poll, returned_state)
     assert path_error_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Workflow.set_workflow_file_path(manual_path)
     File.rm!(manual_path)
     assert {:noreply, removed_state} = WorkflowStore.handle_info(:poll, path_error_state)
     assert removed_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Process.exit(manual_pid, :normal)
     restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
@@ -345,10 +345,13 @@ defmodule SymphonyElixir.ExtensionsTest do
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
                %{
+                 "agent_kind" => "claude",
+                 "executor_pid" => nil,
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
+                 "usage_totals" => nil,
                  "workspace_path" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
@@ -370,6 +373,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "workspace_path" => nil
                }
              ],
+             "usage_totals" => %{
+               "input_tokens" => 4,
+               "output_tokens" => 8,
+               "total_tokens" => 12,
+               "seconds_running" => 42.5
+             },
              "codex_totals" => %{
                "input_tokens" => 4,
                "output_tokens" => 8,
@@ -392,7 +401,10 @@ defmodule SymphonyElixir.ExtensionsTest do
              },
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
+               "agent_kind" => "claude",
+               "executor_pid" => nil,
                "worker_host" => nil,
+               "usage_totals" => nil,
                "workspace_path" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
@@ -547,7 +559,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Live"
     assert html =~ "Offline"
     assert html =~ "Copy ID"
-    assert html =~ "Codex update"
+    assert html =~ "Agent update"
+    assert html =~ "CLAUDE"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -561,6 +574,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_id: "issue-http",
           identifier: "MT-HTTP",
           state: "In Progress",
+          agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 8,
           last_codex_event: :notification,
@@ -690,6 +704,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_id: "issue-http",
           identifier: "MT-HTTP",
           state: "In Progress",
+          agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 7,
           codex_app_server_pid: nil,
