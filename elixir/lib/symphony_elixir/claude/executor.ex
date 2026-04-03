@@ -28,6 +28,7 @@ defmodule SymphonyElixir.Claude.Executor do
     with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
+
       base_session = %{
         agent_kind: "claude",
         config_path: config_path,
