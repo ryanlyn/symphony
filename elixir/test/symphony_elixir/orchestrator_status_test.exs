@@ -1029,7 +1029,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
       assert :ok =
-               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+               SymphonyElixir.AgentResumeState.write(workspace, %{
                  thread_id: "thread-stall",
                  issue_id: issue_id,
                  issue_identifier: "MT-STALL",
@@ -1119,7 +1119,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
       assert :ok =
-               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+               SymphonyElixir.AgentResumeState.write(workspace, %{
                  agent_kind: "claude",
                  resume_id: "claude-stall",
                  issue_id: issue_id,

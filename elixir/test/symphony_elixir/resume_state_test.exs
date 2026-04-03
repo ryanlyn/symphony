@@ -2,7 +2,7 @@ defmodule SymphonyElixir.ResumeStateTest do
   use ExUnit.Case, async: false
   import SymphonyElixir.TestSupport, only: [restore_env: 2]
 
-  alias SymphonyElixir.{AgentResumeState, Codex.ResumeState}
+  alias SymphonyElixir.AgentResumeState
 
   test "write, read, and delete round-trip resume state in a git workspace" do
     test_root =
@@ -25,9 +25,9 @@ defmodule SymphonyElixir.ResumeStateTest do
         updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
       }
 
-      assert :ok = ResumeState.write(workspace, attrs)
+      assert :ok = AgentResumeState.write(workspace, attrs)
 
-      assert {:ok, state} = ResumeState.read(workspace)
+      assert {:ok, state} = AgentResumeState.read(workspace)
       assert state.agent_kind == "codex"
       assert state.resume_id == "thread-1"
       assert state.thread_id == "thread-1"
@@ -37,8 +37,8 @@ defmodule SymphonyElixir.ResumeStateTest do
       assert state.issue_state == "In Progress"
       assert state.workspace_path == workspace
 
-      assert :ok = ResumeState.delete(workspace)
-      assert :missing = ResumeState.read(workspace)
+      assert :ok = AgentResumeState.delete(workspace)
+      assert :missing = AgentResumeState.read(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -54,7 +54,7 @@ defmodule SymphonyElixir.ResumeStateTest do
     try do
       workspace = create_git_workspace!(test_root)
 
-      assert :missing = ResumeState.read(workspace)
+      assert :missing = AgentResumeState.read(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -74,7 +74,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.mkdir_p!(Path.dirname(resume_path))
       File.write!(resume_path, "{bad json")
 
-      assert {:error, {:resume_state_decode_failed, _reason}} = ResumeState.read(workspace)
+      assert {:error, {:resume_state_decode_failed, _reason}} = AgentResumeState.read(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -95,7 +95,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.write!(resume_path, Jason.encode!(%{"thread_id" => "thread-unreadable"}))
       File.chmod!(resume_path, 0o000)
 
-      assert {:error, {:resume_state_read_failed, _reason}} = ResumeState.read(workspace)
+      assert {:error, {:resume_state_read_failed, _reason}} = AgentResumeState.read(workspace)
     after
       File.chmod(resume_state_path(Path.join(test_root, "workspace")), 0o644)
       File.rm_rf(test_root)
@@ -116,7 +116,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.mkdir_p!(Path.dirname(resume_path))
       File.write!(resume_path, Jason.encode!(%{"session_id" => "missing-thread"}))
 
-      assert {:error, :invalid_resume_state} = ResumeState.read(workspace)
+      assert {:error, :invalid_resume_state} = AgentResumeState.read(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -132,7 +132,7 @@ defmodule SymphonyElixir.ResumeStateTest do
     try do
       workspace = create_git_workspace!(test_root)
 
-      assert {:error, :invalid_resume_state} = ResumeState.write(workspace, %{})
+      assert {:error, :invalid_resume_state} = AgentResumeState.write(workspace, %{})
     after
       File.rm_rf(test_root)
     end
@@ -152,7 +152,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.write!(blocked_path, "not a directory")
 
       assert {:error, {:resume_state_write_failed, _reason}} =
-               ResumeState.write(workspace, %{thread_id: "thread-blocked"})
+               AgentResumeState.write(workspace, %{thread_id: "thread-blocked"})
     after
       File.rm_rf(test_root)
     end
@@ -171,7 +171,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       resume_path = resume_state_path(workspace)
       File.mkdir_p!(resume_path)
 
-      assert {:error, {:resume_state_delete_failed, _reason}} = ResumeState.delete(workspace)
+      assert {:error, {:resume_state_delete_failed, _reason}} = AgentResumeState.delete(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -187,7 +187,7 @@ defmodule SymphonyElixir.ResumeStateTest do
     try do
       workspace = create_git_workspace!(test_root)
 
-      assert :ok = ResumeState.delete(workspace)
+      assert :ok = AgentResumeState.delete(workspace)
     after
       File.rm_rf(test_root)
     end
@@ -200,9 +200,9 @@ defmodule SymphonyElixir.ResumeStateTest do
       workspace = Path.join(test_root, "workspace")
       File.mkdir_p!(workspace)
 
-      assert :missing = ResumeState.read(workspace)
-      assert :ok = ResumeState.write(workspace, %{agent_kind: "codex", resume_id: "thread-2"})
-      assert :ok = ResumeState.delete(workspace)
+      assert :missing = AgentResumeState.read(workspace)
+      assert :ok = AgentResumeState.write(workspace, %{agent_kind: "codex", resume_id: "thread-2"})
+      assert :ok = AgentResumeState.delete(workspace)
     after
       File.rm_rf(test_root)
     end
