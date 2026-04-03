@@ -6,20 +6,29 @@ This repository is a fork of [OpenAI Symphony](https://github.com/openai/symphon
 
 ## Changes
 
+### Claude Code Executor
+In addition to the original Codex backend, this fork adds a Claude Code executor as an alternative
+agent backend. Set `agent.kind` to `"claude"` in your workflow config to use it.
+
+- Runs Claude Code CLI (`claude`) as the agent process instead of Codex app-server
+- Streams JSONL output and parses tool-use, results, and completion events
+- Automatically generates a per-workspace MCP config from workflow-defined MCP servers
+- Supports session resumption via `--resume` with the same Git-backed resume metadata as Codex
+- Supports remote execution on SSH worker hosts, same as Codex
+- Configurable model, permission mode, turn/stall timeouts, and MCP server settings under the
+  `claude` config key
+
 ### Session Resumption
-Compared with the original repository, the main capability difference in this fork today is local
-Codex thread resumption:
+Agent sessions (both Codex and Claude) can be resumed across runs:
 
-- Local Git-backed workspaces can persist resume metadata under `.git/symphony/resume.json`
-- Later runs can continue the same Codex session when the saved issue, workspace, and worker context
-  still match
-- Failed or force-restarted runs invalidate that resume state before retry, so the next run starts a
-  fresh thread instead of reusing a bad session
-
+- Local Git-backed workspaces persist resume metadata under `.git/symphony/resume.json`
+- Later runs continue the same session when the saved issue, workspace, and worker context still
+  match
+- Failed or force-restarted runs invalidate resume state before retry, so the next run starts fresh
 
 ### Miscellaneous
 
-- Local Codex app-server environment varianbles are inherited from the orchestrator
+- Local Codex app-server environment variables are inherited from the orchestrator
 
 
 ## Running
