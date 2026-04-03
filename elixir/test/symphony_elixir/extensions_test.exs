@@ -351,7 +351,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
-                 "usage_totals" => nil,
+                 "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
                  "workspace_path" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
@@ -379,12 +379,6 @@ defmodule SymphonyElixir.ExtensionsTest do
                "total_tokens" => 12,
                "seconds_running" => 42.5
              },
-             "codex_totals" => %{
-               "input_tokens" => 4,
-               "output_tokens" => 8,
-               "total_tokens" => 12,
-               "seconds_running" => 42.5
-             },
              "rate_limits" => %{"primary" => %{"remaining" => 11}}
            }
 
@@ -404,7 +398,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "agent_kind" => "claude",
                "executor_pid" => nil,
                "worker_host" => nil,
-               "usage_totals" => nil,
+               "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
                "workspace_path" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
@@ -577,8 +571,9 @@ defmodule SymphonyElixir.ExtensionsTest do
           agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 8,
-          last_codex_event: :notification,
-          last_codex_message: %{
+          last_agent_event: :notification,
+          last_agent_message: %{
+            agent_kind: "claude",
             event: :notification,
             message: %{
               payload: %{
@@ -591,10 +586,8 @@ defmodule SymphonyElixir.ExtensionsTest do
               }
             }
           },
-          last_codex_timestamp: DateTime.utc_now(),
-          codex_input_tokens: 10,
-          codex_output_tokens: 12,
-          codex_total_tokens: 22,
+          last_agent_timestamp: DateTime.utc_now(),
+          usage_totals: %{input_tokens: 10, output_tokens: 12, total_tokens: 22, seconds_running: 0},
           started_at: DateTime.utc_now()
         }
       ])
@@ -707,13 +700,11 @@ defmodule SymphonyElixir.ExtensionsTest do
           agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 7,
-          codex_app_server_pid: nil,
-          last_codex_message: "rendered",
-          last_codex_timestamp: nil,
-          last_codex_event: :notification,
-          codex_input_tokens: 4,
-          codex_output_tokens: 8,
-          codex_total_tokens: 12,
+          executor_pid: nil,
+          last_agent_message: "rendered",
+          last_agent_timestamp: nil,
+          last_agent_event: :notification,
+          usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 0},
           started_at: DateTime.utc_now()
         }
       ],
@@ -726,7 +717,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           error: "boom"
         }
       ],
-      codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
+      usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}}
     }
   end
