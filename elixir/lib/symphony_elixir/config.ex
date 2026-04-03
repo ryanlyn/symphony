@@ -26,16 +26,6 @@ defmodule SymphonyElixir.Config do
           turn_sandbox_policy: map()
         }
 
-  @type claude_runtime_settings :: %{
-          command: String.t(),
-          model: String.t() | nil,
-          permission_mode: String.t(),
-          turn_timeout_ms: pos_integer(),
-          stall_timeout_ms: non_neg_integer(),
-          strict_mcp_config: boolean(),
-          mcp_server_python: String.t()
-        }
-
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
     case Workflow.current() do
@@ -137,30 +127,6 @@ defmodule SymphonyElixir.Config do
            turn_sandbox_policy: turn_sandbox_policy
          }}
       end
-    end
-  end
-
-  @spec claude_runtime_settings() :: {:ok, claude_runtime_settings()} | {:error, term()}
-  def claude_runtime_settings do
-    with {:ok, settings} <- settings() do
-      {:ok,
-       %{
-         command: settings.claude.command,
-         model: settings.claude.model,
-         permission_mode: settings.claude.permission_mode,
-         turn_timeout_ms: settings.claude.turn_timeout_ms,
-         stall_timeout_ms: settings.claude.stall_timeout_ms,
-         strict_mcp_config: settings.claude.strict_mcp_config,
-         mcp_server_python: settings.claude.mcp_server_python
-       }}
-    end
-  end
-
-  @spec claude_runtime_settings!() :: claude_runtime_settings()
-  def claude_runtime_settings! do
-    case claude_runtime_settings() do
-      {:ok, settings} -> settings
-      {:error, reason} -> raise ArgumentError, message: format_config_error(reason)
     end
   end
 

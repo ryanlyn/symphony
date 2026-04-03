@@ -31,8 +31,6 @@ defmodule SymphonyElixir.Claude.Executor do
          {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
-      settings = Config.claude_runtime_settings!()
-
       base_session = %{
         agent_kind: "claude",
         capabilities: capabilities,
@@ -42,7 +40,7 @@ defmodule SymphonyElixir.Claude.Executor do
         port: nil,
         resume_id: Map.get(resume_metadata, :resume_id),
         session_id: Map.get(resume_metadata, :session_id),
-        turn_timeout_ms: settings.turn_timeout_ms,
+        turn_timeout_ms: Config.settings!().claude.turn_timeout_ms,
         worker_host: worker_host,
         workspace: workspace
       }
@@ -126,26 +124,26 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp launch_command(session, issue) do
-    settings = Config.claude_runtime_settings!()
-    argv = launch_argv(session, issue, settings)
-    "exec #{settings.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"
+    claude = Config.settings!().claude
+    argv = launch_argv(session, issue, claude)
+    "exec #{claude.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"
   end
 
   defp remote_launch_command(%{workspace: workspace} = session, issue) when is_binary(workspace) do
     "cd #{SSH.shell_escape(workspace)} && #{launch_command(session, issue)}"
   end
 
-  defp launch_argv(session, issue, settings) do
+  defp launch_argv(session, issue, claude) do
     []
     |> Kernel.++(["--print"])
     |> maybe_add_flag(session.capabilities.verbose, "--verbose")
     |> Kernel.++(["--output-format=stream-json", "--input-format=stream-json"])
-    |> maybe_add_arg("--permission-mode", settings.permission_mode)
+    |> maybe_add_arg("--permission-mode", claude.permission_mode)
     |> maybe_add_arg("--allowedTools", Enum.join(Mcp.allowed_tools(), ","))
-    |> maybe_add_arg("--model", settings.model)
+    |> maybe_add_arg("--model", claude.model)
     |> maybe_add_arg("-n", issue_name(issue))
     |> maybe_add_arg("--mcp-config", session.config_path)
-    |> maybe_add_flag(settings.strict_mcp_config, "--strict-mcp-config")
+    |> maybe_add_flag(claude.strict_mcp_config, "--strict-mcp-config")
     |> maybe_add_arg("--resume", session.resume_id)
   end
 

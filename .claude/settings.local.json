@@ -35,7 +35,8 @@
       "Bash(mix test:*)",
       "Bash(claude export:*)",
       "Bash(claude transcript:*)",
-      "Bash(claude view:*)"
+      "Bash(claude view:*)",
+      "Bash(ln:*)"
     ]
   }
 }

@@ -1001,17 +1001,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.agent_executor() == SymphonyElixir.Claude.Executor
     assert Config.agent_stall_timeout_ms("claude") == 9_876
 
-    assert {:ok, claude_settings} = Config.claude_runtime_settings()
-
-    assert claude_settings == %{
-             command: "/tmp/fake-claude",
-             model: "claude-sonnet-4-6",
-             permission_mode: "dontAsk",
-             turn_timeout_ms: 12_345,
-             stall_timeout_ms: 9_876,
-             strict_mcp_config: false,
-             mcp_server_python: "/usr/bin/python3"
-           }
+    claude = Config.settings!().claude
+    assert claude.command == "/tmp/fake-claude"
+    assert claude.model == "claude-sonnet-4-6"
+    assert claude.permission_mode == "dontAsk"
+    assert claude.turn_timeout_ms == 12_345
+    assert claude.stall_timeout_ms == 9_876
+    assert claude.strict_mcp_config == false
+    assert claude.mcp_server_python == "/usr/bin/python3"
   end
 
   test "schema helpers cover custom type and state limit validation" do

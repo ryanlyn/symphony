@@ -11,7 +11,7 @@ defmodule SymphonyElixir.Claude.Mcp do
   def prepare(workspace, worker_host \\ nil) when is_binary(workspace) do
     config_path = Path.join([workspace, @dir_relative_path, @config_filename])
     sidecar_path = Path.join([workspace, @dir_relative_path, @server_filename])
-    python = Config.claude_runtime_settings!().mcp_server_python
+    python = Config.settings!().claude.mcp_server_python
 
     with :ok <- write_workspace_file(sidecar_path, sidecar_contents(), worker_host, executable?: true),
          :ok <- write_workspace_file(config_path, config_contents(sidecar_path, python), worker_host, []) do
