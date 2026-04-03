@@ -1,50 +1,14 @@
 # Symphony Elixir
 
-This directory contains a fork of Symphony Elixir, the Elixir/OTP implementation of Symphony from
+Elixir/OTP implementation of [Symphony](../README.md), forked from
 [openai/symphony](https://github.com/openai/symphony).
-
-> [!WARNING]
-> Symphony Elixir is prototype software intended for evaluation only and is presented as-is.
-> We recommend implementing your own hardened version based on `SPEC.md`.
-
-## How it works
-
-1. Polls Linear for candidate work
-2. Creates a workspace per issue
-3. Launches the configured agent executor inside the workspace
-4. Sends a workflow prompt to that executor
-5. Keeps the executor working on the issue until the work is done
-
-Codex remains the default executor and runs in [App Server mode](https://developers.openai.com/codex/app-server/).
-Claude is also supported through the shared executor abstraction and receives the same
-workspace-local `linear_graphql` capability via a generated MCP sidecar.
-
-If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
-Symphony stops the active agent for that issue and cleans up matching workspaces.
-
-## How to use it
-
-1. Make sure your codebase is set up to work well with agents: see
-   [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
-3. Copy this directory's `WORKFLOW.md` to your repo.
-4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
-     operations such as comment editing or upload flows.
-5. Customize the copied `WORKFLOW.md` file for your project.
-   - To get your project's slug, right-click the project and copy its URL. The slug is part of the
-     URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
-     Team Settings → Workflow in Linear.
-6. Follow the instructions below to install the required runtime dependencies and start the service.
 
 ## Prerequisites
 
-We recommend using [mise](https://mise.jdx.dev/) to manage Elixir/Erlang versions.
+[mise](https://mise.jdx.dev/) is recommended for managing Elixir/Erlang versions:
 
 ```bash
+mise trust
 mise install
 mise exec -- elixir --version
 ```
@@ -52,183 +16,259 @@ mise exec -- elixir --version
 ## Run
 
 ```bash
-git clone https://github.com/openai/symphony
-cd symphony/elixir
-mise trust
-mise install
 mise exec -- mix setup
 mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
 
-## Configuration
-
-Pass a custom workflow file path to `./bin/symphony` when starting the service:
-
-```bash
-./bin/symphony /path/to/custom/WORKFLOW.md
-```
-
-If no path is passed, Symphony defaults to `./WORKFLOW.md`.
-
 Optional flags:
 
-- `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
-- `--port` also starts the Phoenix observability service (default: disabled)
+- `--logs-root <path>` - write logs under a different directory (default: `./log`)
+- `--port <port>` - start the Phoenix observability dashboard and JSON API (default: disabled)
 
-The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
-agent session prompt.
+### Development mode (hot-reload)
 
-Minimal example:
+Run Symphony interactively with `iex` for automatic code recompilation on changes:
 
-```md
+```bash
+SYMPHONY_WORKFLOW=/path/to/WORKFLOW.md mise exec -- iex -S mix
+```
+
+The `SYMPHONY_WORKFLOW` env var specifies the workflow file path when not passing it as a CLI
+argument. The `WorkflowStore` also polls `WORKFLOW.md` every second and hot-reloads configuration
+and prompt changes without restarting.
+
+## Configuration
+
+All configuration lives in the YAML front matter of `WORKFLOW.md`. The Markdown body below the
+front matter is the agent session prompt, rendered as a Liquid template with issue context variables
+(`{{ issue.identifier }}`, `{{ issue.title }}`, `{{ issue.description }}`, etc.).
+
+### Quickstart
+
+```yaml
 ---
 tracker:
   kind: linear
-  project_slug: "..."
+  project_slug: "your-project-slug"
 workspace:
   root: ~/code/workspaces
 hooks:
   after_create: |
     git clone git@github.com:your-org/your-repo.git .
 agent:
-  kind: codex
-  max_concurrent_agents: 10
-  max_turns: 20
-codex:
-  command: codex app-server
-claude:
-  command: claude
-  permission_mode: dontAsk
+  kind: codex        # or "claude"
 ---
 
-You are working on a Linear issue {{ issue.identifier }}.
+You are working on {{ issue.identifier }}: {{ issue.title }}
 
-Title: {{ issue.title }} Body: {{ issue.description }}
+{{ issue.description }}
+```
+
+Set `LINEAR_API_KEY` in your environment and you're ready to go.
+
+### Full reference
+
+```yaml
+---
+tracker:
+  kind: linear
+  api_key: $LINEAR_API_KEY           # reads from env; defaults to $LINEAR_API_KEY when unset
+  project_slug: "my-project"         # right-click project in Linear, slug is in the URL
+  assignee: $LINEAR_ASSIGNEE         # optional; filter issues by assignee
+  active_states:                     # issue states that trigger agent work
+    - Todo                           #   default: ["Todo", "In Progress"]
+    - In Progress
+    - Merging                        # custom states are supported; add them in
+    - Rework                         #   Linear under Team Settings -> Workflow
+
+  terminal_states:                   # issue states that stop agents and clean up workspaces
+    - Closed                         #   default: ["Closed", "Cancelled", "Canceled",
+    - Cancelled                      #             "Duplicate", "Done"]
+    - Canceled
+    - Duplicate
+    - Done
+
+polling:
+  interval_ms: 30000                 # how often to poll Linear; default: 30000
+
+workspace:
+  root: ~/code/workspaces            # where issue workspaces are created
+                                     #   default: $TMPDIR/symphony_workspaces
+                                     #   supports ~ and $ENV_VAR expansion
+
+worker:
+  ssh_hosts:                         # optional; run agents on remote SSH hosts
+    - worker1.example.com            #   workspaces are synced via rsync over SSH
+    - worker2.example.com
+  max_concurrent_agents_per_host: 2  # optional; cap agents per SSH host
+
+agent:
+  kind: codex                        # "codex" (default) or "claude"
+  max_concurrent_agents: 10          # total concurrent agents across all hosts; default: 10
+  max_turns: 20                      # max re-runs per issue while still active; default: 20
+  max_retry_backoff_ms: 300000       # backoff cap for retries; default: 300000
+  max_concurrent_agents_by_state:    # optional; per-state concurrency limits
+    in progress: 5                   #   state names are case-insensitive
+    merging: 2
+
+codex:                               # Codex-specific settings (used when agent.kind is "codex")
+  command: codex app-server          # shell command to start Codex; default: "codex app-server"
+                                     #   $ENV_VAR expansion happens in the launched shell
+  approval_policy: never             # string or object; default: reject sandbox_approval,
+                                     #   rules, and mcp_elicitations
+                                     #   string values: untrusted, on-failure, on-request, never
+  thread_sandbox: workspace-write    # read-only, workspace-write, danger-full-access
+                                     #   default: workspace-write
+  turn_sandbox_policy:               # optional; overrides auto-generated sandbox policy
+    type: workspaceWrite             #   passed through to Codex unchanged when set
+    writableRoots:
+      - /path/to/workspace
+    networkAccess: true
+  turn_timeout_ms: 3600000           # max time per turn; default: 3600000 (1h)
+  read_timeout_ms: 5000              # read timeout for app-server responses; default: 5000
+  stall_timeout_ms: 300000           # kill turn after this long without output; default: 300000
+
+claude:                              # Claude-specific settings (used when agent.kind is "claude")
+  command: claude                    # CLI command; default: "claude"
+  model: claude-opus-4-6[1m]        # model to use; default: claude-opus-4-6[1m]
+  permission_mode: dontAsk           # default: dontAsk
+  turn_timeout_ms: 3600000           # max time per turn; default: 3600000 (1h)
+  stall_timeout_ms: 300000           # kill turn after this long without output; default: 300000
+  strict_mcp_config: true            # only use MCP servers from the injected config,
+                                     #   ignoring user/project MCP settings; default: true
+  mcp_server_python: python3         # Python interpreter for the Linear MCP sidecar; default: python3
+
+hooks:
+  after_create: |                    # runs after workspace directory is created
+    git clone --depth 1 git@github.com:org/repo.git .
+  before_run: |                      # runs before each agent turn
+    git pull origin main
+  after_run: |                       # runs after each agent turn
+    echo "turn complete"
+  before_remove: |                   # runs before workspace cleanup
+    echo "cleaning up"
+  timeout_ms: 60000                  # hook execution timeout; default: 60000
+
+observability:
+  dashboard_enabled: true            # enable terminal dashboard; default: true
+  refresh_ms: 1000                   # dashboard data refresh; default: 1000
+  render_interval_ms: 16             # terminal render interval; default: 16
+
+server:
+  port: 4000                         # enable Phoenix web dashboard; default: disabled
+  host: 127.0.0.1                    # bind address; default: 127.0.0.1
+---
 ```
 
 Notes:
 
-- If a value is missing, defaults are used.
-- `agent.kind` selects the executor. Supported values: `codex` and `claude`. Default: `codex`.
-- Safer Codex defaults are used when policy fields are omitted:
-  - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
-  - `codex.thread_sandbox` defaults to `workspace-write`
-  - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
-- Claude defaults are also provided when its block is omitted:
-  - `claude.command` defaults to `claude`
-  - `claude.model` defaults to `claude-opus-4-6[1m]`
-  - `claude.permission_mode` defaults to `dontAsk`
-  - `claude.turn_timeout_ms` defaults to `3600000`
-  - `claude.stall_timeout_ms` defaults to `300000`
-  - `claude.strict_mcp_config` defaults to `true` (only uses MCP servers from the injected config, ignoring user/project MCP settings)
-  - `claude.mcp_server_python` defaults to `python3` (Python interpreter used to run the injected Linear MCP sidecar)
-  - `claude.strict_mcp_config` defaults to `true`
-  - `claude.mcp_server_python` defaults to `python3`
-- Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
-- Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
-- When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
-  unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
-  Symphony validation.
-- `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
-  invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
-- If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
-  identifier, title, and body.
-- Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
-  `git clone ... .` there, along with any other setup commands you need.
-- If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
-  the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
-- `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
-- For path values, `~` is expanded to the home directory.
-- For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
-  while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
-  launched shell.
+- If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot. If a later
+  reload fails, it keeps running with the last known good configuration and logs the error.
+- `~` is expanded to the home directory in path values. For env-backed paths, use `$VAR`.
+- The `codex.command` value is a shell command string - `$VAR` expansion happens in the shell, not
+  in Symphony.
+- When `codex.turn_sandbox_policy` is omitted, Symphony auto-generates a `workspaceWrite` policy
+  rooted at the issue workspace.
+- If the Markdown body is blank, Symphony uses a default prompt template with the issue identifier,
+  title, and body.
 
-```yaml
-tracker:
-  api_key: $LINEAR_API_KEY
-workspace:
-  root: $SYMPHONY_WORKSPACE_ROOT
-hooks:
-  after_create: |
-    git clone --depth 1 "$SOURCE_REPO_URL" .
-codex:
-  command: "$CODEX_BIN app-server --model gpt-5.3-codex"
-```
+### Linear
 
-- If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
-- If a later reload fails, Symphony keeps running with the last known good workflow and logs the
-  reload error until the file is fixed.
-- `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+Prerequisites:
+
+1. Get a personal API token: Linear Settings -> Security & access -> Personal API keys
+2. Set it as the `LINEAR_API_KEY` environment variable (or `tracker.api_key: $LINEAR_API_KEY`)
+3. Find your project slug by right-clicking the project in Linear and copying its URL - the slug
+   is in the path
+4. The example workflow files in this repo use non-standard Linear issue states (`Rework`, `Human
+   Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
+   `active_states` / `terminal_states` to match your existing workflow.
+
+### Workflow prompt
+
+The Markdown body of `WORKFLOW.md` is rendered as a [Liquid](https://shopify.github.io/liquid/)
+template before being sent to the agent. Available variables:
+
+- `{{ issue.identifier }}` - e.g. `PROJ-42`
+- `{{ issue.title }}`
+- `{{ issue.description }}`
+- `{{ issue.state }}` - current Linear status
+- `{{ issue.labels }}` - comma-separated label names
+- `{{ issue.url }}` - Linear issue URL
+- `{{ attempt }}` - retry attempt number (nil on first run)
+
+### Skills
+
+The `.codex/skills/` directory in this repo contains orchestration skills referenced by the example
+workflow files:
+
+- `symphony-linear` - interact with Linear (comments, state transitions, queries)
+- `symphony-commit` - produce clean, logical commits
+- `symphony-push` - push branches and create/update PRs
+- `symphony-pull` - merge latest `origin/main` into the working branch
+- `symphony-land` - monitor and merge approved PRs
+- `symphony-debug` - investigate stuck runs and execution failures
+
+Copy these to your target repo's `.codex/skills/` directory if your workflow references them. The
+`symphony-linear` skill uses the `linear_graphql` tool injected by Symphony (via Codex app-server
+tool or Claude MCP sidecar).
 
 ## Web dashboard
 
-The observability UI now runs on a minimal Phoenix stack:
+Start with `--port` to enable the Phoenix web interface:
 
-- LiveView for the dashboard at `/`
-- JSON API for operational debugging under `/api/v1/*`
-- Bandit as the HTTP server
-- Phoenix dependency static assets for the LiveView client bootstrap
+```bash
+mise exec -- ./bin/symphony ./WORKFLOW.md --port 4000
+```
 
-## Project Layout
-
-- `lib/`: application code and Mix tasks
-- `test/`: ExUnit coverage for runtime behavior
-- `WORKFLOW.md`: in-repo workflow contract used by local runs
-- `../.codex/`: repository-local Codex skills and setup helpers
+- LiveView dashboard at `/`
+- JSON API at `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`
 
 ## Testing
+
+### Unit and integration tests
 
 ```bash
 make all
 ```
 
-Run the real external end-to-end test only when you want Symphony to create disposable Linear
-resources and launch a real agent session:
+This runs formatting, linting, coverage, and Dialyzer checks. Individual targets are also
+available:
 
 ```bash
-cd elixir
-export LINEAR_API_KEY=...
+make test        # unit tests only
+make coverage    # tests with coverage
+make fmt-check   # check formatting
+make lint        # credo + spec checks
+make dialyzer    # type checking
+```
+
+### Live end-to-end tests
+
+These create real Linear resources and launch agent sessions. Requires `LINEAR_API_KEY`:
+
+```bash
 make e2e
 ```
 
-Optional environment variables:
+`make e2e` runs two scenarios: one with a local worker and one with SSH workers.
 
-- `SYMPHONY_LIVE_LINEAR_TEAM_KEY` defaults to `SYME2E`
-- `SYMPHONY_LIVE_SSH_WORKER_HOSTS` uses those SSH hosts when set, as a comma-separated list
+- **SSH workers**: if `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is unset, the test uses `docker compose` to
+  start two disposable SSH containers on localhost. It generates a temporary SSH keypair and mounts
+  the host auth config into each container.
+- Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` (comma-separated) to target real SSH hosts instead.
+- `SYMPHONY_LIVE_LINEAR_TEAM_KEY` defaults to `SYME2E`.
 
-`make e2e` runs two live scenarios:
-- one with a local worker
-- one with SSH workers
+### Resume tests
 
-If `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is unset, the SSH scenario uses `docker compose` to start two
-disposable SSH workers on `localhost:<port>`. The live test generates a temporary SSH keypair,
-mounts the host `~/.codex/auth.json` into each worker, verifies that Symphony can talk to them
-over real SSH, then runs the same orchestration flow against those worker addresses. This keeps
-the transport representative without depending on long-lived external machines.
-
-Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` if you want `make e2e` to target real SSH hosts instead.
-
-The live test creates a temporary Linear project and issue, writes a temporary `WORKFLOW.md`, runs
-a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
-Linear issue, then marks the project completed so the run remains visible in Linear.
-
-To exercise only the local resume flow against a real `codex app-server`, run:
+Test session resumption without live Linear resources:
 
 ```bash
-cd elixir
+# Codex resume
 SYMPHONY_RUN_REAL_CODEX_RESUME_E2E=1 mise exec -- mix test test/symphony_elixir/live_resume_e2e_test.exs
-```
 
-That scenario does not require live Linear resources. It verifies that Symphony resumes a saved
-local Codex thread when possible and starts a fresh thread when resume metadata is missing or has
-been invalidated.
-
-Guarded Claude resume and MCP e2e coverage is also available:
-
-```bash
-cd elixir
+# Claude resume + MCP
 SYMPHONY_RUN_REAL_CLAUDE_RESUME_E2E=1 LINEAR_API_KEY=... mise exec -- mix test test/symphony_elixir/live_claude_resume_e2e_test.exs
 ```
 
