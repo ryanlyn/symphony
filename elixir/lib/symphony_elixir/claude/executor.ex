@@ -57,9 +57,8 @@ defmodule SymphonyElixir.Claude.Executor do
     on_message = Keyword.get(opts, :on_message, &default_on_message/1)
 
     with {:ok, session} <- flush_pending_messages(session, on_message),
-         {:ok, session} <- send_turn_input(session, prompt, on_message),
-         {:ok, session, result} <- await_turn_completion(session, on_message) do
-      {:ok, session, result}
+         {:ok, session} <- send_turn_input(session, prompt, on_message) do
+      await_turn_completion(session, on_message)
     end
   end
 

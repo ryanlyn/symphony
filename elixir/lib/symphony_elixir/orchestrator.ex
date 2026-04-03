@@ -466,13 +466,9 @@ defmodule SymphonyElixir.Orchestrator do
       Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
         timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
 
-        cond do
-          timeout_ms <= 0 ->
-            state_acc
-
-          true ->
-            restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
-        end
+        if timeout_ms <= 0,
+          do: state_acc,
+          else: restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
       end)
     end
   end
