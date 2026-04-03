@@ -3,14 +3,13 @@ defmodule SymphonyElixir.Claude.Executor do
 
   @behaviour SymphonyElixir.AgentExecutor
 
-  alias SymphonyElixir.Claude.{CapabilityProbe, Mcp}
+  alias SymphonyElixir.Claude.Mcp
   alias SymphonyElixir.{Config, SSH}
 
   @port_line_bytes 1_048_576
 
   @type session :: %{
           agent_kind: String.t(),
-          capabilities: CapabilityProbe.t(),
           config_path: String.t(),
           metadata: map(),
           pending_line: String.t(),
@@ -26,14 +25,11 @@ defmodule SymphonyElixir.Claude.Executor do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
 
-    with {:ok, capabilities} <- CapabilityProbe.probe(worker_host: worker_host),
-         :ok <- validate_capabilities(capabilities),
-         {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
+    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
       base_session = %{
         agent_kind: "claude",
-        capabilities: capabilities,
         config_path: config_path,
         metadata: %{},
         pending_line: "",
@@ -82,17 +78,6 @@ defmodule SymphonyElixir.Claude.Executor do
     }
   end
 
-  defp validate_capabilities(%CapabilityProbe{
-         print: true,
-         stream_json: true,
-         permission_mode: true,
-         mcp_config: true,
-         input_format: true
-       }),
-       do: :ok
-
-  defp validate_capabilities(capabilities), do: {:error, {:unsupported_claude_capabilities, capabilities}}
-
   defp start_port(%{worker_host: nil, workspace: workspace} = session, issue) do
     executable = System.find_executable("bash")
 
@@ -134,10 +119,7 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp launch_argv(session, issue, claude) do
-    []
-    |> Kernel.++(["--print"])
-    |> maybe_add_flag(session.capabilities.verbose, "--verbose")
-    |> Kernel.++(["--output-format=stream-json", "--input-format=stream-json"])
+    ["--print", "--verbose", "--output-format=stream-json", "--input-format=stream-json"]
     |> maybe_add_arg("--permission-mode", claude.permission_mode)
     |> maybe_add_arg("--allowedTools", Enum.join(Mcp.allowed_tools(), ","))
     |> maybe_add_arg("--model", claude.model)

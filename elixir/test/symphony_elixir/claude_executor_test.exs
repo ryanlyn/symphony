@@ -2,41 +2,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
   use SymphonyElixir.TestSupport
   import Bitwise, only: [&&&: 2]
 
-  alias SymphonyElixir.Claude.{CapabilityProbe, Mcp, Executor}
-
-  test "capability probe reads required flags from the cli help text" do
-    runner = fn
-      _command, ["--help"], _worker_host ->
-        {:ok,
-         """
-         Usage: claude [options]
-           -p, --print
-           --verbose
-           --output-format <format>
-           --input-format <format>
-           --resume [value]
-           --permission-mode <mode>
-           --model <model>
-           --mcp-config <configs...>
-           --strict-mcp-config
-         """}
-
-      _command, ["--version"], _worker_host ->
-        {:ok, "2.1.88 (Claude Code)\n"}
-    end
-
-    assert {:ok, capabilities} = CapabilityProbe.probe(command: "claude", runner: runner)
-    assert capabilities.print == true
-    assert capabilities.stream_json == true
-    assert capabilities.verbose == true
-    assert capabilities.input_format == true
-    assert capabilities.resume == true
-    assert capabilities.permission_mode == true
-    assert capabilities.model == true
-    assert capabilities.mcp_config == true
-    assert capabilities.strict_mcp_config == true
-    assert capabilities.version == "2.1.88 (Claude Code)"
-  end
+  alias SymphonyElixir.Claude.{Mcp, Executor}
 
   test "mcp prepare writes workspace-local config and dependency-free sidecar" do
     test_root = Path.join(System.tmp_dir!(), "symphony-claude-mcp-#{System.unique_integer([:positive])}")
