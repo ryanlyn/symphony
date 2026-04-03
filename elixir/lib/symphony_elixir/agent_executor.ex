@@ -9,7 +9,8 @@ defmodule SymphonyElixir.AgentExecutor do
   @type resume_metadata :: %{
           optional(:agent_kind) => String.t(),
           optional(:resume_id) => String.t() | nil,
-          optional(:session_id) => String.t() | nil
+          optional(:session_id) => String.t() | nil,
+          optional(:thread_id) => String.t() | nil
         }
 
   @callback start_session(Path.t(), keyword()) :: {:ok, session()} | {:error, term()}

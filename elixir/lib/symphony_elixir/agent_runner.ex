@@ -6,6 +6,8 @@ defmodule SymphonyElixir.AgentRunner do
   require Logger
   alias SymphonyElixir.{AgentResumeState, Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
+  @dialyzer :no_match
+
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -79,19 +81,18 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
+    ctx = %{
+      executor: executor,
+      workspace: workspace,
+      update_recipient: update_recipient,
+      opts: opts,
+      issue_state_fetcher: issue_state_fetcher,
+      max_turns: max_turns,
+      worker_host: worker_host
+    }
+
     with {:ok, session} <- start_session(executor, workspace, issue, worker_host) do
-      case do_run_agent_turns(
-             executor,
-             session,
-             workspace,
-             issue,
-             update_recipient,
-             opts,
-             issue_state_fetcher,
-             1,
-             max_turns,
-             worker_host
-           ) do
+      case do_run_agent_turns(ctx, session, issue, 1) do
         {:ok, final_session} ->
           executor.stop_session(final_session)
           :ok
@@ -103,18 +104,17 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp do_run_agent_turns(
-         executor,
-         session,
-         workspace,
-         issue,
-         update_recipient,
-         opts,
-         issue_state_fetcher,
-         turn_number,
-         max_turns,
-         worker_host
-       ) do
+  defp do_run_agent_turns(ctx, session, issue, turn_number) do
+    %{
+      executor: executor,
+      workspace: workspace,
+      update_recipient: update_recipient,
+      opts: opts,
+      issue_state_fetcher: issue_state_fetcher,
+      max_turns: max_turns,
+      worker_host: worker_host
+    } = ctx
+
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
     case executor.run_turn(
@@ -132,18 +132,7 @@ defmodule SymphonyElixir.AgentRunner do
           {:continue, refreshed_issue} when turn_number < max_turns ->
             Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-            do_run_agent_turns(
-              executor,
-              updated_session,
-              workspace,
-              refreshed_issue,
-              update_recipient,
-              opts,
-              issue_state_fetcher,
-              turn_number + 1,
-              max_turns,
-              worker_host
-            )
+            do_run_agent_turns(ctx, updated_session, refreshed_issue, turn_number + 1)
 
           {:continue, refreshed_issue} ->
             Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
@@ -272,16 +261,13 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp resume_state_matches_issue?(resume_state, %Issue{} = issue, workspace, worker_host, agent_kind)
        when is_map(resume_state) do
-    stored_agent_kind_matches?(resume_state.agent_kind, agent_kind) and
+    stored_value_matches?(resume_state.agent_kind, agent_kind) and
       stored_value_matches?(resume_state.issue_id, issue.id) and
       stored_value_matches?(resume_state.issue_identifier, issue.identifier) and
       stored_value_matches?(resume_state.issue_state, issue.state) and
       stored_value_matches?(resume_state.workspace_path, workspace) and
       worker_host_matches?(resume_state.worker_host, worker_host)
   end
-
-  defp stored_agent_kind_matches?(nil, "codex"), do: true
-  defp stored_agent_kind_matches?(stored_kind, current_kind), do: stored_value_matches?(stored_kind, current_kind)
 
   defp stored_value_matches?(nil, _current_value), do: true
   defp stored_value_matches?(stored_value, current_value), do: stored_value == current_value

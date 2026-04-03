@@ -231,18 +231,7 @@ defmodule SymphonyElixir.AgentResumeState do
     with {:ok, data} <- Jason.decode(contents),
          resume_id when is_binary(resume_id) and resume_id != "" <-
            Map.get(data, "resume_id") || Map.get(data, "thread_id") do
-      agent_kind =
-        case Map.get(data, "agent_kind") do
-          kind when is_binary(kind) and kind != "" -> kind
-          _ -> "codex"
-        end
-
-      thread_id =
-        case Map.get(data, "thread_id") do
-          value when is_binary(value) and value != "" -> value
-          _ when agent_kind == "codex" -> resume_id
-          _ -> nil
-        end
+      agent_kind = decode_agent_kind(data)
 
       {:ok,
        %{
@@ -255,11 +244,26 @@ defmodule SymphonyElixir.AgentResumeState do
          workspace_path: string_or_nil(Map.get(data, "workspace_path")),
          worker_host: string_or_nil(Map.get(data, "worker_host")),
          updated_at: string_or_nil(Map.get(data, "updated_at")),
-         thread_id: thread_id
+         thread_id: decode_thread_id(data, agent_kind, resume_id)
        }}
     else
       {:error, reason} -> {:error, {:resume_state_decode_failed, reason}}
       _ -> {:error, :invalid_resume_state}
+    end
+  end
+
+  defp decode_agent_kind(data) do
+    case Map.get(data, "agent_kind") do
+      kind when is_binary(kind) and kind != "" -> kind
+      _ -> "codex"
+    end
+  end
+
+  defp decode_thread_id(data, agent_kind, resume_id) do
+    case Map.get(data, "thread_id") do
+      value when is_binary(value) and value != "" -> value
+      _ when agent_kind == "codex" -> resume_id
+      _ -> nil
     end
   end
 

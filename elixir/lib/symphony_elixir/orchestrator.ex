@@ -456,21 +456,21 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  defp reconcile_stalled_running_issues(%State{running: running} = state)
+       when map_size(running) == 0,
+       do: state
+
   defp reconcile_stalled_running_issues(%State{} = state) do
-    if map_size(state.running) == 0 do
-      state
-    else
-      now = DateTime.utc_now()
-      settings = Config.settings!()
+    now = DateTime.utc_now()
+    settings = Config.settings!()
 
-      Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
-        timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
+    Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+      timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
 
-        if timeout_ms <= 0,
-          do: state_acc,
-          else: restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
-      end)
-    end
+      if timeout_ms <= 0,
+        do: state_acc,
+        else: restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
+    end)
   end
 
   defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
@@ -512,8 +512,6 @@ defmodule SymphonyElixir.Orchestrator do
     Map.get(running_entry, :last_agent_timestamp) ||
       Map.get(running_entry, :started_at)
   end
-
-  defp last_activity_timestamp(_running_entry), do: nil
 
   defp terminate_task(pid) when is_pid(pid) do
     case Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid) do

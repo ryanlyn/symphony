@@ -31,27 +31,12 @@ defmodule SymphonyElixir.SSH do
   @spec write_file(String.t(), Path.t(), iodata(), keyword()) :: :ok | {:error, term()}
   def write_file(host, path, contents, opts \\ [])
       when is_binary(host) and is_binary(path) do
-    chmod_command =
-      case Keyword.get(opts, :mode) do
-        nil ->
-          "true"
-
-        mode when is_integer(mode) ->
-          "chmod #{Integer.to_string(mode, 8)} #{shell_escape(path)}"
-
-        mode when is_binary(mode) and mode != "" ->
-          "chmod #{mode} #{shell_escape(path)}"
-
-        _ ->
-          "true"
-      end
-
     command = """
     mkdir -p #{shell_escape(Path.dirname(path))}
     cat <<'#{@remote_write_marker}' > #{shell_escape(path)}
     #{IO.iodata_to_binary(contents)}
     #{@remote_write_marker}
-    #{chmod_command}
+    #{chmod_command(Keyword.get(opts, :mode), path)}
     """
 
     case run(host, command, stderr_to_stdout: true) do
@@ -60,6 +45,16 @@ defmodule SymphonyElixir.SSH do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp chmod_command(nil, _path), do: "true"
+
+  defp chmod_command(mode, path) when is_integer(mode),
+    do: "chmod #{Integer.to_string(mode, 8)} #{shell_escape(path)}"
+
+  defp chmod_command(mode, path) when is_binary(mode) and mode != "",
+    do: "chmod #{mode} #{shell_escape(path)}"
+
+  defp chmod_command(_mode, _path), do: "true"
 
   @spec remote_shell_command(String.t()) :: String.t()
   def remote_shell_command(command) when is_binary(command) do

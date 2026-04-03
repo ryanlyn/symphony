@@ -2,7 +2,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
   use SymphonyElixir.TestSupport
   import Bitwise, only: [&&&: 2]
 
-  alias SymphonyElixir.Claude.{Mcp, Executor}
+  alias SymphonyElixir.Claude.{Executor, Mcp}
 
   test "mcp prepare writes workspace-local config and dependency-free sidecar" do
     test_root = Path.join(System.tmp_dir!(), "symphony-claude-mcp-#{System.unique_integer([:positive])}")
@@ -87,8 +87,8 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert_receive {:claude_update, %{event: :tool_use_requested}}
       assert_receive {:claude_update, %{event: :tool_result}}
 
-      assert_receive {:claude_update, %{event: :turn_completed, usage: %{input_tokens: 19, output_tokens: 6, total_tokens: 25}}},
-                     1_000
+      expected_usage = %{input_tokens: 19, output_tokens: 6, total_tokens: 25}
+      assert_receive {:claude_update, %{event: :turn_completed, usage: ^expected_usage}}, 1_000
 
       first_turn_pid =
         receive do

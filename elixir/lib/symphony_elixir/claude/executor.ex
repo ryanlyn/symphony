@@ -462,8 +462,6 @@ defmodule SymphonyElixir.Claude.Executor do
     end
   end
 
-  defp normalize_usage_map(_usage), do: nil
-
   defp update_session_from_payload(session, payload) when is_map(session) and is_map(payload) do
     session_id =
       Map.get(payload, "session_id") ||
@@ -503,8 +501,6 @@ defmodule SymphonyElixir.Claude.Executor do
   catch
     :error, _reason -> :ok
   end
-
-  defp stop_port(_port), do: :ok
 
   defp send_port_command(port, data) when is_port(port) and is_binary(data) do
     Port.command(port, data)

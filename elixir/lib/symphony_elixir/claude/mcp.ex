@@ -7,7 +7,8 @@ defmodule SymphonyElixir.Claude.Mcp do
   @config_filename "mcp.json"
   @server_filename "linear_graphql_mcp.py"
 
-  @spec prepare(Path.t(), String.t() | nil) :: {:ok, %{config_path: String.t(), sidecar_path: String.t()}} | {:error, term()}
+  @spec prepare(Path.t(), String.t() | nil) ::
+          {:ok, %{config_path: String.t(), sidecar_path: String.t()}} | {:error, term()}
   def prepare(workspace, worker_host \\ nil) when is_binary(workspace) do
     config_path = Path.join([workspace, @dir_relative_path, @config_filename])
     sidecar_path = Path.join([workspace, @dir_relative_path, @server_filename])
