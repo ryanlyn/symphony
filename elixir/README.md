@@ -1,15 +1,11 @@
 # Symphony Elixir
 
-This directory contains the current Elixir/OTP implementation of Symphony, based on
-[`SPEC.md`](../SPEC.md) at the repository root.
+This directory contains a fork of Symphony Elixir, the Elixir/OTP implementation of Symphony from
+[openai/symphony](https://github.com/openai/symphony).
 
 > [!WARNING]
 > Symphony Elixir is prototype software intended for evaluation only and is presented as-is.
 > We recommend implementing your own hardened version based on `SPEC.md`.
-
-## Screenshot
-
-![Symphony Elixir screenshot](../.github/media/elixir-screenshot.png)
 
 ## How it works
 
@@ -235,20 +231,6 @@ Guarded Claude resume and MCP e2e coverage is also available:
 cd elixir
 SYMPHONY_RUN_REAL_CLAUDE_RESUME_E2E=1 LINEAR_API_KEY=... mise exec -- mix test test/symphony_elixir/live_claude_resume_e2e_test.exs
 ```
-
-
-## FAQ
-
-### Why Elixir?
-
-Elixir is built on Erlang/BEAM/OTP, which is great for supervising long-running processes. It has an
-active ecosystem of tools and libraries. It also supports hot code reloading without stopping
-actively running subagents, which is very useful during development.
-
-### What's the easiest way to set this up for my own codebase?
-
-Launch `codex` in your repo, give it the URL to the Symphony repo, and ask it to set things up for
-you.
 
 ## License
 
