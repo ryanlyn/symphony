@@ -74,6 +74,7 @@ Set `LINEAR_API_KEY` in your environment and you're ready to go.
 tracker:
   kind: linear
   api_key: $LINEAR_API_KEY           # reads from env; defaults to $LINEAR_API_KEY when unset
+  endpoint: "https://api.linear.app/graphql"  # Linear GraphQL endpoint; rarely needs changing
   project_slug: "my-project"         # right-click project in Linear, slug is in the URL
   assignee: $LINEAR_ASSIGNEE         # optional; filter issues by assignee
   active_states:                     # issue states that trigger agent work
@@ -100,7 +101,7 @@ workspace:
 worker:
   ssh_hosts:                         # optional; run agents on remote SSH hosts
     - worker1.example.com            #   workspaces are synced via rsync over SSH
-    - worker2.example.com
+    - worker2.example.com            #   set SYMPHONY_SSH_CONFIG to use a custom SSH config file
   max_concurrent_agents_per_host: 2  # optional; cap agents per SSH host
 
 agent:
@@ -194,8 +195,14 @@ template before being sent to the agent. Available variables:
 - `{{ issue.title }}`
 - `{{ issue.description }}`
 - `{{ issue.state }}` - current Linear status
-- `{{ issue.labels }}` - comma-separated label names
+- `{{ issue.labels }}` - list of label names
 - `{{ issue.url }}` - Linear issue URL
+- `{{ issue.id }}` - Linear internal ID
+- `{{ issue.priority }}` - priority level
+- `{{ issue.branch_name }}` - associated branch name
+- `{{ issue.assignee_id }}`
+- `{{ issue.created_at }}`
+- `{{ issue.updated_at }}`
 - `{{ attempt }}` - retry attempt number (nil on first run)
 
 ### Skills
@@ -237,6 +244,8 @@ This runs formatting, linting, coverage, and Dialyzer checks. Individual targets
 available:
 
 ```bash
+make setup       # install dependencies
+make build       # build escript binary
 make test        # unit tests only
 make coverage    # tests with coverage
 make fmt-check   # check formatting
