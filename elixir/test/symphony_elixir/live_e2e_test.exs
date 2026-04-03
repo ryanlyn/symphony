@@ -741,7 +741,8 @@ defmodule SymphonyElixir.LiveE2ETest do
       {"SYMPHONY_LIVE_DOCKER_AUTH_JSON", auth_json_path},
       {"SYMPHONY_LIVE_DOCKER_AUTHORIZED_KEY", authorized_key_path},
       {"SYMPHONY_LIVE_DOCKER_WORKER_1_PORT", Integer.to_string(Enum.at(worker_ports, 0))},
-      {"SYMPHONY_LIVE_DOCKER_WORKER_2_PORT", Integer.to_string(Enum.at(worker_ports, 1))}
+      {"SYMPHONY_LIVE_DOCKER_WORKER_2_PORT", Integer.to_string(Enum.at(worker_ports, 1))},
+      {"SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN", System.get_env("SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN", "")}
     ]
   end
 

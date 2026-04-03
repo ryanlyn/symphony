@@ -200,7 +200,39 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp workspace_path_for_issue(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
-    {:ok, Path.join(Config.settings!().workspace.root, safe_id)}
+    with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
+      {:ok, Path.join(workspace_root, safe_id)}
+    end
+  end
+
+  defp remote_workspace_root(worker_host, "~") when is_binary(worker_host) do
+    remote_home(worker_host)
+  end
+
+  defp remote_workspace_root(worker_host, "~/" <> suffix) when is_binary(worker_host) do
+    with {:ok, home} <- remote_home(worker_host) do
+      {:ok, Path.join(home, suffix)}
+    end
+  end
+
+  defp remote_workspace_root(_worker_host, workspace_root) when is_binary(workspace_root) do
+    {:ok, workspace_root}
+  end
+
+  defp remote_home(worker_host) when is_binary(worker_host) do
+    case SSH.run(worker_host, "printf '%s\\n' \"$HOME\"", stderr_to_stdout: true) do
+      {:ok, {output, 0}} ->
+        case String.trim(output) do
+          "" -> {:error, {:remote_home_lookup_failed, worker_host, :empty_home}}
+          home -> {:ok, home}
+        end
+
+      {:ok, {output, status}} ->
+        {:error, {:remote_home_lookup_failed, worker_host, status, output}}
+
+      {:error, reason} ->
+        {:error, {:remote_home_lookup_failed, worker_host, reason}}
+    end
   end
 
   defp safe_identifier(identifier) do
@@ -320,7 +352,7 @@ defmodule SymphonyElixir.Workspace do
 
     Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
 
-    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
+    case run_remote_command(worker_host, "cd #{SSH.shell_escape(workspace)} && #{command}", timeout_ms) do
       {:ok, cmd_result} ->
         handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
 
@@ -401,7 +433,7 @@ defmodule SymphonyElixir.Workspace do
   defp remote_shell_assign(variable_name, raw_path)
        when is_binary(variable_name) and is_binary(raw_path) do
     [
-      "#{variable_name}=#{shell_escape(raw_path)}",
+      "#{variable_name}=#{SSH.shell_escape(raw_path)}",
       "case \"$#{variable_name}\" in",
       "  '~') #{variable_name}=\"$HOME\" ;;",
       "  '~/'*) " <> variable_name <> "=\"$HOME/${" <> variable_name <> "#~/}\" ;;",
@@ -448,10 +480,6 @@ defmodule SymphonyElixir.Workspace do
         Task.shutdown(task, :brutal_kill)
         {:error, {:workspace_hook_timeout, "remote_command", timeout_ms}}
     end
-  end
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 
   defp worker_host_for_log(nil), do: "local"

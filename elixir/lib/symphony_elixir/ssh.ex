@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.SSH do
   @moduledoc false
 
+  @remote_write_marker "__SYMPHONY_SSH_WRITE_PAYLOAD__"
+
   @spec run(String.t(), String.t(), keyword()) :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
   def run(host, command, opts \\ []) when is_binary(host) and is_binary(command) do
     with {:ok, executable} <- ssh_executable() do
@@ -23,6 +25,39 @@ defmodule SymphonyElixir.SSH do
         |> maybe_put_line_option(line_bytes)
 
       {:ok, Port.open({:spawn_executable, String.to_charlist(executable)}, port_opts)}
+    end
+  end
+
+  @spec write_file(String.t(), Path.t(), iodata(), keyword()) :: :ok | {:error, term()}
+  def write_file(host, path, contents, opts \\ [])
+      when is_binary(host) and is_binary(path) do
+    chmod_command =
+      case Keyword.get(opts, :mode) do
+        nil ->
+          "true"
+
+        mode when is_integer(mode) ->
+          "chmod #{Integer.to_string(mode, 8)} #{shell_escape(path)}"
+
+        mode when is_binary(mode) and mode != "" ->
+          "chmod #{mode} #{shell_escape(path)}"
+
+        _ ->
+          "true"
+      end
+
+    command = """
+    mkdir -p #{shell_escape(Path.dirname(path))}
+    cat <<'#{@remote_write_marker}' > #{shell_escape(path)}
+    #{IO.iodata_to_binary(contents)}
+    #{@remote_write_marker}
+    #{chmod_command}
+    """
+
+    case run(host, command, stderr_to_stdout: true) do
+      {:ok, {_output, 0}} -> :ok
+      {:ok, {output, status}} -> {:error, {:remote_write_failed, status, output}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -94,7 +129,8 @@ defmodule SymphonyElixir.SSH do
     String.contains?(destination, "[") and String.contains?(destination, "]")
   end
 
-  defp shell_escape(value) when is_binary(value) do
+  @spec shell_escape(String.t()) :: String.t()
+  def shell_escape(value) when is_binary(value) do
     "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 end

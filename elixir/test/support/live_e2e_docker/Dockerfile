@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN install -d -m 700 /root/.ssh /root/.codex /run/symphony/ssh /var/run/sshd
 
-RUN npm install --global @openai/codex
+RUN npm install --global @openai/codex @anthropic-ai/claude-code@2.1.88
 
 COPY symphony-live-worker.conf /etc/ssh/sshd_config.d/symphony-live-worker.conf
 COPY live_worker_entrypoint.sh /usr/local/bin/symphony-live-worker

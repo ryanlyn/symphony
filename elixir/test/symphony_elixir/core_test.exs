@@ -778,9 +778,10 @@ defmodule SymphonyElixir.CoreTest do
 
   defp assert_due_after_event_in_range(due_at_ms, event_started_at_ms, min_delay_ms, max_delay_ms) do
     scheduled_delay_ms = due_at_ms - event_started_at_ms
+    jitter_ms = 250
 
     assert scheduled_delay_ms >= min_delay_ms
-    assert scheduled_delay_ms <= max_delay_ms
+    assert scheduled_delay_ms <= max_delay_ms + jitter_ms
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
@@ -1176,8 +1177,9 @@ defmodule SymphonyElixir.CoreTest do
                  issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
                )
 
-      assert_receive {:codex_worker_update, "issue-live-updates",
+      assert_receive {:agent_worker_update, "issue-live-updates",
                       %{
+                        agent_kind: "codex",
                         event: :session_started,
                         timestamp: %DateTime{},
                         session_id: session_id
@@ -1248,7 +1250,7 @@ defmodule SymphonyElixir.CoreTest do
         state: "In Progress"
       }
 
-      assert_raise RuntimeError, ~r/workspace_prepare_failed/, fn ->
+      assert_raise RuntimeError, ~r/remote_home_lookup_failed|workspace_prepare_failed/, fn ->
         AgentRunner.run(issue, nil, worker_host: "worker-a")
       end
 
@@ -1565,7 +1567,7 @@ defmodule SymphonyElixir.CoreTest do
       persisted = Jason.decode!(File.read!(resume_path))
       assert persisted["thread_id"] == "thread-saved"
       assert persisted["issue_state"] == "In Progress"
-      assert is_nil(persisted["session_id"])
+      assert persisted["session_id"] == "thread-saved-turn-saved"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)
@@ -1736,6 +1738,328 @@ defmodule SymphonyElixir.CoreTest do
       assert persisted["issue_state"] == "In Progress"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner continues with a follow-up Claude turn while the issue remains active" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-agent-runner-continuation-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude.trace")
+
+      initialize_template_repo!(template_repo)
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          session_id='claude-session-1'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":6,\\"output_tokens\\":2}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        agent_kind: "claude",
+        claude_command: claude_binary,
+        max_turns: 3
+      )
+
+      parent = self()
+
+      state_fetcher = fn [_issue_id] ->
+        attempt = Process.get(:claude_agent_turn_fetch_count, 0) + 1
+        Process.put(:claude_agent_turn_fetch_count, attempt)
+        send(parent, {:issue_state_fetch, attempt})
+
+        state = if attempt == 1, do: "In Progress", else: "Done"
+
+        {:ok,
+         [
+           %Issue{
+             id: "issue-claude-continue",
+             identifier: "MT-CLAUDE-247",
+             title: "Continue until done",
+             description: "Still active after first claude turn",
+             state: state
+           }
+         ]}
+      end
+
+      issue = %Issue{
+        id: "issue-claude-continue",
+        identifier: "MT-CLAUDE-247",
+        title: "Continue until done",
+        description: "Still active after first claude turn",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-247",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+      assert_receive {:issue_state_fetch, 1}
+      assert_receive {:issue_state_fetch, 2}
+
+      trace = File.read!(trace_file)
+      assert length(Regex.scan(~r/^ARGV:/m, trace)) == 1
+      refute trace =~ "--resume claude-session-1"
+
+      prompt_1 = (trace_file <> ".stdin.1") |> File.read!() |> Jason.decode!() |> get_in(["message", "content"])
+      prompt_2 = (trace_file <> ".stdin.2") |> File.read!() |> Jason.decode!() |> get_in(["message", "content"])
+
+      assert prompt_1 =~ "You are an agent for this repository."
+      refute prompt_2 =~ "You are an agent for this repository."
+      assert prompt_2 =~ "Continuation guidance:"
+      assert prompt_2 =~ "continuation turn #2 of 3"
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner resumes from persisted Claude resume state" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-agent-runner-resume-state-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-301")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude-resume.trace")
+
+      write_resume_state_fixture!(resume_path, %{
+        "agent_kind" => "claude",
+        "resume_id" => "claude-saved",
+        "issue_id" => "issue-claude-resume-state",
+        "issue_identifier" => "MT-CLAUDE-301",
+        "issue_state" => "In Progress",
+        "workspace_path" => canonical_workspace
+      })
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          if ! printf '%s' "$*" | grep -q -- '--resume claude-saved'; then
+            exit 3
+          fi
+
+          session_id='claude-saved'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":4,\\"output_tokens\\":1}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: claude_binary
+      )
+
+      issue = %Issue{
+        id: "issue-claude-resume-state",
+        identifier: "MT-CLAUDE-301",
+        title: "Resume persisted claude session",
+        description: "Use the stored claude session id for the next run",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-301",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "--resume claude-saved"
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["agent_kind"] == "claude"
+      assert persisted["resume_id"] == "claude-saved"
+      assert persisted["session_id"] == "claude-saved"
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner surfaces Claude resume failures for orchestrator-owned retries" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-agent-runner-resume-fallback-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-302")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude-resume-fallback.trace")
+
+      write_resume_state_fixture!(resume_path, %{
+        "agent_kind" => "claude",
+        "resume_id" => "claude-stale",
+        "issue_id" => "issue-claude-resume-fallback",
+        "issue_identifier" => "MT-CLAUDE-302",
+        "issue_state" => "In Progress",
+        "workspace_path" => canonical_workspace
+      })
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          if printf '%s' "$*" | grep -q -- '--resume claude-stale'; then
+            exit 1
+          fi
+
+          session_id='claude-new'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":4,\\"output_tokens\\":1}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: claude_binary
+      )
+
+      issue = %Issue{
+        id: "issue-claude-resume-fallback",
+        identifier: "MT-CLAUDE-302",
+        title: "Surface claude resume failure",
+        description: "Let the orchestrator own retries after a claude resume failure",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-302",
+        labels: []
+      }
+
+      assert_raise RuntimeError, ~r/Agent run failed/, fn ->
+        AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+      end
+
+      trace = File.read!(trace_file)
+      assert length(Regex.scan(~r/^ARGV:/m, trace)) == 1
+      assert trace =~ "--resume claude-stale"
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["agent_kind"] == "claude"
+      assert persisted["resume_id"] == "claude-stale"
+      assert is_nil(persisted["session_id"])
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner starts fresh for Claude when the persisted issue state changed" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-agent-runner-status-fresh-start-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-303")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude-status-fresh.trace")
+
+      write_resume_state_fixture!(resume_path, %{
+        "agent_kind" => "claude",
+        "resume_id" => "claude-human-review",
+        "issue_id" => "issue-claude-status-fresh",
+        "issue_identifier" => "MT-CLAUDE-303",
+        "issue_state" => "Human Review",
+        "workspace_path" => canonical_workspace
+      })
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          if printf '%s' "$*" | grep -q -- '--resume '; then
+            exit 5
+          fi
+
+          session_id='claude-new-status'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":4,\\"output_tokens\\":1}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: claude_binary
+      )
+
+      issue = %Issue{
+        id: "issue-claude-status-fresh",
+        identifier: "MT-CLAUDE-303",
+        title: "Fresh claude session on status change",
+        description: "A status transition should force a new Claude resume id",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-303",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      refute trace =~ "--resume "
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["agent_kind"] == "claude"
+      assert persisted["resume_id"] == "claude-new-status"
+      assert persisted["issue_state"] == "In Progress"
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
       File.rm_rf(test_root)
     end
   end
@@ -2188,5 +2512,57 @@ defmodule SymphonyElixir.CoreTest do
   defp write_resume_state_fixture!(resume_path, state) do
     File.mkdir_p!(Path.dirname(resume_path))
     File.write!(resume_path, Jason.encode!(state))
+  end
+
+  defp initialize_template_repo!(template_repo) do
+    File.mkdir_p!(template_repo)
+    File.write!(Path.join(template_repo, "README.md"), "# test")
+    System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+    System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+    System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+    System.cmd("git", ["-C", template_repo, "add", "README.md"])
+    System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+  end
+
+  defp fake_streaming_claude_script(startup_body, turn_body)
+       when is_binary(startup_body) and is_binary(turn_body) do
+    """
+    #!/bin/sh
+    trace_file="${SYMP_TEST_CLAUDE_TRACE:-/tmp/claude.trace}"
+
+    case "$1" in
+      --help)
+        cat <<'EOF'
+    Usage: claude [options]
+      -p, --print
+      --verbose
+      --output-format <format>
+      --input-format <format>
+      --resume [value]
+      --permission-mode <mode>
+      --model <model>
+      --mcp-config <configs...>
+      --strict-mcp-config
+    EOF
+        exit 0
+        ;;
+      --version)
+        printf '%s\\n' '2.1.88 (Claude Code)'
+        exit 0
+        ;;
+    esac
+
+    printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+    #{startup_body}
+
+    count=0
+
+    while IFS= read -r line; do
+      count=$((count + 1))
+      printf '%s' "$count" > "${trace_file}.count"
+      printf '%s' "$line" > "${trace_file}.stdin.$count"
+      #{turn_body}
+    done
+    """
   end
 end

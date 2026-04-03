@@ -57,7 +57,7 @@ defmodule SymphonyElixir.LiveResumeE2ETest do
       first_thread_id = first_resume["thread_id"]
       assert is_binary(first_thread_id) and first_thread_id != ""
       assert first_resume["issue_state"] == "In Progress"
-      assert is_nil(first_resume["session_id"])
+      assert is_binary(first_resume["session_id"]) and first_resume["session_id"] != ""
 
       File.rm!(first_file)
 
@@ -78,7 +78,7 @@ defmodule SymphonyElixir.LiveResumeE2ETest do
       second_resume = Jason.decode!(File.read!(resume_path))
       assert second_resume["thread_id"] == first_thread_id
       assert second_resume["issue_state"] == "In Progress"
-      assert is_nil(second_resume["session_id"])
+      assert is_binary(second_resume["session_id"]) and second_resume["session_id"] != ""
     after
       File.rm_rf(test_root)
     end

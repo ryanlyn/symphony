@@ -22,7 +22,20 @@
       "mcp__linear-server__get_authenticated_user",
       "mcp__linear-server__list_projects",
       "mcp__linear-server__save_issue",
-      "mcp__linear-server__get_project"
+      "mcp__linear-server__get_project",
+      "Bash(mix compile:*)",
+      "Bash(mise exec:*)",
+      "Bash(WORKFLOW_FILE=WORKFLOW_FULL_ACCESS.md mise exec:*)",
+      "Read(//private/tmp/**)",
+      "Read(//Users/ryan/**)",
+      "Read(//tmp/**)",
+      "Read(//tmp/symphony_workspaces/**)",
+      "Bash(ln -s WORKFLOW_FULL_ACCESS.md WORKFLOW.md)",
+      "Bash(claude --model 'claude-opus-4-6[1m]' --print --output-format text \"what is your model id? respond with just the model string\")",
+      "Bash(mix test:*)",
+      "Bash(claude export:*)",
+      "Bash(claude transcript:*)",
+      "Bash(claude view:*)"
     ]
   }
 }
