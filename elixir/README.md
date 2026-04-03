@@ -8,6 +8,7 @@ Elixir/OTP implementation of [Symphony](../README.md), forked from
 [mise](https://mise.jdx.dev/) is recommended for managing Elixir/Erlang versions:
 
 ```bash
+mise trust
 mise install
 mise exec -- elixir --version
 ```
@@ -56,7 +57,7 @@ hooks:
   after_create: |
     git clone git@github.com:your-org/your-repo.git .
 agent:
-  kind: claude       # or "codex" (default)
+  kind: codex        # or "claude"
 ---
 
 You are working on {{ issue.identifier }}: {{ issue.title }}
@@ -174,13 +175,15 @@ Notes:
 
 ### Linear
 
-- Get a personal API token: Linear Settings -> Security & access -> Personal API keys
-- Set it as the `LINEAR_API_KEY` environment variable (or `tracker.api_key: $LINEAR_API_KEY`)
-- To find your project slug, right-click the project in Linear and copy its URL - the slug is in
-  the path
-- The example workflow files in this repo use non-standard Linear issue states (`Rework`, `Human
-  Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
-  `active_states` / `terminal_states` to match your existing workflow.
+Prerequisites:
+
+1. Get a personal API token: Linear Settings -> Security & access -> Personal API keys
+2. Set it as the `LINEAR_API_KEY` environment variable (or `tracker.api_key: $LINEAR_API_KEY`)
+3. Find your project slug by right-clicking the project in Linear and copying its URL - the slug
+   is in the path
+4. The example workflow files in this repo use non-standard Linear issue states (`Rework`, `Human
+   Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
+   `active_states` / `terminal_states` to match your existing workflow.
 
 ### Workflow prompt
 

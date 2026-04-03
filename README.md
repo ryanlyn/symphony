@@ -16,30 +16,25 @@ until the work is done.
 6. When an issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, `Duplicate`), stops the
    agent and cleans up the workspace
 
-The workflow file (`WORKFLOW.md`) doubles as configuration (YAML front matter) and the agent session
-prompt (Markdown body). The `WorkflowStore` polls the file every second and hot-reloads changes
-without restarting the process.
+The workflow file (`WORKFLOW.md`) defines both the orchestrator configuration (YAML front matter) and
+the agent session prompt (Markdown body). Editing the workflow while Symphony is running reloads the
+configuration automatically - no restart needed.
 
-## Agent executors
+## Changes
 
-### Codex (default)
+### Claude Code executor
 
-Runs [Codex](https://developers.openai.com/codex/app-server/) in app-server mode. Supports
-configurable approval policies, sandbox modes, and turn sandbox policies.
+In addition to the original Codex backend, this fork adds a Claude Code executor as an alternative
+agent backend. Set `agent.kind` to `"claude"` in the workflow config to use it.
 
-### Claude Code
-
-Runs the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the agent process.
-Set `agent.kind` to `"claude"` in the workflow config to use it.
-
+- Runs the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the agent process
 - Streams JSONL output and parses tool-use, results, and completion events
 - Automatically generates a per-workspace MCP config from workflow-defined MCP servers
-- Supports session resumption via `--resume` with the same Git-backed resume metadata as Codex
 - Supports remote execution on SSH worker hosts, same as Codex
 - Configurable model, permission mode, turn/stall timeouts, and MCP server settings under the
   `claude` config key
 
-## Session resumption
+### Session resumption
 
 Agent sessions (both Codex and Claude) can be resumed across runs:
 
