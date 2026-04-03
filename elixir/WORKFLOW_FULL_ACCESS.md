@@ -26,6 +26,7 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
+  kind: claude
   max_concurrent_agents: 10
   max_turns: 20
 codex:
@@ -35,6 +36,14 @@ codex:
   turn_sandbox_policy:
     type: dangerFullAccess
     networkAccess: true
+claude:
+  command: claude
+  model: claude-opus-4-6[1m]
+  permission_mode: bypassPermissions
+  turn_timeout_ms: 3600000
+  stall_timeout_ms: 300000
+  strict_mcp_config: true
+  mcp_server_python: python3
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`

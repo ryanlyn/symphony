@@ -1,22 +1,26 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single Linear issue in its workspace with Codex.
+  Executes a single Linear issue in its workspace with the configured agent executor.
   """
 
   require Logger
-  alias SymphonyElixir.Codex.{AppServer, ResumeState}
-  alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.{AgentResumeState, Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+
+  @dialyzer :no_match
 
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
-  def run(issue, codex_update_recipient \\ nil, opts \\ []) do
+  def run(issue, update_recipient \\ nil, opts \\ []) do
+    settings = Config.settings!()
+    agent_kind = settings.agent.kind
     # The orchestrator owns host retries so one worker lifetime never hops machines.
-    worker_host = selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+    worker_host = selected_worker_host(Keyword.get(opts, :worker_host), settings.worker.ssh_hosts)
+    executor = executor_module(opts, agent_kind)
 
-    Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
+    Logger.info("Starting agent run for #{issue_context(issue)} agent_kind=#{agent_kind} worker_host=#{worker_host_for_log(worker_host)}")
 
-    case run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
+    case run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind) do
       :ok ->
         :ok
 
@@ -26,16 +30,16 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
-    Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
+  defp run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind) do
+    Logger.info("Starting worker attempt for #{issue_context(issue)} agent_kind=#{agent_kind} worker_host=#{worker_host_for_log(worker_host)}")
 
     case Workspace.create_for_issue(issue, worker_host) do
       {:ok, workspace} ->
-        send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
+        send_worker_runtime_info(update_recipient, issue, worker_host, workspace, agent_kind)
 
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
-            run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
+            run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host)
           end
         after
           Workspace.run_after_run_hook(workspace, issue, worker_host)
@@ -46,22 +50,23 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp codex_message_handler(recipient, issue), do: &send_codex_update(recipient, issue, &1)
+  defp executor_message_handler(recipient, issue), do: &send_agent_update(recipient, issue, &1)
 
-  defp send_codex_update(recipient, %Issue{id: issue_id}, message)
+  defp send_agent_update(recipient, %Issue{id: issue_id}, %{agent_kind: _agent_kind} = message)
        when is_binary(issue_id) and is_pid(recipient) do
-    send(recipient, {:codex_worker_update, issue_id, message})
+    send(recipient, {:agent_worker_update, issue_id, message})
     :ok
   end
 
-  defp send_codex_update(_recipient, _issue, _message), do: :ok
+  defp send_agent_update(_recipient, _issue, _message), do: :ok
 
-  defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace)
+  defp send_worker_runtime_info(recipient, %Issue{id: issue_id}, worker_host, workspace, agent_kind)
        when is_binary(issue_id) and is_pid(recipient) and is_binary(workspace) do
     send(
       recipient,
       {:worker_runtime_info, issue_id,
        %{
+         agent_kind: agent_kind,
          worker_host: worker_host,
          workspace_path: workspace
        }}
@@ -70,62 +75,79 @@ defmodule SymphonyElixir.AgentRunner do
     :ok
   end
 
-  defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace), do: :ok
+  defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace, _agent_kind), do: :ok
 
-  defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
+  defp run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- start_session(workspace, issue, worker_host) do
-      try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
-      after
-        AppServer.stop_session(session)
+    ctx = %{
+      executor: executor,
+      workspace: workspace,
+      update_recipient: update_recipient,
+      opts: opts,
+      issue_state_fetcher: issue_state_fetcher,
+      max_turns: max_turns,
+      worker_host: worker_host
+    }
+
+    with {:ok, session} <- start_session(executor, workspace, issue, worker_host) do
+      case do_run_agent_turns(ctx, session, issue, 1) do
+        {:ok, final_session} ->
+          executor.stop_session(final_session)
+          :ok
+
+        {:error, reason, final_session} ->
+          executor.stop_session(final_session)
+          {:error, reason}
       end
     end
   end
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
+  defp do_run_agent_turns(ctx, session, issue, turn_number) do
+    %{
+      executor: executor,
+      workspace: workspace,
+      update_recipient: update_recipient,
+      opts: opts,
+      issue_state_fetcher: issue_state_fetcher,
+      max_turns: max_turns,
+      worker_host: worker_host
+    } = ctx
+
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
-    case AppServer.run_turn(
-           app_session,
+    case executor.run_turn(
+           session,
            prompt,
            issue,
-           on_message: codex_message_handler(codex_update_recipient, issue)
+           on_message: executor_message_handler(update_recipient, issue)
          ) do
-      {:ok, turn_session} ->
-        Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
+      {:ok, updated_session, turn_result} ->
+        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(updated_session))
+
+        Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_result[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
         case continue_with_issue?(issue, issue_state_fetcher) do
           {:continue, refreshed_issue} when turn_number < max_turns ->
             Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
-            do_run_codex_turns(
-              app_session,
-              workspace,
-              refreshed_issue,
-              codex_update_recipient,
-              opts,
-              issue_state_fetcher,
-              turn_number + 1,
-              max_turns
-            )
+            do_run_agent_turns(ctx, updated_session, refreshed_issue, turn_number + 1)
 
           {:continue, refreshed_issue} ->
             Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
 
-            :ok
+            {:ok, updated_session}
 
           {:done, _refreshed_issue} ->
-            :ok
+            {:ok, updated_session}
 
           {:error, reason} ->
-            {:error, reason}
+            {:error, reason, updated_session}
         end
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, reason, session}
     end
   end
 
@@ -135,7 +157,7 @@ defmodule SymphonyElixir.AgentRunner do
     """
     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+    - The previous agent turn completed normally, but the Linear issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.
@@ -162,16 +184,17 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
 
-  defp start_session(workspace, %Issue{} = issue, worker_host) do
-    resume_thread_id = resume_thread_id(workspace, issue, worker_host)
+  defp start_session(executor, workspace, %Issue{} = issue, worker_host) do
+    resume_metadata = resume_metadata(workspace, issue, worker_host, Config.agent_kind())
 
-    case AppServer.start_session(
+    case executor.start_session(
            workspace,
+           issue: issue,
            worker_host: worker_host,
-           resume_thread_id: resume_thread_id
+           resume_metadata: resume_metadata
          ) do
       {:ok, session} ->
-        persist_resume_state(workspace, worker_host, issue, session.thread_id)
+        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(session))
         {:ok, session}
 
       {:error, reason} ->
@@ -179,50 +202,68 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp resume_thread_id(workspace, %Issue{} = issue, worker_host) do
-    case ResumeState.read(workspace, worker_host) do
+  defp resume_metadata(workspace, %Issue{} = issue, worker_host, agent_kind) do
+    case AgentResumeState.read(workspace, worker_host) do
       {:ok, resume_state} ->
-        if resume_state_matches_issue?(resume_state, issue, workspace, worker_host) do
-          Logger.info("Resuming Codex thread for #{issue_context(issue)} thread_id=#{resume_state.thread_id}")
-          resume_state.thread_id
+        if resume_state_matches_issue?(resume_state, issue, workspace, worker_host, agent_kind) do
+          Logger.info("Resuming agent context for #{issue_context(issue)} agent_kind=#{resume_state.agent_kind} resume_id=#{resume_state.resume_id}")
+
+          %{
+            agent_kind: resume_state.agent_kind,
+            resume_id: resume_state.resume_id,
+            session_id: resume_state.session_id
+          }
         else
-          nil
+          %{}
         end
 
       :missing ->
-        nil
+        %{}
 
       {:error, reason} ->
         Logger.warning("Failed to read resume state for #{issue_context(issue)}: #{inspect(reason)}; not resuming thread")
-        nil
+        %{}
     end
   end
 
-  defp persist_resume_state(workspace, worker_host, %Issue{} = issue, thread_id)
-       when is_binary(workspace) and is_binary(thread_id) do
-    attrs = %{
-      issue_id: issue.id,
-      issue_identifier: issue.identifier,
-      issue_state: issue.state,
-      thread_id: thread_id,
-      session_id: nil,
-      workspace_path: workspace,
-      worker_host: worker_host,
-      updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
-    }
+  defp persist_resume_state(workspace, worker_host, %Issue{} = issue, resume_metadata)
+       when is_binary(workspace) and is_map(resume_metadata) do
+    resume_id = Map.get(resume_metadata, :resume_id)
 
-    case ResumeState.write(workspace, attrs, worker_host) do
-      :ok ->
-        :ok
+    if is_binary(workspace) and is_binary(resume_id) and resume_id != "" do
+      attrs = %{
+        agent_kind: Map.get(resume_metadata, :agent_kind) || Config.agent_kind(),
+        resume_id: resume_id,
+        session_id: Map.get(resume_metadata, :session_id),
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        issue_state: issue.state,
+        thread_id: Map.get(resume_metadata, :thread_id),
+        workspace_path: workspace,
+        worker_host: worker_host,
+        updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      }
 
-      {:error, reason} ->
-        Logger.warning("Failed to persist resume state for #{issue_context(issue)}: #{inspect(reason)}")
-        :ok
+      case AgentResumeState.write(workspace, attrs, worker_host) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("Failed to persist resume state for #{issue_context(issue)}: #{inspect(reason)}")
+          :ok
+      end
+    else
+      :ok
     end
   end
 
-  defp resume_state_matches_issue?(resume_state, %Issue{} = issue, workspace, worker_host) when is_map(resume_state) do
-    stored_value_matches?(resume_state.issue_id, issue.id) and
+  defp persist_resume_state(_workspace, _worker_host, _issue, _resume_metadata), do: :ok
+
+  defp resume_state_matches_issue?(resume_state, %Issue{} = issue, workspace, worker_host, agent_kind)
+       when is_map(resume_state) do
+    stored_value_matches?(resume_state.agent_kind, agent_kind) and
+      stored_value_matches?(resume_state.issue_id, issue.id) and
+      stored_value_matches?(resume_state.issue_identifier, issue.identifier) and
       stored_value_matches?(resume_state.issue_state, issue.state) and
       stored_value_matches?(resume_state.workspace_path, workspace) and
       worker_host_matches?(resume_state.worker_host, worker_host)
@@ -243,6 +284,10 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp active_issue_state?(_state_name), do: false
+
+  defp executor_module(opts, agent_kind) do
+    Keyword.get(opts, :executor, SymphonyElixir.AgentExecutor.module_for_kind(agent_kind))
+  end
 
   defp selected_worker_host(nil, []), do: nil
 

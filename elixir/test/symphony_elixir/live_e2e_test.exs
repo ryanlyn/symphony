@@ -738,10 +738,11 @@ defmodule SymphonyElixir.LiveE2ETest do
   defp docker_compose_env(worker_ports, auth_json_path, authorized_key_path)
        when is_list(worker_ports) and is_binary(auth_json_path) and is_binary(authorized_key_path) do
     [
-      {"SYMPHONY_LIVE_DOCKER_AUTH_JSON", auth_json_path},
+      {"SYMPHONY_LIVE_DOCKER_CODEX_AUTH_JSON", auth_json_path},
       {"SYMPHONY_LIVE_DOCKER_AUTHORIZED_KEY", authorized_key_path},
       {"SYMPHONY_LIVE_DOCKER_WORKER_1_PORT", Integer.to_string(Enum.at(worker_ports, 0))},
-      {"SYMPHONY_LIVE_DOCKER_WORKER_2_PORT", Integer.to_string(Enum.at(worker_ports, 1))}
+      {"SYMPHONY_LIVE_DOCKER_WORKER_2_PORT", Integer.to_string(Enum.at(worker_ports, 1))},
+      {"SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN", System.get_env("SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN", "")}
     ]
   end
 

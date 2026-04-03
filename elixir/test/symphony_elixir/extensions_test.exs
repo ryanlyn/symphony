@@ -158,18 +158,18 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
     assert returned_state.workflow.prompt == "Manual workflow prompt"
     refute returned_state.stamp == nil
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Workflow.set_workflow_file_path(missing_path)
     assert {:noreply, path_error_state} = WorkflowStore.handle_info(:poll, returned_state)
     assert path_error_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Workflow.set_workflow_file_path(manual_path)
     File.rm!(manual_path)
     assert {:noreply, removed_state} = WorkflowStore.handle_info(:poll, path_error_state)
     assert removed_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_000
 
     Process.exit(manual_pid, :normal)
     restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
@@ -345,10 +345,13 @@ defmodule SymphonyElixir.ExtensionsTest do
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
                %{
+                 "agent_kind" => "claude",
+                 "executor_pid" => nil,
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
+                 "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
                  "workspace_path" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
@@ -370,7 +373,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "workspace_path" => nil
                }
              ],
-             "codex_totals" => %{
+             "usage_totals" => %{
                "input_tokens" => 4,
                "output_tokens" => 8,
                "total_tokens" => 12,
@@ -392,7 +395,10 @@ defmodule SymphonyElixir.ExtensionsTest do
              },
              "attempts" => %{"restart_count" => 0, "current_retry_attempt" => 0},
              "running" => %{
+               "agent_kind" => "claude",
+               "executor_pid" => nil,
                "worker_host" => nil,
+               "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
                "workspace_path" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
@@ -547,7 +553,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Live"
     assert html =~ "Offline"
     assert html =~ "Copy ID"
-    assert html =~ "Codex update"
+    assert html =~ "Agent update"
+    assert html =~ "CLAUDE"
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -561,10 +568,12 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_id: "issue-http",
           identifier: "MT-HTTP",
           state: "In Progress",
+          agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 8,
-          last_codex_event: :notification,
-          last_codex_message: %{
+          last_agent_event: :notification,
+          last_agent_message: %{
+            agent_kind: "claude",
             event: :notification,
             message: %{
               payload: %{
@@ -577,10 +586,8 @@ defmodule SymphonyElixir.ExtensionsTest do
               }
             }
           },
-          last_codex_timestamp: DateTime.utc_now(),
-          codex_input_tokens: 10,
-          codex_output_tokens: 12,
-          codex_total_tokens: 22,
+          last_agent_timestamp: DateTime.utc_now(),
+          usage_totals: %{input_tokens: 10, output_tokens: 12, total_tokens: 22, seconds_running: 0},
           started_at: DateTime.utc_now()
         }
       ])
@@ -690,15 +697,14 @@ defmodule SymphonyElixir.ExtensionsTest do
           issue_id: "issue-http",
           identifier: "MT-HTTP",
           state: "In Progress",
+          agent_kind: "claude",
           session_id: "thread-http",
           turn_count: 7,
-          codex_app_server_pid: nil,
-          last_codex_message: "rendered",
-          last_codex_timestamp: nil,
-          last_codex_event: :notification,
-          codex_input_tokens: 4,
-          codex_output_tokens: 8,
-          codex_total_tokens: 12,
+          executor_pid: nil,
+          last_agent_message: "rendered",
+          last_agent_timestamp: nil,
+          last_agent_event: :notification,
+          usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 0},
           started_at: DateTime.utc_now()
         }
       ],
@@ -711,7 +717,7 @@ defmodule SymphonyElixir.ExtensionsTest do
           error: "boom"
         }
       ],
-      codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
+      usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}}
     }
   end

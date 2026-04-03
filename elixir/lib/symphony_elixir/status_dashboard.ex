@@ -307,15 +307,15 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp snapshot_with_samples(token_samples, now_ms) do
     case snapshot_payload() do
-      {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
-        total_tokens = Map.get(codex_totals, :total_tokens, 0)
+      {:ok, %{running: running, retrying: retrying, usage_totals: usage_totals} = snapshot} ->
+        total_tokens = Map.get(usage_totals, :total_tokens, 0)
 
         {
           {:ok,
            %{
              running: running,
              retrying: retrying,
-             codex_totals: codex_totals,
+             usage_totals: usage_totals,
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
            }},
@@ -332,14 +332,14 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_snapshot_content(snapshot_data, tps, terminal_columns_override \\ nil) do
     case snapshot_data do
-      {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
+      {:ok, %{running: running, retrying: retrying, usage_totals: usage_totals} = snapshot} ->
         rate_limits = Map.get(snapshot, :rate_limits)
         project_link_lines = format_project_link_lines()
         project_refresh_line = format_project_refresh_line(Map.get(snapshot, :polling))
-        codex_input_tokens = Map.get(codex_totals, :input_tokens, 0)
-        codex_output_tokens = Map.get(codex_totals, :output_tokens, 0)
-        codex_total_tokens = Map.get(codex_totals, :total_tokens, 0)
-        codex_seconds_running = Map.get(codex_totals, :seconds_running, 0)
+        input_tokens = Map.get(usage_totals, :input_tokens, 0)
+        output_tokens = Map.get(usage_totals, :output_tokens, 0)
+        total_tokens = Map.get(usage_totals, :total_tokens, 0)
+        seconds_running = Map.get(usage_totals, :seconds_running, 0)
         agent_count = length(running)
         max_agents = Config.settings!().agent.max_concurrent_agents
         running_event_width = running_event_width(terminal_columns_override)
@@ -355,13 +355,13 @@ defmodule SymphonyElixir.StatusDashboard do
              colorize("#{max_agents}", @ansi_gray),
            colorize("│ Throughput: ", @ansi_bold) <> colorize("#{format_tps(tps)} tps", @ansi_cyan),
            colorize("│ Runtime: ", @ansi_bold) <>
-             colorize(format_runtime_seconds(codex_seconds_running), @ansi_magenta),
+             colorize(format_runtime_seconds(seconds_running), @ansi_magenta),
            colorize("│ Tokens: ", @ansi_bold) <>
-             colorize("in #{format_count(codex_input_tokens)}", @ansi_yellow) <>
+             colorize("in #{format_count(input_tokens)}", @ansi_yellow) <>
              colorize(" | ", @ansi_gray) <>
-             colorize("out #{format_count(codex_output_tokens)}", @ansi_yellow) <>
+             colorize("out #{format_count(output_tokens)}", @ansi_yellow) <>
              colorize(" | ", @ansi_gray) <>
-             colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
+             colorize("total #{format_count(total_tokens)}", @ansi_yellow),
            colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
            project_link_lines,
            project_refresh_line,
@@ -553,14 +553,14 @@ defmodule SymphonyElixir.StatusDashboard do
         %{
           running: running,
           retrying: retrying,
-          codex_totals: codex_totals
+          usage_totals: usage_totals
         } = snapshot
         when is_list(running) and is_list(retrying) ->
           {:ok,
            %{
              running: running,
              retrying: retrying,
-             codex_totals: codex_totals,
+             usage_totals: usage_totals,
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
            }}
@@ -590,15 +590,31 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
     state = running_entry.state || "unknown"
-    state_display = format_cell(to_string(state), @running_stage_width)
+    agent_kind = Map.get(running_entry, :agent_kind)
+
+    state_display =
+      agent_state_label(agent_kind, state)
+      |> format_cell(@running_stage_width)
+
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
-    pid = format_cell(running_entry.codex_app_server_pid || "n/a", @running_pid_width)
-    total_tokens = running_entry.codex_total_tokens || 0
+
+    pid =
+      format_cell(
+        Map.get(running_entry, :executor_pid, "n/a"),
+        @running_pid_width
+      )
+
+    total_tokens = Map.get(Map.get(running_entry, :usage_totals, %{}), :total_tokens, 0)
     runtime_seconds = running_entry.runtime_seconds || 0
     turn_count = Map.get(running_entry, :turn_count, 0)
     age = format_cell(format_runtime_and_turns(runtime_seconds, turn_count), @running_age_width)
-    event = running_entry.last_codex_event || "none"
-    event_label = format_cell(summarize_message(running_entry.last_codex_message), running_event_width)
+    event = Map.get(running_entry, :last_agent_event, "none")
+
+    event_label =
+      format_cell(
+        summarize_message(Map.get(running_entry, :last_agent_message)),
+        running_event_width
+      )
 
     tokens = format_count(total_tokens) |> format_cell(@running_tokens_width, :right)
 
@@ -636,6 +652,10 @@ defmodule SymphonyElixir.StatusDashboard do
   @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
   def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
     do: format_running_summary(running_entry, running_event_width(terminal_columns))
+
+  defp agent_state_label(nil, state), do: to_string(state)
+  defp agent_state_label("", state), do: to_string(state)
+  defp agent_state_label(agent_kind, state), do: "#{agent_kind}/#{state}"
 
   @doc false
   @spec format_tps_for_test(number()) :: String.t()
@@ -1045,8 +1065,8 @@ defmodule SymphonyElixir.StatusDashboard do
     colorize("●", color_code)
   end
 
-  defp snapshot_total_tokens({:ok, %{codex_totals: codex_totals}}) when is_map(codex_totals) do
-    Map.get(codex_totals, :total_tokens, 0)
+  defp snapshot_total_tokens({:ok, %{usage_totals: usage_totals}}) when is_map(usage_totals) do
+    Map.get(usage_totals, :total_tokens, 0)
   end
 
   defp snapshot_total_tokens(_snapshot_data), do: 0
@@ -1066,6 +1086,22 @@ defmodule SymphonyElixir.StatusDashboard do
   defp colorize(value, code) do
     "#{code}#{value}#{@ansi_reset}"
   end
+
+  @doc false
+  @spec humanize_agent_message(term()) :: String.t()
+  def humanize_agent_message(nil), do: "no agent message yet"
+
+  def humanize_agent_message(%{agent_kind: "claude"} = message) do
+    (humanize_claude_message(message) || humanize_codex_message(Map.delete(message, :agent_kind)))
+    |> truncate(140)
+  end
+
+  def humanize_agent_message(%{message: %{"type" => _type}} = message) do
+    (humanize_claude_message(message) || humanize_codex_message(message))
+    |> truncate(140)
+  end
+
+  def humanize_agent_message(message), do: humanize_codex_message(message)
 
   @doc false
   @spec humanize_codex_message(term()) :: String.t()
@@ -1092,7 +1128,73 @@ defmodule SymphonyElixir.StatusDashboard do
     |> truncate(140)
   end
 
-  defp summarize_message(message), do: humanize_codex_message(message)
+  defp summarize_message(message), do: humanize_agent_message(message)
+
+  defp humanize_claude_message(%{event: event, message: message}) do
+    payload = unwrap_codex_message_payload(message)
+    humanize_claude_event(event, payload)
+  end
+
+  defp humanize_claude_message(%{message: message}) do
+    humanize_claude_event(nil, unwrap_codex_message_payload(message))
+  end
+
+  defp humanize_claude_message(message) do
+    humanize_claude_event(nil, unwrap_codex_message_payload(message))
+  end
+
+  defp humanize_claude_event(:session_started, payload) do
+    session_id = map_value(payload, ["session_id", :session_id])
+    if is_binary(session_id), do: "claude session started (#{session_id})", else: "claude session started"
+  end
+
+  defp humanize_claude_event(:assistant_message, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:tool_use_requested, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:tool_result, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:rate_limit, payload), do: humanize_claude_payload(payload)
+  defp humanize_claude_event(:turn_started, _payload), do: "claude turn started"
+  defp humanize_claude_event(:turn_completed, _payload), do: "claude turn completed"
+  defp humanize_claude_event(:permission_denied, _payload), do: "claude permission denied"
+  defp humanize_claude_event(:turn_failed, payload), do: "claude turn failed: #{format_reason(payload)}"
+  defp humanize_claude_event(:malformed, _payload), do: "malformed JSON event from claude"
+  defp humanize_claude_event(_event, payload), do: humanize_claude_payload(payload)
+
+  defp humanize_claude_payload(%{"type" => "assistant", "message" => %{"content" => contents}})
+       when is_list(contents) do
+    Enum.find_value(contents, fn
+      %{"type" => "text", "text" => text} when is_binary(text) ->
+        inline_text(text)
+
+      %{"type" => "thinking"} ->
+        "claude thinking"
+
+      %{"type" => "tool_use", "name" => name} when is_binary(name) ->
+        "tool requested (#{name})"
+
+      _ ->
+        nil
+    end) || "assistant update"
+  end
+
+  defp humanize_claude_payload(%{"type" => "user", "tool_use_result" => result}) when is_map(result) do
+    tool_name =
+      Map.get(result, "tool_name") ||
+        map_path(result, ["tool", "name"]) ||
+        map_path(result, [:tool, :name])
+
+    if is_binary(tool_name), do: "tool completed (#{tool_name})", else: "tool completed"
+  end
+
+  defp humanize_claude_payload(%{"type" => "rate_limit_event", "rate_limit_info" => info}) when is_map(info) do
+    status = Map.get(info, "status")
+    if is_binary(status), do: "rate limit status: #{status}", else: "rate limit update"
+  end
+
+  defp humanize_claude_payload(%{"type" => "result", "result" => result}) when is_binary(result) do
+    inline_text(result)
+  end
+
+  defp humanize_claude_payload(_payload), do: nil
 
   defp humanize_codex_event(:session_started, _message, payload) do
     session_id = map_value(payload, ["session_id", :session_id])
