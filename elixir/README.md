@@ -125,6 +125,8 @@ Notes:
   - `claude.permission_mode` defaults to `dontAsk`
   - `claude.turn_timeout_ms` defaults to `3600000`
   - `claude.stall_timeout_ms` defaults to `300000`
+  - `claude.strict_mcp_config` defaults to `true` (only uses MCP servers from the injected config, ignoring user/project MCP settings)
+  - `claude.mcp_server_python` defaults to `python3` (Python interpreter used to run the injected Linear MCP sidecar)
   - `claude.strict_mcp_config` defaults to `true`
   - `claude.mcp_server_python` defaults to `python3`
 - Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.

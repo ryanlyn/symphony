@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Workflow do
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
     Application.get_env(:symphony_elixir, :workflow_file_path) ||
+      System.get_env("SYMPHONY_WORKFLOW") ||
       Path.join(File.cwd!(), @workflow_file_name)
   end
 
