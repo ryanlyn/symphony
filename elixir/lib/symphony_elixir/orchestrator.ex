@@ -7,8 +7,8 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.Codex.ResumeState
   alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.Codex.ResumeState
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000

@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Codex.ResumeState
+
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -579,7 +581,7 @@ defmodule SymphonyElixir.CoreTest do
       resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
       assert :ok =
-               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+               ResumeState.write(workspace, %{
                  thread_id: "thread-crash",
                  issue_id: issue_id,
                  issue_identifier: "MT-559",

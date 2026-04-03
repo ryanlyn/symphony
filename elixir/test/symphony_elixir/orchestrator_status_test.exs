@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Codex.ResumeState
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -931,7 +933,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       resume_path = Path.join(workspace, ".git/symphony/resume.json")
 
       assert :ok =
-               SymphonyElixir.Codex.ResumeState.write(workspace, %{
+               ResumeState.write(workspace, %{
                  thread_id: "thread-stall",
                  issue_id: issue_id,
                  issue_identifier: "MT-STALL",
