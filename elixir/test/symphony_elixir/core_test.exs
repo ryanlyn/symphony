@@ -1035,6 +1035,31 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt == "Retry #2"
   end
 
+  test "build_prompt includes ensemble context when ensemble_size > 1" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue, slot_index: 1, ensemble_size: 3)
+    assert prompt =~ "slot 1 of 3"
+    assert prompt =~ "slot-1"
+  end
+
+  test "build_prompt omits ensemble context when ensemble_size is 1" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue, slot_index: 0, ensemble_size: 1)
+    refute prompt =~ "Ensemble context"
+  end
+
+  test "build_prompt omits ensemble context when ensemble_size not specified" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue)
+    refute prompt =~ "Ensemble context"
+  end
+
   test "agent runner keeps workspace after successful codex run" do
     test_root =
       Path.join(
