@@ -40,4 +40,20 @@ defmodule SymphonyElixir.Linear.Issue do
   def label_names(%__MODULE__{labels: labels}) do
     labels
   end
+
+  @spec ensemble_size(t()) :: pos_integer() | nil
+  def ensemble_size(%__MODULE__{labels: labels}) do
+    Enum.find_value(labels, fn label ->
+      case String.split(label, ":", parts: 2) do
+        ["ensemble", n_str] ->
+          case Integer.parse(n_str) do
+            {n, ""} when n >= 1 -> n
+            _ -> nil
+          end
+
+        _ ->
+          nil
+      end
+    end)
+  end
 end
