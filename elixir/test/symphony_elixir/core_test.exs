@@ -1111,7 +1111,9 @@ defmodule SymphonyElixir.CoreTest do
       workspace_name = created |> Enum.to_list() |> List.first()
       assert workspace_name == "S-99"
 
-      workspace = Path.join(workspace_root, workspace_name)
+      issue_dir = Path.join(workspace_root, workspace_name)
+      assert File.exists?(issue_dir)
+      workspace = Path.join(issue_dir, "0")
       assert File.exists?(workspace)
       assert File.exists?(Path.join(workspace, "README.md"))
     after
