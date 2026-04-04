@@ -296,6 +296,29 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
            }
   end
 
+  test "linear_graphql delegates to ToolServer with slot context" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_graphql",
+        %{
+          "query" => "query Viewer { viewer { id } }",
+          "variables" => %{}
+        },
+        issue_id: "issue-1",
+        slot_index: 0,
+        ensemble_size: 1,
+        linear_client: fn query, variables, _opts ->
+          send(test_pid, {:linear_client_called, query, variables})
+          {:ok, %{"data" => %{"viewer" => %{"id" => "usr_123"}}}}
+        end
+      )
+
+    assert response["success"] == true
+    assert_receive {:linear_client_called, _, _}
+  end
+
   test "linear_graphql falls back to inspect for non-JSON payloads" do
     response =
       DynamicTool.execute(
