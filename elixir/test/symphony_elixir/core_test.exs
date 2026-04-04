@@ -88,6 +88,22 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
   end
 
+  test "ensemble_size defaults to 1 and validates correctly" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    assert Config.settings!().agent.ensemble_size == 1
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: 3)
+    assert Config.settings!().agent.ensemble_size == 3
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: 0)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.ensemble_size"
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: -1)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.ensemble_size"
+  end
+
   test "current WORKFLOW.md file is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
