@@ -101,7 +101,7 @@ defmodule SymphonyElixir.AgentRunner do
       worker_host: worker_host
     }
 
-    with {:ok, session} <- start_session(executor, workspace, issue, worker_host) do
+    with {:ok, session} <- start_session(executor, workspace, issue, worker_host, slot_index: slot_index, ensemble_size: ensemble_size) do
       case do_run_agent_turns(ctx, session, issue, 1) do
         {:ok, final_session} ->
           executor.stop_session(final_session)
@@ -194,14 +194,14 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
 
-  defp start_session(executor, workspace, %Issue{} = issue, worker_host) do
+  defp start_session(executor, workspace, %Issue{} = issue, worker_host, opts) do
     resume_metadata = resume_metadata(workspace, issue, worker_host, Config.agent_kind())
+    slot_opts = Keyword.take(opts, [:slot_index, :ensemble_size])
 
     case executor.start_session(
            workspace,
-           issue: issue,
-           worker_host: worker_host,
-           resume_metadata: resume_metadata
+           [issue: issue, worker_host: worker_host, resume_metadata: resume_metadata, issue_id: issue.id]
+           ++ slot_opts
          ) do
       {:ok, session} ->
         persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(session))

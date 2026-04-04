@@ -24,8 +24,9 @@ defmodule SymphonyElixir.Claude.Executor do
   @impl true
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    slot_opts = Keyword.take(opts, [:issue_id, :slot_index, :ensemble_size])
 
-    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
+    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host, slot_opts) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
 

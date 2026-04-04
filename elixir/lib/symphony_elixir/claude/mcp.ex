@@ -1,21 +1,23 @@
 defmodule SymphonyElixir.Claude.Mcp do
   @moduledoc false
 
-  alias SymphonyElixir.{Config, SSH}
+  alias SymphonyElixir.{Config, HttpServer, SSH}
 
   @dir_relative_path ".symphony/claude"
   @config_filename "mcp.json"
   @server_filename "linear_graphql_mcp.py"
 
-  @spec prepare(Path.t(), String.t() | nil) ::
+  @spec prepare(Path.t(), String.t() | nil, keyword()) ::
           {:ok, %{config_path: String.t(), sidecar_path: String.t()}} | {:error, term()}
-  def prepare(workspace, worker_host \\ nil) when is_binary(workspace) do
+  def prepare(workspace, worker_host \\ nil, opts \\ []) when is_binary(workspace) do
     config_path = Path.join([workspace, @dir_relative_path, @config_filename])
     sidecar_path = Path.join([workspace, @dir_relative_path, @server_filename])
     python = Config.settings!().claude.mcp_server_python
 
+    slot_env = slot_env_vars(opts)
+
     with :ok <- write_workspace_file(sidecar_path, sidecar_contents(), worker_host, executable?: true),
-         :ok <- write_workspace_file(config_path, config_contents(sidecar_path, python), worker_host, []) do
+         :ok <- write_workspace_file(config_path, config_contents(sidecar_path, python, slot_env), worker_host, []) do
       {:ok, %{config_path: config_path, sidecar_path: sidecar_path}}
     end
   end
@@ -33,9 +35,17 @@ defmodule SymphonyElixir.Claude.Mcp do
     ]
   end
 
-  @spec config_contents(String.t(), String.t()) :: String.t()
-  def config_contents(sidecar_path, python) when is_binary(sidecar_path) and is_binary(python) do
+  @spec config_contents(String.t(), String.t(), map()) :: String.t()
+  def config_contents(sidecar_path, python, slot_env \\ %{})
+      when is_binary(sidecar_path) and is_binary(python) and is_map(slot_env) do
     tracker = Config.settings!().tracker
+
+    base_env = %{
+      "SYMPHONY_LINEAR_API_KEY" => tracker.api_key,
+      "SYMPHONY_LINEAR_ENDPOINT" => tracker.endpoint
+    }
+
+    env = Map.merge(base_env, slot_env)
 
     %{
       "mcpServers" => %{
@@ -43,10 +53,7 @@ defmodule SymphonyElixir.Claude.Mcp do
           "type" => "stdio",
           "command" => python,
           "args" => [sidecar_path],
-          "env" => %{
-            "SYMPHONY_LINEAR_API_KEY" => tracker.api_key,
-            "SYMPHONY_LINEAR_ENDPOINT" => tracker.endpoint
-          }
+          "env" => env
         }
       }
     }
@@ -122,6 +129,46 @@ defmodule SymphonyElixir.Claude.Mcp do
             payload["error"].update(extra)
         return payload
 
+    def has_state_id(variables):
+        if "stateId" in variables:
+            return True
+        for v in variables.values():
+            if isinstance(v, dict) and "stateId" in v:
+                return True
+        return False
+
+    def barrier_request(query, variables):
+        port = os.environ.get("SYMPHONY_HTTP_PORT")
+        issue_id = os.environ.get("SYMPHONY_ISSUE_ID")
+        slot_index = int(os.environ.get("SYMPHONY_SLOT_INDEX", "0"))
+
+        body = json.dumps({
+            "issue_id": issue_id,
+            "slot_index": slot_index,
+            "query": query,
+            "variables": variables
+        }).encode("utf-8")
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/barrier/check",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+
+        try:
+            with urllib.request.urlopen(request) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            return tool_error(f"Barrier request failed with HTTP {error.code}.", {"status": error.code}), True
+        except urllib.error.URLError as error:
+            return tool_error("Barrier request failed.", {"reason": repr(error.reason)}), True
+        except Exception as error:
+            return tool_error("Barrier request failed.", {"reason": repr(error)}), True
+
+        is_error = isinstance(payload.get("errors"), list) and len(payload["errors"]) > 0
+        return payload, is_error
+
     def graphql_request(arguments):
         if not isinstance(arguments, dict):
             return tool_error("`linear_graphql` expects an object with `query` and optional `variables`."), True
@@ -134,6 +181,11 @@ defmodule SymphonyElixir.Claude.Mcp do
 
         if not isinstance(variables, dict):
             return tool_error("`linear_graphql.variables` must be a JSON object when provided."), True
+
+        ensemble_size = int(os.environ.get("SYMPHONY_ENSEMBLE_SIZE", "1"))
+
+        if ensemble_size > 1 and "issueUpdate" in query and has_state_id(variables):
+            return barrier_request(query, variables)
 
         api_key = os.environ.get("SYMPHONY_LINEAR_API_KEY")
         endpoint = os.environ.get("SYMPHONY_LINEAR_ENDPOINT", "https://api.linear.app/graphql")
@@ -233,6 +285,23 @@ defmodule SymphonyElixir.Claude.Mcp do
         if response is not None:
             write_message(response)
     """
+  end
+
+  @spec slot_env_vars(keyword()) :: map()
+  defp slot_env_vars(opts) do
+    issue_id = Keyword.get(opts, :issue_id)
+    slot_index = Keyword.get(opts, :slot_index)
+    ensemble_size = Keyword.get(opts, :ensemble_size)
+    http_port = HttpServer.bound_port()
+
+    env = %{}
+
+    env = if issue_id, do: Map.put(env, "SYMPHONY_ISSUE_ID", to_string(issue_id)), else: env
+    env = if slot_index, do: Map.put(env, "SYMPHONY_SLOT_INDEX", to_string(slot_index)), else: env
+    env = if ensemble_size, do: Map.put(env, "SYMPHONY_ENSEMBLE_SIZE", to_string(ensemble_size)), else: env
+    env = if http_port, do: Map.put(env, "SYMPHONY_HTTP_PORT", to_string(http_port)), else: env
+
+    env
   end
 
   @spec write_workspace_file(String.t(), iodata(), String.t() | nil, keyword()) :: :ok | {:error, term()}
