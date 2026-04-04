@@ -38,6 +38,10 @@ defmodule SymphonyElixirWeb.Router do
     live("/", DashboardLive, :index)
   end
 
+  scope "/api/barrier", SymphonyElixirWeb do
+    post("/check", BarrierController, :check)
+  end
+
   scope "/", SymphonyElixirWeb do
     get("/api/v1/state", ObservabilityApiController, :state)
 
