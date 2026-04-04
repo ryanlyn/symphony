@@ -60,8 +60,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     state_with_issue =
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
 
     :sys.replace_state(pid, fn _ -> state_with_issue end)
 
@@ -146,8 +146,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -243,8 +243,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -352,8 +352,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -425,8 +425,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -536,8 +536,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     rate_limits = %{
@@ -615,8 +615,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -701,8 +701,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     for usage <- [
@@ -773,8 +773,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -1055,8 +1055,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
       end)
 
       tick_sent_at_ms = System.monotonic_time(:millisecond)
@@ -1065,7 +1065,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       state = :sys.get_state(pid)
 
       refute Process.alive?(worker_pid)
-      refute Map.has_key?(state.running, issue_id)
+      refute Map.has_key?(state.running, {issue_id, 0})
 
       assert %{
                attempt: 1,
@@ -1147,8 +1147,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
       end)
 
       tick_sent_at_ms = System.monotonic_time(:millisecond)
@@ -1157,7 +1157,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       state = :sys.get_state(pid)
 
       refute Process.alive?(worker_pid)
-      refute Map.has_key?(state.running, issue_id)
+      refute Map.has_key?(state.running, {issue_id, 0})
 
       assert %{
                attempt: 1,

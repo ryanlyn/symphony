@@ -38,6 +38,7 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
+      ensembles: %{},
       usage_totals: nil,
       codex_rate_limits: nil
     ]
@@ -121,31 +122,32 @@ defmodule SymphonyElixir.Orchestrator do
         {:DOWN, ref, :process, _pid, reason},
         %{running: running} = state
       ) do
-    case find_issue_id_for_ref(running, ref) do
+    case find_slot_for_ref(running, ref) do
       nil ->
         {:noreply, state}
 
-      issue_id ->
-        {running_entry, state} = pop_running_entry(state, issue_id)
+      {issue_id, slot_index} = slot_key ->
+        {running_entry, state} = pop_running_entry(state, slot_key)
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
 
         state =
           case reason do
             :normal ->
-              Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+              Logger.info("Agent task completed for issue_id=#{issue_id} slot=#{slot_index} session_id=#{session_id}; scheduling active-state continuation check")
 
               state
               |> complete_issue(issue_id)
               |> schedule_issue_retry(issue_id, 1, %{
                 identifier: running_entry.identifier,
                 delay_type: :continuation,
+                slot_index: slot_index,
                 worker_host: Map.get(running_entry, :worker_host),
                 workspace_path: Map.get(running_entry, :workspace_path)
               })
 
             _ ->
-              Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+              Logger.warning("Agent task exited for issue_id=#{issue_id} slot=#{slot_index} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
               next_attempt = next_retry_attempt_from_running(running_entry)
               maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
@@ -153,12 +155,13 @@ defmodule SymphonyElixir.Orchestrator do
               schedule_issue_retry(state, issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
                 error: "agent exited: #{inspect(reason)}",
+                slot_index: slot_index,
                 worker_host: Map.get(running_entry, :worker_host),
                 workspace_path: Map.get(running_entry, :workspace_path)
               })
           end
 
-        Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
+        Logger.info("Agent task finished for issue_id=#{issue_id} slot=#{slot_index} session_id=#{session_id} reason=#{inspect(reason)}")
 
         notify_dashboard()
         {:noreply, state}
@@ -167,19 +170,28 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info({:worker_runtime_info, issue_id, runtime_info}, %{running: running} = state)
       when is_binary(issue_id) and is_map(runtime_info) do
-    case Map.get(running, issue_id) do
-      nil ->
-        {:noreply, state}
+    slots = running_slots_for_issue(running, issue_id)
 
-      running_entry ->
-        updated_running_entry =
-          running_entry
-          |> maybe_put_runtime_value(:agent_kind, runtime_info[:agent_kind])
-          |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
-          |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
+    if map_size(slots) == 0 do
+      {:noreply, state}
+    else
+      updated_running =
+        Enum.reduce(slots, running, fn {slot_key, running_entry}, acc ->
+          if Map.get(running_entry, :workspace_path) == nil do
+            updated_entry =
+              running_entry
+              |> maybe_put_runtime_value(:agent_kind, runtime_info[:agent_kind])
+              |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
+              |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
 
-        notify_dashboard()
-        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+            Map.put(acc, slot_key, updated_entry)
+          else
+            acc
+          end
+        end)
+
+      notify_dashboard()
+      {:noreply, %{state | running: updated_running}}
     end
   end
 
@@ -187,20 +199,28 @@ defmodule SymphonyElixir.Orchestrator do
         {:agent_worker_update, issue_id, %{event: _, timestamp: _} = update},
         %{running: running} = state
       ) do
-    case Map.get(running, issue_id) do
-      nil ->
+    slots = running_slots_for_issue(running, issue_id)
+
+    case Enum.to_list(slots) do
+      [] ->
         {:noreply, state}
 
-      running_entry ->
-        {updated_running_entry, token_delta} = integrate_agent_update(running_entry, update)
+      slot_entries ->
+        # Apply update to all running slots for this issue_id
+        {updated_running, state} =
+          Enum.reduce(slot_entries, {running, state}, fn {slot_key, running_entry}, {run_acc, st_acc} ->
+            {updated_running_entry, token_delta} = integrate_agent_update(running_entry, update)
 
-        state =
-          state
-          |> apply_usage_token_delta(token_delta)
-          |> apply_codex_rate_limits(update)
+            st_acc =
+              st_acc
+              |> apply_usage_token_delta(token_delta)
+              |> apply_codex_rate_limits(update)
+
+            {Map.put(run_acc, slot_key, updated_running_entry), st_acc}
+          end)
 
         notify_dashboard()
-        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+        {:noreply, %{state | running: updated_running}}
     end
   end
 
@@ -285,7 +305,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp reconcile_running_issues(%State{} = state) do
     state = reconcile_stalled_running_issues(state)
-    running_ids = Map.keys(state.running)
+
+    running_ids =
+      state.running
+      |> Map.keys()
+      |> Enum.map(fn {issue_id, _slot} -> issue_id end)
+      |> Enum.uniq()
 
     if running_ids == [] do
       state
@@ -360,12 +385,12 @@ defmodule SymphonyElixir.Orchestrator do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
 
-        terminate_running_issue(state, issue.id, true)
+        terminate_all_issue_slots(state, issue.id, true)
 
       !issue_routable_to_worker?(issue) ->
         Logger.info("Issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; stopping active agent")
 
-        terminate_running_issue(state, issue.id, false)
+        terminate_all_issue_slots(state, issue.id, false)
 
       active_issue_state?(issue.state, active_states) ->
         refresh_running_issue_state(state, issue)
@@ -373,7 +398,7 @@ defmodule SymphonyElixir.Orchestrator do
       true ->
         Logger.info("Issue moved to non-active state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
 
-        terminate_running_issue(state, issue.id, false)
+        terminate_all_issue_slots(state, issue.id, false)
     end
   end
 
@@ -394,7 +419,7 @@ defmodule SymphonyElixir.Orchestrator do
         state_acc
       else
         log_missing_running_issue(state_acc, issue_id)
-        terminate_running_issue(state_acc, issue_id, false)
+        terminate_all_issue_slots(state_acc, issue_id, false)
       end
     end)
   end
@@ -402,8 +427,10 @@ defmodule SymphonyElixir.Orchestrator do
   defp reconcile_missing_running_issue_ids(state, _requested_issue_ids, _issues), do: state
 
   defp log_missing_running_issue(%State{} = state, issue_id) when is_binary(issue_id) do
-    case Map.get(state.running, issue_id) do
-      %{identifier: identifier} ->
+    slots = running_slots_for_issue(state.running, issue_id)
+
+    case Enum.at(Enum.to_list(slots), 0) do
+      {_key, %{identifier: identifier}} ->
         Logger.info("Issue no longer visible during running-state refresh: issue_id=#{issue_id} issue_identifier=#{identifier}; stopping active agent")
 
       _ ->
@@ -414,19 +441,47 @@ defmodule SymphonyElixir.Orchestrator do
   defp log_missing_running_issue(_state, _issue_id), do: :ok
 
   defp refresh_running_issue_state(%State{} = state, %Issue{} = issue) do
-    case Map.get(state.running, issue.id) do
-      %{issue: _} = running_entry ->
-        %{state | running: Map.put(state.running, issue.id, %{running_entry | issue: issue})}
+    slots = running_slots_for_issue(state.running, issue.id)
 
-      _ ->
-        state
+    if map_size(slots) == 0 do
+      state
+    else
+      updated_running =
+        Enum.reduce(slots, state.running, fn {slot_key, running_entry}, acc ->
+          case running_entry do
+            %{issue: _} -> Map.put(acc, slot_key, %{running_entry | issue: issue})
+            _ -> acc
+          end
+        end)
+
+      %{state | running: updated_running}
     end
   end
 
-  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
-    case Map.get(state.running, issue_id) do
+  defp terminate_all_issue_slots(%State{} = state, issue_id, cleanup_workspace) do
+    slots =
+      state.running
+      |> Enum.filter(fn {{id, _slot}, _} -> id == issue_id end)
+      |> Enum.map(fn {{_id, slot}, _} -> slot end)
+
+    if slots == [] do
+      release_all_issue_claims(state, issue_id)
+    else
+      state = Enum.reduce(slots, state, fn slot_index, acc ->
+        terminate_running_slot(acc, {issue_id, slot_index}, cleanup_workspace)
+      end)
+
+      %{state |
+        ensembles: Map.delete(state.ensembles, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+      }
+    end
+  end
+
+  defp terminate_running_slot(%State{} = state, {issue_id, _slot_index} = slot_key, cleanup_workspace) do
+    case Map.get(state.running, slot_key) do
       nil ->
-        release_issue_claim(state, issue_id)
+        release_issue_claim(state, slot_key)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
@@ -446,13 +501,13 @@ defmodule SymphonyElixir.Orchestrator do
 
         %{
           state
-          | running: Map.delete(state.running, issue_id),
-            claimed: MapSet.delete(state.claimed, issue_id),
+          | running: Map.delete(state.running, slot_key),
+            claimed: MapSet.delete(state.claimed, slot_key),
             retry_attempts: Map.delete(state.retry_attempts, issue_id)
         }
 
       _ ->
-        release_issue_claim(state, issue_id)
+        release_issue_claim(state, slot_key)
     end
   end
 
@@ -464,31 +519,32 @@ defmodule SymphonyElixir.Orchestrator do
     now = DateTime.utc_now()
     settings = Config.settings!()
 
-    Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+    Enum.reduce(state.running, state, fn {{issue_id, slot_index} = slot_key, running_entry}, state_acc ->
       timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
 
       if timeout_ms <= 0,
         do: state_acc,
-        else: restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
+        else: restart_stalled_issue(state_acc, slot_key, issue_id, slot_index, running_entry, now, timeout_ms)
     end)
   end
 
-  defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
+  defp restart_stalled_issue(state, slot_key, issue_id, slot_index, running_entry, now, timeout_ms) do
     elapsed_ms = stall_elapsed_ms(running_entry, now)
 
     if is_integer(elapsed_ms) and elapsed_ms > timeout_ms do
       identifier = Map.get(running_entry, :identifier, issue_id)
       session_id = running_entry_session_id(running_entry)
 
-      Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
+      Logger.warning("Issue stalled: issue_id=#{issue_id} slot=#{slot_index} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
 
       next_attempt = next_retry_attempt_from_running(running_entry)
       maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
       state
-      |> terminate_running_issue(issue_id, false)
+      |> terminate_running_slot(slot_key, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
+        slot_index: slot_index,
         error: "stalled for #{elapsed_ms}ms without agent activity"
       })
     else
@@ -562,16 +618,17 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp should_dispatch_issue?(
          %Issue{} = issue,
-         %State{running: running, claimed: claimed} = state,
+         %State{running: _running, claimed: claimed} = state,
          active_states,
          terminal_states
        ) do
+    ensemble_size = resolve_ensemble_size(issue)
+
     candidate_issue?(issue, active_states, terminal_states) and
       !todo_issue_blocked_by_non_terminal?(issue, terminal_states) and
-      !MapSet.member?(claimed, issue.id) and
-      !Map.has_key?(running, issue.id) and
+      claimed_slot_count_for_issue(claimed, issue.id) < ensemble_size and
       available_slots(state) > 0 and
-      state_slots_available?(issue, running) and
+      state_slots_available?(issue, state.running) and
       worker_slots_available?(state)
   end
 
@@ -589,7 +646,7 @@ defmodule SymphonyElixir.Orchestrator do
     normalized_state = normalize_issue_state(issue_state)
 
     Enum.count(running, fn
-      {_id, %{issue: %Issue{state: state_name}}} ->
+      {_key, %{issue: %Issue{state: state_name}}} ->
         normalize_issue_state(state_name) == normalized_state
 
       _ ->
@@ -687,34 +744,58 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
-    recipient = self()
+    ensemble_size = resolve_ensemble_size(issue)
 
-    case select_worker_host(state, preferred_worker_host) do
-      :no_worker_capacity ->
-        Logger.debug("No SSH worker slots available for #{issue_context(issue)} preferred_worker_host=#{inspect(preferred_worker_host)}")
-        state
+    dispatched_slots =
+      state.claimed
+      |> Enum.filter(fn {id, _slot} -> id == issue.id end)
+      |> Enum.map(fn {_id, slot} -> slot end)
+      |> MapSet.new()
 
-      worker_host ->
-        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
-    end
+    all_slots = MapSet.new(0..(ensemble_size - 1))
+    remaining = MapSet.difference(all_slots, dispatched_slots)
+    slots_to_fill = remaining |> Enum.sort() |> Enum.take(max(available_slots(state), 0))
+
+    Enum.reduce(slots_to_fill, state, fn slot_index, acc_state ->
+      case select_worker_host(acc_state, preferred_worker_host) do
+        :no_worker_capacity ->
+          Logger.debug("No SSH worker slots available for #{issue_context(issue)} slot=#{slot_index} preferred_worker_host=#{inspect(preferred_worker_host)}")
+          acc_state
+
+        worker_host ->
+          spawn_issue_slot(acc_state, issue, slot_index, ensemble_size, attempt, worker_host)
+      end
+    end)
   end
 
-  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
+  defp spawn_issue_slot(%State{} = state, issue, slot_index, ensemble_size, attempt, worker_host) do
+    recipient = self()
+
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           AgentRunner.run(issue, recipient,
+             attempt: attempt,
+             worker_host: worker_host,
+             slot_index: slot_index,
+             ensemble_size: ensemble_size
+           )
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+        slot_key = {issue.id, slot_index}
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+        Logger.info("Dispatching issue to agent: #{issue_context(issue)} slot=#{slot_index}/#{ensemble_size} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+
+        ensemble = get_or_init_ensemble(state.ensembles, issue.id, ensemble_size)
 
         running =
-          Map.put(state.running, issue.id, %{
+          Map.put(state.running, slot_key, %{
             pid: pid,
             ref: ref,
             agent_kind: Config.agent_kind(),
             identifier: issue.identifier,
             issue: issue,
+            slot_index: slot_index,
+            ensemble_size: ensemble_size,
             worker_host: worker_host,
             workspace_path: nil,
             session_id: nil,
@@ -734,16 +815,18 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           state
           | running: running,
-            claimed: MapSet.put(state.claimed, issue.id),
+            claimed: MapSet.put(state.claimed, slot_key),
+            ensembles: Map.put(state.ensembles, issue.id, ensemble),
             retry_attempts: Map.delete(state.retry_attempts, issue.id)
         }
 
       {:error, reason} ->
-        Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
+        Logger.error("Unable to spawn agent for #{issue_context(issue)} slot=#{slot_index}: #{inspect(reason)}")
         next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
 
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
+          slot_index: slot_index,
           error: "failed to spawn agent: #{inspect(reason)}",
           worker_host: worker_host
         })
@@ -862,7 +945,7 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.info("Issue state is terminal: issue_id=#{issue_id} issue_identifier=#{issue.identifier} state=#{issue.state}; removing associated workspace")
 
         cleanup_issue_workspace(issue.identifier, metadata[:worker_host])
-        {:noreply, release_issue_claim(state, issue_id)}
+        {:noreply, release_all_issue_claims(state, issue_id)}
 
       retry_candidate_issue?(issue, terminal_states) ->
         handle_active_retry(state, issue, attempt, metadata)
@@ -870,13 +953,13 @@ defmodule SymphonyElixir.Orchestrator do
       true ->
         Logger.debug("Issue left active states, removing claim issue_id=#{issue_id} issue_identifier=#{issue.identifier}")
 
-        {:noreply, release_issue_claim(state, issue_id)}
+        {:noreply, release_all_issue_claims(state, issue_id)}
     end
   end
 
   defp handle_retry_issue_lookup(nil, state, issue_id, _attempt, _metadata) do
     Logger.debug("Issue no longer visible, removing claim issue_id=#{issue_id}")
-    {:noreply, release_issue_claim(state, issue_id)}
+    {:noreply, release_all_issue_claims(state, issue_id)}
   end
 
   defp cleanup_issue_workspace(identifier, worker_host \\ nil)
@@ -929,8 +1012,18 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp release_issue_claim(%State{} = state, issue_id) do
-    %{state | claimed: MapSet.delete(state.claimed, issue_id)}
+  defp release_issue_claim(%State{} = state, {_issue_id, _slot_index} = slot_key) do
+    %{state | claimed: MapSet.delete(state.claimed, slot_key)}
+  end
+
+  defp release_all_issue_claims(%State{} = state, issue_id) when is_binary(issue_id) do
+    claimed =
+      Enum.reduce(state.claimed, state.claimed, fn
+        {id, _slot} = key, acc when id == issue_id -> MapSet.delete(acc, key)
+        _, acc -> acc
+      end)
+
+    %{state | claimed: claimed, retry_attempts: Map.delete(state.retry_attempts, issue_id)}
   end
 
   defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
@@ -1031,7 +1124,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_worker_host_count(running, worker_host) when is_map(running) and is_binary(worker_host) do
     Enum.count(running, fn
-      {_issue_id, %{worker_host: ^worker_host}} -> true
+      {_key, %{worker_host: ^worker_host}} -> true
       _ -> false
     end)
   end
@@ -1064,11 +1157,36 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp find_issue_id_for_ref(running, ref) do
-    running
-    |> Enum.find_value(fn {issue_id, %{ref: running_ref}} ->
-      if running_ref == ref, do: issue_id
+  defp find_slot_for_ref(running, ref) do
+    Enum.find_value(running, fn {{issue_id, slot_index}, entry} ->
+      if entry.ref == ref, do: {issue_id, slot_index}
     end)
+  end
+
+  defp running_slots_for_issue(running, issue_id) do
+    running
+    |> Enum.filter(fn {{id, _slot}, _entry} -> id == issue_id end)
+    |> Map.new()
+  end
+
+  defp claimed_slot_count_for_issue(claimed, issue_id) do
+    Enum.count(claimed, fn {id, _slot} -> id == issue_id end)
+  end
+
+  defp resolve_ensemble_size(issue) do
+    case Issue.ensemble_size(issue) do
+      n when is_integer(n) and n >= 1 -> n
+      _ -> Config.settings!().agent.ensemble_size
+    end
+  end
+
+  defp get_or_init_ensemble(ensembles, issue_id, size) do
+    Map.get(ensembles, issue_id, %{
+      size: size,
+      completed_slots: MapSet.new(),
+      failed_slots: MapSet.new(),
+      last_intent: nil
+    })
   end
 
   defp running_entry_session_id(%{session_id: session_id}) when is_binary(session_id),
@@ -1127,11 +1245,13 @@ defmodule SymphonyElixir.Orchestrator do
 
     running =
       state.running
-      |> Enum.map(fn {issue_id, metadata} ->
+      |> Enum.map(fn {{issue_id, slot_index}, metadata} ->
         usage_totals = Map.get(metadata, :usage_totals, @empty_usage_totals)
 
         %{
           issue_id: issue_id,
+          slot_index: slot_index,
+          ensemble_size: Map.get(metadata, :ensemble_size, 1),
           identifier: metadata.identifier,
           agent_kind: Map.get(metadata, :agent_kind, "codex"),
           state: metadata.issue.state,
@@ -1190,6 +1310,34 @@ defmodule SymphonyElixir.Orchestrator do
        requested_at: DateTime.utc_now(),
        operations: ["poll", "reconcile"]
      }, state}
+  end
+
+  def handle_call({:barrier_register, issue_id, slot_index, query, variables}, _from, state) do
+    case Map.get(state.ensembles, issue_id) do
+      nil ->
+        {:reply, {:error, :no_ensemble}, state}
+
+      ensemble ->
+        completed = MapSet.put(ensemble.completed_slots, slot_index)
+        effective_size = ensemble.size - MapSet.size(ensemble.failed_slots)
+        updated = %{ensemble | completed_slots: completed, last_intent: {query, variables, slot_index}}
+
+        if MapSet.size(completed) >= effective_size do
+          {last_query, last_vars, _} = updated.last_intent
+
+          case SymphonyElixir.Linear.Client.graphql(last_query, last_vars, []) do
+            {:ok, response} ->
+              state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
+              {:reply, {:executed, response, updated}, state}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
+        else
+          state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
+          {:reply, {:deferred, updated}, state}
+        end
+    end
   end
 
   defp integrate_agent_update(running_entry, %{event: event, timestamp: timestamp} = update) do
@@ -1289,8 +1437,9 @@ defmodule SymphonyElixir.Orchestrator do
     max(0, next_poll_due_at_ms - now_ms)
   end
 
-  defp pop_running_entry(state, issue_id) do
-    {Map.get(state.running, issue_id), %{state | running: Map.delete(state.running, issue_id)}}
+  defp pop_running_entry(state, {_issue_id, _slot_index} = slot_key) do
+    {entry, running} = Map.pop(state.running, slot_key)
+    {entry, %{state | running: running}}
   end
 
   defp record_session_completion_totals(state, running_entry) when is_map(running_entry) do
