@@ -14,15 +14,41 @@ defmodule SymphonyElixir.PromptBuilder do
       |> prompt_template!()
       |> parse_template!()
 
-    template
-    |> Solid.render!(
-      %{
-        "attempt" => Keyword.get(opts, :attempt),
-        "issue" => issue |> Map.from_struct() |> to_solid_map()
-      },
-      @render_opts
-    )
-    |> IO.iodata_to_binary()
+    base_prompt =
+      template
+      |> Solid.render!(
+        %{
+          "attempt" => Keyword.get(opts, :attempt),
+          "issue" => issue |> Map.from_struct() |> to_solid_map()
+        },
+        @render_opts
+      )
+      |> IO.iodata_to_binary()
+
+    maybe_append_ensemble_context(base_prompt, opts)
+  end
+
+  defp maybe_append_ensemble_context(prompt, opts) do
+    ensemble_size = Keyword.get(opts, :ensemble_size, 1)
+    slot_index = Keyword.get(opts, :slot_index, 0)
+
+    if ensemble_size > 1 do
+      ensemble_context = """
+
+      ---
+      Ensemble context:
+
+      You are working on this issue as slot #{slot_index} of #{ensemble_size} concurrent agents.
+      When creating branches or PRs, include your slot identifier in the branch name (e.g. slot-#{slot_index}).
+      When you finish your work and transition the issue state, you may receive a deferred
+      response indicating the transition will be applied when all slots complete.
+      After receiving a deferred response, finalize any remaining work and end your session.
+      """
+
+      prompt <> ensemble_context
+    else
+      prompt
+    end
   end
 
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
