@@ -25,6 +25,40 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor closes a started port when later startup work fails" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-claude-startup-cleanup-#{System.unique_integer([:positive])}")
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-CLEANUP")
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude"
+      )
+
+      parent = self()
+
+      assert {:error, :synthetic_startup_failure} =
+               Executor.start_session(workspace,
+                 start_port_fn: fn _session, _issue ->
+                   port = open_idle_port!()
+                   send(parent, {:started_port, port})
+                   {:ok, port, %{}}
+                 end,
+                 complete_start_session_fn: fn _base_session, _port, _metadata ->
+                   {:error, :synthetic_startup_failure}
+                 end
+               )
+
+      assert_receive {:started_port, port}
+      assert_port_closed(port)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "claude executor keeps one persistent worker across multiple turns" do
     test_root = Path.join(System.tmp_dir!(), "symphony-claude-executor-#{System.unique_integer([:positive])}")
 
@@ -427,4 +461,25 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     done
     """
   end
+
+  defp open_idle_port! do
+    executable = System.find_executable("cat") || flunk("cat executable not found")
+
+    Port.open({:spawn_executable, String.to_charlist(executable)}, [:binary, :exit_status])
+  end
+
+  defp assert_port_closed(port, attempts \\ 20)
+
+  defp assert_port_closed(port, attempts) when attempts > 0 do
+    case Port.info(port) do
+      nil ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        assert_port_closed(port, attempts - 1)
+    end
+  end
+
+  defp assert_port_closed(_port, 0), do: flunk("port remained open")
 end

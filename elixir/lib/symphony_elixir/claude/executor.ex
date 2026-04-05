@@ -24,6 +24,9 @@ defmodule SymphonyElixir.Claude.Executor do
   @impl true
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    start_port_fn = Keyword.get(opts, :start_port_fn, &start_port/2)
+    complete_start_session_fn =
+      Keyword.get(opts, :complete_start_session_fn, &complete_start_session/3)
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
          {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
@@ -44,9 +47,11 @@ defmodule SymphonyElixir.Claude.Executor do
         workspace: expanded_workspace
       }
 
-      case start_port(base_session, issue) do
+      case start_port_fn.(base_session, issue) do
         {:ok, port, metadata} ->
-          {:ok, %{base_session | port: port, metadata: metadata}}
+          with_started_port(port, fn ->
+            complete_start_session_fn.(base_session, port, metadata)
+          end)
 
         {:error, reason} ->
           {:error, reason}
@@ -495,6 +500,29 @@ defmodule SymphonyElixir.Claude.Executor do
       host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
       _ -> base_metadata
     end
+  end
+
+  defp complete_start_session(base_session, port, metadata) do
+    {:ok, %{base_session | port: port, metadata: metadata}}
+  end
+
+  defp with_started_port(port, fun) when is_port(port) and is_function(fun, 0) do
+    case fun.() do
+      {:ok, session} ->
+        {:ok, session}
+
+      {:error, reason} ->
+        stop_port(port)
+        {:error, reason}
+    end
+  rescue
+    exception ->
+      stop_port(port)
+      reraise exception, __STACKTRACE__
+  catch
+    kind, reason ->
+      stop_port(port)
+      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp stop_port(port) when is_port(port) do
