@@ -1274,6 +1274,65 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.workflow_prompt() == workflow_prompt
   end
 
+  test "remote workspace removal rejects paths outside the configured root before running hooks or deletion" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-workspace-remove-invalid-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+      workspace_root = "~/.symphony-remote-workspaces"
+      remote_root = "/remote/home/.symphony-remote-workspaces"
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      if printf '%s' "$*" | grep -q '\\$HOME'; then
+        printf '%s\\n' '/remote/home'
+      fi
+
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_ssh_hosts: ["worker-01:2200"],
+        hook_before_remove: "echo before-remove"
+      )
+
+      assert {:error, {:workspace_outside_root, "/tmp/outside-root", ^remote_root}, ""} =
+               Workspace.remove("/tmp/outside-root", "worker-01:2200")
+
+      trace = File.read!(trace_file)
+      assert trace =~ "-p 2200 worker-01 bash -lc"
+      assert trace =~ "$HOME"
+      refute trace =~ "echo before-remove"
+      refute trace =~ "rm -rf"
+      refute trace =~ "/tmp/outside-root"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "remote workspace lifecycle uses ssh host aliases from worker config" do
     test_root =
       Path.join(
@@ -1328,7 +1387,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert {:ok, ^workspace_path} = Workspace.create_for_issue("MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_before_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_after_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")
-      assert :ok = Workspace.remove_issue_workspaces("MT-SSH-WS", "worker-01:2200")
+      assert {:ok, []} = Workspace.remove(workspace_path, "worker-01:2200")
 
       trace = File.read!(trace_file)
       assert trace =~ "-p 2200 worker-01 bash -lc"
