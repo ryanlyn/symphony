@@ -173,26 +173,19 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file, """
-    #!/bin/sh
-    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
-    for arg in "$@"; do
-      last_arg="$arg"
-    done
-    eval "$last_arg"
-    """)
+    install_fake_ssh_with_eval!(test_root, trace_file)
 
     payload = "#!/bin/bash\necho ready\n"
 
     assert :ok = SSH.write_file("localhost", output_file, payload, mode: 0o755)
     written_contents = File.read!(output_file)
     assert written_contents == payload
-    assert binary_part(written_contents, 0, 2) == "#!"
     assert {:ok, stat} = File.stat(output_file)
     assert :erlang.band(stat.mode, 0o777) == 0o755
 
     trace = File.read!(trace_file)
     assert trace =~ "printf"
+    assert trace =~ "%s"
   end
 
   test "write_file/4 preserves delimiter-shaped payload lines without execution" do
@@ -207,14 +200,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file, """
-    #!/bin/sh
-    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
-    for arg in "$@"; do
-      last_arg="$arg"
-    done
-    eval "$last_arg"
-    """)
+    install_fake_ssh_with_eval!(test_root, trace_file)
 
     payload = """
     first line
@@ -232,7 +218,19 @@ defmodule SymphonyElixir.SSHTest do
     trace = File.read!(trace_file)
     refute trace =~ "cat <<'__SYMPHONY_SSH_WRITE_PAYLOAD__' >"
     assert trace =~ "printf"
+    assert trace =~ "%s"
     assert trace =~ "__SYMPHONY_SSH_WRITE_PAYLOAD__"
+  end
+
+  defp install_fake_ssh_with_eval!(test_root, trace_file) do
+    install_fake_ssh!(test_root, trace_file, """
+    #!/bin/sh
+    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
+    for arg in "$@"; do
+      last_arg="$arg"
+    done
+    eval "$last_arg"
+    """)
   end
 
   defp install_fake_ssh!(test_root, trace_file, script \\ nil) do
