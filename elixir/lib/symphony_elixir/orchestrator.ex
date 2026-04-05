@@ -37,6 +37,9 @@ defmodule SymphonyElixir.Orchestrator do
       running: %{},
       completed: MapSet.new(),
       claimed: MapSet.new(),
+      # Keyed by issue_id (not slot_key). This is intentional: retries re-dispatch
+      # all unfilled slots via do_dispatch_issue, so per-slot retry tracking is
+      # unnecessary. If two slots fail in sequence, the later retry subsumes the earlier.
       retry_attempts: %{},
       ensembles: %{},
       usage_totals: nil,
@@ -170,28 +173,26 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info({:worker_runtime_info, issue_id, runtime_info}, %{running: running} = state)
       when is_binary(issue_id) and is_map(runtime_info) do
-    slots = running_slots_for_issue(running, issue_id)
+    slot_index = Map.get(runtime_info, :slot_index, 0)
+    slot_key = {issue_id, slot_index}
 
-    if map_size(slots) == 0 do
-      {:noreply, state}
-    else
-      updated_running =
-        Enum.reduce(slots, running, fn {slot_key, running_entry}, acc ->
-          if Map.get(running_entry, :workspace_path) == nil do
-            updated_entry =
-              running_entry
-              |> maybe_put_runtime_value(:agent_kind, runtime_info[:agent_kind])
-              |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
-              |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
+    case Map.get(running, slot_key) do
+      nil ->
+        {:noreply, state}
 
-            Map.put(acc, slot_key, updated_entry)
-          else
-            acc
-          end
-        end)
+      running_entry ->
+        if Map.get(running_entry, :workspace_path) == nil do
+          updated_entry =
+            running_entry
+            |> maybe_put_runtime_value(:agent_kind, runtime_info[:agent_kind])
+            |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
+            |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
 
-      notify_dashboard()
-      {:noreply, %{state | running: updated_running}}
+          notify_dashboard()
+          {:noreply, %{state | running: Map.put(running, slot_key, updated_entry)}}
+        else
+          {:noreply, state}
+        end
     end
   end
 
@@ -199,28 +200,23 @@ defmodule SymphonyElixir.Orchestrator do
         {:agent_worker_update, issue_id, %{event: _, timestamp: _} = update},
         %{running: running} = state
       ) do
-    slots = running_slots_for_issue(running, issue_id)
+    slot_index = Map.get(update, :slot_index, 0)
+    slot_key = {issue_id, slot_index}
 
-    case Enum.to_list(slots) do
-      [] ->
+    case Map.get(running, slot_key) do
+      nil ->
         {:noreply, state}
 
-      slot_entries ->
-        # Apply update to all running slots for this issue_id
-        {updated_running, state} =
-          Enum.reduce(slot_entries, {running, state}, fn {slot_key, running_entry}, {run_acc, st_acc} ->
-            {updated_running_entry, token_delta} = integrate_agent_update(running_entry, update)
+      running_entry ->
+        {updated_running_entry, token_delta} = integrate_agent_update(running_entry, update)
 
-            st_acc =
-              st_acc
-              |> apply_usage_token_delta(token_delta)
-              |> apply_codex_rate_limits(update)
-
-            {Map.put(run_acc, slot_key, updated_running_entry), st_acc}
-          end)
+        state =
+          state
+          |> apply_usage_token_delta(token_delta)
+          |> apply_codex_rate_limits(update)
 
         notify_dashboard()
-        {:noreply, %{state | running: updated_running}}
+        {:noreply, %{state | running: Map.put(running, slot_key, updated_running_entry)}}
     end
   end
 
@@ -1189,6 +1185,10 @@ defmodule SymphonyElixir.Orchestrator do
     })
   end
 
+  defp barrier_linear_client do
+    Application.get_env(:symphony_elixir, :barrier_linear_client, &SymphonyElixir.Linear.Client.graphql/3)
+  end
+
   defp running_entry_session_id(%{session_id: session_id}) when is_binary(session_id),
     do: session_id
 
@@ -1320,17 +1320,21 @@ defmodule SymphonyElixir.Orchestrator do
       ensemble ->
         completed = MapSet.put(ensemble.completed_slots, slot_index)
         effective_size = ensemble.size - MapSet.size(ensemble.failed_slots)
+        # last-writer-wins: the final slot to register determines the mutation.
+        # All slots target the same state so this is safe; if divergence becomes
+        # possible, validate agreement before executing.
         updated = %{ensemble | completed_slots: completed, last_intent: {query, variables, slot_index}}
 
         if MapSet.size(completed) >= effective_size do
           {last_query, last_vars, _} = updated.last_intent
 
-          case SymphonyElixir.Linear.Client.graphql(last_query, last_vars, []) do
+          case barrier_linear_client().(last_query, last_vars, []) do
             {:ok, response} ->
               state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
               {:reply, {:executed, response, updated}, state}
 
             {:error, reason} ->
+              state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
               {:reply, {:error, reason}, state}
           end
         else

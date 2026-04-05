@@ -27,7 +27,7 @@ defmodule SymphonyElixir.ToolServer do
   @spec inject_barrier_metadata(map(), :deferred | :executed, non_neg_integer(), String.t(), map()) :: map()
   def inject_barrier_metadata(response, status, slot_index, _issue_id, ensemble_state)
       when is_map(response) and is_atom(status) and is_integer(slot_index) and is_map(ensemble_state) do
-    completed_slots = Enum.sort(ensemble_state.completed_slots)
+    completed_slots = ensemble_state.completed_slots |> MapSet.to_list() |> Enum.sort()
     ensemble_size = ensemble_state.ensemble_size
 
     barrier = %{
@@ -65,7 +65,7 @@ defmodule SymphonyElixir.ToolServer do
     case execute_passthrough(query, variables, opts) do
       {:ok, response} ->
         ensemble_state = %{
-          completed_slots: [slot_index],
+          completed_slots: MapSet.new([slot_index]),
           ensemble_size: 1
         }
 
