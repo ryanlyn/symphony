@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Claude.Executor do
   @behaviour SymphonyElixir.AgentExecutor
 
   alias SymphonyElixir.Claude.Mcp
-  alias SymphonyElixir.{Config, SSH}
+  alias SymphonyElixir.{Config, SSH, WorkspaceCwd}
 
   @port_line_bytes 1_048_576
 
@@ -25,7 +25,9 @@ defmodule SymphonyElixir.Claude.Executor do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
 
-    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host) do
+    with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
+         {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
+           Mcp.prepare(expanded_workspace, worker_host) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
 
@@ -39,7 +41,7 @@ defmodule SymphonyElixir.Claude.Executor do
         session_id: Map.get(resume_metadata, :session_id),
         turn_timeout_ms: Config.settings!().claude.turn_timeout_ms,
         worker_host: worker_host,
-        workspace: workspace
+        workspace: expanded_workspace
       }
 
       case start_port(base_session, issue) do

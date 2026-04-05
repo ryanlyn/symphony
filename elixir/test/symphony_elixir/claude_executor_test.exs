@@ -261,6 +261,87 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor rejects the workspace root and paths outside workspace root" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-executor-cwd-guard-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      outside_workspace = Path.join(test_root, "outside")
+
+      File.mkdir_p!(workspace_root)
+      File.mkdir_p!(outside_workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:invalid_workspace_cwd, :workspace_root, _path}} =
+               Executor.start_session(workspace_root)
+
+      assert {:error, {:invalid_workspace_cwd, :outside_workspace_root, _path, _root}} =
+               Executor.start_session(outside_workspace)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "claude executor rejects symlink escape cwd paths under the workspace root" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-executor-symlink-cwd-guard-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      outside_workspace = Path.join(test_root, "outside")
+      symlink_workspace = Path.join(workspace_root, "MT-CLAUDE-SYM")
+
+      File.mkdir_p!(workspace_root)
+      File.mkdir_p!(outside_workspace)
+      File.ln_s!(outside_workspace, symlink_workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:invalid_workspace_cwd, :symlink_escape, ^symlink_workspace, _root}} =
+               Executor.start_session(symlink_workspace)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "claude executor rejects invalid remote workspace strings before launch" do
+    assert {:error, {:invalid_workspace_cwd, :empty_remote_workspace, "worker-1"}} =
+             Executor.start_session("   ", worker_host: "worker-1")
+
+    assert {:error, {:invalid_workspace_cwd, :invalid_remote_workspace, "worker-1", "bad\npath"}} =
+             Executor.start_session("bad\npath", worker_host: "worker-1")
+  end
+
+  test "claude executor surfaces unreadable local workspace paths before launch" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-executor-unreadable-cwd-guard-#{System.unique_integer([:positive])}"
+      )
+
+    invalid_segment = String.duplicate("a", 300)
+    unreadable_workspace = Path.join(System.tmp_dir!(), invalid_segment)
+    expanded_workspace = Path.expand(unreadable_workspace)
+
+    try do
+      File.mkdir_p!(workspace_root)
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:invalid_workspace_cwd, :path_unreadable, ^expanded_workspace, :enametoolong}} =
+               Executor.start_session(unreadable_workspace)
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "claude executor fails clearly on unsupported control protocol messages" do
     test_root =
       Path.join(System.tmp_dir!(), "symphony-claude-control-request-#{System.unique_integer([:positive])}")
