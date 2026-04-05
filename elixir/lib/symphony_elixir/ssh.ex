@@ -26,6 +26,13 @@ defmodule SymphonyElixir.SSH do
     end
   end
 
+  @spec write_file(String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
+  def write_file(host, remote_path, contents, opts \\ [])
+      when is_binary(host) and is_binary(remote_path) and is_binary(contents) do
+    run(host, write_file_command(remote_path, contents), opts)
+  end
+
   @spec remote_shell_command(String.t()) :: String.t()
   def remote_shell_command(command) when is_binary(command) do
     "bash -lc " <> shell_escape(command)
@@ -92,6 +99,11 @@ defmodule SymphonyElixir.SSH do
     # IPv6 literals contain ":" already, so we only accept additional ":port"
     # parsing when the host is explicitly bracketed, e.g. "[::1]:2222".
     String.contains?(destination, "[") and String.contains?(destination, "]")
+  end
+
+  defp write_file_command(remote_path, contents)
+       when is_binary(remote_path) and is_binary(contents) do
+    "printf '%s' #{shell_escape(contents)} > #{shell_escape(remote_path)}"
   end
 
   defp shell_escape(value) when is_binary(value) do

@@ -162,6 +162,48 @@ defmodule SymphonyElixir.SSHTest do
              "bash -lc 'printf '\"'\"'hello'\"'\"''"
   end
 
+  test "write_file/4 preserves exact contents and does not execute payload lines" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-write-file-test-#{System.unique_integer([:positive])}")
+    trace_file = Path.join(test_root, "ssh.trace")
+    remote_path = Path.join(test_root, "remote.txt")
+    pwned_path = Path.join(test_root, "pwned")
+    previous_path = System.get_env("PATH")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end)
+
+    install_fake_ssh!(test_root, trace_file, """
+    #!/bin/sh
+    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
+    last=''
+    for arg in "$@"; do
+      last="$arg"
+    done
+    sh -lc "$last"
+    """)
+
+    payload =
+      Enum.join(
+        [
+          "first line",
+          "__SYMPHONY_SSH_WRITE_PAYLOAD__",
+          "touch #{pwned_path}",
+          "quote: 'still literal'",
+          "last line"
+        ],
+        "\n"
+      )
+
+    assert {:ok, {"", 0}} = SSH.write_file("localhost", remote_path, payload)
+
+    wait_for_trace!(trace_file)
+
+    assert File.read!(remote_path) == payload
+    refute File.exists?(pwned_path)
+  end
+
   defp install_fake_ssh!(test_root, trace_file, script \\ nil) do
     fake_bin_dir = Path.join(test_root, "bin")
     fake_ssh = Path.join(fake_bin_dir, "ssh")
