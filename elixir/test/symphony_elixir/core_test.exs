@@ -549,9 +549,59 @@ defmodule SymphonyElixir.CoreTest do
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
-    assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
+
+    assert %{
+             attempt: 1,
+             retry_kind: :continuation,
+             failure_attempt: 0,
+             continuation_attempt: 1,
+             due_at_ms: due_at_ms
+           } = state.retry_attempts[issue_id]
+
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert_due_in_range(due_at_ms, 300, 1_100)
+  end
+
+  test "normal worker exit increments continuation retry attempts separately" do
+    issue_id = "issue-resume-progressive"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :ContinuationProgressiveOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-558A",
+      retry_attempt: 4,
+      continuation_attempt: 2,
+      issue: %Issue{id: issue_id, identifier: "MT-558A", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+
+    assert %{
+             attempt: 3,
+             retry_kind: :continuation,
+             failure_attempt: 4,
+             continuation_attempt: 3
+           } = :sys.get_state(pid).retry_attempts[issue_id]
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -588,10 +638,18 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+    assert %{
+             attempt: 3,
+             retry_kind: :failure,
+             failure_attempt: 3,
+             continuation_attempt: 0,
+             due_at_ms: due_at_ms,
+             identifier: "MT-559",
+             error: "agent exited: :boom"
+           } =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert_due_in_range(due_at_ms, 38_500, 40_500)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -627,7 +685,15 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
+    assert %{
+             attempt: 1,
+             retry_kind: :failure,
+             failure_attempt: 1,
+             continuation_attempt: 0,
+             due_at_ms: due_at_ms,
+             identifier: "MT-560",
+             error: "agent exited: :boom"
+           } =
              state.retry_attempts[issue_id]
 
     assert_due_in_range(due_at_ms, 9_000, 10_500)
@@ -653,6 +719,9 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{
         issue_id => %{
           attempt: 2,
+          retry_kind: :failure,
+          failure_attempt: 2,
+          continuation_attempt: 0,
           timer_ref: nil,
           retry_token: current_retry_token,
           due_at_ms: System.monotonic_time(:millisecond) + 30_000,
@@ -667,10 +736,124 @@ defmodule SymphonyElixir.CoreTest do
 
     assert %{
              attempt: 2,
+             retry_kind: :failure,
+             failure_attempt: 2,
+             continuation_attempt: 0,
              retry_token: ^current_retry_token,
              identifier: "MT-561",
              error: "agent exited: :boom"
            } = :sys.get_state(pid).retry_attempts[issue_id]
+  end
+
+  test "abnormal worker exit stops scheduling after max_retries" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 3)
+
+    issue_id = "issue-crash-exhausted"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :CrashRetryExhaustedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-559A",
+      retry_attempt: 3,
+      issue: %Issue{id: issue_id, identifier: "MT-559A", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :boom})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    refute MapSet.member?(state.claimed, issue_id)
+    assert MapSet.member?(state.completed, issue_id)
+  end
+
+  test "normal worker exit stops scheduling after max_retries continuation attempts" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 3)
+
+    issue_id = "issue-resume-exhausted"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :ContinuationRetryExhaustedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-558B",
+      retry_attempt: 2,
+      continuation_attempt: 3,
+      issue: %Issue{id: issue_id, identifier: "MT-558B", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    refute MapSet.member?(state.claimed, issue_id)
+    assert MapSet.member?(state.completed, issue_id)
+  end
+
+  test "completed issues are not redispatched by normal polling" do
+    issue = %Issue{
+      id: "issue-exhausted",
+      identifier: "MT-558C",
+      title: "Already exhausted",
+      state: "In Progress",
+      labels: [],
+      blocked_by: []
+    }
+
+    state = %Orchestrator.State{
+      poll_interval_ms: 30_000,
+      max_concurrent_agents: 1,
+      next_poll_due_at_ms: nil,
+      poll_check_in_progress: false,
+      tick_timer_ref: nil,
+      tick_token: nil,
+      running: %{},
+      completed: MapSet.new([issue.id]),
+      claimed: MapSet.new(),
+      retry_attempts: %{},
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      codex_rate_limits: nil
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
   test "manual refresh coalesces repeated requests and ignores superseded ticks" do

@@ -405,6 +405,10 @@ Fields:
 - `max_concurrent_agents` (integer or string integer)
   - Default: `10`
   - Changes should be re-applied at runtime and affect subsequent dispatch decisions.
+- `max_retries` (integer or string integer)
+  - Default: `10`
+  - Applies independently to failure retries and continuation retries.
+  - Changes should be re-applied at runtime and affect future retry scheduling.
 - `max_retry_backoff_ms` (integer or string integer)
   - Default: `300000` (5 minutes)
   - Changes should be re-applied at runtime and affect future retry scheduling.
@@ -570,6 +574,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
+- `agent.max_retries`: integer, default `10`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
@@ -652,13 +657,14 @@ Distinct terminal reasons are important because retry logic and logs differ.
 - `Worker Exit (normal)`
   - Remove running entry.
   - Update aggregate runtime totals.
-  - Schedule continuation retry (attempt `1`) after the worker exhausts or finishes its in-process
-    turn loop.
+  - Schedule continuation retry after the worker exhausts or finishes its in-process turn loop.
+  - Continuation retry attempts increment separately from failure retries and are capped by
+    `agent.max_retries`.
 
 - `Worker Exit (abnormal)`
   - Remove running entry.
   - Update aggregate runtime totals.
-  - Schedule exponential-backoff retry.
+  - Schedule exponential-backoff retry up to `agent.max_retries`.
 
 - `Codex Update Event`
   - Update live session fields, token counters, and rate limits.
@@ -751,6 +757,8 @@ Backoff formula:
 - Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
+- Both retry kinds stop scheduling once their independent attempt counter would exceed
+  `agent.max_retries`.
 
 Retry handling behavior:
 
@@ -1998,8 +2006,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace
 - Reconciliation with no running issues is a no-op
-- Normal worker exit schedules a short continuation retry (attempt 1)
+- Normal worker exit schedules a short continuation retry with a separately tracked attempt counter
 - Abnormal worker exit increments retries with 10s-based exponential backoff
+- Retry scheduling stops after `agent.max_retries` for both failure and continuation paths
 - Retry backoff cap uses configured `agent.max_retry_backoff_ms`
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
@@ -2093,6 +2102,7 @@ Use the same validation profiles as Section 17:
 - Codex launch command config (`codex.command`, default `codex app-server`)
 - Strict prompt rendering with `issue` and `attempt` variables
 - Exponential retry queue with continuation retries after normal exit
+- Configurable retry cap (`agent.max_retries`, default 10)
 - Configurable retry backoff cap (`agent.max_retry_backoff_ms`, default 5m)
 - Reconciliation that stops runs on terminal/non-active tracker states
 - Workspace cleanup for terminal issues (startup sweep + active transition)
