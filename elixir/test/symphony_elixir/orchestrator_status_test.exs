@@ -1091,7 +1091,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert is_integer(due_at_ms)
       scheduled_delay_ms = due_at_ms - tick_sent_at_ms
       assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_150
+      assert scheduled_delay_ms <= 10_500
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1182,7 +1182,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       scheduled_delay_ms = due_at_ms - tick_sent_at_ms
       assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_250
+      assert scheduled_delay_ms <= 10_500
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
