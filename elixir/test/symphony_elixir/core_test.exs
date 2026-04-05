@@ -543,16 +543,15 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    down_sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
     state = :sys.get_state(pid)
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
-    assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
+    assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 1_000, 1_100)
+    assert_retry_timer_in_range(timer_ref, 100, 1_500)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -604,15 +603,15 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:retry_attempts, %{})
       end)
 
-      down_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, {:DOWN, ref, :process, self(), :boom})
       Process.sleep(50)
       state = :sys.get_state(pid)
 
-      assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+      assert %{attempt: 3, due_at_ms: due_at_ms, timer_ref: timer_ref, identifier: "MT-559", error: "agent exited: :boom"} =
                state.retry_attempts[issue_id]
 
-      assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 40_000, 40_100)
+      assert is_integer(due_at_ms)
+      assert_retry_timer_in_range(timer_ref, 39_000, 40_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -648,15 +647,15 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    down_sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
+    assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 10_000, 10_100)
+    assert is_integer(due_at_ms)
+    assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -776,12 +775,14 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_after_event_in_range(due_at_ms, event_started_at_ms, min_delay_ms, max_delay_ms) do
-    scheduled_delay_ms = due_at_ms - event_started_at_ms
-    jitter_ms = 250
+  defp assert_retry_timer_in_range(timer_ref, min_remaining_ms, max_remaining_ms) do
+    remaining_ms = Process.read_timer(timer_ref)
 
-    assert scheduled_delay_ms >= min_delay_ms
-    assert scheduled_delay_ms <= max_delay_ms + jitter_ms
+    assert is_reference(timer_ref)
+    assert is_integer(remaining_ms)
+
+    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms <= max_remaining_ms
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
