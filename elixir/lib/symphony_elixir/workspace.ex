@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Workspace do
   alias SymphonyElixir.{Config, PathSafety, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
+  @remote_workspace_validation_marker "__SYMPHONY_WORKSPACE_VALIDATION__"
 
   @type worker_host :: String.t() | nil
 
@@ -106,22 +107,28 @@ defmodule SymphonyElixir.Workspace do
   end
 
   def remove(workspace, worker_host) when is_binary(worker_host) do
-    maybe_run_before_remove_hook(workspace, worker_host)
+    with :ok <- validate_workspace_path(workspace, worker_host),
+         :ok <- validate_remote_remove_path(workspace, worker_host) do
+      maybe_run_before_remove_hook(workspace, worker_host)
 
-    script =
-      [
-        remote_shell_assign("workspace", workspace),
-        "rm -rf \"$workspace\""
-      ]
-      |> Enum.join("\n")
+      script =
+        [
+          remote_shell_assign("workspace", workspace),
+          "rm -rf \"$workspace\""
+        ]
+        |> Enum.join("\n")
 
-    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
-      {:ok, {_output, 0}} ->
-        {:ok, []}
+      case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
+        {:ok, {_output, 0}} ->
+          {:ok, []}
 
-      {:ok, {output, status}} ->
-        {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
+        {:ok, {output, status}} ->
+          {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
 
+        {:error, reason} ->
+          {:error, reason, ""}
+      end
+    else
       {:error, reason} ->
         {:error, reason, ""}
     end
@@ -392,8 +399,46 @@ defmodule SymphonyElixir.Workspace do
       String.contains?(workspace, ["\n", "\r", <<0>>]) ->
         {:error, {:workspace_path_unreadable, workspace, :invalid_characters}}
 
+      Enum.any?(Path.split(workspace), &(&1 in [".", ".."])) ->
+        {:error, {:workspace_path_unreadable, workspace, :unsafe_segments}}
+
       true ->
         :ok
+    end
+  end
+
+  defp validate_remote_remove_path(workspace, worker_host)
+       when is_binary(workspace) and is_binary(worker_host) do
+    script =
+      [
+        remote_shell_assign("root", Config.settings!().workspace.root),
+        remote_shell_assign("workspace", workspace),
+        "case \"$workspace\" in",
+        "  \"$root\") printf '%s\\tequals_root\\t%s\\t%s\\n' '#{@remote_workspace_validation_marker}' \"$workspace\" \"$root\"; exit 201 ;;",
+        "  \"$root\"/*) printf '%s\\tok\\t%s\\t%s\\n' '#{@remote_workspace_validation_marker}' \"$workspace\" \"$root\" ;;",
+        "  *) printf '%s\\toutside_root\\t%s\\t%s\\n' '#{@remote_workspace_validation_marker}' \"$workspace\" \"$root\"; exit 202 ;;",
+        "esac"
+      ]
+      |> Enum.join("\n")
+
+    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
+      {:ok, {output, status}} ->
+        case parse_remote_remove_validation_output(output) do
+          :ok when status == 0 ->
+            :ok
+
+          {:error, {:workspace_equals_root, _workspace, _root} = reason} ->
+            {:error, reason}
+
+          {:error, {:workspace_outside_root, _workspace, _root} = reason} ->
+            {:error, reason}
+
+          _ ->
+            {:error, {:workspace_remove_failed, worker_host, status, output}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -429,6 +474,37 @@ defmodule SymphonyElixir.Workspace do
 
       _ ->
         {:error, {:workspace_prepare_failed, :invalid_output, output}}
+    end
+  end
+
+  defp parse_remote_remove_validation_output(output) do
+    lines = String.split(IO.iodata_to_binary(output), "\n", trim: true)
+
+    payload =
+      Enum.find_value(lines, fn line ->
+        case String.split(line, "\t", parts: 4) do
+          [@remote_workspace_validation_marker, status, workspace, root]
+          when status in ["ok", "equals_root", "outside_root"] and workspace != "" and
+                 root != "" ->
+            {status, workspace, root}
+
+          _ ->
+            nil
+        end
+      end)
+
+    case payload do
+      {"ok", _workspace, _root} ->
+        :ok
+
+      {"equals_root", workspace, root} ->
+        {:error, {:workspace_equals_root, workspace, root}}
+
+      {"outside_root", workspace, root} ->
+        {:error, {:workspace_outside_root, workspace, root}}
+
+      _ ->
+        {:error, {:invalid_remote_workspace_validation_output, output}}
     end
   end
 
