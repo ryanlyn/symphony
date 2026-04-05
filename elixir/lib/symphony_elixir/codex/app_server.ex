@@ -1056,7 +1056,14 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"
-    Port.command(port, line)
+
+    try do
+      Port.command(port, line)
+    rescue
+      ArgumentError ->
+        Logger.warning("Codex send_message failed: port is dead")
+        :ok
+    end
   end
 
   defp needs_input?(method, payload)
