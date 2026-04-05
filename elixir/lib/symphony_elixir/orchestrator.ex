@@ -638,15 +638,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp unstarted_issue_blocked_by_non_terminal?(_issue, _terminal_states), do: false
 
-  defp unstarted_issue_state?(_state_name, state_type) when is_binary(state_type) do
-    normalize_issue_state(state_type) == "unstarted"
+  defp unstarted_issue_state?(state_name, state_type) when is_binary(state_name) do
+    case state_type do
+      state_type when is_binary(state_type) -> normalize_issue_state(state_type) == "unstarted"
+      _ -> normalize_issue_state(state_name) == "todo"
+    end
   end
-
-  defp unstarted_issue_state?(state_name, _state_type) when is_binary(state_name) do
-    normalize_issue_state(state_name) == "todo"
-  end
-
-  defp unstarted_issue_state?(_state_name, _state_type), do: false
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     MapSet.member?(terminal_states, normalize_issue_state(state_name))
