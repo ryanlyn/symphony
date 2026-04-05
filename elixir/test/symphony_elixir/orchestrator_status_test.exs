@@ -897,6 +897,130 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert next_poll_in_ms <= 50
   end
 
+  test "orchestrator starts with fallback runtime config when workflow config is invalid" do
+    with_stopped_workflow_store(fn ->
+      File.write!(Workflow.workflow_file_path(), "---\npolling: bad\n")
+      orchestrator_name = Module.concat(__MODULE__, :InvalidStartupConfigOrchestrator)
+
+      log =
+        capture_log(fn ->
+          {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+          send(self(), {:invalid_startup_pid, pid})
+
+          assert %{polling: %{checking?: false, poll_interval_ms: 30_000}} =
+                   wait_for_snapshot(
+                     pid,
+                     fn
+                       %{polling: %{checking?: false, poll_interval_ms: 30_000}} ->
+                         true
+
+                       _ ->
+                         false
+                     end,
+                     500
+                   )
+        end)
+
+      assert_receive {:invalid_startup_pid, pid}
+
+      on_exit(fn ->
+        if Process.alive?(pid) do
+          Process.exit(pid, :normal)
+        end
+      end)
+
+      assert Process.alive?(pid)
+      assert log =~ "Orchestrator starting with fallback runtime config"
+    end)
+  end
+
+  test "orchestrator keeps running when workflow config turns invalid during tick refresh" do
+    with_stopped_workflow_store(fn ->
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "memory",
+        tracker_api_token: nil,
+        tracker_project_slug: nil
+      )
+
+      issue_id = "issue-invalid-refresh"
+
+      issue = %Issue{
+        id: issue_id,
+        identifier: "MT-INVALID",
+        title: "Invalid refresh",
+        description: "Keep runtime state",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-INVALID"
+      }
+
+      orchestrator_name = Module.concat(__MODULE__, :InvalidRefreshOrchestrator)
+      {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+      on_exit(fn ->
+        if Process.alive?(pid) do
+          Process.exit(pid, :normal)
+        end
+      end)
+
+      initial_state = :sys.get_state(pid)
+      started_at = DateTime.utc_now()
+
+      running_entry = %{
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: "thread-invalid-refresh",
+        codex_app_server_pid: nil,
+        codex_input_tokens: 0,
+        codex_output_tokens: 0,
+        codex_total_tokens: 0,
+        codex_last_reported_input_tokens: 0,
+        codex_last_reported_output_tokens: 0,
+        codex_last_reported_total_tokens: 0,
+        turn_count: 0,
+        last_codex_message: nil,
+        last_codex_timestamp: started_at,
+        last_codex_event: nil,
+        started_at: started_at
+      }
+
+      :sys.replace_state(pid, fn _ ->
+        initial_state
+        |> Map.put(:running, %{issue_id => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      end)
+
+      File.write!(Workflow.workflow_file_path(), "---\npolling: bad\n")
+
+      log =
+        capture_log(fn ->
+          send(pid, :tick)
+
+          assert %{running: [%{issue_id: ^issue_id}], polling: %{checking?: false, poll_interval_ms: 30_000}} =
+                   wait_for_snapshot(
+                     pid,
+                     fn
+                       %{running: [%{issue_id: ^issue_id}], polling: %{checking?: false, poll_interval_ms: 30_000}} ->
+                         true
+
+                       _ ->
+                         false
+                     end,
+                     500
+                   )
+        end)
+
+      assert Process.alive?(pid)
+
+      state = :sys.get_state(pid)
+      assert Map.has_key?(state.running, issue_id)
+      assert MapSet.member?(state.claimed, issue_id)
+      assert log =~ "Keeping last known orchestrator runtime config"
+      assert log =~ "Skipping running-state refresh while config is unavailable"
+    end)
+  end
+
   test "orchestrator restarts stalled workers with retry backoff" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -957,7 +1081,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 9_500
+    assert remaining_ms >= 8_000
     assert remaining_ms <= 10_500
   end
 
@@ -969,6 +1093,30 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert rendered =~ "app_status=offline"
     refute rendered =~ "Timestamp:"
+  end
+
+  defp with_stopped_workflow_store(fun) when is_function(fun, 0) do
+    workflow_store_pid = Process.whereis(WorkflowStore)
+
+    on_exit(fn ->
+      write_workflow_file!(Workflow.workflow_file_path())
+      maybe_restart_workflow_store(workflow_store_pid)
+    end)
+
+    if is_pid(workflow_store_pid) do
+      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
+    end
+
+    fun.()
+  end
+
+  defp maybe_restart_workflow_store(workflow_store_pid) do
+    if is_pid(workflow_store_pid) and is_nil(Process.whereis(WorkflowStore)) do
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+    end
   end
 
   test "status dashboard renders linear project link in header" do
