@@ -59,6 +59,7 @@ defmodule SymphonyElixir.TestSupport do
 
   def write_workflow_file!(path, overrides \\ []) do
     workflow = workflow_content(overrides)
+    File.mkdir_p!(Path.dirname(path))
     File.write!(path, workflow)
 
     if Process.whereis(SymphonyElixir.WorkflowStore) do
