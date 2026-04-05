@@ -464,17 +464,19 @@ defmodule SymphonyElixir.Workspace do
 
   defp validate_remote_workspace_containment(expanded_workspace, expanded_root)
        when is_binary(expanded_workspace) and is_binary(expanded_root) do
-    expanded_root_prefix = expanded_root <> "/"
+    normalized_workspace = Path.expand(expanded_workspace)
+    normalized_root = Path.expand(expanded_root)
+    normalized_root_prefix = normalized_root <> "/"
 
     cond do
-      expanded_workspace == expanded_root ->
-        {:error, {:workspace_equals_root, expanded_workspace, expanded_root}}
+      normalized_workspace == normalized_root ->
+        {:error, {:workspace_equals_root, normalized_workspace, normalized_root}}
 
-      String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
-        {:ok, expanded_workspace}
+      String.starts_with?(normalized_workspace <> "/", normalized_root_prefix) ->
+        {:ok, normalized_workspace}
 
       true ->
-        {:error, {:workspace_outside_root, expanded_workspace, expanded_root}}
+        {:error, {:workspace_outside_root, normalized_workspace, normalized_root}}
     end
   end
 
