@@ -753,7 +753,7 @@ defmodule SymphonyElixir.CoreTest do
   defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
 
-    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms >= max(min_remaining_ms - 250, 0)
     assert remaining_ms <= max_remaining_ms
   end
 

@@ -315,10 +315,6 @@ defmodule SymphonyElixir.Orchestrator do
         {:error, reason} ->
           Logger.debug("Skipping running-state refresh while config is unavailable: #{inspect(reason)}")
           state
-
-        other ->
-          Logger.debug("Failed to refresh running issue states: #{inspect(other)}; keeping active workers")
-          state
       end
     end
   end
@@ -600,12 +596,6 @@ defmodule SymphonyElixir.Orchestrator do
     limit > used
   end
 
-  defp state_slots_available?(%Issue{state: issue_state}, running) when is_map(running) do
-    limit = max_concurrent_agents_for_state(nil, issue_state)
-    used = running_issue_count_for_state(running, issue_state)
-    limit > used
-  end
-
   defp state_slots_available?(_issue, _running), do: false
 
   defp running_issue_count_for_state(running, issue_state) when is_map(running) do
@@ -676,25 +666,25 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp terminal_state_set(%State{} = state) do
-    state.terminal_states
+    (state.terminal_states || current_runtime_config().terminal_states)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
   end
 
   defp terminal_state_set do
-    terminal_state_set(default_runtime_state())
+    terminal_state_set(current_runtime_state())
   end
 
   defp active_state_set(%State{} = state) do
-    state.active_states
+    (state.active_states || current_runtime_config().active_states)
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
   end
 
   defp active_state_set do
-    active_state_set(default_runtime_state())
+    active_state_set(current_runtime_state())
   end
 
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
@@ -786,17 +776,7 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(issue_id) and is_function(issue_fetcher, 1) do
     with :ok <- Config.validate!(),
          {:ok, issues} <- issue_fetcher.([issue_id]) do
-      case issues do
-        [%Issue{} = refreshed_issue | _] ->
-          if retry_candidate_issue?(refreshed_issue, terminal_states) do
-            {:ok, refreshed_issue}
-          else
-            {:skip, refreshed_issue}
-          end
-
-        [] ->
-          {:skip, :missing}
-      end
+      handle_revalidated_issue_fetch(issues, terminal_states)
     else
       {:error, reason} ->
         {:error, reason}
@@ -804,6 +784,16 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp revalidate_issue_for_dispatch(issue, _issue_fetcher, _terminal_states), do: {:ok, issue}
+
+  defp handle_revalidated_issue_fetch([%Issue{} = refreshed_issue | _], terminal_states) do
+    if retry_candidate_issue?(refreshed_issue, terminal_states) do
+      {:ok, refreshed_issue}
+    else
+      {:skip, refreshed_issue}
+    end
+  end
+
+  defp handle_revalidated_issue_fetch([], _terminal_states), do: {:skip, :missing}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{
@@ -1014,7 +1004,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp select_worker_host(%State{} = state, preferred_worker_host) do
-    case state.worker_ssh_hosts || @default_worker_ssh_hosts do
+    case state.worker_ssh_hosts || current_runtime_config().worker_ssh_hosts || @default_worker_ssh_hosts do
       [] ->
         nil
 
@@ -1066,7 +1056,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp worker_host_slots_available?(%State{} = state, worker_host) when is_binary(worker_host) do
-    case state.worker_max_concurrent_agents_per_host do
+    case state.worker_max_concurrent_agents_per_host ||
+           current_runtime_config().worker_max_concurrent_agents_per_host do
       limit when is_integer(limit) and limit > 0 ->
         running_worker_host_count(state.running, worker_host) < limit
 
@@ -1374,9 +1365,16 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp default_runtime_state do
+  defp current_runtime_state do
     %State{}
-    |> apply_runtime_config(default_runtime_config())
+    |> apply_runtime_config(current_runtime_config())
+  end
+
+  defp current_runtime_config do
+    case Config.settings() do
+      {:ok, config} -> runtime_config(config)
+      {:error, _reason} -> default_runtime_config()
+    end
   end
 
   defp apply_runtime_config(%State{} = state, runtime_config) when is_map(runtime_config) do
@@ -1396,11 +1394,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
+    runtime_config = current_runtime_config()
 
     Map.get(
-      state.max_concurrent_agents_by_state || %{},
+      state.max_concurrent_agents_by_state || runtime_config.max_concurrent_agents_by_state || %{},
       normalized_state,
-      state.max_concurrent_agents || @default_max_concurrent_agents
+      state.max_concurrent_agents || runtime_config.max_concurrent_agents || @default_max_concurrent_agents
     )
   end
 

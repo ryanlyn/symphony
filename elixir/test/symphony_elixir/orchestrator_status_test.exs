@@ -1681,13 +1681,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     on_exit(fn ->
       write_workflow_file!(Workflow.workflow_file_path())
-
-      if is_pid(workflow_store_pid) and is_nil(Process.whereis(WorkflowStore)) do
-        case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-        end
-      end
+      maybe_restart_workflow_store(workflow_store_pid)
     end)
 
     if is_pid(workflow_store_pid) do
@@ -1695,6 +1689,15 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     end
 
     fun.()
+  end
+
+  defp maybe_restart_workflow_store(workflow_store_pid) do
+    if is_pid(workflow_store_pid) and is_nil(Process.whereis(WorkflowStore)) do
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+    end
   end
 
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
