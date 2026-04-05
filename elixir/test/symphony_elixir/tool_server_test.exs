@@ -157,7 +157,7 @@ defmodule SymphonyElixir.ToolServerTest do
       response = %{"data" => %{"issueUpdate" => %{"success" => true}}}
 
       ensemble_state = %{
-        completed_slots: [0, 2],
+        completed_slots: MapSet.new([0, 2]),
         ensemble_size: 3
       }
 
@@ -176,7 +176,7 @@ defmodule SymphonyElixir.ToolServerTest do
       response = %{"data" => %{"issueUpdate" => %{"success" => true}}}
 
       ensemble_state = %{
-        completed_slots: [0, 1, 2],
+        completed_slots: MapSet.new([0, 1, 2]),
         ensemble_size: 3
       }
 
@@ -195,7 +195,7 @@ defmodule SymphonyElixir.ToolServerTest do
         "extensions" => %{"requestId" => "req-1"}
       }
 
-      ensemble_state = %{completed_slots: [0], ensemble_size: 1}
+      ensemble_state = %{completed_slots: MapSet.new([0]), ensemble_size: 1}
 
       result = ToolServer.inject_barrier_metadata(response, :executed, 0, "issue-1", ensemble_state)
 

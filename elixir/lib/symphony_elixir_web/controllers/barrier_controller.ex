@@ -13,7 +13,9 @@ defmodule SymphonyElixirWeb.BarrierController do
   alias SymphonyElixirWeb.Endpoint
 
   @spec check(Conn.t(), map()) :: Conn.t()
-  def check(conn, %{"issue_id" => issue_id, "slot_index" => slot_index, "query" => query, "variables" => variables}) do
+  def check(conn, %{"issue_id" => issue_id, "slot_index" => raw_slot_index, "query" => query, "variables" => variables}) do
+    slot_index = ensure_integer(raw_slot_index)
+
     case GenServer.call(
            orchestrator(),
            {:barrier_register, issue_id, slot_index, query, variables}
@@ -60,4 +62,7 @@ defmodule SymphonyElixirWeb.BarrierController do
   defp orchestrator do
     Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
   end
+
+  defp ensure_integer(value) when is_integer(value), do: value
+  defp ensure_integer(value) when is_binary(value), do: String.to_integer(value)
 end
