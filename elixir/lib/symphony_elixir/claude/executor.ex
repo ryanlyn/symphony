@@ -26,7 +26,8 @@ defmodule SymphonyElixir.Claude.Executor do
     worker_host = Keyword.get(opts, :worker_host)
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
-         {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(expanded_workspace, worker_host) do
+         {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
+           Mcp.prepare(expanded_workspace, worker_host) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
 

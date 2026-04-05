@@ -320,6 +320,28 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
              Executor.start_session("bad\npath", worker_host: "worker-1")
   end
 
+  test "claude executor surfaces unreadable local workspace paths before launch" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-executor-unreadable-cwd-guard-#{System.unique_integer([:positive])}"
+      )
+
+    invalid_segment = String.duplicate("a", 300)
+    unreadable_workspace = Path.join(System.tmp_dir!(), invalid_segment)
+    expanded_workspace = Path.expand(unreadable_workspace)
+
+    try do
+      File.mkdir_p!(workspace_root)
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:error, {:invalid_workspace_cwd, :path_unreadable, ^expanded_workspace, :enametoolong}} =
+               Executor.start_session(unreadable_workspace)
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "claude executor fails clearly on unsupported control protocol messages" do
     test_root =
       Path.join(System.tmp_dir!(), "symphony-claude-control-request-#{System.unique_integer([:positive])}")
