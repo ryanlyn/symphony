@@ -220,6 +220,40 @@ defmodule SymphonyElixir.CoreTest do
     GenServer.stop(pid)
   end
 
+  test "application restarts downstream children when orchestrator crashes" do
+    previous_server_port_override = Application.get_env(:symphony_elixir, :server_port_override)
+
+    Application.put_env(:symphony_elixir, :server_port_override, 0)
+
+    on_exit(fn ->
+      stop_default_http_server()
+      restore_app_env(:server_port_override, previous_server_port_override)
+    end)
+
+    assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
+
+    before_children = supervisor_child_pids()
+    orchestrator_pid = Map.fetch!(before_children, SymphonyElixir.Orchestrator)
+    http_server_pid = Map.fetch!(before_children, SymphonyElixir.HttpServer)
+    dashboard_pid = Map.fetch!(before_children, SymphonyElixir.StatusDashboard)
+    orchestrator_ref = Process.monitor(orchestrator_pid)
+
+    Process.exit(orchestrator_pid, :kill)
+
+    assert_receive {:DOWN, ^orchestrator_ref, :process, ^orchestrator_pid, :killed}, 1_000
+
+    assert eventually(fn ->
+             after_children = supervisor_child_pids()
+             new_orchestrator_pid = Map.get(after_children, SymphonyElixir.Orchestrator)
+             new_http_server_pid = Map.get(after_children, SymphonyElixir.HttpServer)
+             new_dashboard_pid = Map.get(after_children, SymphonyElixir.StatusDashboard)
+
+             is_pid(new_orchestrator_pid) and is_pid(new_http_server_pid) and is_pid(new_dashboard_pid) and
+               new_orchestrator_pid != orchestrator_pid and new_http_server_pid != http_server_pid and
+               new_dashboard_pid != dashboard_pid
+           end)
+  end
+
   test "linear issue state reconciliation fetch with no running issues is a no-op" do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
   end
@@ -782,6 +816,25 @@ defmodule SymphonyElixir.CoreTest do
 
     assert scheduled_delay_ms >= min_delay_ms
     assert scheduled_delay_ms <= max_delay_ms + jitter_ms
+  end
+
+  defp supervisor_child_pids do
+    Supervisor.which_children(SymphonyElixir.Supervisor)
+    |> Enum.reduce(%{}, fn {id, pid, _type, _modules}, acc ->
+      Map.put(acc, id, pid)
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 20)
+  defp eventually(fun, attempts) when attempts <= 0, do: fun.()
+
+  defp eventually(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      true
+    else
+      Process.sleep(50)
+      eventually(fun, attempts - 1)
+    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
