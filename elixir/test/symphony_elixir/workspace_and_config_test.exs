@@ -1260,6 +1260,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
       case "$*" in
+        *"__SYMPHONY_WORKSPACE_VALIDATION__"*)
+          printf '%s\\t%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE_VALIDATION__' 'ok' '#{workspace_path}' '/remote/home/.symphony-remote-workspaces'
+          ;;
         *"__SYMPHONY_WORKSPACE__"*)
           printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '#{workspace_path}'
           ;;
@@ -1295,6 +1298,64 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert trace =~ "echo before-remove"
       assert trace =~ "rm -rf"
       assert trace =~ workspace_path
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "remote workspace remove rejects out-of-root paths before hooks or rm" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-remove-validation-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      case "$*" in
+        *"__SYMPHONY_WORKSPACE_VALIDATION__"*)
+          printf '%s\\t%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE_VALIDATION__' 'outside_root' '/tmp/outside-root' '/remote/home/.symphony-remote-workspaces'
+          exit 202
+          ;;
+      esac
+
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "~/.symphony-remote-workspaces",
+        worker_ssh_hosts: ["worker-01:2200"],
+        hook_before_remove: "echo before-remove"
+      )
+
+      assert {:error, {:workspace_outside_root, "/tmp/outside-root", "/remote/home/.symphony-remote-workspaces"}, ""} =
+               Workspace.remove("/tmp/outside-root", "worker-01:2200")
+
+      trace = File.read!(trace_file)
+      assert trace =~ "__SYMPHONY_WORKSPACE_VALIDATION__"
+      refute trace =~ "echo before-remove"
+      refute trace =~ "rm -rf"
     after
       File.rm_rf(test_root)
     end
