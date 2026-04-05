@@ -17,6 +17,7 @@ defmodule SymphonyElixir.CoreTest do
     assert config.tracker.terminal_states == ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
     assert config.tracker.assignee == nil
     assert config.agent.max_turns == 20
+    assert config.agent.max_retries == 10
 
     write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: "invalid")
 
@@ -36,6 +37,13 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), max_turns: 5)
     assert Config.settings!().agent.max_turns == 5
+
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 0)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.max_retries"
+
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 6)
+    assert Config.settings!().agent.max_retries == 6
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: "Todo,  Review,")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
@@ -555,6 +563,55 @@ defmodule SymphonyElixir.CoreTest do
     assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 1_000, 1_100)
   end
 
+  test "normal worker exit preserves continuation retry count separately" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 5)
+
+    issue_id = "issue-resume-late"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :ContinuationRetryCountOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-558B",
+      continuation_retry_attempt: 2,
+      failure_retry_attempt: 4,
+      issue: %Issue{id: issue_id, identifier: "MT-558B", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    down_sent_at_ms = System.monotonic_time(:millisecond)
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    assert %{
+             attempt: 3,
+             retry_kind: :continuation,
+             continuation_attempt: 3,
+             failure_attempt: 4,
+             due_at_ms: due_at_ms
+           } = state.retry_attempts[issue_id]
+
+    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 40_000, 40_100)
+  end
+
   test "abnormal worker exit increments retry attempt progressively" do
     issue_id = "issue-crash"
     ref = make_ref()
@@ -617,6 +674,87 @@ defmodule SymphonyElixir.CoreTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  test "failure retries stop once agent.max_retries is reached" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 3)
+
+    issue_id = "issue-crash-capped"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :CrashRetryCapOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-559B",
+      failure_retry_attempt: 3,
+      issue: %Issue{id: issue_id, identifier: "MT-559B", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :boom})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    assert MapSet.member?(state.claimed, issue_id)
+  end
+
+  test "continuation retries stop once agent.max_retries is reached" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 3)
+
+    issue_id = "issue-resume-capped"
+    ref = make_ref()
+    orchestrator_name = Module.concat(__MODULE__, :ContinuationRetryCapOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-558C",
+      continuation_retry_attempt: 3,
+      issue: %Issue{id: issue_id, identifier: "MT-558C", state: "In Progress"},
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:retry_attempts, %{})
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.retry_attempts, issue_id)
+    assert MapSet.member?(state.claimed, issue_id)
+    assert MapSet.member?(state.completed, issue_id)
   end
 
   test "first abnormal worker exit waits before retrying" do
