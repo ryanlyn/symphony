@@ -8,6 +8,11 @@ defmodule SymphonyElixir.Linear.Client do
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
+  @graphql_request_timeout_ms 30_000
+  @graphql_request_options [
+    receive_timeout: @graphql_request_timeout_ms,
+    connect_options: [timeout: @graphql_request_timeout_ms]
+  ]
 
   @query """
   query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
@@ -221,6 +226,10 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   @doc false
+  @spec graphql_request_options_for_test() :: keyword()
+  def graphql_request_options_for_test, do: @graphql_request_options
+
+  @doc false
   @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
           {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
@@ -395,11 +404,13 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp post_graphql_request(payload, headers) do
-    Req.post(Config.settings!().tracker.endpoint,
-      headers: headers,
-      json: payload,
-      connect_options: [timeout: 30_000]
-    )
+    options =
+      [
+        headers: headers,
+        json: payload
+      ] ++ @graphql_request_options
+
+    Req.post(Config.settings!().tracker.endpoint, options)
   end
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do

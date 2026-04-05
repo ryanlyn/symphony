@@ -458,6 +458,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
 
+  test "linear client declares explicit graphql request timeouts" do
+    options = Client.graphql_request_options_for_test()
+
+    assert Keyword.fetch!(options, :receive_timeout) == 30_000
+    assert Keyword.fetch!(options, :connect_options) == [timeout: 30_000]
+  end
+
   test "orchestrator sorts dispatch by priority then oldest created_at" do
     issue_same_priority_older = %Issue{
       id: "issue-old-high",
