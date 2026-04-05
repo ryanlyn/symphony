@@ -1,8 +1,6 @@
 defmodule SymphonyElixir.SSH do
   @moduledoc false
 
-  @remote_write_marker "__SYMPHONY_SSH_WRITE_PAYLOAD__"
-
   @spec run(String.t(), String.t(), keyword()) :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
   def run(host, command, opts \\ []) when is_binary(host) and is_binary(command) do
     with {:ok, executable} <- ssh_executable() do
@@ -31,11 +29,11 @@ defmodule SymphonyElixir.SSH do
   @spec write_file(String.t(), Path.t(), iodata(), keyword()) :: :ok | {:error, term()}
   def write_file(host, path, contents, opts \\ [])
       when is_binary(host) and is_binary(path) do
+    contents_binary = IO.iodata_to_binary(contents)
+
     command = """
     mkdir -p #{shell_escape(Path.dirname(path))}
-    cat <<'#{@remote_write_marker}' > #{shell_escape(path)}
-    #{IO.iodata_to_binary(contents)}
-    #{@remote_write_marker}
+    printf '%s' #{shell_escape(contents_binary)} > #{shell_escape(path)}
     #{chmod_command(Keyword.get(opts, :mode), path)}
     """
 
