@@ -570,6 +570,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
+- `agent.max_retries`: integer, default `10`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
@@ -744,13 +745,17 @@ Optional SSH host limit:
 Retry entry creation:
 
 - Cancel any existing retry timer for the same issue.
-- Store `attempt`, `identifier`, `error`, `due_at_ms`, and new timer handle.
+- Track continuation and failure retry counts separately.
+- Stop scheduling once the next attempt would exceed `agent.max_retries`.
+- Store `attempt`, `retry_kind`, `failure_attempt`, `continuation_attempt`, `identifier`, `error`,
+  `due_at_ms`, and new timer handle.
 
 Backoff formula:
 
 - Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
+- Both retry kinds stop once `attempt > agent.max_retries`.
 
 Retry handling behavior:
 
@@ -1906,6 +1911,7 @@ on_retry_timer(issue_id, state):
   candidates = tracker.fetch_candidate_issues()
   if fetch failed:
     return schedule_retry(state, issue_id, retry_entry.attempt + 1, {
+      retry_kind: retry_entry.retry_kind,
       identifier: retry_entry.identifier,
       error: "retry poll failed"
     })
@@ -1998,10 +2004,11 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace
 - Reconciliation with no running issues is a no-op
-- Normal worker exit schedules a short continuation retry (attempt 1)
+- Normal worker exit schedules a short continuation retry and preserves its continuation counter
 - Abnormal worker exit increments retries with 10s-based exponential backoff
+- Failure and continuation retries are capped by `agent.max_retries`
 - Retry backoff cap uses configured `agent.max_retry_backoff_ms`
-- Retry queue entries include attempt, due time, identifier, and error
+- Retry queue entries include attempt kind, per-kind counters, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason
 - If a snapshot API is implemented, it returns running rows, retry rows, token totals, and rate
@@ -2093,6 +2100,7 @@ Use the same validation profiles as Section 17:
 - Codex launch command config (`codex.command`, default `codex app-server`)
 - Strict prompt rendering with `issue` and `attempt` variables
 - Exponential retry queue with continuation retries after normal exit
+- Configurable retry cap (`agent.max_retries`, default 10)
 - Configurable retry backoff cap (`agent.max_retry_backoff_ms`, default 5m)
 - Reconciliation that stops runs on terminal/non-active tracker states
 - Workspace cleanup for terminal issues (startup sweep + active transition)

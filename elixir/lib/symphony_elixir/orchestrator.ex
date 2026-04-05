@@ -135,11 +135,16 @@ defmodule SymphonyElixir.Orchestrator do
             :normal ->
               Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
+              next_attempt = next_retry_attempt_from_running(running_entry, :continuation)
+
               state
               |> complete_issue(issue_id)
-              |> schedule_issue_retry(issue_id, 1, %{
+              |> schedule_issue_retry(issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
                 delay_type: :continuation,
+                retry_kind: :continuation,
+                failure_attempt: retry_attempt_from_running(running_entry, :failure),
+                continuation_attempt: retry_attempt_from_running(running_entry, :continuation),
                 worker_host: Map.get(running_entry, :worker_host),
                 workspace_path: Map.get(running_entry, :workspace_path)
               })
@@ -147,12 +152,15 @@ defmodule SymphonyElixir.Orchestrator do
             _ ->
               Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
-              next_attempt = next_retry_attempt_from_running(running_entry)
+              next_attempt = next_retry_attempt_from_running(running_entry, :failure)
               maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
               schedule_issue_retry(state, issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
                 error: "agent exited: #{inspect(reason)}",
+                retry_kind: :failure,
+                failure_attempt: retry_attempt_from_running(running_entry, :failure),
+                continuation_attempt: retry_attempt_from_running(running_entry, :continuation),
                 worker_host: Map.get(running_entry, :worker_host),
                 workspace_path: Map.get(running_entry, :workspace_path)
               })
@@ -482,14 +490,17 @@ defmodule SymphonyElixir.Orchestrator do
 
       Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{identifier} session_id=#{session_id} elapsed_ms=#{elapsed_ms}; restarting with backoff")
 
-      next_attempt = next_retry_attempt_from_running(running_entry)
+      next_attempt = next_retry_attempt_from_running(running_entry, :failure)
       maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
       state
       |> terminate_running_issue(issue_id, false)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
-        error: "stalled for #{elapsed_ms}ms without agent activity"
+        error: "stalled for #{elapsed_ms}ms without agent activity",
+        retry_kind: :failure,
+        failure_attempt: retry_attempt_from_running(running_entry, :failure),
+        continuation_attempt: retry_attempt_from_running(running_entry, :continuation)
       })
     else
       state
@@ -705,6 +716,7 @@ defmodule SymphonyElixir.Orchestrator do
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+        retry_entry = Map.get(state.retry_attempts, issue.id, %{})
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
@@ -728,6 +740,8 @@ defmodule SymphonyElixir.Orchestrator do
             last_agent_event: nil,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
+            failure_retry_attempt: retry_failure_attempt(retry_entry),
+            continuation_retry_attempt: retry_continuation_attempt(retry_entry),
             started_at: DateTime.utc_now()
           })
 
@@ -740,11 +754,11 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
-        next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
 
-        schedule_issue_retry(state, issue.id, next_attempt, %{
+        schedule_issue_retry(state, issue.id, nil, %{
           identifier: issue.identifier,
           error: "failed to spawn agent: #{inspect(reason)}",
+          retry_kind: :failure,
           worker_host: worker_host
         })
     end
@@ -780,47 +794,64 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
-    previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
-    next_attempt = if is_integer(attempt), do: attempt, else: previous_retry.attempt + 1
-    delay_ms = retry_delay(next_attempt, metadata)
+    previous_retry = Map.get(state.retry_attempts, issue_id, %{})
     old_timer = Map.get(previous_retry, :timer_ref)
-    retry_token = make_ref()
-    due_at_ms = System.monotonic_time(:millisecond) + delay_ms
     identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    retry_kind = pick_retry_kind(previous_retry, metadata)
+    next_attempt = resolve_next_retry_attempt(previous_retry, retry_kind, attempt)
+    delay_type = pick_retry_delay_type(previous_retry, metadata)
+    failure_attempt = next_failure_retry_attempt(previous_retry, metadata, retry_kind, next_attempt)
+    continuation_attempt = next_continuation_retry_attempt(previous_retry, metadata, retry_kind, next_attempt)
 
     if is_reference(old_timer) do
       Process.cancel_timer(old_timer)
     end
 
-    timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+    if next_attempt > Config.settings!().agent.max_retries do
+      Logger.warning("Retry limit reached for issue_id=#{issue_id} issue_identifier=#{identifier} retry_kind=#{retry_kind} max_retries=#{Config.settings!().agent.max_retries}; stopping retries")
 
-    error_suffix = if is_binary(error), do: " error=#{error}", else: ""
+      %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}
+    else
+      delay_ms = retry_delay(next_attempt, Map.put(metadata, :delay_type, delay_type))
+      retry_token = make_ref()
+      due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+      timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+      error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
-    Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+      Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} retry_kind=#{retry_kind} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
 
-    %{
-      state
-      | retry_attempts:
-          Map.put(state.retry_attempts, issue_id, %{
-            attempt: next_attempt,
-            timer_ref: timer_ref,
-            retry_token: retry_token,
-            due_at_ms: due_at_ms,
-            identifier: identifier,
-            error: error,
-            worker_host: worker_host,
-            workspace_path: workspace_path
-          })
-    }
+      %{
+        state
+        | retry_attempts:
+            Map.put(state.retry_attempts, issue_id, %{
+              attempt: next_attempt,
+              retry_kind: retry_kind,
+              failure_attempt: failure_attempt,
+              continuation_attempt: continuation_attempt,
+              delay_type: delay_type,
+              timer_ref: timer_ref,
+              retry_token: retry_token,
+              due_at_ms: due_at_ms,
+              identifier: identifier,
+              error: error,
+              worker_host: worker_host,
+              workspace_path: workspace_path
+            })
+      }
+    end
   end
 
   defp pop_retry_attempt_state(%State{} = state, issue_id, retry_token) when is_reference(retry_token) do
     case Map.get(state.retry_attempts, issue_id) do
       %{attempt: attempt, retry_token: ^retry_token} = retry_entry ->
         metadata = %{
+          retry_kind: Map.get(retry_entry, :retry_kind, :failure),
+          delay_type: Map.get(retry_entry, :delay_type),
+          failure_attempt: retry_failure_attempt(retry_entry),
+          continuation_attempt: retry_continuation_attempt(retry_entry),
           identifier: Map.get(retry_entry, :identifier),
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
@@ -949,10 +980,79 @@ defmodule SymphonyElixir.Orchestrator do
   defp normalize_retry_attempt(attempt) when is_integer(attempt) and attempt > 0, do: attempt
   defp normalize_retry_attempt(_attempt), do: 0
 
-  defp next_retry_attempt_from_running(running_entry) do
-    case Map.get(running_entry, :retry_attempt) do
-      attempt when is_integer(attempt) and attempt > 0 -> attempt + 1
-      _ -> nil
+  defp next_retry_attempt_from_running(running_entry, retry_kind) do
+    retry_attempt_from_running(running_entry, retry_kind) + 1
+  end
+
+  defp retry_attempt_from_running(running_entry, :failure) do
+    case Map.get(running_entry, :failure_retry_attempt) do
+      attempt when is_integer(attempt) and attempt > 0 -> attempt
+      _ -> normalize_retry_attempt(Map.get(running_entry, :retry_attempt))
+    end
+  end
+
+  defp retry_attempt_from_running(running_entry, :continuation) do
+    case Map.get(running_entry, :continuation_retry_attempt) do
+      attempt when is_integer(attempt) and attempt > 0 -> attempt
+      _ -> normalize_retry_attempt(Map.get(running_entry, :retry_attempt))
+    end
+  end
+
+  defp resolve_next_retry_attempt(previous_retry, retry_kind, attempt) do
+    case attempt do
+      attempt when is_integer(attempt) and attempt > 0 ->
+        attempt
+
+      _ ->
+        retry_attempt_for_kind(previous_retry, retry_kind) + 1
+    end
+  end
+
+  defp retry_attempt_for_kind(retry_entry, :failure), do: retry_failure_attempt(retry_entry)
+  defp retry_attempt_for_kind(retry_entry, :continuation), do: retry_continuation_attempt(retry_entry)
+
+  defp retry_failure_attempt(retry_entry) when is_map(retry_entry) do
+    case Map.get(retry_entry, :failure_attempt) do
+      attempt when is_integer(attempt) and attempt > 0 -> attempt
+      _ -> 0
+    end
+  end
+
+  defp retry_failure_attempt(_retry_entry), do: 0
+
+  defp retry_continuation_attempt(retry_entry) when is_map(retry_entry) do
+    case Map.get(retry_entry, :continuation_attempt) do
+      attempt when is_integer(attempt) and attempt > 0 -> attempt
+      _ -> 0
+    end
+  end
+
+  defp retry_continuation_attempt(_retry_entry), do: 0
+
+  defp next_failure_retry_attempt(_previous_retry, _metadata, :failure, next_attempt), do: next_attempt
+
+  defp next_failure_retry_attempt(previous_retry, metadata, _retry_kind, _next_attempt),
+    do: normalize_retry_attempt(metadata[:failure_attempt]) |> max(retry_failure_attempt(previous_retry))
+
+  defp next_continuation_retry_attempt(_previous_retry, _metadata, :continuation, next_attempt), do: next_attempt
+
+  defp next_continuation_retry_attempt(previous_retry, metadata, _retry_kind, _next_attempt),
+    do: normalize_retry_attempt(metadata[:continuation_attempt]) |> max(retry_continuation_attempt(previous_retry))
+
+  defp pick_retry_kind(previous_retry, metadata) do
+    metadata[:retry_kind] || Map.get(previous_retry, :retry_kind) || :failure
+  end
+
+  defp pick_retry_delay_type(previous_retry, metadata) do
+    cond do
+      metadata[:delay_type] ->
+        metadata[:delay_type]
+
+      metadata[:retry_kind] && metadata[:retry_kind] != Map.get(previous_retry, :retry_kind) ->
+        nil
+
+      true ->
+        Map.get(previous_retry, :delay_type)
     end
   end
 
