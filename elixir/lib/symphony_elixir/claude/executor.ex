@@ -25,6 +25,7 @@ defmodule SymphonyElixir.Claude.Executor do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
     start_port_fn = Keyword.get(opts, :start_port_fn, &start_port/2)
+
     complete_start_session_fn =
       Keyword.get(opts, :complete_start_session_fn, &complete_start_session/3)
 
@@ -47,15 +48,7 @@ defmodule SymphonyElixir.Claude.Executor do
         workspace: expanded_workspace
       }
 
-      case start_port_fn.(base_session, issue) do
-        {:ok, port, metadata} ->
-          with_started_port(port, fn ->
-            complete_start_session_fn.(base_session, port, metadata)
-          end)
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      start_started_session(base_session, issue, start_port_fn, complete_start_session_fn)
     end
   end
 
@@ -504,6 +497,18 @@ defmodule SymphonyElixir.Claude.Executor do
 
   defp complete_start_session(base_session, port, metadata) do
     {:ok, %{base_session | port: port, metadata: metadata}}
+  end
+
+  defp start_started_session(base_session, issue, start_port_fn, complete_start_session_fn) do
+    case start_port_fn.(base_session, issue) do
+      {:ok, port, metadata} ->
+        with_started_port(port, fn ->
+          complete_start_session_fn.(base_session, port, metadata)
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp with_started_port(port, fun) when is_port(port) and is_function(fun, 0) do
