@@ -1053,8 +1053,19 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"
-    Port.command(port, line)
+
+    unless send_port_command(port, line) do
+      Logger.warning("Codex send_message failed: port is dead")
+    end
   end
+
+  defp send_port_command(port, data) when is_port(port) and is_binary(data) do
+    Port.command(port, data)
+  catch
+    :error, _reason -> false
+  end
+
+  defp send_port_command(_port, _data), do: false
 
   defp needs_input?(method, payload)
        when is_binary(method) and is_map(payload) do
