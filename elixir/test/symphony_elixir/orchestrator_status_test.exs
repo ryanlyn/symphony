@@ -1073,7 +1073,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, :tick)
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1084,14 +1083,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
       assert is_integer(due_at_ms)
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_500
+      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1165,7 +1163,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, :tick)
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1176,13 +1173,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-CLAUDE-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_500
+      assert is_integer(due_at_ms)
+      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1923,5 +1920,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp assert_retry_timer_in_range(timer_ref, min_remaining_ms, max_remaining_ms) do
+    remaining_ms = Process.read_timer(timer_ref)
+
+    assert is_reference(timer_ref)
+    assert is_integer(remaining_ms)
+    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms <= max_remaining_ms
   end
 end
