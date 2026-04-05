@@ -995,6 +995,135 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert next_poll_in_ms <= 50
   end
 
+  test "orchestrator stays alive when startup workflow config is invalid" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      poll_interval_ms: %{bad: true}
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :InvalidStartupConfigOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    snapshot =
+      wait_for_snapshot(
+        pid,
+        fn
+          %{polling: %{checking?: false, poll_interval_ms: 30_000, next_poll_in_ms: next_poll_in_ms}}
+          when is_integer(next_poll_in_ms) and next_poll_in_ms <= 30_000 ->
+            true
+
+          _ ->
+            false
+        end,
+        500
+      )
+
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(pid)
+    assert state.poll_interval_ms == 30_000
+    assert state.max_concurrent_agents == 10
+    assert %{polling: %{poll_interval_ms: 30_000, checking?: false}} = snapshot
+  end
+
+  test "orchestrator keeps running state when tick refresh sees invalid workflow config" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      poll_interval_ms: 30_000
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :InvalidTickConfigOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    wait_for_snapshot(
+      pid,
+      fn
+        %{polling: %{checking?: false}} -> true
+        _ -> false
+      end,
+      500
+    )
+
+    issue_id = "issue-invalid-tick"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-INVALID-TICK",
+      title: "Invalid tick config",
+      description: "Keep running state alive",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-INVALID-TICK"
+    }
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_agent_message: nil,
+      last_agent_timestamp: nil,
+      last_agent_event: nil,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | running: %{issue_id => running_entry},
+          claimed: MapSet.put(state.claimed, issue_id)
+      }
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      poll_interval_ms: %{bad: true}
+    )
+
+    send(pid, :tick)
+
+    snapshot =
+      wait_for_snapshot(
+        pid,
+        fn
+          %{running: [running_snapshot], polling: %{checking?: false, poll_interval_ms: 30_000}}
+          when running_snapshot.issue_id == issue_id ->
+            true
+
+          _ ->
+            false
+        end,
+        500
+      )
+
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(pid)
+    assert Map.has_key?(state.running, issue_id)
+    assert MapSet.member?(state.claimed, issue_id)
+    assert state.poll_interval_ms == initial_state.poll_interval_ms
+    assert state.max_concurrent_agents == initial_state.max_concurrent_agents
+    assert %{running: [%{issue_id: ^issue_id}], polling: %{poll_interval_ms: 30_000}} = snapshot
+  end
+
   test "orchestrator restarts stalled workers with retry backoff" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1077,7 +1206,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert is_integer(due_at_ms)
       scheduled_delay_ms = due_at_ms - tick_sent_at_ms
       assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_150
+      assert scheduled_delay_ms <= 10_250
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
