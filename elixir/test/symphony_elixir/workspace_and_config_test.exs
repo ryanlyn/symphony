@@ -1333,6 +1333,67 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "remote workspace removal normalizes traversal paths before containment checks" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-workspace-remove-traversal-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+      workspace_root = "~/.symphony-remote-workspaces"
+      remote_root = "/remote/home/.symphony-remote-workspaces"
+      traversal_workspace = "~/.symphony-remote-workspaces/../outside-root"
+      normalized_outside = "/remote/home/outside-root"
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      if printf '%s' "$*" | grep -q '\\$HOME'; then
+        printf '%s\\n' '/remote/home'
+      fi
+
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_ssh_hosts: ["worker-01:2200"],
+        hook_before_remove: "echo before-remove"
+      )
+
+      assert {:error, {:workspace_outside_root, ^normalized_outside, ^remote_root}, ""} =
+               Workspace.remove(traversal_workspace, "worker-01:2200")
+
+      trace = File.read!(trace_file)
+      assert trace =~ "-p 2200 worker-01 bash -lc"
+      assert trace =~ "$HOME"
+      refute trace =~ "echo before-remove"
+      refute trace =~ "rm -rf"
+      refute trace =~ normalized_outside
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "remote workspace lifecycle uses ssh host aliases from worker config" do
     test_root =
       Path.join(
