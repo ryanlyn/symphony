@@ -988,16 +988,12 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp running_failure_attempt(attempt, _retry_metadata), do: normalize_retry_attempt(attempt)
-
   defp running_continuation_attempt(attempt, retry_metadata) when is_map(retry_metadata) do
     case retry_kind(retry_metadata) do
       :continuation -> normalize_retry_attempt(attempt)
       _ -> normalize_retry_attempt(Map.get(retry_metadata, :continuation_attempt))
     end
   end
-
-  defp running_continuation_attempt(_attempt, _retry_metadata), do: 0
 
   defp next_retry_attempt_from_running(running_entry) do
     case Map.get(running_entry, :retry_attempt) do
@@ -1028,8 +1024,6 @@ defmodule SymphonyElixir.Orchestrator do
         if Map.get(metadata, :delay_type) == :continuation, do: :continuation, else: :failure
     end
   end
-
-  defp retry_kind(_metadata), do: :failure
 
   defp previous_retry_attempt(previous_retry, retry_kind) do
     previous_retry
