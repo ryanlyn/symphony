@@ -835,6 +835,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       tracker_terminal_states: %{done: true},
       poll_interval_ms: %{bad: true},
       workspace_root: 123,
+      max_retries: 0,
       max_retry_backoff_ms: 0,
       max_concurrent_agents_by_state: %{"Todo" => "1", "Review" => 0, "Done" => "bad"},
       hook_timeout_ms: 0,
@@ -964,6 +965,20 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
     assert :ok = Config.validate!()
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
+  end
+
+  test "config applies agent max_retries overrides" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 7)
+
+    assert :ok = Config.validate!()
+    assert Config.settings!().agent.max_retries == 7
+  end
+
+  test "config rejects non-positive agent max_retries" do
+    write_workflow_file!(Workflow.workflow_file_path(), max_retries: 0)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.max_retries"
   end
 
   test "schema helpers cover custom type and state limit validation" do
