@@ -125,13 +125,33 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp launch_command(session, issue) do
-    claude = Config.settings!().claude
+    settings = Config.settings!()
+    claude = settings.claude
     argv = launch_argv(session, issue, claude)
-    "exec #{claude.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"
+
+    [launch_env_prefix(settings.tracker), "exec #{claude.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
   end
 
   defp remote_launch_command(%{workspace: workspace} = session, issue) when is_binary(workspace) do
     "cd #{SSH.shell_escape(workspace)} && #{launch_command(session, issue)}"
+  end
+
+  defp launch_env_prefix(tracker) when is_map(tracker) do
+    [
+      maybe_env_assignment("SYMPHONY_LINEAR_API_KEY", Map.get(tracker, :api_key)),
+      maybe_env_assignment("SYMPHONY_LINEAR_ENDPOINT", Map.get(tracker, :endpoint))
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
+  end
+
+  defp maybe_env_assignment(_name, nil), do: nil
+  defp maybe_env_assignment(_name, ""), do: nil
+
+  defp maybe_env_assignment(name, value) when is_binary(name) and is_binary(value) do
+    "#{name}=#{SSH.shell_escape(value)}"
   end
 
   defp launch_argv(session, issue, claude) do
