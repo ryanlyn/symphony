@@ -459,6 +459,143 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
 
+  test "linear client retries 429 responses using retry-after seconds before succeeding" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:ok, %{"data" => %{"viewer" => %{"id" => "user-1"}}}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 case attempt do
+                   1 ->
+                     {:ok,
+                      %{
+                        status: 429,
+                        headers: %{"retry-after" => ["2"]},
+                        body: %{"errors" => [%{"message" => "rate limited"}]}
+                      }}
+
+                   2 ->
+                     {:ok,
+                      %{
+                        status: 200,
+                        body: %{"data" => %{"viewer" => %{"id" => "user-1"}}}
+                      }}
+                 end
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 2_000}
+    assert_receive {:request_attempt, 2}
+  end
+
+  test "linear client retries 429 responses using exponential backoff when retry-after is absent" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:ok, %{"data" => %{"viewer" => %{"id" => "user-1"}}}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 case attempt do
+                   1 ->
+                     {:ok, %{status: 429, body: %{"errors" => [%{"message" => "burst limit"}]}}}
+
+                   2 ->
+                     {:ok, %{status: 429, body: %{"errors" => [%{"message" => "burst limit"}]}}}
+
+                   3 ->
+                     {:ok, %{status: 200, body: %{"data" => %{"viewer" => %{"id" => "user-1"}}}}}
+                 end
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50,
+               rate_limit_max_delay_ms: 1_000
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 50}
+    assert_receive {:request_attempt, 2}
+    assert_receive {:sleep_delay, 100}
+    assert_receive {:request_attempt, 3}
+  end
+
+  test "linear client stops retrying 429 responses after the retry budget is exhausted" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+    retry_after_at = "Mon, 06 Apr 2026 03:00:02 GMT"
+
+    assert {:error, {:linear_api_status, 429}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 {:ok,
+                  %{
+                    status: 429,
+                    headers: %{"retry-after" => [retry_after_at]},
+                    body: %{"errors" => [%{"message" => "still rate limited"}]}
+                  }}
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               now_fun: fn -> DateTime.from_unix!(1_775_444_400, :second) end,
+               rate_limit_max_retries: 1,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 2_000}
+    assert_receive {:request_attempt, 2}
+    refute_receive {:sleep_delay, _delay_ms}
+    assert :counters.get(attempt_counter, 1) == 2
+  end
+
+  test "linear client does not retry non-429 graphql responses" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:error, {:linear_api_status, 503}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 {:ok,
+                  %{
+                    status: 503,
+                    body: %{"errors" => [%{"message" => "upstream unavailable"}]}
+                  }}
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    refute_receive {:sleep_delay, _delay_ms}
+    assert :counters.get(attempt_counter, 1) == 1
+  end
+
   test "orchestrator sorts dispatch by priority then oldest created_at" do
     issue_same_priority_older = %Issue{
       id: "issue-old-high",
