@@ -107,17 +107,42 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
       assert {:ok, session} =
                Executor.start_session(workspace,
+                 issue: issue,
                  resume_metadata: %{resume_id: "session-prev", session_id: "session-prev"}
                )
 
-      assert {:ok, session, _result} =
-               Executor.run_turn(session, "Use the MCP tool and finish", issue, on_message: &send(self(), {:claude_update, &1}))
+      log =
+        capture_log(fn ->
+          assert {:ok, updated_session, _result} =
+                   Executor.run_turn(session, "Use the MCP tool and finish", issue, on_message: &send(self(), {:claude_update, &1}))
+
+          send(self(), {:first_turn_session, updated_session})
+        end)
+
+      assert log =~ "Claude turn started for issue_id=issue-claude issue_identifier=MT-CLAUDE"
+      assert log =~ "Claude turn completed for issue_id=issue-claude issue_identifier=MT-CLAUDE session_id=session-tool"
+      assert_receive {:first_turn_session, session}
 
       assert session.resume_id == "session-tool"
       assert session.session_id == "session-tool"
 
-      assert_receive {:claude_update, %{event: :session_started, session_id: "session-tool"}}
-      assert_receive {:claude_update, %{event: :turn_started}}
+      assert_receive {:claude_update,
+                      %{
+                        event: :session_started,
+                        session_id: "session-tool",
+                        issue_id: "issue-claude",
+                        issue_identifier: "MT-CLAUDE",
+                        issue_title: "Claude executor"
+                      }}
+
+      assert_receive {:claude_update,
+                      %{
+                        event: :turn_started,
+                        issue_id: "issue-claude",
+                        issue_identifier: "MT-CLAUDE",
+                        issue_title: "Claude executor"
+                      }}
+
       assert_receive {:claude_update, %{event: :tool_use_requested}}
       assert_receive {:claude_update, %{event: :tool_result}}
 
@@ -142,6 +167,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "--print"
+      assert trace =~ "-n MT-CLAUDE: Claude executor"
       assert trace =~ "--resume session-prev"
       assert trace =~ "--allowedTools Bash,Edit,Write,mcp__symphony_linear__linear_graphql"
       assert trace =~ "--mcp-config "

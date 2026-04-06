@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Claude.Executor do
   @moduledoc false
 
   @behaviour SymphonyElixir.AgentExecutor
+  require Logger
 
   alias SymphonyElixir.Claude.Mcp
   alias SymphonyElixir.{Config, SSH, WorkspaceCwd}
@@ -53,12 +54,27 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   @impl true
-  def run_turn(session, prompt, _issue, opts \\ []) when is_map(session) and is_binary(prompt) do
+  def run_turn(session, prompt, issue, opts \\ []) when is_map(session) and is_binary(prompt) do
     on_message = Keyword.get(opts, :on_message, &default_on_message/1)
+    session = attach_issue_context(session, issue)
+
+    Logger.info("Claude turn started for #{issue_context(issue)} session_id=#{session_log_id(session)}")
 
     with {:ok, session} <- flush_pending_messages(session, on_message),
          {:ok, session} <- send_turn_input(session, prompt, on_message) do
-      await_turn_completion(session, on_message)
+      case await_turn_completion(session, on_message) do
+        {:ok, updated_session, result} ->
+          Logger.info("Claude turn completed for #{issue_context(issue)} session_id=#{session_log_id(updated_session)}")
+          {:ok, updated_session, result}
+
+        {:error, reason} = error ->
+          Logger.warning("Claude turn ended with error for #{issue_context(issue)} session_id=#{session_log_id(session)}: #{inspect(reason)}")
+          error
+      end
+    else
+      {:error, reason} = error ->
+        Logger.error("Claude turn failed for #{issue_context(issue)} session_id=#{session_log_id(session)}: #{inspect(reason)}")
+        error
     end
   end
 
@@ -432,6 +448,9 @@ defmodule SymphonyElixir.Claude.Executor do
       session_id: session.session_id,
       executor_pid: metadata[:executor_pid]
     }
+    |> maybe_put_metadata_field(:issue_id, metadata[:issue_id])
+    |> maybe_put_metadata_field(:issue_identifier, metadata[:issue_identifier])
+    |> maybe_put_metadata_field(:issue_title, metadata[:issue_title])
   end
 
   defp maybe_put_usage(update, payload) when is_map(update) and is_map(payload) do
@@ -498,6 +517,40 @@ defmodule SymphonyElixir.Claude.Executor do
   defp complete_start_session(base_session, port, metadata) do
     {:ok, %{base_session | port: port, metadata: metadata}}
   end
+
+  defp attach_issue_context(%{metadata: metadata} = session, issue) when is_map(metadata) do
+    %{session | metadata: Map.merge(metadata, issue_metadata(issue))}
+  end
+
+  defp attach_issue_context(session, _issue), do: session
+
+  defp issue_metadata(issue) when is_map(issue) do
+    %{}
+    |> maybe_put_metadata_field(:issue_id, Map.get(issue, :id))
+    |> maybe_put_metadata_field(:issue_identifier, Map.get(issue, :identifier))
+    |> maybe_put_metadata_field(:issue_title, Map.get(issue, :title))
+  end
+
+  defp issue_metadata(_issue), do: %{}
+
+  defp issue_context(%{id: issue_id, identifier: identifier})
+       when is_binary(issue_id) and is_binary(identifier) do
+    "issue_id=#{issue_id} issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(%{identifier: identifier}) when is_binary(identifier) do
+    "issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(_issue), do: "issue=unknown"
+
+  defp session_log_id(%{session_id: session_id}) when is_binary(session_id), do: session_id
+  defp session_log_id(%{resume_id: resume_id}) when is_binary(resume_id), do: resume_id
+  defp session_log_id(_session), do: "pending"
+
+  defp maybe_put_metadata_field(metadata, _key, nil), do: metadata
+  defp maybe_put_metadata_field(metadata, _key, ""), do: metadata
+  defp maybe_put_metadata_field(metadata, key, value), do: Map.put(metadata, key, value)
 
   defp start_started_session(base_session, issue, start_port_fn, complete_start_session_fn) do
     case start_port_fn.(base_session, issue) do
