@@ -138,6 +138,40 @@ defmodule SymphonyElixir.ResumeStateTest do
     end
   end
 
+  test "write returns an error when agent_kind is missing" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-resume-state-missing-agent-kind-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace = create_git_workspace!(test_root)
+
+      assert {:error, :invalid_resume_state} =
+               AgentResumeState.write(workspace, %{resume_id: "session-missing-kind"})
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "write returns an error when agent_kind is empty" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-resume-state-empty-agent-kind-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace = create_git_workspace!(test_root)
+
+      assert {:error, :invalid_resume_state} =
+               AgentResumeState.write(workspace, %{agent_kind: "", resume_id: "session-empty-kind"})
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "write returns an error when the resume directory cannot be created" do
     test_root =
       Path.join(
@@ -152,7 +186,7 @@ defmodule SymphonyElixir.ResumeStateTest do
       File.write!(blocked_path, "not a directory")
 
       assert {:error, {:resume_state_write_failed, _reason}} =
-               AgentResumeState.write(workspace, %{thread_id: "thread-blocked"})
+               AgentResumeState.write(workspace, %{agent_kind: "codex", thread_id: "thread-blocked"})
     after
       File.rm_rf(test_root)
     end
