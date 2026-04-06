@@ -8,6 +8,24 @@ defmodule SymphonyElixir.Linear.Client do
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
+  @rate_limit_base_delay_ms 1_000
+  @rate_limit_max_delay_ms 30_000
+  @rate_limit_max_retries 4
+  @retry_after_http_date_regex ~r/^[A-Za-z]{3}, (?<day>\d{2}) (?<month>[A-Za-z]{3}) (?<year>\d{4}) (?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2}) GMT$/
+  @retry_after_http_months %{
+    "Jan" => 1,
+    "Feb" => 2,
+    "Mar" => 3,
+    "Apr" => 4,
+    "May" => 5,
+    "Jun" => 6,
+    "Jul" => 7,
+    "Aug" => 8,
+    "Sep" => 9,
+    "Oct" => 10,
+    "Nov" => 11,
+    "Dec" => 12
+  }
 
   @query """
   query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
@@ -167,22 +185,20 @@ defmodule SymphonyElixir.Linear.Client do
       when is_binary(query) and is_map(variables) and is_list(opts) do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
     request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    sleep_fun = Keyword.get(opts, :sleep_fun, &Process.sleep/1)
+    now_fun = Keyword.get(opts, :now_fun, &DateTime.utc_now/0)
 
-    with {:ok, headers} <- graphql_headers(),
-         {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
-      {:ok, body}
-    else
-      {:ok, response} ->
-        Logger.error(
-          "Linear GraphQL request failed status=#{response.status}" <>
-            linear_error_context(payload, response)
-        )
+    retry_opts = %{
+      base_delay_ms: Keyword.get(opts, :rate_limit_base_delay_ms, @rate_limit_base_delay_ms),
+      max_delay_ms: Keyword.get(opts, :rate_limit_max_delay_ms, @rate_limit_max_delay_ms),
+      max_retries: Keyword.get(opts, :rate_limit_max_retries, @rate_limit_max_retries),
+      now_fun: now_fun,
+      request_fun: request_fun,
+      sleep_fun: sleep_fun
+    }
 
-        {:error, {:linear_api_status, response.status}}
-
-      {:error, reason} ->
-        Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
-        {:error, {:linear_api_request, reason}}
+    with {:ok, headers} <- graphql_headers() do
+      graphql_with_retry(payload, headers, retry_opts, 0)
     end
   end
 
@@ -345,6 +361,142 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp maybe_put_operation_name(payload, _operation_name), do: payload
 
+  defp graphql_with_retry(payload, headers, retry_opts, retry_count) do
+    case retry_opts.request_fun.(payload, headers) do
+      {:ok, %{status: 200, body: body}} ->
+        {:ok, body}
+
+      {:ok, response} ->
+        maybe_retry_rate_limited_response(payload, headers, retry_opts, retry_count, response)
+
+      {:error, reason} ->
+        Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
+        {:error, {:linear_api_request, reason}}
+    end
+  end
+
+  defp maybe_retry_rate_limited_response(payload, headers, retry_opts, retry_count, %{status: 429} = response) do
+    if retry_count < retry_opts.max_retries do
+      delay_ms = retry_delay_ms(response, retry_opts, retry_count)
+
+      Logger.warning(
+        "Linear GraphQL request rate limited status=429 retry=#{retry_count + 1}/#{retry_opts.max_retries}" <>
+          " delay_ms=#{delay_ms}" <> linear_error_context(payload, response)
+      )
+
+      retry_opts.sleep_fun.(delay_ms)
+      graphql_with_retry(payload, headers, retry_opts, retry_count + 1)
+    else
+      log_graphql_status_error(payload, response)
+      {:error, {:linear_api_status, response.status}}
+    end
+  end
+
+  defp maybe_retry_rate_limited_response(payload, _headers, _retry_opts, _retry_count, response) do
+    log_graphql_status_error(payload, response)
+    {:error, {:linear_api_status, response.status}}
+  end
+
+  defp retry_delay_ms(response, retry_opts, retry_count) do
+    response
+    |> retry_after_header_value()
+    |> parse_retry_after_ms(retry_opts.now_fun)
+    |> case do
+      delay_ms when is_integer(delay_ms) and delay_ms >= 0 ->
+        delay_ms
+
+      _ ->
+        exponential_retry_delay_ms(retry_opts.base_delay_ms, retry_opts.max_delay_ms, retry_count)
+    end
+  end
+
+  defp exponential_retry_delay_ms(base_delay_ms, max_delay_ms, retry_count)
+       when is_integer(base_delay_ms) and base_delay_ms > 0 and is_integer(max_delay_ms) and max_delay_ms > 0 and
+              is_integer(retry_count) and retry_count >= 0 do
+    min(base_delay_ms * Integer.pow(2, retry_count), max_delay_ms)
+  end
+
+  defp exponential_retry_delay_ms(_base_delay_ms, max_delay_ms, _retry_count)
+       when is_integer(max_delay_ms) and max_delay_ms > 0,
+       do: max_delay_ms
+
+  defp exponential_retry_delay_ms(_base_delay_ms, _max_delay_ms, _retry_count), do: @rate_limit_base_delay_ms
+
+  defp retry_after_header_value(%{headers: headers}), do: retry_after_header_value(headers)
+
+  defp retry_after_header_value(headers) when is_map(headers) do
+    Enum.find_value(headers, fn
+      {key, value} ->
+        if String.downcase(to_string(key)) == "retry-after" do
+          normalize_header_value(value)
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp retry_after_header_value(headers) when is_list(headers) do
+    Enum.find_value(headers, fn
+      {key, value} ->
+        if String.downcase(to_string(key)) == "retry-after" do
+          normalize_header_value(value)
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp retry_after_header_value(_headers), do: nil
+
+  defp normalize_header_value([value | _rest]), do: normalize_header_value(value)
+  defp normalize_header_value(value) when is_binary(value), do: String.trim(value)
+  defp normalize_header_value(value) when is_list(value), do: value |> to_string() |> String.trim()
+  defp normalize_header_value(_value), do: nil
+
+  defp parse_retry_after_ms(nil, _now_fun), do: nil
+
+  defp parse_retry_after_ms(retry_after, now_fun) when is_binary(retry_after) do
+    case Integer.parse(retry_after) do
+      {seconds, ""} when seconds >= 0 ->
+        seconds * 1_000
+
+      _ ->
+        parse_retry_after_http_date_ms(retry_after, now_fun)
+    end
+  end
+
+  defp parse_retry_after_ms(_retry_after, _now_fun), do: nil
+
+  defp parse_retry_after_http_date_ms(retry_after, now_fun) when is_binary(retry_after) do
+    with %{} = captures <- Regex.named_captures(@retry_after_http_date_regex, retry_after),
+         {:ok, month} <- retry_after_http_month(captures["month"]),
+         {year, ""} <- Integer.parse(captures["year"]),
+         {day, ""} <- Integer.parse(captures["day"]),
+         {hour, ""} <- Integer.parse(captures["hour"]),
+         {minute, ""} <- Integer.parse(captures["minute"]),
+         {second, ""} <- Integer.parse(captures["second"]),
+         {:ok, naive_dt} <- NaiveDateTime.new(year, month, day, hour, minute, second),
+         {:ok, retry_after_dt} <- DateTime.from_naive(naive_dt, "Etc/UTC") do
+      max(DateTime.diff(retry_after_dt, now_fun.(), :millisecond), 0)
+    else
+      _ ->
+        nil
+    end
+  end
+
+  defp retry_after_http_month(month_abbrev) when is_binary(month_abbrev) do
+    case Map.fetch(@retry_after_http_months, month_abbrev) do
+      {:ok, month} -> {:ok, month}
+      :error -> :error
+    end
+  end
+
+  defp log_graphql_status_error(payload, response) do
+    Logger.error("Linear GraphQL request failed status=#{response.status}" <> linear_error_context(payload, response))
+  end
+
   defp linear_error_context(payload, response) when is_map(payload) do
     operation_name =
       case Map.get(payload, "operationName") do
@@ -408,7 +560,7 @@ defmodule SymphonyElixir.Linear.Client do
     issues =
       nodes
       |> Enum.map(&normalize_issue(&1, assignee_filter))
-      |> Enum.reject(&is_nil(&1))
+      |> Enum.reject(&is_nil/1)
 
     {:ok, issues}
   end
