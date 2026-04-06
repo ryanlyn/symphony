@@ -613,6 +613,7 @@ defmodule SymphonyElixir.CoreTest do
 
       assert :ok =
                SymphonyElixir.AgentResumeState.write(workspace, %{
+                 agent_kind: "codex",
                  thread_id: "thread-crash",
                  issue_id: issue_id,
                  issue_identifier: "MT-559",

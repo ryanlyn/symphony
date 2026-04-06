@@ -1173,6 +1173,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       assert :ok =
                SymphonyElixir.AgentResumeState.write(workspace, %{
+                 agent_kind: "codex",
                  thread_id: "thread-stall",
                  issue_id: issue_id,
                  issue_identifier: "MT-STALL",
