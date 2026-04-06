@@ -314,7 +314,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       "title" => "Blocked todo",
       "description" => "Needs dependency",
       "priority" => 2,
-      "state" => %{"name" => "Todo"},
+      "state" => %{"name" => "Todo", "type" => "unstarted"},
       "branchName" => "mt-1",
       "url" => "https://example.org/issues/MT-1",
       "assignee" => %{
@@ -351,6 +351,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert issue.labels == ["backend"]
     assert issue.priority == 2
     assert issue.state == "Todo"
+    assert issue.state_type == "unstarted"
     assert issue.assignee_id == "user-1"
     assert issue.assigned_to_worker
   end
@@ -510,6 +511,31 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       identifier: "MT-1001",
       title: "Blocked work",
       state: "Todo",
+      blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
+  test "custom unstarted issue with non-terminal blocker is not dispatch-eligible" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_active_states: ["Ready", "In Progress"]
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "blocked-ready-1",
+      identifier: "MT-1001A",
+      title: "Blocked ready work",
+      state: "Ready",
+      state_type: "unstarted",
       blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
     }
 
