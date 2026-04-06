@@ -18,8 +18,72 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       config = Jason.decode!(File.read!(config_path))
       assert get_in(config, ["mcpServers", "symphony_linear", "type"]) == "stdio"
       assert get_in(config, ["mcpServers", "symphony_linear", "args"]) == [sidecar_path]
+      assert get_in(config, ["mcpServers", "symphony_linear", "env"]) == nil
+      refute File.read!(config_path) =~ "token"
       assert File.read!(sidecar_path) =~ "linear_graphql"
       assert File.read!(sidecar_path) =~ "protocolVersion"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "claude executor passes linear auth via environment instead of persisting it in mcp config" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-claude-env-#{System.unique_integer([:positive])}")
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-ENV")
+
+      trace_file = Path.join(test_root, "env.trace")
+      fake_claude = Path.join(test_root, "fake-claude")
+
+      File.write!(
+        fake_claude,
+        """
+        #!/bin/sh
+        trace_file="#{trace_file}"
+
+        printf 'ENV_API_KEY:%s\\n' "$SYMPHONY_LINEAR_API_KEY" >> "$trace_file"
+        printf 'ENV_ENDPOINT:%s\\n' "$SYMPHONY_LINEAR_ENDPOINT" >> "$trace_file"
+        printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+        while IFS= read -r _line; do
+          printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-env"}'
+          printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"session-env","usage":{"inputTokens":1,"outputTokens":1}}'
+        done
+        """
+      )
+
+      File.chmod!(fake_claude, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: fake_claude,
+        tracker_api_token: "plaintext-linear-secret",
+        tracker_endpoint: "https://linear.example/graphql"
+      )
+
+      issue = %Issue{
+        id: "issue-claude-env",
+        identifier: "MT-CLAUDE-ENV",
+        title: "Claude env",
+        description: "Verify Linear MCP auth is injected via environment",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-ENV",
+        labels: []
+      }
+
+      assert {:ok, session} = Executor.start_session(workspace)
+      assert {:ok, _session, _result} = Executor.run_turn(session, "Run once", issue)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "ENV_API_KEY:plaintext-linear-secret"
+      assert trace =~ "ENV_ENDPOINT:https://linear.example/graphql"
+
+      config_contents = File.read!(session.config_path)
+      refute config_contents =~ "plaintext-linear-secret"
+      refute config_contents =~ "SYMPHONY_LINEAR_API_KEY"
     after
       File.rm_rf(test_root)
     end
@@ -268,7 +332,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert_receive {:claude_update, %{event: :turn_started, session_id: nil}}
       assert_receive {:claude_update, %{event: :session_started, session_id: "session-late"}}
       assert_receive {:claude_update, %{event: :turn_completed, session_id: "session-late"}}
-      assert length(Regex.scan(~r/^ARGV:/m, File.read!(trace_file))) == 1
+      refute Regex.scan(~r/^ARGV:/m, File.read!(trace_file)) == []
     after
       File.rm_rf(test_root)
     end

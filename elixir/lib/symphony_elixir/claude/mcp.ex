@@ -35,18 +35,12 @@ defmodule SymphonyElixir.Claude.Mcp do
 
   @spec config_contents(String.t(), String.t()) :: String.t()
   def config_contents(sidecar_path, python) when is_binary(sidecar_path) and is_binary(python) do
-    tracker = Config.settings!().tracker
-
     %{
       "mcpServers" => %{
         "symphony_linear" => %{
           "type" => "stdio",
           "command" => python,
-          "args" => [sidecar_path],
-          "env" => %{
-            "SYMPHONY_LINEAR_API_KEY" => tracker.api_key,
-            "SYMPHONY_LINEAR_ENDPOINT" => tracker.endpoint
-          }
+          "args" => [sidecar_path]
         }
       }
     }
