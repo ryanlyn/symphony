@@ -27,12 +27,19 @@ defmodule SymphonyElixir.Claude.Executor do
     worker_host = Keyword.get(opts, :worker_host)
     start_port_fn = Keyword.get(opts, :start_port_fn, &start_port/2)
 
+<<<<<<< HEAD
     complete_start_session_fn =
       Keyword.get(opts, :complete_start_session_fn, &complete_start_session/3)
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
          {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
            Mcp.prepare(expanded_workspace, worker_host) do
+||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
+    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <- Mcp.prepare(workspace, worker_host, slot_opts) do
+=======
+    with {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
+           Mcp.prepare(workspace, worker_host, slot_opts) do
+>>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
 

@@ -18,8 +18,17 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       config = Jason.decode!(File.read!(config_path))
       assert get_in(config, ["mcpServers", "symphony_linear", "type"]) == "stdio"
       assert get_in(config, ["mcpServers", "symphony_linear", "args"]) == [sidecar_path]
+<<<<<<< HEAD
       assert get_in(config, ["mcpServers", "symphony_linear", "env"]) == nil
       refute File.read!(config_path) =~ "token"
+||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
+=======
+      assert get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_LINEAR_API_KEY"]) == "token"
+      assert get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_LINEAR_ENDPOINT"]) == "https://api.linear.app/graphql"
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_SLOT_INDEX"])
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_ENSEMBLE_SIZE"])
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_HTTP_PORT"])
+>>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
       assert File.read!(sidecar_path) =~ "linear_graphql"
       assert File.read!(sidecar_path) =~ "protocolVersion"
     after

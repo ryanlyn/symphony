@@ -141,7 +141,14 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state, :ensemble_size],
+        [
+          :kind,
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state,
+          :ensemble_size
+        ],
         empty_values: []
       )
       |> validate_inclusion(:kind, ["codex", "claude"])

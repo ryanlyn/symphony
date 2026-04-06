@@ -1079,6 +1079,32 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "retry attempt #2"
   end
 
+  test "in-repo WORKFLOW_ENSEMBLE.md renders correctly" do
+    workflow_path = Workflow.workflow_file_path()
+    Workflow.set_workflow_file_path(Path.expand("WORKFLOW_ENSEMBLE.md", File.cwd!()))
+
+    issue = %Issue{
+      identifier: "MT-777",
+      title: "Coordinate safely without runtime locks",
+      description: "Render ensemble guidance from the selected workflow template",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-777/coordinate-safely-without-runtime-locks",
+      labels: ["ensemble", "workflow"]
+    }
+
+    on_exit(fn -> Workflow.set_workflow_file_path(workflow_path) end)
+
+    prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 1, ensemble_size: 3)
+
+    assert prompt =~ "You are working on a Linear ticket `MT-777`"
+    assert prompt =~ "You are slot `1` of `3` concurrent agents"
+    assert prompt =~ "Shared side effects can race"
+    assert prompt =~ "Prefer unique slot-scoped branch names"
+    assert prompt =~ "Re-fetch before every shared mutation"
+    assert prompt =~ "If the desired mutation already happened"
+    assert prompt =~ "retry attempt #2"
+  end
+
   test "prompt builder adds continuation guidance for retries" do
     workflow_prompt = "{% if attempt %}Retry #" <> "{{ attempt }}" <> "{% endif %}"
     write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
@@ -1097,29 +1123,40 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt == "Retry #2"
   end
 
-  test "build_prompt includes ensemble context when ensemble_size > 1" do
-    write_workflow_file!(Workflow.workflow_file_path())
+  test "build_prompt exposes nested ensemble variables when ensemble_size > 1" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}slot {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
     issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
 
     prompt = PromptBuilder.build_prompt(issue, slot_index: 1, ensemble_size: 3)
     assert prompt =~ "slot 1 of 3"
-    assert prompt =~ "slot-1"
   end
 
-  test "build_prompt omits ensemble context when ensemble_size is 1" do
-    write_workflow_file!(Workflow.workflow_file_path())
+  test "build_prompt exposes nested ensemble variables for solo runs" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}multi{% else %}solo {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
     issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
 
     prompt = PromptBuilder.build_prompt(issue, slot_index: 0, ensemble_size: 1)
-    refute prompt =~ "Ensemble context"
+    assert prompt == "solo 0 of 1"
   end
 
-  test "build_prompt omits ensemble context when ensemble_size not specified" do
-    write_workflow_file!(Workflow.workflow_file_path())
+  test "build_prompt defaults ensemble variables when ensemble_size not specified" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}multi{% else %}solo {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
     issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
 
     prompt = PromptBuilder.build_prompt(issue)
-    refute prompt =~ "Ensemble context"
+    assert prompt == "solo 0 of 1"
   end
 
   test "agent runner keeps workspace after successful codex run" do

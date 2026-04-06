@@ -30,6 +30,14 @@ defmodule SymphonyElixir.Linear.IssueTest do
 
       issue = %Issue{labels: ["ensemble:abc"]}
       assert Issue.ensemble_size(issue) == nil
+
+      issue = %Issue{labels: ["ensemble:3x"]}
+      assert Issue.ensemble_size(issue) == nil
+    end
+
+    test "ignores malformed and non-string labels" do
+      issue = %Issue{labels: ["ensemble", 123, "priority:high"]}
+      assert Issue.ensemble_size(issue) == nil
     end
 
     test "takes first valid ensemble label when multiple present" do

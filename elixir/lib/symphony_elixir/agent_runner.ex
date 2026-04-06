@@ -95,13 +95,27 @@ defmodule SymphonyElixir.AgentRunner do
       executor: executor,
       workspace: workspace,
       update_recipient: update_recipient,
-      opts: Keyword.merge(opts, slot_index: slot_index, ensemble_size: ensemble_size, issue_id: issue.id),
+      opts:
+        Keyword.merge(
+          opts,
+          slot_index: slot_index,
+          ensemble_size: ensemble_size,
+          issue_id: issue.id
+        ),
       issue_state_fetcher: issue_state_fetcher,
       max_turns: max_turns,
       worker_host: worker_host
     }
 
-    with {:ok, session} <- start_session(executor, workspace, issue, worker_host, slot_index: slot_index, ensemble_size: ensemble_size) do
+    with {:ok, session} <-
+           start_session(
+             executor,
+             workspace,
+             issue,
+             worker_host,
+             slot_index: slot_index,
+             ensemble_size: ensemble_size
+           ) do
       case do_run_agent_turns(ctx, session, issue, 1) do
         {:ok, final_session} ->
           executor.stop_session(final_session)
@@ -200,8 +214,8 @@ defmodule SymphonyElixir.AgentRunner do
 
     case executor.start_session(
            workspace,
-           [issue: issue, worker_host: worker_host, resume_metadata: resume_metadata, issue_id: issue.id]
-           ++ slot_opts
+           [issue: issue, worker_host: worker_host, resume_metadata: resume_metadata, issue_id: issue.id] ++
+             slot_opts
          ) do
       {:ok, session} ->
         persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(session))

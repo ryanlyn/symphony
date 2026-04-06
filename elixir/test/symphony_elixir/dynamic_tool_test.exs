@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Claude.Mcp
   alias SymphonyElixir.Codex.DynamicTool
 
   test "tool_specs advertises the linear_graphql input contract" do
@@ -20,6 +21,11 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
            ] = DynamicTool.tool_specs()
 
     assert description =~ "Linear"
+  end
+
+  test "claude and codex expose the same linear_graphql tool name" do
+    assert Enum.map(DynamicTool.tool_specs(), & &1["name"]) == ["linear_graphql"]
+    assert Mcp.tool_names() == ["mcp__symphony_linear__linear_graphql"]
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do

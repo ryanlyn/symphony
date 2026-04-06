@@ -33,8 +33,18 @@ defmodule SymphonyElixir.Claude.Mcp do
     ]
   end
 
+<<<<<<< HEAD
   @spec config_contents(String.t(), String.t()) :: String.t()
   def config_contents(sidecar_path, python) when is_binary(sidecar_path) and is_binary(python) do
+||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
+  @spec config_contents(String.t(), String.t(), map()) :: String.t()
+  def config_contents(sidecar_path, python, slot_env \\ %{})
+      when is_binary(sidecar_path) and is_binary(python) and is_map(slot_env) do
+=======
+  @spec config_contents(String.t(), String.t()) :: String.t()
+  def config_contents(sidecar_path, python)
+      when is_binary(sidecar_path) and is_binary(python) do
+>>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
     tracker = Config.settings!().tracker
 
     env = %{

@@ -51,7 +51,6 @@ defmodule SymphonyElixir.Orchestrator do
       # all unfilled slots via do_dispatch_issue, so per-slot retry tracking is
       # unnecessary. If two slots fail in sequence, the later retry subsumes the earlier.
       retry_attempts: %{},
-      ensembles: %{},
       usage_totals: nil,
       codex_rate_limits: nil
     ]
@@ -500,15 +499,18 @@ defmodule SymphonyElixir.Orchestrator do
     else
       updated_running =
         Enum.reduce(slots, state.running, fn {slot_key, running_entry}, acc ->
-          case running_entry do
-            %{issue: _} -> Map.put(acc, slot_key, %{running_entry | issue: issue})
-            _ -> acc
-          end
+          maybe_update_running_issue(acc, slot_key, running_entry, issue)
         end)
 
       %{state | running: updated_running}
     end
   end
+
+  defp maybe_update_running_issue(acc, slot_key, %{issue: _} = running_entry, issue) do
+    Map.put(acc, slot_key, %{running_entry | issue: issue})
+  end
+
+  defp maybe_update_running_issue(acc, _slot_key, _running_entry, _issue), do: acc
 
   defp terminate_all_issue_slots(%State{} = state, issue_id, cleanup_workspace) do
     slots =
@@ -524,7 +526,16 @@ defmodule SymphonyElixir.Orchestrator do
           terminate_running_slot(acc, {issue_id, slot_index}, cleanup_workspace)
         end)
 
+<<<<<<< HEAD
       %{state | ensembles: Map.delete(state.ensembles, issue_id), retry_attempts: Map.delete(state.retry_attempts, issue_id)}
+||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
+      %{state |
+        ensembles: Map.delete(state.ensembles, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+      }
+=======
+      %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}
+>>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
     end
   end
 
@@ -870,8 +881,6 @@ defmodule SymphonyElixir.Orchestrator do
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} slot=#{slot_index}/#{ensemble_size} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
-        ensemble = get_or_init_ensemble(state.ensembles, issue.id, ensemble_size)
-
         running =
           Map.put(state.running, slot_key, %{
             pid: pid,
@@ -901,7 +910,6 @@ defmodule SymphonyElixir.Orchestrator do
           state
           | running: running,
             claimed: MapSet.put(state.claimed, slot_key),
-            ensembles: Map.put(state.ensembles, issue.id, ensemble),
             retry_attempts: Map.delete(state.retry_attempts, issue.id)
         }
 
@@ -1295,19 +1303,6 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp get_or_init_ensemble(ensembles, issue_id, size) do
-    Map.get(ensembles, issue_id, %{
-      size: size,
-      completed_slots: MapSet.new(),
-      failed_slots: MapSet.new(),
-      last_intent: nil
-    })
-  end
-
-  defp barrier_linear_client do
-    Application.get_env(:symphony_elixir, :barrier_linear_client, &SymphonyElixir.Linear.Client.graphql/3)
-  end
-
   defp running_entry_session_id(%{session_id: session_id}) when is_binary(session_id),
     do: session_id
 
@@ -1429,38 +1424,6 @@ defmodule SymphonyElixir.Orchestrator do
        requested_at: DateTime.utc_now(),
        operations: ["poll", "reconcile"]
      }, state}
-  end
-
-  def handle_call({:barrier_register, issue_id, slot_index, query, variables}, _from, state) do
-    case Map.get(state.ensembles, issue_id) do
-      nil ->
-        {:reply, {:error, :no_ensemble}, state}
-
-      ensemble ->
-        completed = MapSet.put(ensemble.completed_slots, slot_index)
-        effective_size = ensemble.size - MapSet.size(ensemble.failed_slots)
-        # last-writer-wins: the final slot to register determines the mutation.
-        # All slots target the same state so this is safe; if divergence becomes
-        # possible, validate agreement before executing.
-        updated = %{ensemble | completed_slots: completed, last_intent: {query, variables, slot_index}}
-
-        if MapSet.size(completed) >= effective_size do
-          {last_query, last_vars, _} = updated.last_intent
-
-          case barrier_linear_client().(last_query, last_vars, []) do
-            {:ok, response} ->
-              state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
-              {:reply, {:executed, response, updated}, state}
-
-            {:error, reason} ->
-              state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
-              {:reply, {:error, reason}, state}
-          end
-        else
-          state = %{state | ensembles: Map.put(state.ensembles, issue_id, updated)}
-          {:reply, {:deferred, updated}, state}
-        end
-    end
   end
 
   defp integrate_agent_update(running_entry, %{event: event, timestamp: timestamp} = update) do

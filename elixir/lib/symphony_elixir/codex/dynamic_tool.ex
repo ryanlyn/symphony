@@ -54,19 +54,20 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp execute_linear_graphql(arguments, opts) do
-    with {:ok, query, variables} <- normalize_linear_graphql_arguments(arguments) do
-      tool_server_opts = [
-        issue_id: Keyword.get(opts, :issue_id),
-        slot_index: Keyword.get(opts, :slot_index, 0),
-        ensemble_size: Keyword.get(opts, :ensemble_size, 1),
-        linear_client: Keyword.get(opts, :linear_client, &Client.graphql/3)
-      ]
+    case normalize_linear_graphql_arguments(arguments) do
+      {:ok, query, variables} ->
+        tool_server_opts = [
+          issue_id: Keyword.get(opts, :issue_id),
+          slot_index: Keyword.get(opts, :slot_index, 0),
+          ensemble_size: Keyword.get(opts, :ensemble_size, 1),
+          linear_client: Keyword.get(opts, :linear_client, &Client.graphql/3)
+        ]
 
-      case SymphonyElixir.ToolServer.handle_linear_graphql(query, variables, tool_server_opts) do
-        {:ok, response} -> graphql_response(response)
-        {:error, reason} -> failure_response(tool_error_payload(reason))
-      end
-    else
+        case SymphonyElixir.ToolServer.handle_linear_graphql(query, variables, tool_server_opts) do
+          {:ok, response} -> graphql_response(response)
+          {:error, reason} -> failure_response(tool_error_payload(reason))
+        end
+
       {:error, reason} ->
         failure_response(tool_error_payload(reason))
     end
