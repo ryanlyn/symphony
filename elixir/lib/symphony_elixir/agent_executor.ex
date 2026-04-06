@@ -19,7 +19,14 @@ defmodule SymphonyElixir.AgentExecutor do
   @callback stop_session(session()) :: :ok
   @callback resume_metadata(session()) :: resume_metadata()
 
+  @supported_kinds ~w(codex claude)
+
   @spec module_for_kind(String.t()) :: module()
+  def module_for_kind("codex"), do: SymphonyElixir.Codex.Executor
   def module_for_kind("claude"), do: SymphonyElixir.Claude.Executor
-  def module_for_kind(_kind), do: SymphonyElixir.Codex.Executor
+
+  def module_for_kind(kind) do
+    raise ArgumentError,
+          "Unsupported agent kind #{inspect(kind)}. Expected one of: #{Enum.join(@supported_kinds, ", ")}"
+  end
 end

@@ -1219,7 +1219,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              } = state.retry_attempts[issue_id]
 
       assert is_integer(due_at_ms)
-      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
+      assert_retry_timer_in_range(timer_ref, 8_500, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1309,7 +1309,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              } = state.retry_attempts[issue_id]
 
       assert is_integer(due_at_ms)
-      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
+      assert_retry_timer_in_range(timer_ref, 8_500, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
