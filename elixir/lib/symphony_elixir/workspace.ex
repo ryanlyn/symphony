@@ -106,21 +106,27 @@ defmodule SymphonyElixir.Workspace do
   end
 
   def remove(workspace, worker_host) when is_binary(worker_host) do
-    maybe_run_before_remove_hook(workspace, worker_host)
+    case remote_workspace_path_within_root(workspace, worker_host) do
+      {:ok, validated_workspace} ->
+        maybe_run_before_remove_hook(validated_workspace, worker_host)
 
-    script =
-      [
-        remote_shell_assign("workspace", workspace),
-        "rm -rf \"$workspace\""
-      ]
-      |> Enum.join("\n")
+        script =
+          [
+            remote_shell_assign("workspace", validated_workspace),
+            "rm -rf \"$workspace\""
+          ]
+          |> Enum.join("\n")
 
-    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
-      {:ok, {_output, 0}} ->
-        {:ok, []}
+        case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
+          {:ok, {_output, 0}} ->
+            {:ok, []}
 
-      {:ok, {output, status}} ->
-        {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
+          {:ok, {output, status}} ->
+            {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
+
+          {:error, reason} ->
+            {:error, reason, ""}
+        end
 
       {:error, reason} ->
         {:error, reason, ""}
@@ -418,6 +424,14 @@ defmodule SymphonyElixir.Workspace do
 
   defp validate_workspace_path(workspace, worker_host)
        when is_binary(workspace) and is_binary(worker_host) do
+    case remote_workspace_path_within_root(workspace, worker_host) do
+      {:ok, _validated_workspace} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp remote_workspace_path_within_root(workspace, worker_host)
+       when is_binary(workspace) and is_binary(worker_host) do
     cond do
       String.trim(workspace) == "" ->
         {:error, {:workspace_path_unreadable, workspace, :empty}}
@@ -426,7 +440,43 @@ defmodule SymphonyElixir.Workspace do
         {:error, {:workspace_path_unreadable, workspace, :invalid_characters}}
 
       true ->
-        :ok
+        with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root),
+             {:ok, expanded_workspace} <-
+               expand_remote_workspace_path(workspace, worker_host, workspace_root) do
+          validate_remote_workspace_containment(expanded_workspace, Path.expand(workspace_root))
+        end
+    end
+  end
+
+  defp expand_remote_workspace_path("~", worker_host, _workspace_root) when is_binary(worker_host) do
+    remote_workspace_root(worker_host, "~")
+  end
+
+  defp expand_remote_workspace_path("~/" <> suffix, worker_host, _workspace_root)
+       when is_binary(worker_host) do
+    remote_workspace_root(worker_host, "~/" <> suffix)
+  end
+
+  defp expand_remote_workspace_path(workspace, _worker_host, workspace_root)
+       when is_binary(workspace) and is_binary(workspace_root) do
+    {:ok, Path.expand(workspace, workspace_root)}
+  end
+
+  defp validate_remote_workspace_containment(expanded_workspace, expanded_root)
+       when is_binary(expanded_workspace) and is_binary(expanded_root) do
+    normalized_workspace = Path.expand(expanded_workspace)
+    normalized_root = Path.expand(expanded_root)
+    normalized_root_prefix = normalized_root <> "/"
+
+    cond do
+      normalized_workspace == normalized_root ->
+        {:error, {:workspace_equals_root, normalized_workspace, normalized_root}}
+
+      String.starts_with?(normalized_workspace <> "/", normalized_root_prefix) ->
+        {:ok, normalized_workspace}
+
+      true ->
+        {:error, {:workspace_outside_root, normalized_workspace, normalized_root}}
     end
   end
 

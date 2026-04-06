@@ -8,7 +8,7 @@ defmodule SymphonyElixir.StatusDashboard do
 
   alias SymphonyElixir.{Config, HttpServer}
   alias SymphonyElixir.Orchestrator
-  alias SymphonyElixirWeb.ObservabilityPubSub
+  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub}
 
   @minimum_idle_rerender_ms 1_000
   @throughput_window_ms 5_000
@@ -25,6 +25,7 @@ defmodule SymphonyElixir.StatusDashboard do
   @running_event_min_width 12
   @running_row_chrome_width 10
   @default_terminal_columns 115
+  @snapshot_timeout_ms 15_000
 
   @ansi_reset IO.ANSI.reset()
   @ansi_bold IO.ANSI.bright()
@@ -547,29 +548,45 @@ defmodule SymphonyElixir.StatusDashboard do
   def dashboard_url_for_test(host, configured_port, bound_port),
     do: dashboard_url(host, configured_port, bound_port)
 
-  defp snapshot_payload do
-    if Process.whereis(Orchestrator) do
-      case Orchestrator.snapshot() do
-        %{
-          running: running,
-          retrying: retrying,
-          usage_totals: usage_totals
-        } = snapshot
-        when is_list(running) and is_list(retrying) ->
-          {:ok,
-           %{
-             running: running,
-             retrying: retrying,
-             usage_totals: usage_totals,
-             rate_limits: Map.get(snapshot, :rate_limits),
-             polling: Map.get(snapshot, :polling)
-           }}
+  @doc false
+  @spec snapshot_payload_for_test() :: {:ok, map()} | :error
+  def snapshot_payload_for_test, do: snapshot_payload()
 
-        _ ->
-          :error
-      end
-    else
-      :error
+  defp snapshot_payload do
+    case Orchestrator.snapshot(orchestrator(), @snapshot_timeout_ms) do
+      %{
+        running: running,
+        retrying: retrying,
+        usage_totals: usage_totals
+      } = snapshot
+      when is_list(running) and is_list(retrying) ->
+        {:ok,
+         %{
+           running: running,
+           retrying: retrying,
+           usage_totals: usage_totals,
+           rate_limits: Map.get(snapshot, :rate_limits),
+           polling: Map.get(snapshot, :polling)
+         }}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp orchestrator do
+    endpoint_config(:orchestrator, Orchestrator)
+  end
+
+  defp endpoint_config(key, default) do
+    case :ets.whereis(Endpoint) do
+      :undefined ->
+        :symphony_elixir
+        |> Application.get_env(Endpoint, [])
+        |> Keyword.get(key, default)
+
+      _table ->
+        Endpoint.config(key) || default
     end
   end
 

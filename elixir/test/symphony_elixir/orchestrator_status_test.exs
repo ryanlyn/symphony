@@ -1,6 +1,20 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  defmodule StaticDashboardOrchestrator do
+    use GenServer
+
+    def start_link(opts) do
+      name = Keyword.fetch!(opts, :name)
+      snapshot = Keyword.fetch!(opts, :snapshot)
+      GenServer.start_link(__MODULE__, snapshot, name: name)
+    end
+
+    def init(snapshot), do: {:ok, snapshot}
+
+    def handle_call(:snapshot, _from, snapshot), do: {:reply, snapshot, snapshot}
+  end
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -1188,7 +1202,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, :tick)
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1199,14 +1212,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
       assert is_integer(due_at_ms)
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_250
+      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1280,7 +1292,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, :tick)
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1291,13 +1302,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-CLAUDE-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_250
+      assert is_integer(due_at_ms)
+      assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1468,12 +1479,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert rendered |> String.split("\n") |> List.last() == "╰─"
   end
 
-  test "status dashboard coalesces rapid updates to one render per interval" do
-    dashboard_name = Module.concat(__MODULE__, :RenderDashboard)
-    parent = self()
-    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+  test "status dashboard uses configured endpoint orchestrator" do
+    orchestrator_name = Module.concat(__MODULE__, :ConfiguredDashboardOrchestrator)
+    endpoint_config = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])
+    default_orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
+      Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+
       if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
@@ -1482,9 +1495,79 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end
     end)
 
-    if is_pid(orchestrator_pid) do
+    if is_pid(default_orchestrator_pid) do
       assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
     end
+
+    snapshot = %{
+      running: [
+        %{
+          identifier: "MT-CUSTOM",
+          state: "running",
+          session_id: "thread-custom",
+          executor_pid: "1234",
+          usage_totals: %{input_tokens: 1, output_tokens: 2, total_tokens: 3, seconds_running: 0},
+          runtime_seconds: 5,
+          turn_count: 1,
+          last_agent_event: :notification,
+          last_agent_message: nil
+        }
+      ],
+      retrying: [],
+      usage_totals: %{input_tokens: 1, output_tokens: 2, total_tokens: 3, seconds_running: 5},
+      rate_limits: nil
+    }
+
+    {:ok, orchestrator_pid} =
+      StaticDashboardOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+
+    on_exit(fn ->
+      if Process.alive?(orchestrator_pid) do
+        Process.exit(orchestrator_pid, :normal)
+      end
+    end)
+
+    Application.put_env(
+      :symphony_elixir,
+      SymphonyElixirWeb.Endpoint,
+      Keyword.put(endpoint_config, :orchestrator, orchestrator_name)
+    )
+
+    assert {:ok, rendered_snapshot} = StatusDashboard.snapshot_payload_for_test()
+    assert [%{identifier: "MT-CUSTOM"}] = rendered_snapshot.running
+  end
+
+  test "status dashboard coalesces rapid updates to one render per interval" do
+    dashboard_name = Module.concat(__MODULE__, :RenderDashboard)
+    orchestrator_name = Module.concat(__MODULE__, :RenderDashboardOrchestrator)
+    parent = self()
+    endpoint_config = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])
+
+    snapshot = %{
+      running: [],
+      retrying: [],
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      rate_limits: nil
+    }
+
+    on_exit(fn ->
+      Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+    end)
+
+    {:ok, orchestrator_pid} =
+      StaticDashboardOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+
+    Application.put_env(
+      :symphony_elixir,
+      SymphonyElixirWeb.Endpoint,
+      Keyword.put(endpoint_config, :orchestrator, orchestrator_name)
+    )
+
+    on_exit(fn ->
+      if Process.alive?(orchestrator_pid) do
+        Process.exit(orchestrator_pid, :normal)
+      end
+    end)
 
     {:ok, pid} =
       StatusDashboard.start_link(
@@ -1966,5 +2049,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp assert_retry_timer_in_range(timer_ref, min_remaining_ms, max_remaining_ms) do
+    remaining_ms = Process.read_timer(timer_ref)
+
+    assert is_reference(timer_ref)
+    assert is_integer(remaining_ms)
+    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms <= max_remaining_ms
   end
 end

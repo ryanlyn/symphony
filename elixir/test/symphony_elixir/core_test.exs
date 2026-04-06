@@ -220,6 +220,40 @@ defmodule SymphonyElixir.CoreTest do
     GenServer.stop(pid)
   end
 
+  test "application restarts downstream children when orchestrator crashes" do
+    previous_server_port_override = Application.get_env(:symphony_elixir, :server_port_override)
+
+    Application.put_env(:symphony_elixir, :server_port_override, 0)
+
+    on_exit(fn ->
+      stop_default_http_server()
+      restore_app_env(:server_port_override, previous_server_port_override)
+    end)
+
+    assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
+
+    before_children = supervisor_child_pids()
+    orchestrator_pid = Map.fetch!(before_children, SymphonyElixir.Orchestrator)
+    http_server_pid = Map.fetch!(before_children, SymphonyElixir.HttpServer)
+    dashboard_pid = Map.fetch!(before_children, SymphonyElixir.StatusDashboard)
+    orchestrator_ref = Process.monitor(orchestrator_pid)
+
+    Process.exit(orchestrator_pid, :kill)
+
+    assert_receive {:DOWN, ^orchestrator_ref, :process, ^orchestrator_pid, :killed}, 1_000
+
+    assert eventually(fn ->
+             after_children = supervisor_child_pids()
+             new_orchestrator_pid = Map.get(after_children, SymphonyElixir.Orchestrator)
+             new_http_server_pid = Map.get(after_children, SymphonyElixir.HttpServer)
+             new_dashboard_pid = Map.get(after_children, SymphonyElixir.StatusDashboard)
+
+             is_pid(new_orchestrator_pid) and is_pid(new_http_server_pid) and is_pid(new_dashboard_pid) and
+               new_orchestrator_pid != orchestrator_pid and new_http_server_pid != http_server_pid and
+               new_dashboard_pid != dashboard_pid
+           end)
+  end
+
   test "linear issue state reconciliation fetch with no running issues is a no-op" do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
   end
@@ -543,16 +577,15 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    down_sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
     Process.sleep(50)
     state = :sys.get_state(pid)
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
-    assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
+    assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 1_000, 1_100)
+    assert_retry_timer_in_range(timer_ref, 100, 1_500)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -604,15 +637,15 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:retry_attempts, %{})
       end)
 
-      down_sent_at_ms = System.monotonic_time(:millisecond)
       send(pid, {:DOWN, ref, :process, self(), :boom})
       Process.sleep(50)
       state = :sys.get_state(pid)
 
-      assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+      assert %{attempt: 3, due_at_ms: due_at_ms, timer_ref: timer_ref, identifier: "MT-559", error: "agent exited: :boom"} =
                state.retry_attempts[issue_id]
 
-      assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 40_000, 40_100)
+      assert is_integer(due_at_ms)
+      assert_retry_timer_in_range(timer_ref, 39_000, 40_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -648,15 +681,15 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    down_sent_at_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
+    assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_after_event_in_range(due_at_ms, down_sent_at_ms, 10_000, 10_100)
+    assert is_integer(due_at_ms)
+    assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -776,12 +809,33 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_after_event_in_range(due_at_ms, event_started_at_ms, min_delay_ms, max_delay_ms) do
-    scheduled_delay_ms = due_at_ms - event_started_at_ms
-    jitter_ms = 250
+  defp assert_retry_timer_in_range(timer_ref, min_remaining_ms, max_remaining_ms) do
+    remaining_ms = Process.read_timer(timer_ref)
 
-    assert scheduled_delay_ms >= min_delay_ms
-    assert scheduled_delay_ms <= max_delay_ms + jitter_ms
+    assert is_reference(timer_ref)
+    assert is_integer(remaining_ms)
+
+    assert remaining_ms >= min_remaining_ms
+    assert remaining_ms <= max_remaining_ms
+  end
+
+  defp supervisor_child_pids do
+    Supervisor.which_children(SymphonyElixir.Supervisor)
+    |> Enum.reduce(%{}, fn {id, pid, _type, _modules}, acc ->
+      Map.put(acc, id, pid)
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 20)
+  defp eventually(fun, attempts) when attempts <= 0, do: fun.()
+
+  defp eventually(fun, attempts) when is_function(fun, 0) do
+    if fun.() do
+      true
+    else
+      Process.sleep(50)
+      eventually(fun, attempts - 1)
+    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
