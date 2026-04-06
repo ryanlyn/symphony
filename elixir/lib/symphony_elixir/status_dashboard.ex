@@ -95,6 +95,7 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
+  @impl true
   @spec init(keyword()) :: {:ok, t()}
   def init(opts) do
     refresh_ms_override = keyword_override(opts, :refresh_ms)
@@ -145,6 +146,7 @@ defmodule SymphonyElixir.StatusDashboard do
       :ok
   end
 
+  @impl true
   @spec handle_info(term(), t()) :: {:noreply, t()}
   def handle_info(:tick, %{enabled: true} = state) do
     state = refresh_runtime_config(state)
