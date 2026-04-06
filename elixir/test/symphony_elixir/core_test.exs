@@ -105,7 +105,7 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
+    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/ryanlyn/symphony ."
     assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
     assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
@@ -441,14 +441,18 @@ defmodule SymphonyElixir.CoreTest do
         started_at: DateTime.utc_now()
       }
 
+      tick_token = make_ref()
+
       :sys.replace_state(pid, fn _ ->
         initial_state
         |> Map.put(:running, %{issue_id => running_entry})
         |> Map.put(:claimed, MapSet.new([issue_id]))
         |> Map.put(:retry_attempts, %{})
+        |> Map.put(:tick_timer_ref, nil)
+        |> Map.put(:tick_token, tick_token)
       end)
 
-      send(pid, :tick)
+      send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 
