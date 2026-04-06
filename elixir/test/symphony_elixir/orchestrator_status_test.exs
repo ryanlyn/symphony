@@ -1212,6 +1212,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:tick_token, tick_token)
       end)
 
+      before_send_ms = System.monotonic_time(:millisecond)
       send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1227,8 +1228,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      assert is_integer(due_at_ms)
-      assert_retry_timer_in_range(timer_ref, 8_500, 10_500)
+      assert is_reference(timer_ref)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 10_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1306,6 +1307,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         |> Map.put(:tick_token, tick_token)
       end)
 
+      before_send_ms = System.monotonic_time(:millisecond)
       send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
@@ -1321,8 +1323,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      assert is_integer(due_at_ms)
-      assert_retry_timer_in_range(timer_ref, 8_500, 10_500)
+      assert is_reference(timer_ref)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 10_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -2065,12 +2067,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     |> elem(1)
   end
 
-  defp assert_retry_timer_in_range(timer_ref, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = Process.read_timer(timer_ref)
+  defp assert_retry_deadline_in_range(due_at_ms, started_at_ms, min_delay_ms, max_delay_ms) do
+    scheduled_delay_ms = due_at_ms - started_at_ms
 
-    assert is_reference(timer_ref)
-    assert is_integer(remaining_ms)
-    assert remaining_ms >= min_remaining_ms
-    assert remaining_ms <= max_remaining_ms
+    assert is_integer(due_at_ms)
+    assert scheduled_delay_ms >= min_delay_ms
+    assert scheduled_delay_ms <= max_delay_ms
   end
 end
