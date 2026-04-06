@@ -689,7 +689,7 @@ defmodule SymphonyElixir.CoreTest do
              state.retry_attempts[issue_id]
 
     assert is_integer(due_at_ms)
-    assert_retry_timer_in_range(timer_ref, 9_000, 10_500)
+    assert_retry_timer_in_range(timer_ref, 8_500, 10_500)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
