@@ -840,39 +840,39 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
            }
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "tracker.active_states"
 
     write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "agent.max_concurrent_agents"
 
     write_workflow_file!(Workflow.workflow_file_path(), agent_kind: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "agent.kind"
 
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 0)
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "worker.max_concurrent_agents_per_host"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.turn_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_read_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.read_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_stall_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), claude_turn_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "claude.turn_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), claude_stall_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "claude.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -890,19 +890,20 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       server_host: 123
     )
 
-    assert {:error, {:invalid_workflow_config, _message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, _message}} = Config.validate()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
     assert Config.settings!().codex.approval_policy == ""
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "")
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
     assert Config.settings!().codex.thread_sandbox == ""
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.turn_sandbox_policy"
+    assert_raise ArgumentError, ~r/codex\.turn_sandbox_policy/, fn -> Config.validate!() end
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_approval_policy: "future-policy",
@@ -917,7 +918,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.approval_policy == "future-policy"
     assert config.codex.thread_sandbox == "future-sandbox"
 
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "futureSandbox",
@@ -1007,7 +1008,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
 
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
   end
 

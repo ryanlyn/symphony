@@ -298,7 +298,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
 
-    with :ok <- Config.validate!(),
+    with :ok <- Config.validate(),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
@@ -353,7 +353,7 @@ defmodule SymphonyElixir.Orchestrator do
     if running_ids == [] do
       state
     else
-      with :ok <- Config.validate!(),
+      with :ok <- Config.validate(),
            {:ok, issues} <- Tracker.fetch_issue_states_by_ids(running_ids) do
         issues
         |> reconcile_running_issue_states(
@@ -938,7 +938,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
-    with :ok <- Config.validate!(),
+    with :ok <- Config.validate(),
          {:ok, issues} <- Tracker.fetch_candidate_issues() do
       issues
       |> find_issue_by_id(issue_id)

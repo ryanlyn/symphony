@@ -107,10 +107,21 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  @spec validate!() :: :ok | {:error, term()}
-  def validate! do
+  @spec validate() :: :ok | {:error, term()}
+  def validate do
     with {:ok, settings} <- settings() do
       validate_semantics(settings)
+    end
+  end
+
+  @spec validate!() :: :ok
+  def validate! do
+    case validate() do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError, message: format_config_error(reason)
     end
   end
 
@@ -162,6 +173,18 @@ defmodule SymphonyElixir.Config do
 
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+
+      :missing_tracker_kind ->
+        "Tracker kind missing in WORKFLOW.md"
+
+      :missing_linear_api_token ->
+        "Linear API token missing in WORKFLOW.md"
+
+      :missing_linear_project_slug ->
+        "Linear project slug missing in WORKFLOW.md"
+
+      {:unsupported_tracker_kind, kind} ->
+        "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
 
       other ->
         "Invalid WORKFLOW.md config: #{inspect(other)}"
