@@ -6,6 +6,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixirWeb.StaticAssets
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -485,6 +486,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "dashboard bootstraps liveview from embedded static assets" do
     orchestrator_name = Module.concat(__MODULE__, :AssetOrchestrator)
+    dashboard_css_path = StaticAssets.asset_path(:dashboard_css)
+    phoenix_html_js_path = StaticAssets.asset_path(:phoenix_html_js)
+    phoenix_js_path = StaticAssets.asset_path(:phoenix_js)
+    phoenix_live_view_js_path = StaticAssets.asset_path(:phoenix_live_view_js)
 
     {:ok, _pid} =
       StaticOrchestrator.start_link(
@@ -501,29 +506,62 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     html = html_response(get(build_conn(), "/"), 200)
-    assert html =~ "/dashboard.css"
-    assert html =~ "/vendor/phoenix_html/phoenix_html.js"
-    assert html =~ "/vendor/phoenix/phoenix.js"
-    assert html =~ "/vendor/phoenix_live_view/phoenix_live_view.js"
+    assert html =~ dashboard_css_path
+    assert html =~ phoenix_html_js_path
+    assert html =~ phoenix_js_path
+    assert html =~ phoenix_live_view_js_path
+    refute html =~ ~s(href="/dashboard.css")
+    refute html =~ ~s(src="/vendor/phoenix_html/phoenix_html.js")
+    refute html =~ ~s(src="/vendor/phoenix/phoenix.js")
+    refute html =~ ~s(src="/vendor/phoenix_live_view/phoenix_live_view.js")
     refute html =~ "/assets/app.js"
     refute html =~ "<style>"
 
-    dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
+    dashboard_css_conn = get(build_conn(), dashboard_css_path)
+
+    assert Plug.Conn.get_resp_header(dashboard_css_conn, "cache-control") == [
+             "public, max-age=31536000"
+           ]
+
+    dashboard_css = response(dashboard_css_conn, 200)
     assert dashboard_css =~ ":root {"
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
 
-    phoenix_html_js = response(get(build_conn(), "/vendor/phoenix_html/phoenix_html.js"), 200)
+    phoenix_html_js = response(get(build_conn(), phoenix_html_js_path), 200)
     assert phoenix_html_js =~ "phoenix.link.click"
 
-    phoenix_js = response(get(build_conn(), "/vendor/phoenix/phoenix.js"), 200)
+    phoenix_js = response(get(build_conn(), phoenix_js_path), 200)
     assert phoenix_js =~ "var Phoenix = (() => {"
 
     live_view_js =
-      response(get(build_conn(), "/vendor/phoenix_live_view/phoenix_live_view.js"), 200)
+      response(get(build_conn(), phoenix_live_view_js_path), 200)
 
     assert live_view_js =~ "var LiveView = (() => {"
+    assert response(get(build_conn(), "/dashboard.css"), 200) == dashboard_css
+  end
+
+  test "static asset paths are fingerprinted from embedded content" do
+    fingerprinted_path = fn stable_path, body ->
+      digest =
+        :crypto.hash(:sha256, body)
+        |> Base.encode16(case: :lower)
+        |> binary_part(0, 12)
+
+      "#{Path.rootname(stable_path)}-#{digest}#{Path.extname(stable_path)}"
+    end
+
+    for {key, stable_path, content_type} <- [
+          {:dashboard_css, "/dashboard.css", "text/css"},
+          {:phoenix_html_js, "/vendor/phoenix_html/phoenix_html.js", "application/javascript"},
+          {:phoenix_js, "/vendor/phoenix/phoenix.js", "application/javascript"},
+          {:phoenix_live_view_js, "/vendor/phoenix_live_view/phoenix_live_view.js", "application/javascript"}
+        ] do
+      assert {:ok, ^content_type, body} = StaticAssets.fetch(stable_path)
+      assert StaticAssets.asset_path(key) == fingerprinted_path.(stable_path, body)
+      assert StaticAssets.fetch(StaticAssets.asset_path(key)) == {:ok, content_type, body}
+    end
   end
 
   test "dashboard liveview renders and refreshes over pubsub" do
@@ -650,13 +688,16 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert response.status == 200
     assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
 
-    dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
+    dashboard_css = Req.get!("http://127.0.0.1:#{port}#{StaticAssets.asset_path(:dashboard_css)}")
     assert dashboard_css.status == 200
     assert dashboard_css.body =~ ":root {"
 
-    phoenix_js = Req.get!("http://127.0.0.1:#{port}/vendor/phoenix/phoenix.js")
+    phoenix_js = Req.get!("http://127.0.0.1:#{port}#{StaticAssets.asset_path(:phoenix_js)}")
     assert phoenix_js.status == 200
     assert phoenix_js.body =~ "var Phoenix = (() => {"
+
+    legacy_dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
+    assert legacy_dashboard_css.status == 200
 
     refresh_response =
       Req.post!("http://127.0.0.1:#{port}/api/v1/refresh",

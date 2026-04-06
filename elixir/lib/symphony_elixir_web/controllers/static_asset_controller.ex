@@ -8,17 +8,8 @@ defmodule SymphonyElixirWeb.StaticAssetController do
   alias Plug.Conn
   alias SymphonyElixirWeb.StaticAssets
 
-  @spec dashboard_css(Conn.t(), map()) :: Conn.t()
-  def dashboard_css(conn, _params), do: serve(conn, "/dashboard.css")
-
-  @spec phoenix_html_js(Conn.t(), map()) :: Conn.t()
-  def phoenix_html_js(conn, _params), do: serve(conn, "/vendor/phoenix_html/phoenix_html.js")
-
-  @spec phoenix_js(Conn.t(), map()) :: Conn.t()
-  def phoenix_js(conn, _params), do: serve(conn, "/vendor/phoenix/phoenix.js")
-
-  @spec phoenix_live_view_js(Conn.t(), map()) :: Conn.t()
-  def phoenix_live_view_js(conn, _params), do: serve(conn, "/vendor/phoenix_live_view/phoenix_live_view.js")
+  @spec show(Conn.t(), map()) :: Conn.t()
+  def show(conn, _params), do: serve(conn, conn.request_path)
 
   defp serve(conn, path) do
     case StaticAssets.fetch(path) do
