@@ -1,6 +1,8 @@
 defmodule SymphonyElixirWeb.StaticAssets do
   @moduledoc false
 
+  @type asset_key :: :dashboard_css | :phoenix_html_js | :phoenix_js | :phoenix_live_view_js
+
   @dashboard_css_path Path.expand("../../priv/static/dashboard.css", __DIR__)
   @phoenix_html_js_path Application.app_dir(:phoenix_html, "priv/static/phoenix_html.js")
   @phoenix_js_path Application.app_dir(:phoenix, "priv/static/phoenix.js")
@@ -16,12 +18,37 @@ defmodule SymphonyElixirWeb.StaticAssets do
   @phoenix_js File.read!(@phoenix_js_path)
   @phoenix_live_view_js File.read!(@phoenix_live_view_js_path)
 
+  @dashboard_css_digest :crypto.hash(:sha256, @dashboard_css) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+  @phoenix_html_js_digest :crypto.hash(:sha256, @phoenix_html_js) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+  @phoenix_js_digest :crypto.hash(:sha256, @phoenix_js) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+
+  @phoenix_live_view_js_digest :crypto.hash(:sha256, @phoenix_live_view_js)
+                               |> Base.encode16(case: :lower)
+                               |> binary_part(0, 12)
+
+  @dashboard_css_asset_path "/dashboard-#{@dashboard_css_digest}.css"
+
+  @phoenix_html_js_asset_path "/vendor/phoenix_html/phoenix_html-#{@phoenix_html_js_digest}.js"
+  @phoenix_js_asset_path "/vendor/phoenix/phoenix-#{@phoenix_js_digest}.js"
+
+  @phoenix_live_view_js_asset_path "/vendor/phoenix_live_view/phoenix_live_view-#{@phoenix_live_view_js_digest}.js"
+
   @assets %{
     "/dashboard.css" => {"text/css", @dashboard_css},
+    @dashboard_css_asset_path => {"text/css", @dashboard_css},
     "/vendor/phoenix_html/phoenix_html.js" => {"application/javascript", @phoenix_html_js},
+    @phoenix_html_js_asset_path => {"application/javascript", @phoenix_html_js},
     "/vendor/phoenix/phoenix.js" => {"application/javascript", @phoenix_js},
-    "/vendor/phoenix_live_view/phoenix_live_view.js" => {"application/javascript", @phoenix_live_view_js}
+    @phoenix_js_asset_path => {"application/javascript", @phoenix_js},
+    "/vendor/phoenix_live_view/phoenix_live_view.js" => {"application/javascript", @phoenix_live_view_js},
+    @phoenix_live_view_js_asset_path => {"application/javascript", @phoenix_live_view_js}
   }
+
+  @spec asset_path(asset_key()) :: String.t()
+  def asset_path(:dashboard_css), do: @dashboard_css_asset_path
+  def asset_path(:phoenix_html_js), do: @phoenix_html_js_asset_path
+  def asset_path(:phoenix_js), do: @phoenix_js_asset_path
+  def asset_path(:phoenix_live_view_js), do: @phoenix_live_view_js_asset_path
 
   @spec fetch(String.t()) :: {:ok, String.t(), binary()} | :error
   def fetch(path) when is_binary(path) do
