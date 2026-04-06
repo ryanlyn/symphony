@@ -332,7 +332,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert_receive {:claude_update, %{event: :turn_started, session_id: nil}}
       assert_receive {:claude_update, %{event: :session_started, session_id: "session-late"}}
       assert_receive {:claude_update, %{event: :turn_completed, session_id: "session-late"}}
-      assert length(Regex.scan(~r/^ARGV:/m, File.read!(trace_file))) >= 1
+      refute Regex.scan(~r/^ARGV:/m, File.read!(trace_file)) == []
     after
       File.rm_rf(test_root)
     end
