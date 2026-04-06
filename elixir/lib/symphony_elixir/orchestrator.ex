@@ -1411,7 +1411,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp schedule_poll_cycle_start do
-    :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
+    Process.send_after(self(), :run_poll_cycle, @poll_transition_render_delay_ms)
     :ok
   end
 
