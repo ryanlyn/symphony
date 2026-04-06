@@ -1099,10 +1099,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     }
 
     :sys.replace_state(pid, fn state ->
+      tick_token = make_ref()
+
       %{
         state
         | running: %{issue_id => running_entry},
-          claimed: MapSet.put(state.claimed, issue_id)
+          claimed: MapSet.put(state.claimed, issue_id),
+          tick_timer_ref: nil,
+          tick_token: tick_token
       }
     end)
 
@@ -1112,7 +1116,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       poll_interval_ms: %{bad: true}
     )
 
-    send(pid, :tick)
+    tick_token = :sys.get_state(pid).tick_token
+    send(pid, {:tick, tick_token})
 
     snapshot =
       wait_for_snapshot(
@@ -1196,13 +1201,17 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         started_at: stale_activity_at
       }
 
+      tick_token = make_ref()
+
       :sys.replace_state(pid, fn _ ->
         initial_state
         |> Map.put(:running, %{issue_id => running_entry})
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:tick_timer_ref, nil)
+        |> Map.put(:tick_token, tick_token)
       end)
 
-      send(pid, :tick)
+      send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 
@@ -1286,13 +1295,17 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         started_at: stale_activity_at
       }
 
+      tick_token = make_ref()
+
       :sys.replace_state(pid, fn _ ->
         initial_state
         |> Map.put(:running, %{issue_id => running_entry})
         |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:tick_timer_ref, nil)
+        |> Map.put(:tick_token, tick_token)
       end)
 
-      send(pid, :tick)
+      send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 
