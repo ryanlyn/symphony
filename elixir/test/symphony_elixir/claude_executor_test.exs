@@ -274,6 +274,67 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor resets turn timeout after streamed output" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-claude-timeout-reset-#{System.unique_integer([:positive])}")
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-TIMEOUT")
+      fake_claude = Path.join(test_root, "fake-claude")
+
+      File.write!(
+        fake_claude,
+        fake_persistent_claude_script(Path.join(test_root, "timeout.trace"), "session-timeout", """
+        sleep 0.45
+        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-1"}]}}'
+        sleep 0.45
+        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-2"}]}}'
+        sleep 0.45
+        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-3"}]}}'
+        sleep 0.45
+        printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"session-timeout","usage":{"inputTokens":1,"outputTokens":1}}'
+        """)
+      )
+
+      File.chmod!(fake_claude, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: fake_claude,
+        claude_turn_timeout_ms: 1_000
+      )
+
+      issue = %Issue{
+        id: "issue-claude-timeout",
+        identifier: "MT-CLAUDE-TIMEOUT",
+        title: "Claude timeout reset",
+        description: "Ensure timeout resets while output keeps streaming",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-TIMEOUT",
+        labels: []
+      }
+
+      assert {:ok, session} = Executor.start_session(workspace)
+
+      assert {:ok, _updated_session, %{"result" => "done"}} =
+               Executor.run_turn(session, "Wait through streamed output", issue, on_message: &send(self(), {:claude_update, &1}))
+
+      assert_receive {:claude_update, %{event: :session_started, session_id: "session-timeout"}}
+      assert_receive {:claude_update, %{event: :turn_started}}
+
+      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-1"}]}}}}
+
+      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-2"}]}}}}
+
+      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-3"}]}}}}
+
+      assert_receive {:claude_update, %{event: :turn_completed}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "claude executor reports malformed output before permission-denied failures" do
     test_root = Path.join(System.tmp_dir!(), "symphony-claude-denied-#{System.unique_integer([:positive])}")
 

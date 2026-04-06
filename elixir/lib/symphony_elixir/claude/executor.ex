@@ -233,34 +233,30 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp await_turn_completion(session, on_message) do
-    started_at_ms = System.monotonic_time(:millisecond)
-    receive_loop(session, on_message, started_at_ms)
+    receive_loop(session, on_message)
   end
 
-  defp receive_loop(%{port: port, pending_line: pending_line} = session, on_message, started_at_ms) do
-    timeout_ms = max(1, session.turn_timeout_ms - (System.monotonic_time(:millisecond) - started_at_ms))
-
+  defp receive_loop(%{port: port, pending_line: pending_line} = session, on_message) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         handle_line(
           %{session | pending_line: ""},
           pending_line <> to_string(chunk),
-          on_message,
-          started_at_ms
+          on_message
         )
 
       {^port, {:data, {:noeol, chunk}}} ->
-        receive_loop(%{session | pending_line: pending_line <> to_string(chunk)}, on_message, started_at_ms)
+        receive_loop(%{session | pending_line: pending_line <> to_string(chunk)}, on_message)
 
       {^port, {:exit_status, status}} ->
         {:error, {:port_exit, status}}
     after
-      timeout_ms ->
+      session.turn_timeout_ms ->
         {:error, :turn_timeout}
     end
   end
 
-  defp handle_line(session, data, on_message, started_at_ms) do
+  defp handle_line(session, data, on_message) do
     payload_string = to_string(data)
 
     case Jason.decode(payload_string) do
@@ -268,7 +264,7 @@ defmodule SymphonyElixir.Claude.Executor do
         case normalize_stream_event(payload, payload_string, session.metadata, session) do
           {:continue, updated_session, update} ->
             emit_update(on_message, update)
-            receive_loop(%{updated_session | pending_line: ""}, on_message, started_at_ms)
+            receive_loop(%{updated_session | pending_line: ""}, on_message)
 
           {:done, updated_session, update, result} ->
             emit_update(on_message, update)
@@ -279,13 +275,13 @@ defmodule SymphonyElixir.Claude.Executor do
             {:error, reason}
 
           {:ignore, updated_session} ->
-            receive_loop(%{updated_session | pending_line: ""}, on_message, started_at_ms)
+            receive_loop(%{updated_session | pending_line: ""}, on_message)
         end
 
       {:error, _reason} ->
         update = base_update(session, session.metadata, :malformed, payload_string, payload_string)
         emit_update(on_message, update)
-        receive_loop(%{session | pending_line: ""}, on_message, started_at_ms)
+        receive_loop(%{session | pending_line: ""}, on_message)
     end
   end
 
