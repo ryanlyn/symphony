@@ -174,20 +174,23 @@ defmodule SymphonyElixir.Config do
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
 
-      :missing_tracker_kind ->
-        "Tracker kind missing in WORKFLOW.md"
-
-      :missing_linear_api_token ->
-        "Linear API token missing in WORKFLOW.md"
-
-      :missing_linear_project_slug ->
-        "Linear project slug missing in WORKFLOW.md"
-
-      {:unsupported_tracker_kind, kind} ->
-        "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
-
       other ->
-        "Invalid WORKFLOW.md config: #{inspect(other)}"
+        format_validation_config_error(other)
     end
   end
+
+  defp format_validation_config_error(:missing_tracker_kind),
+    do: "Tracker kind missing in WORKFLOW.md"
+
+  defp format_validation_config_error(:missing_linear_api_token),
+    do: "Linear API token missing in WORKFLOW.md"
+
+  defp format_validation_config_error(:missing_linear_project_slug),
+    do: "Linear project slug missing in WORKFLOW.md"
+
+  defp format_validation_config_error({:unsupported_tracker_kind, kind}),
+    do: "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
+
+  defp format_validation_config_error(other),
+    do: "Invalid WORKFLOW.md config: #{inspect(other)}"
 end
