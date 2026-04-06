@@ -11,6 +11,21 @@ defmodule SymphonyElixir.Linear.Client do
   @rate_limit_base_delay_ms 1_000
   @rate_limit_max_delay_ms 30_000
   @rate_limit_max_retries 4
+  @retry_after_http_date_regex ~r/^[A-Za-z]{3}, (?<day>\d{2}) (?<month>[A-Za-z]{3}) (?<year>\d{4}) (?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2}) GMT$/
+  @retry_after_http_months %{
+    "Jan" => 1,
+    "Feb" => 2,
+    "Mar" => 3,
+    "Apr" => 4,
+    "May" => 5,
+    "Jun" => 6,
+    "Jul" => 7,
+    "Aug" => 8,
+    "Sep" => 9,
+    "Oct" => 10,
+    "Nov" => 11,
+    "Dec" => 12
+  }
 
   @query """
   query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
@@ -455,21 +470,28 @@ defmodule SymphonyElixir.Linear.Client do
   defp parse_retry_after_ms(_retry_after, _now_fun), do: nil
 
   defp parse_retry_after_http_date_ms(retry_after, now_fun) when is_binary(retry_after) do
-    case :httpd_util.convert_request_date(String.to_charlist(retry_after)) do
-      {{year, month, day}, {hour, minute, second}} ->
-        with {:ok, naive_dt} <- NaiveDateTime.new(year, month, day, hour, minute, second),
-             {:ok, retry_after_dt} <- DateTime.from_naive(naive_dt, "Etc/UTC") do
-          max(DateTime.diff(retry_after_dt, now_fun.(), :millisecond), 0)
-        else
-          _ -> nil
-        end
-
+    with %{} = captures <- Regex.named_captures(@retry_after_http_date_regex, retry_after),
+         {:ok, month} <- retry_after_http_month(captures["month"]),
+         {year, ""} <- Integer.parse(captures["year"]),
+         {day, ""} <- Integer.parse(captures["day"]),
+         {hour, ""} <- Integer.parse(captures["hour"]),
+         {minute, ""} <- Integer.parse(captures["minute"]),
+         {second, ""} <- Integer.parse(captures["second"]),
+         {:ok, naive_dt} <- NaiveDateTime.new(year, month, day, hour, minute, second),
+         {:ok, retry_after_dt} <- DateTime.from_naive(naive_dt, "Etc/UTC") do
+      max(DateTime.diff(retry_after_dt, now_fun.(), :millisecond), 0)
+    else
       _ ->
         nil
     end
   end
 
-  defp parse_retry_after_http_date_ms(_retry_after, _now_fun), do: nil
+  defp retry_after_http_month(month_abbrev) when is_binary(month_abbrev) do
+    case Map.fetch(@retry_after_http_months, month_abbrev) do
+      {:ok, month} -> {:ok, month}
+      :error -> :error
+    end
+  end
 
   defp log_graphql_status_error(payload, response) do
     Logger.error("Linear GraphQL request failed status=#{response.status}" <> linear_error_context(payload, response))
@@ -538,7 +560,7 @@ defmodule SymphonyElixir.Linear.Client do
     issues =
       nodes
       |> Enum.map(&normalize_issue(&1, assignee_filter))
-      |> Enum.reject(&is_nil(&1))
+      |> Enum.reject(&is_nil/1)
 
     {:ok, issues}
   end
