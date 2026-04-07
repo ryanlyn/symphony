@@ -20,28 +20,14 @@ The workflow file (`WORKFLOW.md`) defines both the orchestrator configuration (Y
 the agent session prompt (Markdown body). Editing the workflow while Symphony is running reloads the
 configuration automatically - no restart needed.
 
-## Changes
+## Extensions
 
-### Claude Code executor
-
-In addition to the original Codex backend, this fork adds a Claude Code executor as an alternative
-agent backend. Set `agent.kind` to `"claude"` in the workflow config to use it.
-
-- Runs the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the agent process
-- Streams JSONL output and parses tool-use, results, and completion events
-- Automatically generates a per-workspace MCP config that points Claude at Symphony's `/claude-mcp` endpoint
-- Supports remote execution on SSH worker hosts, same as Codex
-- Uses the same Symphony-owned Linear tool backend as Codex, without a Python MCP sidecar
-- Configurable model, permission mode, and turn/stall timeouts under the `claude` config key
-
-### Session resumption
-
-Agent sessions (both Codex and Claude) can be resumed across runs:
-
-- Local Git-backed workspaces persist resume metadata under `.git/symphony/resume.json`
-- Later runs continue the same session when the saved issue, workspace, and worker context still
-  match
-- Failed or force-restarted runs invalidate resume state before retry, so the next run starts fresh
+| Extension | What it adds |
+| --- | --- |
+| Claude Code executor | Adds `agent.kind: "claude"` support, including Claude CLI execution, JSONL event parsing, `/claude-mcp` config generation, remote worker support, and Claude-specific runtime settings. |
+| Session resumption | Persists resume metadata in `.git/symphony/resume.json` so Codex and Claude sessions can continue safely across runs with executor-aware validation. |
+| Workflow and runtime hardening | Defaults Codex workflows to sandboxed `workspace-write`, honors Linear `Retry-After` backoff on `429`, tightens remote workspace path validation, and improves long-running orchestrator reliability. |
+| Claude parity and MCP handling | Routes Claude and Codex through the same Symphony-owned Linear tool backend, removes the Python MCP sidecar, and improves remote cleanup behavior. |
 
 ## Running
 
@@ -55,6 +41,8 @@ mise exec -- mix setup
 mise exec -- mix build
 mise exec -- ./bin/symphony ./WORKFLOW.md
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for notable fork-specific changes.
 
 ## License
 
