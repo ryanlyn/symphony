@@ -526,16 +526,7 @@ defmodule SymphonyElixir.Orchestrator do
           terminate_running_slot(acc, {issue_id, slot_index}, cleanup_workspace)
         end)
 
-<<<<<<< HEAD
-      %{state | ensembles: Map.delete(state.ensembles, issue_id), retry_attempts: Map.delete(state.retry_attempts, issue_id)}
-||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
-      %{state |
-        ensembles: Map.delete(state.ensembles, issue_id),
-        retry_attempts: Map.delete(state.retry_attempts, issue_id)
-      }
-=======
       %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}
->>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
     end
   end
 

@@ -98,12 +98,16 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.settings!().agent.ensemble_size == 3
 
     write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: 0)
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "agent.ensemble_size"
+
+    assert_raise ArgumentError, ~r/agent\.ensemble_size/, fn ->
+      Config.validate!()
+    end
 
     write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: -1)
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "agent.ensemble_size"
+
+    assert_raise ArgumentError, ~r/agent\.ensemble_size/, fn ->
+      Config.validate!()
+    end
   end
 
   test "current WORKFLOW.md file is valid and complete" do
@@ -1097,11 +1101,11 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 1, ensemble_size: 3)
 
     assert prompt =~ "You are working on a Linear ticket `MT-777`"
-    assert prompt =~ "You are slot `1` of `3` concurrent agents"
-    assert prompt =~ "Shared side effects can race"
-    assert prompt =~ "Prefer unique slot-scoped branch names"
-    assert prompt =~ "Re-fetch before every shared mutation"
-    assert prompt =~ "If the desired mutation already happened"
+    assert prompt =~ "You are independent agent `1` out of `3` agents"
+    assert prompt =~ "Come up with independent work on the ticket yourself"
+    assert prompt =~ "your own tracking workpad comment"
+    assert prompt =~ "Status: COMPLETE"
+    assert prompt =~ "all expected ensemble workpads contain the exact line"
     assert prompt =~ "retry attempt #2"
   end
 

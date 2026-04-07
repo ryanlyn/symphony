@@ -7,9 +7,9 @@ defmodule SymphonyElixir.Claude.Mcp do
   @config_filename "mcp.json"
   @server_filename "linear_graphql_mcp.py"
 
-  @spec prepare(Path.t(), String.t() | nil, keyword()) ::
+  @spec prepare(Path.t(), String.t() | nil) ::
           {:ok, %{config_path: String.t(), sidecar_path: String.t()}} | {:error, term()}
-  def prepare(workspace, worker_host \\ nil, _opts \\ []) when is_binary(workspace) do
+  def prepare(workspace, worker_host \\ nil) when is_binary(workspace) do
     config_path = Path.join([workspace, @dir_relative_path, @config_filename])
     sidecar_path = Path.join([workspace, @dir_relative_path, @server_filename])
     python = Config.settings!().claude.mcp_server_python
@@ -33,32 +33,14 @@ defmodule SymphonyElixir.Claude.Mcp do
     ]
   end
 
-<<<<<<< HEAD
   @spec config_contents(String.t(), String.t()) :: String.t()
   def config_contents(sidecar_path, python) when is_binary(sidecar_path) and is_binary(python) do
-||||||| parent of fbd2aaf (refactor(elixir): simplify ensemble orchestration)
-  @spec config_contents(String.t(), String.t(), map()) :: String.t()
-  def config_contents(sidecar_path, python, slot_env \\ %{})
-      when is_binary(sidecar_path) and is_binary(python) and is_map(slot_env) do
-=======
-  @spec config_contents(String.t(), String.t()) :: String.t()
-  def config_contents(sidecar_path, python)
-      when is_binary(sidecar_path) and is_binary(python) do
->>>>>>> fbd2aaf (refactor(elixir): simplify ensemble orchestration)
-    tracker = Config.settings!().tracker
-
-    env = %{
-      "SYMPHONY_LINEAR_API_KEY" => tracker.api_key,
-      "SYMPHONY_LINEAR_ENDPOINT" => tracker.endpoint
-    }
-
     %{
       "mcpServers" => %{
         "symphony_linear" => %{
           "type" => "stdio",
           "command" => python,
-          "args" => [sidecar_path],
-          "env" => env
+          "args" => [sidecar_path]
         }
       }
     }
