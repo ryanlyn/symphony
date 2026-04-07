@@ -18,8 +18,11 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       config = Jason.decode!(File.read!(config_path))
       assert get_in(config, ["mcpServers", "symphony_linear", "type"]) == "stdio"
       assert get_in(config, ["mcpServers", "symphony_linear", "args"]) == [sidecar_path]
-      assert get_in(config, ["mcpServers", "symphony_linear", "env"]) == nil
-      refute File.read!(config_path) =~ "token"
+      assert get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_LINEAR_API_KEY"]) == "token"
+      assert get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_LINEAR_ENDPOINT"]) == "https://api.linear.app/graphql"
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_SLOT_INDEX"])
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_ENSEMBLE_SIZE"])
+      refute get_in(config, ["mcpServers", "symphony_linear", "env", "SYMPHONY_HTTP_PORT"])
       assert File.read!(sidecar_path) =~ "linear_graphql"
       assert File.read!(sidecar_path) =~ "protocolVersion"
     after
@@ -82,8 +85,11 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert trace =~ "ENV_ENDPOINT:https://linear.example/graphql"
 
       config_contents = File.read!(session.config_path)
-      refute config_contents =~ "plaintext-linear-secret"
-      refute config_contents =~ "SYMPHONY_LINEAR_API_KEY"
+      assert config_contents =~ "plaintext-linear-secret"
+      assert config_contents =~ "SYMPHONY_LINEAR_API_KEY"
+      refute config_contents =~ "SYMPHONY_SLOT_INDEX"
+      refute config_contents =~ "SYMPHONY_ENSEMBLE_SIZE"
+      refute config_contents =~ "SYMPHONY_HTTP_PORT"
     after
       File.rm_rf(test_root)
     end
