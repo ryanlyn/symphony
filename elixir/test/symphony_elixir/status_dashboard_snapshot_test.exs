@@ -203,6 +203,8 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
       %{
         identifier: "MT-000",
         state: "running",
+        slot_index: 0,
+        ensemble_size: 1,
         session_id: "thread-1234567890",
         executor_pid: "4242",
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},

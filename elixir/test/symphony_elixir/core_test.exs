@@ -90,6 +90,26 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate()
   end
 
+  test "ensemble_size defaults to 1 and validates correctly" do
+    write_workflow_file!(Workflow.workflow_file_path())
+    assert Config.settings!().agent.ensemble_size == 1
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: 3)
+    assert Config.settings!().agent.ensemble_size == 3
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: 0)
+
+    assert_raise ArgumentError, ~r/agent\.ensemble_size/, fn ->
+      Config.validate!()
+    end
+
+    write_workflow_file!(Workflow.workflow_file_path(), ensemble_size: -1)
+
+    assert_raise ArgumentError, ~r/agent\.ensemble_size/, fn ->
+      Config.validate!()
+    end
+  end
+
   test "current WORKFLOW.md file is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
@@ -290,7 +310,7 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          issue_id => %{
+          {issue_id, 0} => %{
             pid: agent_pid,
             ref: nil,
             identifier: issue_identifier,
@@ -298,7 +318,7 @@ defmodule SymphonyElixir.CoreTest do
             started_at: DateTime.utc_now()
           }
         },
-        claimed: MapSet.new([issue_id]),
+        claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
         retry_attempts: %{}
       }
@@ -314,8 +334,8 @@ defmodule SymphonyElixir.CoreTest do
 
       updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
 
-      refute Map.has_key?(updated_state.running, issue_id)
-      refute MapSet.member?(updated_state.claimed, issue_id)
+      refute Map.has_key?(updated_state.running, {issue_id, 0})
+      refute MapSet.member?(updated_state.claimed, {issue_id, 0})
       refute Process.alive?(agent_pid)
       assert File.exists?(workspace)
     after
@@ -353,7 +373,7 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          issue_id => %{
+          {issue_id, 0} => %{
             pid: agent_pid,
             ref: nil,
             identifier: issue_identifier,
@@ -361,7 +381,7 @@ defmodule SymphonyElixir.CoreTest do
             started_at: DateTime.utc_now()
           }
         },
-        claimed: MapSet.new([issue_id]),
+        claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
         retry_attempts: %{}
       }
@@ -377,8 +397,8 @@ defmodule SymphonyElixir.CoreTest do
 
       updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
 
-      refute Map.has_key?(updated_state.running, issue_id)
-      refute MapSet.member?(updated_state.claimed, issue_id)
+      refute Map.has_key?(updated_state.running, {issue_id, 0})
+      refute MapSet.member?(updated_state.claimed, {issue_id, 0})
       refute Process.alive?(agent_pid)
       refute File.exists?(workspace)
     after
@@ -447,8 +467,8 @@ defmodule SymphonyElixir.CoreTest do
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.new([issue_id]))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.new([{issue_id, 0}]))
         |> Map.put(:retry_attempts, %{})
         |> Map.put(:tick_timer_ref, nil)
         |> Map.put(:tick_token, tick_token)
@@ -458,8 +478,8 @@ defmodule SymphonyElixir.CoreTest do
       Process.sleep(100)
       state = :sys.get_state(pid)
 
-      refute Map.has_key?(state.running, issue_id)
-      refute MapSet.member?(state.claimed, issue_id)
+      refute Map.has_key?(state.running, {issue_id, 0})
+      refute MapSet.member?(state.claimed, {issue_id, 0})
       refute Process.alive?(agent_pid)
       assert File.exists?(workspace)
     after
@@ -473,7 +493,7 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        issue_id => %{
+        {issue_id, 0} => %{
           pid: self(),
           ref: nil,
           identifier: "MT-557",
@@ -485,7 +505,7 @@ defmodule SymphonyElixir.CoreTest do
           started_at: DateTime.utc_now()
         }
       },
-      claimed: MapSet.new([issue_id]),
+      claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       retry_attempts: %{}
     }
@@ -500,10 +520,10 @@ defmodule SymphonyElixir.CoreTest do
     }
 
     updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
-    updated_entry = updated_state.running[issue_id]
+    updated_entry = updated_state.running[{issue_id, 0}]
 
-    assert Map.has_key?(updated_state.running, issue_id)
-    assert MapSet.member?(updated_state.claimed, issue_id)
+    assert Map.has_key?(updated_state.running, {issue_id, 0})
+    assert MapSet.member?(updated_state.claimed, {issue_id, 0})
     assert updated_entry.issue.state == "In Progress"
   end
 
@@ -519,7 +539,7 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        issue_id => %{
+        {issue_id, 0} => %{
           pid: agent_pid,
           ref: nil,
           identifier: "MT-561",
@@ -532,7 +552,7 @@ defmodule SymphonyElixir.CoreTest do
           started_at: DateTime.utc_now()
         }
       },
-      claimed: MapSet.new([issue_id]),
+      claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       retry_attempts: %{}
     }
@@ -549,8 +569,8 @@ defmodule SymphonyElixir.CoreTest do
 
     updated_state = Orchestrator.reconcile_issue_states_for_test([issue], state)
 
-    refute Map.has_key?(updated_state.running, issue_id)
-    refute MapSet.member?(updated_state.claimed, issue_id)
+    refute Map.has_key?(updated_state.running, {issue_id, 0})
+    refute MapSet.member?(updated_state.claimed, {issue_id, 0})
     refute Process.alive?(agent_pid)
   end
 
@@ -578,8 +598,8 @@ defmodule SymphonyElixir.CoreTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.new([{issue_id, 0}]))
       |> Map.put(:retry_attempts, %{})
     end)
 
@@ -588,7 +608,7 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    refute Map.has_key?(state.running, issue_id)
+    refute Map.has_key?(state.running, {issue_id, 0})
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref} = state.retry_attempts[issue_id]
     assert is_reference(timer_ref)
@@ -640,8 +660,8 @@ defmodule SymphonyElixir.CoreTest do
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.new([issue_id]))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.new([{issue_id, 0}]))
         |> Map.put(:retry_attempts, %{})
       end)
 
@@ -685,8 +705,8 @@ defmodule SymphonyElixir.CoreTest do
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.new([issue_id]))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.new([{issue_id, 0}]))
       |> Map.put(:retry_attempts, %{})
     end)
 
@@ -1063,6 +1083,32 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "retry attempt #2"
   end
 
+  test "in-repo WORKFLOW_ENSEMBLE.md renders correctly" do
+    workflow_path = Workflow.workflow_file_path()
+    Workflow.set_workflow_file_path(Path.expand("WORKFLOW_ENSEMBLE.md", File.cwd!()))
+
+    issue = %Issue{
+      identifier: "MT-777",
+      title: "Coordinate safely without runtime locks",
+      description: "Render ensemble guidance from the selected workflow template",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-777/coordinate-safely-without-runtime-locks",
+      labels: ["ensemble", "workflow"]
+    }
+
+    on_exit(fn -> Workflow.set_workflow_file_path(workflow_path) end)
+
+    prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 1, ensemble_size: 3)
+
+    assert prompt =~ "You are working on a Linear ticket `MT-777`"
+    assert prompt =~ "You are independent agent `1` out of `3` agents"
+    assert prompt =~ "Come up with independent work on the ticket yourself"
+    assert prompt =~ "your own tracking workpad comment"
+    assert prompt =~ "Status: COMPLETE"
+    assert prompt =~ "all expected ensemble workpads are marked `Status: COMPLETE`"
+    assert prompt =~ "retry attempt #2"
+  end
+
   test "prompt builder adds continuation guidance for retries" do
     workflow_prompt = "{% if attempt %}Retry #" <> "{{ attempt }}" <> "{% endif %}"
     write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
@@ -1079,6 +1125,42 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
     assert prompt == "Retry #2"
+  end
+
+  test "build_prompt exposes nested ensemble variables when ensemble_size > 1" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}slot {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue, slot_index: 1, ensemble_size: 3)
+    assert prompt =~ "slot 1 of 3"
+  end
+
+  test "build_prompt exposes nested ensemble variables for solo runs" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}multi{% else %}solo {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue, slot_index: 0, ensemble_size: 1)
+    assert prompt == "solo 0 of 1"
+  end
+
+  test "build_prompt defaults ensemble variables when ensemble_size not specified" do
+    write_workflow_file!(
+      Workflow.workflow_file_path(),
+      prompt: "{% if ensemble.enabled %}multi{% else %}solo {{ ensemble.slot_index }} of {{ ensemble.size }}{% endif %}"
+    )
+
+    issue = %Issue{id: "id-1", identifier: "TEST-1", title: "Test", description: "Desc", state: "Todo"}
+
+    prompt = PromptBuilder.build_prompt(issue)
+    assert prompt == "solo 0 of 1"
   end
 
   test "agent runner keeps workspace after successful codex run" do
@@ -1157,7 +1239,9 @@ defmodule SymphonyElixir.CoreTest do
       workspace_name = created |> Enum.to_list() |> List.first()
       assert workspace_name == "S-99"
 
-      workspace = Path.join(workspace_root, workspace_name)
+      issue_dir = Path.join(workspace_root, workspace_name)
+      assert File.exists?(issue_dir)
+      workspace = Path.join(issue_dir, "0")
       assert File.exists?(workspace)
       assert File.exists?(Path.join(workspace, "README.md"))
     after

@@ -53,7 +53,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert {:ok, second_workspace} = Workspace.create_for_issue("MT/Det")
 
     assert first_workspace == second_workspace
-    assert Path.basename(first_workspace) == "MT_Det"
+    assert Path.basename(Path.dirname(first_workspace)) == "MT_Det"
+    assert Path.basename(first_workspace) == "0"
   end
 
   test "workspace reuses existing issue directory without deleting local changes" do
@@ -100,8 +101,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       )
 
     try do
-      stale_workspace = Path.join(workspace_root, "MT-STALE")
-      File.mkdir_p!(workspace_root)
+      stale_workspace = Path.join([workspace_root, "MT-STALE", "0"])
+      File.mkdir_p!(Path.join(workspace_root, "MT-STALE"))
       File.write!(stale_workspace, "old state\n")
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
@@ -133,10 +134,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, canonical_outside_root} = SymphonyElixir.PathSafety.canonicalize(outside_root)
+      assert {:ok, canonical_outside_root_with_slot} =
+               SymphonyElixir.PathSafety.canonicalize(Path.join(outside_root, "0"))
+
       assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
-      assert {:error, {:workspace_outside_root, ^canonical_outside_root, ^canonical_workspace_root}} =
+      assert {:error, {:workspace_outside_root, ^canonical_outside_root_with_slot, ^canonical_workspace_root}} =
                Workspace.create_for_issue("MT-SYM")
     after
       File.rm_rf(test_root)
@@ -160,7 +163,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: linked_root)
 
       assert {:ok, canonical_workspace} =
-               SymphonyElixir.PathSafety.canonicalize(Path.join(actual_root, "MT-LINK"))
+               SymphonyElixir.PathSafety.canonicalize(Path.join([actual_root, "MT-LINK", "0"]))
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-LINK")
       assert workspace == canonical_workspace
@@ -242,7 +245,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      workspace = Path.join(workspace_root, "MT-608")
+      workspace = Path.join([workspace_root, "MT-608", "0"])
       assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
 
       assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-608")
@@ -293,6 +296,83 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
   test "workspace cleanup ignores non-binary identifier" do
     assert :ok = Workspace.remove_issue_workspaces(nil)
+  end
+
+  test "workspace slot_index defaults to 0 and appends /0 to path" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-default-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-DEFAULT")
+      assert Path.basename(workspace) == "0"
+      assert Path.basename(Path.dirname(workspace)) == "SLOT-DEFAULT"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace slot_index: 0 appends /0 to path" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-0-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-ZERO", nil, slot_index: 0)
+      assert Path.basename(workspace) == "0"
+      assert Path.basename(Path.dirname(workspace)) == "SLOT-ZERO"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace slot_index: 2 appends /2 to path" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-2-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-TWO", nil, slot_index: 2)
+      assert Path.basename(workspace) == "2"
+      assert Path.basename(Path.dirname(workspace)) == "SLOT-TWO"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace different slot indices produce different paths" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-diff-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace_0} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 0)
+      assert {:ok, workspace_1} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 1)
+      assert {:ok, workspace_2} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 2)
+
+      assert workspace_0 != workspace_1
+      assert workspace_1 != workspace_2
+      assert Path.dirname(workspace_0) == Path.dirname(workspace_1)
+      assert Path.dirname(workspace_1) == Path.dirname(workspace_2)
+    after
+      File.rm_rf(workspace_root)
+    end
   end
 
   test "linear issue helpers" do
