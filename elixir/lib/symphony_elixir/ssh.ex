@@ -26,6 +26,29 @@ defmodule SymphonyElixir.SSH do
     end
   end
 
+  @spec start_reverse_tunnel(String.t(), pos_integer(), String.t(), pos_integer()) ::
+          {:ok, port()} | {:error, term()}
+  def start_reverse_tunnel(host, remote_port, local_host, local_port)
+      when is_binary(host) and is_integer(remote_port) and remote_port > 0 and
+             is_binary(local_host) and is_integer(local_port) and local_port > 0 do
+    with {:ok, executable} <- ssh_executable() do
+      args =
+        reverse_tunnel_args(host, remote_port, local_host, local_port)
+        |> Enum.map(&String.to_charlist/1)
+
+      {:ok,
+       Port.open(
+         {:spawn_executable, String.to_charlist(executable)},
+         [
+           :binary,
+           :exit_status,
+           :stderr_to_stdout,
+           args: args
+         ]
+       )}
+    end
+  end
+
   @spec write_file(String.t(), Path.t(), iodata(), keyword()) :: :ok | {:error, term()}
   def write_file(host, path, contents, opts \\ [])
       when is_binary(host) and is_binary(path) do
@@ -74,6 +97,16 @@ defmodule SymphonyElixir.SSH do
     |> Kernel.++(["-T"])
     |> maybe_put_port(port)
     |> Kernel.++([destination, remote_shell_command(command)])
+  end
+
+  defp reverse_tunnel_args(host, remote_port, local_host, local_port) do
+    %{destination: destination, port: port} = parse_target(host)
+
+    []
+    |> maybe_put_config()
+    |> Kernel.++(["-T", "-N", "-o", "ExitOnForwardFailure=yes"])
+    |> maybe_put_port(port)
+    |> Kernel.++(["-R", "#{remote_port}:#{local_host}:#{local_port}", destination])
   end
 
   defp maybe_put_line_option(port_opts, nil), do: port_opts

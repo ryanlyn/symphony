@@ -4,6 +4,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Claude.McpAuth
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
   alias SymphonyElixirWeb.StaticAssets
@@ -352,7 +353,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
-                 "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
+                 "usage_totals" => %{
+                   "input_tokens" => 4,
+                   "output_tokens" => 8,
+                   "total_tokens" => 12,
+                   "seconds_running" => 0
+                 },
                  "workspace_path" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
@@ -399,7 +405,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "agent_kind" => "claude",
                "executor_pid" => nil,
                "worker_host" => nil,
-               "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
+               "usage_totals" => %{
+                 "input_tokens" => 4,
+                 "output_tokens" => 8,
+                 "total_tokens" => 12,
+                 "seconds_running" => 0
+               },
                "workspace_path" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
@@ -625,7 +636,12 @@ defmodule SymphonyElixir.ExtensionsTest do
             }
           },
           last_agent_timestamp: DateTime.utc_now(),
-          usage_totals: %{input_tokens: 10, output_tokens: 12, total_tokens: 22, seconds_running: 0},
+          usage_totals: %{
+            input_tokens: 10,
+            output_tokens: 12,
+            total_tokens: 22,
+            seconds_running: 0
+          },
           started_at: DateTime.utc_now()
         }
       ])
@@ -718,6 +734,58 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert method_not_allowed_response.body["error"]["code"] == "method_not_allowed"
 
     assert {:error, _reason} = HttpServer.start_link(host: "bad host", port: 0)
+  end
+
+  test "claude MCP endpoint authorizes bearer tokens and supports multiple valid sessions" do
+    start_supervised!({HttpServer, host: "127.0.0.1", port: 0})
+    port = wait_for_bound_port()
+
+    {:ok, token_one} = McpAuth.issue_token()
+    {:ok, token_two} = McpAuth.issue_token()
+
+    tools_list_one =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [
+          {"authorization", "Bearer #{token_one}"},
+          {"content-type", "application/json"}
+        ],
+        json: %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
+      )
+
+    assert tools_list_one.status == 200
+    assert get_in(tools_list_one.body, ["result", "tools"]) == SymphonyElixir.Tools.tool_specs()
+
+    tools_call_two =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [
+          {"authorization", "Bearer #{token_two}"},
+          {"content-type", "application/json"}
+        ],
+        json: %{
+          "jsonrpc" => "2.0",
+          "id" => 2,
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "linear_graphql",
+            "arguments" => %{}
+          }
+        }
+      )
+
+    assert tools_call_two.status == 200
+    assert get_in(tools_call_two.body, ["result", "isError"]) == true
+
+    assert get_in(tools_call_two.body, ["result", "content", Access.at(0), "text"]) =~
+             "requires a non-empty `query` string"
+
+    unauthorized =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [{"content-type", "application/json"}],
+        json: %{"jsonrpc" => "2.0", "id" => 3, "method" => "tools/list"}
+      )
+
+    assert unauthorized.status == 401
+    assert unauthorized.body["error"]["code"] == "unauthorized"
   end
 
   defp start_test_endpoint(overrides) do

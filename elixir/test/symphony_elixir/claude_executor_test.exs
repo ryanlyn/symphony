@@ -1,34 +1,37 @@
 defmodule SymphonyElixir.ClaudeExecutorTest do
   use SymphonyElixir.TestSupport
-  import Bitwise, only: [&&&: 2]
 
-  alias SymphonyElixir.Claude.{Executor, Mcp}
+  alias SymphonyElixir.Claude.{Executor, Mcp, McpTunnelManager}
+  alias SymphonyElixir.FakeSshSupport
 
-  test "mcp prepare writes workspace-local config and dependency-free sidecar" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-claude-mcp-#{System.unique_integer([:positive])}")
+  test "mcp prepare writes workspace-local HTTP config" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-claude-mcp-#{System.unique_integer([:positive])}")
 
     try do
       workspace = create_git_workspace!(test_root, "MT-CLAUDE-MCP").workspace
 
-      assert {:ok, %{config_path: config_path, sidecar_path: sidecar_path}} = Mcp.prepare(workspace)
+      assert {:ok, %{config_path: config_path}} =
+               Mcp.prepare(workspace, "http://127.0.0.1:4100/claude-mcp", "bearer-token")
+
       assert File.exists?(config_path)
-      assert File.exists?(sidecar_path)
-      assert (File.stat!(sidecar_path).mode &&& 0o111) != 0
 
       config = Jason.decode!(File.read!(config_path))
-      assert get_in(config, ["mcpServers", "symphony_linear", "type"]) == "stdio"
-      assert get_in(config, ["mcpServers", "symphony_linear", "args"]) == [sidecar_path]
-      assert get_in(config, ["mcpServers", "symphony_linear", "env"]) == nil
-      refute File.read!(config_path) =~ "token"
-      assert File.read!(sidecar_path) =~ "linear_graphql"
-      assert File.read!(sidecar_path) =~ "protocolVersion"
+      assert get_in(config, ["mcpServers", "symphony_linear", "type"]) == "http"
+
+      assert get_in(config, ["mcpServers", "symphony_linear", "url"]) ==
+               "http://127.0.0.1:4100/claude-mcp"
+
+      assert get_in(config, ["mcpServers", "symphony_linear", "headers", "Authorization"]) ==
+               "Bearer bearer-token"
     after
       File.rm_rf(test_root)
     end
   end
 
-  test "claude executor passes linear auth via environment instead of persisting it in mcp config" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-claude-env-#{System.unique_integer([:positive])}")
+  test "claude executor persists only MCP bearer auth in config, not Linear auth" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-claude-env-#{System.unique_integer([:positive])}")
 
     try do
       %{workspace_root: workspace_root, workspace: workspace} =
@@ -78,10 +81,15 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert {:ok, _session, _result} = Executor.run_turn(session, "Run once", issue)
 
       trace = File.read!(trace_file)
-      assert trace =~ "ENV_API_KEY:plaintext-linear-secret"
-      assert trace =~ "ENV_ENDPOINT:https://linear.example/graphql"
+      assert trace =~ "ENV_API_KEY:"
+      assert trace =~ "ENV_ENDPOINT:"
+      refute trace =~ "plaintext-linear-secret"
+      refute trace =~ "https://linear.example/graphql"
 
       config_contents = File.read!(session.config_path)
+      assert config_contents =~ "\"type\": \"http\""
+      assert config_contents =~ "/claude-mcp"
+      assert config_contents =~ "\"Authorization\": \"Bearer "
       refute config_contents =~ "plaintext-linear-secret"
       refute config_contents =~ "SYMPHONY_LINEAR_API_KEY"
     after
@@ -89,9 +97,121 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor reuses one shared remote MCP tunnel per worker host" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-remote-mcp-#{System.unique_integer([:positive])}"
+      )
+
+    trace_file = Path.join(test_root, "ssh.trace")
+    previous_path = System.get_env("PATH")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end)
+
+    FakeSshSupport.install_fake_ssh!(
+      test_root,
+      trace_file,
+      fake_remote_ssh_script(trace_file, false)
+    )
+
+    workspace_root = Path.join(test_root, "workspaces")
+    workspace_one = Path.join(workspace_root, "MT-CLAUDE-REMOTE-1")
+    workspace_two = Path.join(workspace_root, "MT-CLAUDE-REMOTE-2")
+    File.mkdir_p!(workspace_one)
+    File.mkdir_p!(workspace_two)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      agent_kind: "claude"
+    )
+
+    start_port_fn = fn _session, _issue ->
+      {:ok, open_idle_port!(), %{}}
+    end
+
+    assert {:ok, session_one} =
+             Executor.start_session(workspace_one,
+               worker_host: "worker-remote-1",
+               start_port_fn: start_port_fn
+             )
+
+    assert {:ok, session_two} =
+             Executor.start_session(workspace_two,
+               worker_host: "worker-remote-1",
+               start_port_fn: start_port_fn
+             )
+
+    FakeSshSupport.wait_for_trace!(trace_file)
+
+    config_one = File.read!(session_one.config_path)
+    config_two = File.read!(session_two.config_path)
+
+    [_, remote_port] = Regex.run(~r"http:\/\/127\.0\.0\.1:(\d+)\/claude-mcp", config_one)
+    assert config_two =~ "http://127.0.0.1:#{remote_port}/claude-mcp"
+    assert config_one =~ "\"Authorization\": \"Bearer "
+    assert config_two =~ "\"Authorization\": \"Bearer "
+
+    trace = File.read!(trace_file)
+    assert length(Regex.scan(~r/-R #{remote_port}:127\.0\.0\.1:\d+ worker-remote-1/m, trace)) == 1
+
+    Executor.stop_session(session_one)
+    Executor.stop_session(session_two)
+  end
+
+  test "claude executor releases acquired remote MCP tunnels when config write fails" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-remote-mcp-fail-#{System.unique_integer([:positive])}"
+      )
+
+    trace_file = Path.join(test_root, "ssh.trace")
+    previous_path = System.get_env("PATH")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end)
+
+    FakeSshSupport.install_fake_ssh!(
+      test_root,
+      trace_file,
+      fake_remote_ssh_script(trace_file, true)
+    )
+
+    workspace_root = Path.join(test_root, "workspaces")
+    workspace = Path.join(workspace_root, "MT-CLAUDE-REMOTE-FAIL")
+    File.mkdir_p!(workspace)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: workspace_root,
+      agent_kind: "claude"
+    )
+
+    assert {:error, _reason} =
+             Executor.start_session(workspace, worker_host: "worker-remote-fail-1")
+
+    wait_for_trace_count!(trace_file, "worker-remote-fail-1", 1)
+
+    assert {:ok, remote_port} =
+             McpTunnelManager.acquire("worker-remote-fail-1", "127.0.0.1", 41_000)
+
+    wait_for_trace_count!(trace_file, "worker-remote-fail-1", 2)
+
+    assert is_integer(remote_port)
+    assert :ok = McpTunnelManager.release("worker-remote-fail-1")
+  end
+
   test "claude executor closes a started port when later startup work fails" do
     test_root =
-      Path.join(System.tmp_dir!(), "symphony-claude-startup-cleanup-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-startup-cleanup-#{System.unique_integer([:positive])}"
+      )
 
     try do
       %{workspace_root: workspace_root, workspace: workspace} =
@@ -124,10 +244,16 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
   end
 
   test "claude executor keeps one persistent worker across multiple turns" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-claude-executor-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-executor-#{System.unique_integer([:positive])}"
+      )
 
     try do
-      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE")
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE")
+
       trace_file = Path.join(test_root, "claude.trace")
       fake_claude = Path.join(test_root, "fake-claude")
 
@@ -184,7 +310,10 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
         end)
 
       assert log =~ "Claude turn started for issue_id=issue-claude issue_identifier=MT-CLAUDE"
-      assert log =~ "Claude turn completed for issue_id=issue-claude issue_identifier=MT-CLAUDE session_id=session-tool"
+
+      assert log =~
+               "Claude turn completed for issue_id=issue-claude issue_identifier=MT-CLAUDE session_id=session-tool"
+
       assert_receive {:first_turn_session, session}
 
       assert session.resume_id == "session-tool"
@@ -215,7 +344,8 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
       first_turn_pid =
         receive do
-          {:claude_update, %{executor_pid: executor_pid}} when is_binary(executor_pid) -> executor_pid
+          {:claude_update, %{executor_pid: executor_pid}} when is_binary(executor_pid) ->
+            executor_pid
         after
           0 -> session.metadata.executor_pid
         end
@@ -251,10 +381,15 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
   test "claude executor accepts init emitted only after the first streamed turn starts" do
     test_root =
-      Path.join(System.tmp_dir!(), "symphony-claude-late-init-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-late-init-#{System.unique_integer([:positive])}"
+      )
 
     try do
-      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-LATE-INIT")
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-LATE-INIT")
+
       trace_file = Path.join(test_root, "late-init.trace")
       fake_claude = Path.join(test_root, "fake-claude")
 
@@ -340,24 +475,33 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
   test "claude executor resets turn timeout after streamed output" do
     test_root =
-      Path.join(System.tmp_dir!(), "symphony-claude-timeout-reset-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-timeout-reset-#{System.unique_integer([:positive])}"
+      )
 
     try do
-      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-TIMEOUT")
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-TIMEOUT")
+
       fake_claude = Path.join(test_root, "fake-claude")
 
       File.write!(
         fake_claude,
-        fake_persistent_claude_script(Path.join(test_root, "timeout.trace"), "session-timeout", """
-        sleep 0.45
-        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-1"}]}}'
-        sleep 0.45
-        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-2"}]}}'
-        sleep 0.45
-        printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-3"}]}}'
-        sleep 0.45
-        printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"session-timeout","usage":{"inputTokens":1,"outputTokens":1}}'
-        """)
+        fake_persistent_claude_script(
+          Path.join(test_root, "timeout.trace"),
+          "session-timeout",
+          """
+          sleep 0.45
+          printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-1"}]}}'
+          sleep 0.45
+          printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-2"}]}}'
+          sleep 0.45
+          printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"tick-3"}]}}'
+          sleep 0.45
+          printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"session-timeout","usage":{"inputTokens":1,"outputTokens":1}}'
+          """
+        )
       )
 
       File.chmod!(fake_claude, 0o755)
@@ -387,11 +531,23 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
       assert_receive {:claude_update, %{event: :session_started, session_id: "session-timeout"}}
       assert_receive {:claude_update, %{event: :turn_started}}
 
-      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-1"}]}}}}
+      assert_receive {:claude_update,
+                      %{
+                        event: :assistant_message,
+                        payload: %{"message" => %{"content" => [%{"text" => "tick-1"}]}}
+                      }}
 
-      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-2"}]}}}}
+      assert_receive {:claude_update,
+                      %{
+                        event: :assistant_message,
+                        payload: %{"message" => %{"content" => [%{"text" => "tick-2"}]}}
+                      }}
 
-      assert_receive {:claude_update, %{event: :assistant_message, payload: %{"message" => %{"content" => [%{"text" => "tick-3"}]}}}}
+      assert_receive {:claude_update,
+                      %{
+                        event: :assistant_message,
+                        payload: %{"message" => %{"content" => [%{"text" => "tick-3"}]}}
+                      }}
 
       assert_receive {:claude_update, %{event: :turn_completed}}
     after
@@ -400,10 +556,13 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
   end
 
   test "claude executor reports malformed output before permission-denied failures" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-claude-denied-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-claude-denied-#{System.unique_integer([:positive])}")
 
     try do
-      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-DENIED")
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-DENIED")
+
       fake_claude = Path.join(test_root, "fake-claude")
 
       File.write!(
@@ -529,17 +688,26 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
   test "claude executor fails clearly on unsupported control protocol messages" do
     test_root =
-      Path.join(System.tmp_dir!(), "symphony-claude-control-request-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-control-request-#{System.unique_integer([:positive])}"
+      )
 
     try do
-      %{workspace_root: workspace_root, workspace: workspace} = create_git_workspace!(test_root, "MT-CLAUDE-CONTROL")
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-CONTROL")
+
       fake_claude = Path.join(test_root, "fake-claude")
 
       File.write!(
         fake_claude,
-        fake_persistent_claude_script(Path.join(test_root, "control.trace"), "session-control", """
-        printf '%s\\n' '{"type":"control_request","request_id":"req-1","request":{"subtype":"mcp_status"}}'
-        """)
+        fake_persistent_claude_script(
+          Path.join(test_root, "control.trace"),
+          "session-control",
+          """
+          printf '%s\\n' '{"type":"control_request","request_id":"req-1","request":{"subtype":"mcp_status"}}'
+          """
+        )
       )
 
       File.chmod!(fake_claude, 0o755)
@@ -633,4 +801,52 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
   end
 
   defp assert_port_closed(_port, 0), do: flunk("port remained open")
+
+  defp fake_remote_ssh_script(trace_file, fail_config_write?) when is_binary(trace_file) do
+    """
+    #!/bin/sh
+    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
+
+    for arg in "$@"; do
+      last_arg="$arg"
+    done
+
+    case "$*" in
+      *" -N "*)
+        while true; do
+          sleep 1
+        done
+        ;;
+      *)
+        if [ "#{if fail_config_write?, do: "true", else: "false"}" = "true" ] && echo "$last_arg" | grep -q '.symphony/claude/mcp.json'; then
+          exit 1
+        fi
+        eval "$last_arg"
+        ;;
+    esac
+    """
+  end
+
+  defp wait_for_trace_count!(trace_file, host, expected_count, attempts \\ 100)
+
+  defp wait_for_trace_count!(_trace_file, _host, _expected_count, 0) do
+    flunk("timed out waiting for expected fake ssh trace count")
+  end
+
+  defp wait_for_trace_count!(trace_file, host, expected_count, attempts) do
+    count =
+      if File.exists?(trace_file) do
+        Regex.scan(~r/-R \d+:127\.0\.0\.1:\d+ #{Regex.escape(host)}/m, File.read!(trace_file))
+        |> length()
+      else
+        0
+      end
+
+    if count >= expected_count do
+      :ok
+    else
+      Process.sleep(10)
+      wait_for_trace_count!(trace_file, host, expected_count, attempts - 1)
+    end
+  end
 end
