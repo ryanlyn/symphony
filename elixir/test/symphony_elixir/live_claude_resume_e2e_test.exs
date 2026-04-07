@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.LiveClaudeResumeE2ETest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.{AgentRunner, Linear, SSH}
+  alias SymphonyElixir.{AgentRunner, Linear, LiveWorkerSupport, SSH}
 
   @moduletag :live_e2e
   @moduletag timeout: 300_000
@@ -78,11 +78,7 @@ defmodule SymphonyElixir.LiveClaudeResumeE2ETest do
     end
   end
 
-  @remote_skip_reason if(
-                        @live_claude_skip_reason != nil or
-                          System.get_env("SYMPHONY_LIVE_SSH_WORKER_HOSTS") in [nil, ""],
-                        do: "set SYMPHONY_RUN_REAL_CLAUDE_RESUME_E2E=1, LINEAR_API_KEY, and SYMPHONY_LIVE_SSH_WORKER_HOSTS to enable the remote Claude resume e2e test"
-                      )
+  @remote_skip_reason LiveWorkerSupport.remote_claude_skip_reason(@live_claude_skip_reason)
 
   @tag skip: @remote_skip_reason
   test "agent runner resumes the same real Claude session on an ssh worker with MCP tool use" do
@@ -92,9 +88,11 @@ defmodule SymphonyElixir.LiveClaudeResumeE2ETest do
         "symphony-elixir-claude-resume-remote-e2e-#{System.unique_integer([:positive])}"
       )
 
-    workspace_root = "~/.symphony-remote-workspaces"
     issue_identifier = "MT-REAL-CLAUDE-REMOTE"
-    worker_host = System.get_env("SYMPHONY_LIVE_SSH_WORKER_HOSTS") |> String.split(",") |> List.first()
+    run_id = "symphony-claude-resume-remote-e2e-#{System.unique_integer([:positive])}"
+    worker_setup = LiveWorkerSupport.ssh_worker_setup!(run_id, test_root)
+    workspace_root = worker_setup.workspace_root
+    worker_host = List.first(worker_setup.ssh_worker_hosts)
 
     try do
       File.mkdir_p!(test_root)
@@ -148,6 +146,7 @@ defmodule SymphonyElixir.LiveClaudeResumeE2ETest do
       second_resume = Jason.decode!(remote_file_contents!(worker_host, remote_resume_path))
       assert second_resume["resume_id"] == first_resume_id
     after
+      LiveWorkerSupport.cleanup_worker_setup(worker_setup)
       File.rm_rf(test_root)
     end
   end

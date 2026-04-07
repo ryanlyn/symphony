@@ -138,7 +138,6 @@ claude:                              # Claude-specific settings (used when agent
   stall_timeout_ms: 300000           # kill turn after this long without output; default: 300000
   strict_mcp_config: true            # only use MCP servers from the injected config,
                                      #   ignoring user/project MCP settings; default: true
-  mcp_server_python: python3         # Python interpreter for the Linear MCP sidecar; default: python3
 
 hooks:
   after_create: |                    # runs after workspace directory is created
@@ -219,7 +218,7 @@ workflow files:
 
 Copy these to your target repo's `.codex/skills/` directory if your workflow references them. The
 `symphony-linear` skill uses the `linear_graphql` tool injected by Symphony (via Codex app-server
-tool or Claude MCP sidecar).
+tool or Symphony's `/claude-mcp` endpoint for Claude).
 
 ## Web dashboard
 
@@ -280,6 +279,11 @@ SYMPHONY_RUN_REAL_CODEX_RESUME_E2E=1 mise exec -- mix test test/symphony_elixir/
 # Claude resume + MCP
 SYMPHONY_RUN_REAL_CLAUDE_RESUME_E2E=1 LINEAR_API_KEY=... mise exec -- mix test test/symphony_elixir/live_claude_resume_e2e_test.exs
 ```
+
+For the remote Claude resume scenario, set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to real SSH workers, or
+let the test boot disposable docker SSH workers automatically by providing
+`SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN` (or `CLAUDE_CODE_OAUTH_TOKEN`) so Claude inside the
+worker container can authenticate.
 
 ## License
 

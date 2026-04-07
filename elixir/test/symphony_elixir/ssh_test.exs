@@ -1,10 +1,13 @@
 defmodule SymphonyElixir.SSHTest do
   use ExUnit.Case, async: false
 
+  alias SymphonyElixir.FakeSshSupport
   alias SymphonyElixir.SSH
 
   test "run/3 keeps bracketed IPv6 host:port targets intact" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-ipv6-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-ssh-ipv6-test-#{System.unique_integer([:positive])}")
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -13,7 +16,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file)
 
     assert {:ok, {"", 0}} =
              SSH.run("root@[::1]:2200", "printf ok", stderr_to_stdout: true)
@@ -24,7 +27,12 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 leaves unbracketed IPv6-style targets unchanged" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-ipv6-raw-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-ipv6-raw-test-#{System.unique_integer([:positive])}"
+      )
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -33,7 +41,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file)
 
     assert {:ok, {"", 0}} =
              SSH.run("::1:2200", "printf ok", stderr_to_stdout: true)
@@ -44,7 +52,9 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 passes host:port targets through ssh -p" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-ssh-test-#{System.unique_integer([:positive])}")
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
     previous_ssh_config = System.get_env("SYMPHONY_SSH_CONFIG")
@@ -55,7 +65,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file)
     System.put_env("SYMPHONY_SSH_CONFIG", "/tmp/symphony-test-ssh-config")
 
     assert {:ok, {"", 0}} =
@@ -68,7 +78,9 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 keeps the user prefix when parsing user@host:port targets" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-user-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-ssh-user-test-#{System.unique_integer([:positive])}")
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -77,7 +89,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file)
 
     assert {:ok, {"", 0}} =
              SSH.run("root@127.0.0.1:2200", "printf ok", stderr_to_stdout: true)
@@ -88,7 +100,12 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "run/3 returns an error when ssh is unavailable" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-missing-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-missing-test-#{System.unique_integer([:positive])}"
+      )
+
     previous_path = System.get_env("PATH")
 
     on_exit(fn ->
@@ -103,7 +120,9 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "start_port/3 supports binary output without line mode" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-port-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-ssh-port-test-#{System.unique_integer([:positive])}")
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
     previous_ssh_config = System.get_env("SYMPHONY_SSH_CONFIG")
@@ -114,7 +133,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file, """
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file, """
     #!/bin/sh
     printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
     printf 'ready\\n'
@@ -125,7 +144,7 @@ defmodule SymphonyElixir.SSHTest do
 
     assert {:ok, port} = SSH.start_port("localhost", "printf ok")
     assert is_port(port)
-    wait_for_trace!(trace_file)
+    FakeSshSupport.wait_for_trace!(trace_file)
 
     trace = File.read!(trace_file)
     assert trace =~ "-T localhost bash -lc"
@@ -133,7 +152,12 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "start_port/3 supports line mode" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-line-port-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-line-port-test-#{System.unique_integer([:positive])}"
+      )
+
     trace_file = Path.join(test_root, "ssh.trace")
     previous_path = System.get_env("PATH")
 
@@ -142,7 +166,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh!(test_root, trace_file, """
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file, """
     #!/bin/sh
     printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
     printf 'ready\\n'
@@ -151,7 +175,7 @@ defmodule SymphonyElixir.SSHTest do
 
     assert {:ok, port} = SSH.start_port("localhost:2222", "printf ok", line: 256)
     assert is_port(port)
-    wait_for_trace!(trace_file)
+    FakeSshSupport.wait_for_trace!(trace_file)
 
     trace = File.read!(trace_file)
     assert trace =~ "-T -p 2222 localhost bash -lc"
@@ -163,7 +187,12 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "write_file/4 preserves shebang-prefixed payloads without a leading newline" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-write-file-shebang-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-write-file-shebang-test-#{System.unique_integer([:positive])}"
+      )
+
     trace_file = Path.join(test_root, "ssh.trace")
     output_file = Path.join(test_root, "script.sh")
     previous_path = System.get_env("PATH")
@@ -173,7 +202,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh_with_eval!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh_with_eval!(test_root, trace_file)
 
     payload = "#!/bin/bash\necho ready\n"
 
@@ -189,7 +218,12 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   test "write_file/4 preserves delimiter-shaped payload lines without execution" do
-    test_root = Path.join(System.tmp_dir!(), "symphony-ssh-write-file-test-#{System.unique_integer([:positive])}")
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-write-file-test-#{System.unique_integer([:positive])}"
+      )
+
     trace_file = Path.join(test_root, "ssh.trace")
     output_file = Path.join(test_root, "written.txt")
     probe_file = Path.join(test_root, "pwned")
@@ -200,7 +234,7 @@ defmodule SymphonyElixir.SSHTest do
       File.rm_rf(test_root)
     end)
 
-    install_fake_ssh_with_eval!(test_root, trace_file)
+    FakeSshSupport.install_fake_ssh_with_eval!(test_root, trace_file)
 
     payload = """
     first line
@@ -220,49 +254,6 @@ defmodule SymphonyElixir.SSHTest do
     assert trace =~ "printf"
     assert trace =~ "%s"
     assert trace =~ "__SYMPHONY_SSH_WRITE_PAYLOAD__"
-  end
-
-  defp install_fake_ssh_with_eval!(test_root, trace_file) do
-    install_fake_ssh!(test_root, trace_file, """
-    #!/bin/sh
-    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
-    for arg in "$@"; do
-      last_arg="$arg"
-    done
-    eval "$last_arg"
-    """)
-  end
-
-  defp install_fake_ssh!(test_root, trace_file, script \\ nil) do
-    fake_bin_dir = Path.join(test_root, "bin")
-    fake_ssh = Path.join(fake_bin_dir, "ssh")
-
-    File.mkdir_p!(fake_bin_dir)
-
-    File.write!(
-      fake_ssh,
-      script ||
-        """
-        #!/bin/sh
-        printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
-        exit 0
-        """
-    )
-
-    File.chmod!(fake_ssh, 0o755)
-    System.put_env("PATH", fake_bin_dir <> ":" <> (System.get_env("PATH") || ""))
-  end
-
-  defp wait_for_trace!(trace_file, attempts \\ 20)
-  defp wait_for_trace!(trace_file, 0), do: flunk("timed out waiting for fake ssh trace at #{trace_file}")
-
-  defp wait_for_trace!(trace_file, attempts) do
-    if File.exists?(trace_file) and File.read!(trace_file) != "" do
-      :ok
-    else
-      Process.sleep(25)
-      wait_for_trace!(trace_file, attempts - 1)
-    end
   end
 
   defp restore_env(key, nil), do: System.delete_env(key)

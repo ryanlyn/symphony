@@ -29,10 +29,10 @@ agent backend. Set `agent.kind` to `"claude"` in the workflow config to use it.
 
 - Runs the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) as the agent process
 - Streams JSONL output and parses tool-use, results, and completion events
-- Automatically generates a per-workspace MCP config from workflow-defined MCP servers
+- Automatically generates a per-workspace MCP config that points Claude at Symphony's `/claude-mcp` endpoint
 - Supports remote execution on SSH worker hosts, same as Codex
-- Configurable model, permission mode, turn/stall timeouts, and MCP server settings under the
-  `claude` config key
+- Uses the same Symphony-owned Linear tool backend as Codex, without a Python MCP sidecar
+- Configurable model, permission mode, and turn/stall timeouts under the `claude` config key
 
 ### Session resumption
 

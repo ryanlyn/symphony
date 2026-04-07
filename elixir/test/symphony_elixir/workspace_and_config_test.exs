@@ -914,7 +914,6 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.claude.turn_timeout_ms == 3_600_000
     assert config.claude.stall_timeout_ms == 300_000
     assert config.claude.strict_mcp_config == true
-    assert config.claude.mcp_server_python == "python3"
 
     assert config.codex.approval_policy == %{
              "reject" => %{
@@ -1157,8 +1156,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       claude_permission_mode: "dontAsk",
       claude_turn_timeout_ms: 12_345,
       claude_stall_timeout_ms: 9_876,
-      claude_strict_mcp_config: false,
-      claude_mcp_server_python: "/usr/bin/python3"
+      claude_strict_mcp_config: false
     )
 
     assert Config.agent_kind() == "claude"
@@ -1172,7 +1170,6 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert claude.turn_timeout_ms == 12_345
     assert claude.stall_timeout_ms == 9_876
     assert claude.strict_mcp_config == false
-    assert claude.mcp_server_python == "/usr/bin/python3"
   end
 
   test "schema helpers cover custom type and state limit validation" do
