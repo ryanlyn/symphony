@@ -351,7 +351,7 @@ defmodule SymphonyElixir.Orchestrator do
     running_ids =
       state.running
       |> Map.keys()
-      |> Enum.map(fn {issue_id, _slot} -> issue_id end)
+      |> Enum.map(&running_issue_id_from_key/1)
       |> Enum.uniq()
 
     if running_ids == [] do
@@ -572,27 +572,28 @@ defmodule SymphonyElixir.Orchestrator do
       {:ok, settings} ->
         now = DateTime.utc_now()
 
-        Enum.reduce(state.running, state, fn {{issue_id, slot_index} = slot_key, running_entry}, state_acc ->
-          timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
-
-          if timeout_ms <= 0,
-            do: state_acc,
-            else:
-              restart_stalled_issue(
-                state_acc,
-                slot_key,
-                issue_id,
-                slot_index,
-                running_entry,
-                now,
-                timeout_ms
-              )
+        Enum.reduce(state.running, state, fn {slot_key, running_entry}, state_acc ->
+          reconcile_stalled_running_slot(state_acc, slot_key, running_entry, now, settings)
         end)
 
       {:error, reason} ->
         Logger.warning("Skipping stall reconciliation; config load failed: #{inspect(reason)}")
         state
     end
+  end
+
+  defp reconcile_stalled_running_slot(
+         state,
+         {issue_id, slot_index} = slot_key,
+         running_entry,
+         now,
+         settings
+       ) do
+    timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
+
+    if timeout_ms <= 0,
+      do: state,
+      else: restart_stalled_issue(state, slot_key, issue_id, slot_index, running_entry, now, timeout_ms)
   end
 
   defp restart_stalled_issue(state, slot_key, issue_id, slot_index, running_entry, now, timeout_ms) do
@@ -1350,29 +1351,7 @@ defmodule SymphonyElixir.Orchestrator do
 
     running =
       state.running
-      |> Enum.map(fn {{issue_id, slot_index}, metadata} ->
-        usage_totals = Map.get(metadata, :usage_totals, @empty_usage_totals)
-
-        %{
-          issue_id: issue_id,
-          slot_index: slot_index,
-          ensemble_size: Map.get(metadata, :ensemble_size, 1),
-          identifier: metadata.identifier,
-          agent_kind: Map.get(metadata, :agent_kind, "codex"),
-          state: metadata.issue.state,
-          worker_host: Map.get(metadata, :worker_host),
-          workspace_path: Map.get(metadata, :workspace_path),
-          session_id: metadata.session_id,
-          executor_pid: Map.get(metadata, :executor_pid),
-          usage_totals: usage_totals,
-          last_agent_timestamp: Map.get(metadata, :last_agent_timestamp),
-          last_agent_message: Map.get(metadata, :last_agent_message),
-          last_agent_event: Map.get(metadata, :last_agent_event),
-          turn_count: Map.get(metadata, :turn_count, 0),
-          started_at: metadata.started_at,
-          runtime_seconds: running_seconds(metadata.started_at, now)
-        }
-      end)
+      |> Enum.map(&snapshot_running_entry(&1, now))
 
     retrying =
       state.retry_attempts
@@ -1416,6 +1395,37 @@ defmodule SymphonyElixir.Orchestrator do
        operations: ["poll", "reconcile"]
      }, state}
   end
+
+  defp snapshot_running_entry({{issue_id, slot_index}, metadata}, now) when is_map(metadata) do
+    usage_totals = Map.get(metadata, :usage_totals, @empty_usage_totals)
+
+    %{
+      issue_id: issue_id,
+      slot_index: slot_index,
+      ensemble_size: Map.get(metadata, :ensemble_size, 1),
+      identifier: metadata.identifier,
+      agent_kind: Map.get(metadata, :agent_kind, "codex"),
+      state: metadata.issue.state,
+      worker_host: Map.get(metadata, :worker_host),
+      workspace_path: Map.get(metadata, :workspace_path),
+      session_id: metadata.session_id,
+      executor_pid: Map.get(metadata, :executor_pid),
+      usage_totals: usage_totals,
+      last_agent_timestamp: Map.get(metadata, :last_agent_timestamp),
+      last_agent_message: Map.get(metadata, :last_agent_message),
+      last_agent_event: Map.get(metadata, :last_agent_event),
+      turn_count: Map.get(metadata, :turn_count, 0),
+      started_at: metadata.started_at,
+      runtime_seconds: running_seconds(metadata.started_at, now)
+    }
+  end
+
+  defp snapshot_running_entry({issue_id, metadata}, now) when is_binary(issue_id) and is_map(metadata) do
+    snapshot_running_entry({{issue_id, 0}, metadata}, now)
+  end
+
+  defp running_issue_id_from_key({issue_id, _slot}) when is_binary(issue_id), do: issue_id
+  defp running_issue_id_from_key(issue_id) when is_binary(issue_id), do: issue_id
 
   defp integrate_agent_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)

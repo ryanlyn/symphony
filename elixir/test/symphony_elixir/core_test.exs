@@ -1105,7 +1105,7 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Come up with independent work on the ticket yourself"
     assert prompt =~ "your own tracking workpad comment"
     assert prompt =~ "Status: COMPLETE"
-    assert prompt =~ "all expected ensemble workpads contain the exact line"
+    assert prompt =~ "all expected ensemble workpads are marked `Status: COMPLETE`"
     assert prompt =~ "retry attempt #2"
   end
 

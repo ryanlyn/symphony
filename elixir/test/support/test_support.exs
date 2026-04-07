@@ -100,6 +100,7 @@ defmodule SymphonyElixir.TestSupport do
     workspace_root = Path.join(test_root, "workspaces")
     workspace = Path.join([workspace_root, issue_identifier, "0"])
 
+    File.rm_rf!(template_repo)
     File.mkdir_p!(template_repo)
     File.write!(Path.join(template_repo, "README.md"), "# test")
     {_output, 0} = System.cmd("git", ["-C", template_repo, "init", "-b", "main"])

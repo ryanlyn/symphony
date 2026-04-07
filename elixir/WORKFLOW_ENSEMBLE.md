@@ -225,11 +225,19 @@ Use this only when completion is blocked by missing required tools or missing au
 
 - GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
 - Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in your workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in your workpad that includes:
-  - what is missing,
-  - why it blocks required acceptance/validation,
-  - exact human action needed to unblock.
+- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, do this exact sequence:
+  - finish your current investigation
+  - update your own workpad
+  - set your own workpad status line to exactly `Status: BLOCKED`
+  - add a short blocker brief in your own workpad that includes:
+    - what is missing,
+    - why it blocks required acceptance/validation,
+    - exact human action needed to unblock
+  - re-read all ensemble workpads on the ticket
+  - if any expected ensemble workpad does not contain either `Status: COMPLETE` or `Status: BLOCKED`, do not move the ticket
+  - if all expected ensemble workpads are terminal for this run (`Status: COMPLETE` or `Status: BLOCKED`) and at least one workpad is `Status: BLOCKED`, move the ticket to `Human Review`
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside your workpad.
+- A workpad is considered still in progress when it does not contain either `Status: COMPLETE` or `Status: BLOCKED`.
 
 ## Step 2: Execution phase (Todo -> In Progress -> Human Review)
 
@@ -266,22 +274,27 @@ Use this only when completion is blocked by missing required tools or missing au
    - update your own workpad
    - add the exact line `Status: COMPLETE` to your own workpad
    - only after that, re-read all ensemble workpads on the ticket
-   - if all expected ensemble workpads contain the exact line `Status: COMPLETE`, then update the ticket state
+   - if all expected ensemble workpads are marked `Status: COMPLETE`, then update the ticket state
    - otherwise leave the ticket state unchanged for the next completed agent to update
 12. Treat `Todo -> In Progress` as optimistic:
    - first write wins
    - if another agent already made the equivalent transition, continue without treating it as a problem
 13. Treat later shared transitions as completion-gated:
-   - do not move to `Human Review` unless all ensemble workpads are marked `Status: COMPLETE`
-   - do not move to `Done` unless all ensemble workpads are marked `Status: COMPLETE` and the merge flow is actually complete
-14. Before moving to `Human Review`, poll PR feedback and checks:
+   - do not move to `Human Review` for normal completion unless all expected ensemble workpads are marked `Status: COMPLETE`
+   - do not move to `Done` unless all expected ensemble workpads are marked `Status: COMPLETE`, and the merge flow is actually complete
+14. Treat blocked handoff as terminal-state gated:
+   - `Status: BLOCKED` is a terminal per-agent state, just like `Status: COMPLETE`
+   - do not move the ticket to `Human Review` for blocking while any expected ensemble workpad lacks both `Status: COMPLETE` and `Status: BLOCKED`
+   - move the ticket to `Human Review` for blocking only when all expected ensemble workpads are terminal and at least one of them is `Status: BLOCKED`
+   - if all expected ensemble workpads are `Status: COMPLETE`, this is a normal completion handoff, not a blocked handoff
+15. Before moving to `Human Review`, poll PR feedback and checks:
    - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
    - Run the full PR feedback sweep protocol.
    - Confirm PR checks are passing (green) after the latest changes.
    - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in your workpad.
    - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
    - Re-open and refresh your workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-15. Only then move issue to `Human Review`.
+16. Only then move issue to `Human Review`.
    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
 
 ## Step 3: Human Review and merge handling
@@ -290,8 +303,10 @@ Use this only when completion is blocked by missing required tools or missing au
 2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
 3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
 4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, open and follow `.codex/skills/symphony-land/SKILL.md`, then run the `symphony-land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, add `Status: COMPLETE` to your own workpad if not already present, re-read all workpads, and move the issue to `Done` only if all expected workpads are marked complete.
+5. When the issue is in `Merging`, assume there is only one merging agent for now.
+6. That merging agent should expect the issue, workpads, PRs, and review history to contain feedback about which approach or combination of work should become the final merged result.
+7. When the issue is in `Merging`, open and follow `.codex/skills/symphony-land/SKILL.md`, then run the `symphony-land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
+8. After merge is complete, add `Status: COMPLETE` to your own workpad if not already present, re-read all workpads, and move the issue to `Done` only if all expected workpads are marked `Status: COMPLETE`.
 
 ## Step 4: Rework handling
 
@@ -317,6 +332,19 @@ Use this only when completion is blocked by missing required tools or missing au
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 - All expected ensemble workpads are marked `Status: COMPLETE` before moving the ticket to `Human Review`.
 
+## Completion bar before blocked Human Review
+
+- Your workpad contains the exact line `Status: BLOCKED` before any attempt to move the ticket due to blocking.
+- Your blocker brief is present in your own workpad and clearly explains:
+  - what is missing,
+  - why it blocks required acceptance/validation,
+  - exact human action needed to unblock.
+- All expected ensemble workpads are terminal for this run:
+  - `Status: COMPLETE`, or
+  - `Status: BLOCKED`
+- At least one expected ensemble workpad is `Status: BLOCKED`.
+- No expected ensemble workpad remains without a terminal status marker.
+
 ## Guardrails
 
 - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
@@ -327,6 +355,10 @@ Use this only when completion is blocked by missing required tools or missing au
   `## Codex Workpad - {{ issue.identifier }} {{ ensemble.slot_index }}`
 - Your workpad is separate, persistent, and isolated from other agents' workpads.
 - Do not edit another agent's workpad.
+- Your workpad has no explicit in-progress marker.
+- A workpad is considered in progress by default until it contains one terminal marker:
+  - `Status: COMPLETE`
+  - `Status: BLOCKED`
 - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.
 - If out-of-scope improvements are found, create a separate Backlog issue rather
@@ -350,8 +382,6 @@ Use this exact structure for your own persistent workpad comment and keep it upd
 ```text
 <hostname>:<abs-path>@<short-sha>
 ```
-
-Status: IN_PROGRESS
 
 ### Plan
 
@@ -385,3 +415,11 @@ Status: COMPLETE
 ```
 
 Do that before any attempt to move the ticket to a later shared state.
+
+When your work is blocked by missing required tools, auth, permissions, or secrets, change the status line to exactly:
+
+```md
+Status: BLOCKED
+```
+
+Do that before any attempt to move the ticket to `Human Review` because of blocking.
