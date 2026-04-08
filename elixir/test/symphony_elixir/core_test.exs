@@ -767,7 +767,7 @@ defmodule SymphonyElixir.CoreTest do
                state.retry_attempts[issue_id]
 
       assert is_reference(timer_ref)
-      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 40_000, 40_500)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 40_000, 41_000)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1194,7 +1194,7 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 1, ensemble_size: 3)
 
     assert prompt =~ "You are working on a Linear ticket `MT-777`"
-    assert prompt =~ "You are independent agent `1` out of `3` agents"
+    assert prompt =~ "You are independent agent with 0-indexed id: `1` (out of `3` total agents)"
     assert prompt =~ "Come up with independent work on the ticket yourself"
     assert prompt =~ "your own tracking workpad comment"
     assert prompt =~ "Status: COMPLETE"

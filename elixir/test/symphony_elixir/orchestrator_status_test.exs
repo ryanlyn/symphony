@@ -1760,6 +1760,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     row =
       StatusDashboard.format_running_summary_for_test(%{
         identifier: "MT-CLAUDE",
+        slot_index: 0,
+        ensemble_size: 2,
         agent_kind: "claude",
         state: "running",
         session_id: "session-1234567890",
@@ -1774,6 +1776,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert plain =~ "claude/running"
     assert plain =~ "9999"
+    assert plain =~ " 0 "
+    refute plain =~ "0/2"
   end
 
   test "status dashboard strips ANSI and control bytes from last codex message" do
