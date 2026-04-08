@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Config do
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Workflow
 
+  @default_ssh_timeout_ms 60_000
+
   @default_prompt_template """
   You are working on a Linear issue.
 
@@ -64,6 +66,17 @@ defmodule SymphonyElixir.Config do
   @spec agent_kind() :: String.t()
   def agent_kind do
     settings!().agent.kind
+  end
+
+  @spec ssh_timeout_ms() :: pos_integer()
+  def ssh_timeout_ms do
+    case settings() do
+      {:ok, settings} when is_integer(settings.worker.ssh_timeout_ms) and settings.worker.ssh_timeout_ms > 0 ->
+        settings.worker.ssh_timeout_ms
+
+      _ ->
+        @default_ssh_timeout_ms
+    end
   end
 
   @spec agent_executor() :: module()

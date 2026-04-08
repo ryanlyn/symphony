@@ -133,6 +133,7 @@ defmodule SymphonyElixir.TestSupport do
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
           worker_ssh_hosts: [],
+          worker_ssh_timeout_ms: 60_000,
           worker_max_concurrent_agents_per_host: nil,
           agent_kind: "codex",
           max_concurrent_agents: 10,
@@ -178,6 +179,7 @@ defmodule SymphonyElixir.TestSupport do
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
+    worker_ssh_timeout_ms = Keyword.get(config, :worker_ssh_timeout_ms)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     agent_kind = Keyword.get(config, :agent_kind)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -225,7 +227,7 @@ defmodule SymphonyElixir.TestSupport do
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
-        worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
+        worker_yaml(worker_ssh_hosts, worker_ssh_timeout_ms, worker_max_concurrent_agents_per_host),
         "agent:",
         "  kind: #{yaml_value(agent_kind)}",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
@@ -296,14 +298,16 @@ defmodule SymphonyElixir.TestSupport do
     |> Enum.join("\n")
   end
 
-  defp worker_yaml(ssh_hosts, max_concurrent_agents_per_host)
-       when ssh_hosts in [nil, []] and is_nil(max_concurrent_agents_per_host),
+  defp worker_yaml(ssh_hosts, ssh_timeout_ms, max_concurrent_agents_per_host)
+       when ssh_hosts in [nil, []] and is_nil(max_concurrent_agents_per_host) and
+              ssh_timeout_ms in [nil, 60_000],
        do: nil
 
-  defp worker_yaml(ssh_hosts, max_concurrent_agents_per_host) do
+  defp worker_yaml(ssh_hosts, ssh_timeout_ms, max_concurrent_agents_per_host) do
     [
       "worker:",
       ssh_hosts not in [nil, []] && "  ssh_hosts: #{yaml_value(ssh_hosts)}",
+      ssh_timeout_ms not in [nil, 60_000] && "  ssh_timeout_ms: #{yaml_value(ssh_timeout_ms)}",
       !is_nil(max_concurrent_agents_per_host) &&
         "  max_concurrent_agents_per_host: #{yaml_value(max_concurrent_agents_per_host)}"
     ]

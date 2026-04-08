@@ -244,10 +244,11 @@ defmodule SymphonyElixir.WorkspaceCwdTest do
 
     Enum.each(
       [
-        {"empty", fake_ssh_script({:output, ""}), {:remote_home_lookup_failed, "worker-01", :empty_home}},
-        {"status", fake_ssh_script({:status, 75, "lookup failed"}), {:remote_home_lookup_failed, "worker-01", 75, "lookup failed\n"}}
+        {"empty", fake_ssh_script({:output, ""}), [], {:remote_home_lookup_failed, "worker-01", :empty_home}},
+        {"status", fake_ssh_script({:status, 75, "lookup failed"}), [], {:remote_home_lookup_failed, "worker-01", 75, "lookup failed\n"}},
+        {"timeout", fake_ssh_script({:sleep, 1}), [worker_ssh_timeout_ms: 10], {:remote_home_lookup_failed, "worker-01", {:ssh_timeout, "worker-01", 10}}}
       ],
-      fn {suffix, script, expected} ->
+      fn {suffix, script, workflow_overrides, expected} ->
         test_root =
           Path.join(
             System.tmp_dir!(),
@@ -256,7 +257,11 @@ defmodule SymphonyElixir.WorkspaceCwdTest do
 
         try do
           configure_fake_ssh!(test_root, previous_path, script)
-          write_workflow_file!(Workflow.workflow_file_path(), workspace_root: "~")
+
+          write_workflow_file!(
+            Workflow.workflow_file_path(),
+            Keyword.merge([workspace_root: "~"], workflow_overrides)
+          )
 
           assert {:error, ^expected} = WorkspaceCwd.validate("~", "worker-01")
         after
@@ -387,6 +392,13 @@ defmodule SymphonyElixir.WorkspaceCwdTest do
     """
     printf '%s\\n' #{SSH.shell_escape(output)}
     exit #{status}
+    """
+  end
+
+  defp fake_ssh_case_script({:sleep, seconds}) when is_integer(seconds) and seconds > 0 do
+    """
+    sleep #{seconds}
+    exit 0
     """
   end
 

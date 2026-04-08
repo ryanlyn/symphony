@@ -119,6 +119,37 @@ defmodule SymphonyElixir.SSHTest do
     assert {:error, :ssh_not_found} = SSH.run("localhost", "printf ok")
   end
 
+  test "run/3 returns a timeout error when ssh exceeds the caller timeout" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-ssh-timeout-test-#{System.unique_integer([:positive])}"
+      )
+
+    trace_file = Path.join(test_root, "ssh.trace")
+    previous_path = System.get_env("PATH")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end)
+
+    FakeSshSupport.install_fake_ssh!(test_root, trace_file, """
+    #!/bin/sh
+    printf 'ARGV:%s\\n' "$*" >> "#{trace_file}"
+    sleep 1
+    exit 0
+    """)
+
+    assert {:error, {:ssh_timeout, "localhost", 10}} =
+             SSH.run("localhost", "printf ok", stderr_to_stdout: true, timeout: 10)
+
+    FakeSshSupport.wait_for_trace!(trace_file)
+    trace = File.read!(trace_file)
+    assert trace =~ "-T localhost bash -lc"
+    assert trace =~ "printf ok"
+  end
+
   test "start_port/3 supports binary output without line mode" do
     test_root =
       Path.join(System.tmp_dir!(), "symphony-ssh-port-test-#{System.unique_integer([:positive])}")

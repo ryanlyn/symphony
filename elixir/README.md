@@ -102,6 +102,7 @@ worker:
   ssh_hosts:                         # optional; run agents on remote SSH hosts
     - worker1.example.com            #   workspaces are synced via rsync over SSH
     - worker2.example.com            #   set SYMPHONY_SSH_CONFIG to use a custom SSH config file
+  ssh_timeout_ms: 60000              # optional; default timeout for SSH.run/3 calls; default: 60000
   max_concurrent_agents_per_host: 2  # optional; cap agents per SSH host
 
 agent:

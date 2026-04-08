@@ -17,6 +17,8 @@ polling:
   interval_ms: 5000
 workspace:
   root: ~/dev/symphony-workspaces
+worker:
+  ssh_timeout_ms: 60000
 hooks:
   after_create: |
     git clone --depth 1 https://github.com/ryanlyn/symphony .
