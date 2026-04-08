@@ -153,16 +153,13 @@ defmodule SymphonyElixir.Workspace do
   def remove_issue_workspaces(identifier, nil) when is_binary(identifier) do
     safe_id = safe_identifier(identifier)
 
-    case Config.settings!().worker.ssh_hosts do
-      [] ->
-        case issue_base_path(safe_id, nil) do
-          {:ok, workspace} -> remove(workspace, nil)
-          {:error, _reason} -> :ok
-        end
-
-      worker_hosts ->
-        Enum.each(worker_hosts, &remove_issue_workspaces(identifier, &1))
+    case issue_base_path(safe_id, nil) do
+      {:ok, workspace} -> remove(workspace, nil)
+      {:error, _reason} -> :ok
     end
+
+    Config.settings!().worker.ssh_hosts
+    |> Enum.each(&remove_issue_workspaces(identifier, &1))
 
     :ok
   end

@@ -567,6 +567,73 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "startup terminal workspace cleanup removes local and configured remote workspaces" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-startup-terminal-cleanup-#{System.unique_integer([:positive])}"
+      )
+
+    previous_memory_issues = Application.get_env(:symphony_elixir, :memory_tracker_issues)
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+    orchestrator_name = Module.concat(__MODULE__, :StartupTerminalCleanupOrchestrator)
+    issue_id = "issue-startup-cleanup"
+    issue_identifier = "MONO-117"
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+      workspace_root = Path.join(test_root, "workspaces")
+      local_workspace = Path.join(workspace_root, issue_identifier)
+
+      File.mkdir_p!(local_workspace)
+      File.write!(Path.join(local_workspace, "marker.txt"), "stale")
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "memory",
+        workspace_root: workspace_root,
+        worker_ssh_hosts: ["worker-01:2200"],
+        tracker_terminal_states: ["Done"],
+        poll_interval_ms: 30_000
+      )
+
+      Application.put_env(:symphony_elixir, :memory_tracker_issues, [
+        %Issue{id: issue_id, identifier: issue_identifier, state: "Done"}
+      ])
+
+      {:ok, _pid} = Orchestrator.start_link(name: orchestrator_name)
+
+      refute File.exists?(local_workspace)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "-p 2200 worker-01 bash -lc"
+      assert trace =~ "rm -rf"
+      assert trace =~ Path.join(workspace_root, issue_identifier)
+    after
+      restore_app_env(:memory_tracker_issues, previous_memory_issues)
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+
+      if pid = Process.whereis(orchestrator_name) do
+        Process.exit(pid, :normal)
+      end
+
+      File.rm_rf(test_root)
+    end
+  end
+
   test "reconcile updates running issue state for active issues" do
     issue_id = "issue-3"
 
