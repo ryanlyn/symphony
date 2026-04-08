@@ -6,8 +6,6 @@ defmodule SymphonyElixir.HttpServer do
   alias SymphonyElixir.{Config, Orchestrator}
   alias SymphonyElixirWeb.Endpoint
 
-  @secret_key_bytes 48
-
   @spec child_spec(keyword()) :: Supervisor.child_spec()
   def child_spec(opts) do
     %{
@@ -30,8 +28,7 @@ defmodule SymphonyElixir.HttpServer do
             http: [ip: ip, port: port],
             url: [host: normalize_host(host)],
             orchestrator: orchestrator,
-            snapshot_timeout_ms: snapshot_timeout_ms,
-            secret_key_base: secret_key_base()
+            snapshot_timeout_ms: snapshot_timeout_ms
           ]
 
           endpoint_config =
@@ -170,8 +167,4 @@ defmodule SymphonyElixir.HttpServer do
   end
 
   defp url_host(host), do: to_string(host)
-
-  defp secret_key_base do
-    Base.encode64(:crypto.strong_rand_bytes(@secret_key_bytes), padding: false)
-  end
 end
