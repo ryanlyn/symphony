@@ -66,12 +66,6 @@ defmodule SymphonyElixir.Config do
     settings!().agent.kind
   end
 
-  @spec agent_executor() :: module()
-  def agent_executor do
-    settings!().agent.kind
-    |> SymphonyElixir.AgentExecutor.module_for_kind()
-  end
-
   @spec agent_stall_timeout_ms(String.t() | nil) :: non_neg_integer()
   def agent_stall_timeout_ms(nil), do: agent_stall_timeout_ms(agent_kind())
   def agent_stall_timeout_ms("claude"), do: settings!().claude.stall_timeout_ms
