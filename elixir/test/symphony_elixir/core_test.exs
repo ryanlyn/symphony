@@ -203,12 +203,29 @@ defmodule SymphonyElixir.CoreTest do
              Workflow.load(workflow_path)
   end
 
-  test "workflow load accepts unterminated front matter with an empty prompt" do
+  test "workflow load preserves content when front matter is unterminated" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
-    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt\n")
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
+    assert {:ok,
+            %{
+              config: %{},
+              prompt: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt",
+              prompt_template: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt"
+            }} =
              Workflow.load(workflow_path)
+  end
+
+  test "workflow load accepts valid front matter with a prompt body" do
+    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "VALID_FRONT_MATTER_WORKFLOW.md")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n---\nPrompt body\n")
+
+    assert {:ok,
+            %{
+              config: %{"tracker" => %{"kind" => "linear"}},
+              prompt: "Prompt body",
+              prompt_template: "Prompt body"
+            }} = Workflow.load(workflow_path)
   end
 
   test "workflow load rejects non-map front matter" do
@@ -224,10 +241,12 @@ defmodule SymphonyElixir.CoreTest do
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
-      if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
+      if is_pid(orchestrator_pid) and is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
+          :ignore -> :ok
+          {:error, :not_found} -> :ok
         end
       end
     end)
@@ -244,13 +263,30 @@ defmodule SymphonyElixir.CoreTest do
 
   test "application restarts downstream children when orchestrator crashes" do
     previous_server_port_override = Application.get_env(:symphony_elixir, :server_port_override)
+    previous_start_orchestrator = Application.get_env(:symphony_elixir, :start_orchestrator)
 
     Application.put_env(:symphony_elixir, :server_port_override, 0)
+    Application.put_env(:symphony_elixir, :start_orchestrator, true)
 
     on_exit(fn ->
       stop_default_http_server()
+      Application.put_env(:symphony_elixir, :start_orchestrator, previous_start_orchestrator)
+
+      if Process.whereis(SymphonyElixir.Orchestrator) do
+        assert :ok =
+                 Supervisor.terminate_child(
+                   SymphonyElixir.Supervisor,
+                   SymphonyElixir.Orchestrator
+                 )
+      end
+
       restore_app_env(:server_port_override, previous_server_port_override)
     end)
+
+    case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
 
@@ -1241,9 +1277,7 @@ defmodule SymphonyElixir.CoreTest do
 
       issue_dir = Path.join(workspace_root, workspace_name)
       assert File.exists?(issue_dir)
-      workspace = Path.join(issue_dir, "0")
-      assert File.exists?(workspace)
-      assert File.exists?(Path.join(workspace, "README.md"))
+      assert File.exists?(Path.join(issue_dir, "README.md"))
     after
       File.rm_rf(test_root)
     end
