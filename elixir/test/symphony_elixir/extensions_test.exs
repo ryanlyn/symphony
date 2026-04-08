@@ -736,6 +736,26 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, _reason} = HttpServer.start_link(host: "bad host", port: 0)
   end
 
+  test "http server preserves the configured secret key base across startups" do
+    expected_secret = String.duplicate("t", 64)
+
+    endpoint_config =
+      :symphony_elixir
+      |> Application.get_env(SymphonyElixirWeb.Endpoint, [])
+      |> Keyword.put(:secret_key_base, expected_secret)
+
+    Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+
+    Enum.each(1..2, fn _attempt ->
+      assert {:ok, pid} = HttpServer.start_link(host: "127.0.0.1", port: 0)
+
+      assert Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])[:secret_key_base] ==
+               expected_secret
+
+      assert :ok = Supervisor.stop(pid)
+    end)
+  end
+
   test "claude MCP endpoint authorizes bearer tokens and supports multiple valid sessions" do
     start_supervised!({HttpServer, host: "127.0.0.1", port: 0})
     port = wait_for_bound_port()

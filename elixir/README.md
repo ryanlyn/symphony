@@ -169,6 +169,8 @@ Notes:
 - `~` is expanded to the home directory in path values. For env-backed paths, use `$VAR`.
 - `SYMPHONY_WORKSPACE_ROOT` overrides `workspace.root` at runtime. This is useful for isolated
   test and CI runs that should not touch shared local workspaces.
+- `SYMPHONY_SECRET_KEY_BASE` and `SYMPHONY_LIVE_VIEW_SIGNING_SALT` optionally override the Phoenix
+  endpoint defaults at boot.
 - The `codex.command` value is a shell command string - `$VAR` expansion happens in the shell, not
   in Symphony.
 - When `codex.turn_sandbox_policy` is omitted, Symphony auto-generates a `workspaceWrite` policy
