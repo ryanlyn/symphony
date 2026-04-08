@@ -23,6 +23,104 @@ defmodule SymphonyElixir.Orchestrator do
     seconds_running: 0
   }
 
+  defmodule RunningEntry do
+    @moduledoc false
+
+    @empty_usage_totals %{
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      seconds_running: 0
+    }
+
+    @type usage_totals_t :: %{
+            input_tokens: non_neg_integer(),
+            output_tokens: non_neg_integer(),
+            total_tokens: non_neg_integer(),
+            seconds_running: non_neg_integer()
+          }
+
+    @type t :: %__MODULE__{
+            pid: pid() | nil,
+            ref: reference() | nil,
+            agent_kind: String.t() | nil,
+            identifier: String.t() | nil,
+            issue: SymphonyElixir.Linear.Issue.t() | nil,
+            slot_index: non_neg_integer(),
+            ensemble_size: pos_integer(),
+            worker_host: String.t() | nil,
+            workspace_path: String.t() | nil,
+            session_id: String.t() | nil,
+            executor_pid: String.t() | nil,
+            usage_totals: usage_totals_t,
+            usage_last_reported_input_tokens: non_neg_integer(),
+            usage_last_reported_output_tokens: non_neg_integer(),
+            usage_last_reported_total_tokens: non_neg_integer(),
+            last_agent_message: map() | nil,
+            last_agent_timestamp: DateTime.t() | nil,
+            last_agent_event: term(),
+            turn_count: non_neg_integer(),
+            retry_attempt: non_neg_integer(),
+            started_at: DateTime.t() | nil
+          }
+
+    defstruct pid: nil,
+              ref: nil,
+              agent_kind: "codex",
+              identifier: nil,
+              issue: nil,
+              slot_index: 0,
+              ensemble_size: 1,
+              worker_host: nil,
+              workspace_path: nil,
+              session_id: nil,
+              executor_pid: nil,
+              usage_totals: @empty_usage_totals,
+              usage_last_reported_input_tokens: 0,
+              usage_last_reported_output_tokens: 0,
+              usage_last_reported_total_tokens: 0,
+              last_agent_message: nil,
+              last_agent_timestamp: nil,
+              last_agent_event: nil,
+              turn_count: 0,
+              retry_attempt: 0,
+              started_at: nil
+
+    @spec new() :: t()
+    def new, do: new(%{})
+
+    @spec new(map() | keyword()) :: t()
+    def new(attrs) when is_list(attrs) do
+      attrs
+      |> Enum.into(%{})
+      |> new()
+    end
+
+    def new(attrs) when is_map(attrs) do
+      attrs
+      |> Map.update(:usage_totals, @empty_usage_totals, &normalize_usage_totals/1)
+      |> then(&struct(__MODULE__, &1))
+    end
+
+    @spec ref_matches?(term(), reference()) :: boolean()
+    def ref_matches?(entry, ref) when is_map(entry) and is_reference(ref) do
+      Map.get(entry, :ref) == ref
+    end
+
+    def ref_matches?(_entry, _ref), do: false
+
+    defp normalize_usage_totals(totals) when is_map(totals) do
+      %{
+        input_tokens: max(0, Map.get(totals, :input_tokens, 0)),
+        output_tokens: max(0, Map.get(totals, :output_tokens, 0)),
+        total_tokens: max(0, Map.get(totals, :total_tokens, 0)),
+        seconds_running: max(0, Map.get(totals, :seconds_running, 0))
+      }
+    end
+
+    defp normalize_usage_totals(_totals), do: @empty_usage_totals
+  end
+
   defmodule State do
     @moduledoc """
     Runtime state for the orchestrator polling loop.
@@ -531,7 +629,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_update_running_issue(acc, slot_key, %{issue: _} = running_entry, issue) do
-    Map.put(acc, slot_key, %{running_entry | issue: issue})
+    Map.put(acc, slot_key, update_running_entry(running_entry, %{issue: issue}))
   end
 
   defp maybe_update_running_issue(acc, _slot_key, _running_entry, _issue), do: acc
@@ -898,29 +996,22 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} slot=#{slot_index}/#{ensemble_size} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
         running =
-          Map.put(state.running, slot_key, %{
-            pid: pid,
-            ref: ref,
-            agent_kind: state.agent_kind || current_or_default_runtime_settings().agent.kind,
-            identifier: issue.identifier,
-            issue: issue,
-            slot_index: slot_index,
-            ensemble_size: ensemble_size,
-            worker_host: worker_host,
-            workspace_path: nil,
-            session_id: nil,
-            executor_pid: nil,
-            usage_totals: @empty_usage_totals,
-            usage_last_reported_input_tokens: 0,
-            usage_last_reported_output_tokens: 0,
-            usage_last_reported_total_tokens: 0,
-            last_agent_message: nil,
-            last_agent_timestamp: nil,
-            last_agent_event: nil,
-            turn_count: 0,
-            retry_attempt: normalize_retry_attempt(attempt),
-            started_at: DateTime.utc_now()
-          })
+          Map.put(
+            state.running,
+            slot_key,
+            RunningEntry.new(%{
+              pid: pid,
+              ref: ref,
+              agent_kind: state.agent_kind || current_or_default_runtime_settings().agent.kind,
+              identifier: issue.identifier,
+              issue: issue,
+              slot_index: slot_index,
+              ensemble_size: ensemble_size,
+              worker_host: worker_host,
+              retry_attempt: normalize_retry_attempt(attempt),
+              started_at: DateTime.utc_now()
+            })
+          )
 
         %{
           state
@@ -1200,7 +1291,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry
 
   defp maybe_put_runtime_value(running_entry, key, value) when is_map(running_entry) do
-    Map.put(running_entry, key, value)
+    update_running_entry(running_entry, %{key => value})
   end
 
   defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
@@ -1298,7 +1389,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp find_slot_for_ref(running, ref) do
     Enum.find_value(running, fn {{issue_id, slot_index}, entry} ->
-      if entry.ref == ref, do: {issue_id, slot_index}
+      if RunningEntry.ref_matches?(entry, ref), do: {issue_id, slot_index}
     end)
   end
 
@@ -1462,7 +1553,7 @@ defmodule SymphonyElixir.Orchestrator do
     summary = summarize_agent_update(update)
 
     {
-      Map.merge(running_entry, %{
+      update_running_entry(running_entry, %{
         agent_kind: Map.get(update, :agent_kind, Map.get(running_entry, :agent_kind, "codex")),
         last_agent_timestamp: timestamp,
         last_agent_message: summary,
@@ -1477,6 +1568,14 @@ defmodule SymphonyElixir.Orchestrator do
       }),
       token_delta
     }
+  end
+
+  defp update_running_entry(%RunningEntry{} = running_entry, attrs) when is_map(attrs) do
+    struct(running_entry, attrs)
+  end
+
+  defp update_running_entry(running_entry, attrs) when is_map(running_entry) and is_map(attrs) do
+    Map.merge(running_entry, attrs)
   end
 
   defp executor_pid_for_update(_existing, %{executor_pid: pid}) when is_binary(pid), do: pid
