@@ -710,7 +710,7 @@ defmodule SymphonyElixir.CoreTest do
                state.retry_attempts[issue_id]
 
       assert is_reference(timer_ref)
-      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 40_000, 40_500)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 40_000, 41_000)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)

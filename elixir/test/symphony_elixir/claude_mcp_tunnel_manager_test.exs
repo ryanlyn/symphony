@@ -72,11 +72,15 @@ defmodule SymphonyElixir.ClaudeMcpTunnelManagerTest do
     assert {:ok, second_remote_port} =
              McpTunnelManager.acquire("worker-shared-2", "127.0.0.1", 41_001)
 
-    FakeSshSupport.wait_for_trace!(trace_file)
+    assert_eventually(
+      fn ->
+        trace = if File.exists?(trace_file), do: File.read!(trace_file), else: ""
 
-    trace = File.read!(trace_file)
-    assert trace =~ "-R #{first_remote_port}:127.0.0.1:41000 worker-shared-2"
-    assert trace =~ "-R #{second_remote_port}:127.0.0.1:41001 worker-shared-2"
+        trace =~ "-R #{first_remote_port}:127.0.0.1:41000 worker-shared-2" and
+          trace =~ "-R #{second_remote_port}:127.0.0.1:41001 worker-shared-2"
+      end,
+      200
+    )
 
     assert :ok = McpTunnelManager.release("worker-shared-2")
   end
