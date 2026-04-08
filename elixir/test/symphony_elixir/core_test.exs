@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  alias Elixir.Config.Reader, as: ElixirConfigReader
 
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -169,6 +170,42 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert Config.settings!().tracker.assignee == env_assignee
+  end
+
+  test "endpoint secrets resolve from Symphony env vars" do
+    previous_secret_key_base = System.get_env("SYMPHONY_SECRET_KEY_BASE")
+    previous_signing_salt = System.get_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT")
+
+    on_exit(fn ->
+      restore_env("SYMPHONY_SECRET_KEY_BASE", previous_secret_key_base)
+      restore_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT", previous_signing_salt)
+    end)
+
+    System.put_env("SYMPHONY_SECRET_KEY_BASE", "env-secret-key-base")
+    System.put_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT", "env-signing-salt")
+
+    endpoint_config = read_endpoint_config_from_app_config!()
+
+    assert endpoint_config[:secret_key_base] == "env-secret-key-base"
+    assert get_in(endpoint_config, [:live_view, :signing_salt]) == "env-signing-salt"
+  end
+
+  test "endpoint secrets fall back to defaults when Symphony env vars are blank" do
+    previous_secret_key_base = System.get_env("SYMPHONY_SECRET_KEY_BASE")
+    previous_signing_salt = System.get_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT")
+
+    on_exit(fn ->
+      restore_env("SYMPHONY_SECRET_KEY_BASE", previous_secret_key_base)
+      restore_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT", previous_signing_salt)
+    end)
+
+    System.put_env("SYMPHONY_SECRET_KEY_BASE", "")
+    System.put_env("SYMPHONY_LIVE_VIEW_SIGNING_SALT", "")
+
+    endpoint_config = read_endpoint_config_from_app_config!()
+
+    assert endpoint_config[:secret_key_base] == String.duplicate("s", 64)
+    assert get_in(endpoint_config, [:live_view, :signing_salt]) == "symphony-live-view"
   end
 
   test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
@@ -2702,6 +2739,13 @@ defmodule SymphonyElixir.CoreTest do
     System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
     System.cmd("git", ["-C", template_repo, "add", "README.md"])
     System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+  end
+
+  defp read_endpoint_config_from_app_config! do
+    "config/config.exs"
+    |> ElixirConfigReader.read!(env: Mix.env())
+    |> Keyword.fetch!(:symphony_elixir)
+    |> Keyword.fetch!(SymphonyElixirWeb.Endpoint)
   end
 
   defp fake_streaming_claude_script(startup_body, turn_body)
