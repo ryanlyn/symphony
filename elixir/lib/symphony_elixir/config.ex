@@ -50,16 +50,33 @@ defmodule SymphonyElixir.Config do
 
   @spec max_concurrent_agents_for_state(term()) :: pos_integer()
   def max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
-    config = settings!()
-
-    Map.get(
-      config.agent.max_concurrent_agents_by_state,
-      Schema.normalize_issue_state(state_name),
-      config.agent.max_concurrent_agents
-    )
+    settings_for_state(state_name).agent.max_concurrent_agents
   end
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
+
+  @spec local_max_concurrent_agents_for_state(term()) :: pos_integer() | nil
+  def local_max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
+    settings = settings!()
+
+    case get_in(Schema.status_override(settings, state_name), ["agent", "max_concurrent_agents"]) do
+      limit when is_integer(limit) and limit > 0 ->
+        Schema.resolve_state_settings(settings, state_name).agent.max_concurrent_agents
+
+      _ ->
+        nil
+    end
+  end
+
+  def local_max_concurrent_agents_for_state(_state_name), do: nil
+
+  @spec settings_for_state(term()) :: Schema.t()
+  def settings_for_state(state_name) when is_binary(state_name) do
+    settings!()
+    |> Schema.resolve_state_settings(state_name)
+  end
+
+  def settings_for_state(_state_name), do: settings!()
 
   @spec agent_kind() :: String.t()
   def agent_kind do

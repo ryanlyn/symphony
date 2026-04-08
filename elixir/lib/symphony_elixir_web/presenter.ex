@@ -12,15 +12,19 @@ defmodule SymphonyElixirWeb.Presenter do
     case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
       %{} = snapshot ->
         usage_totals = snapshot.usage_totals
+        blocked = Map.get(snapshot, :blocked, [])
 
         %{
           generated_at: generated_at,
           counts: %{
             running: length(snapshot.running),
-            retrying: length(snapshot.retrying)
+            retrying: length(snapshot.retrying),
+            blocked: length(blocked)
           },
+          blocked_by_reason: blocked_counts(blocked),
           running: Enum.map(snapshot.running, &running_entry_payload/1),
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
+          blocked: Enum.map(blocked, &blocked_entry_payload/1),
           usage_totals: usage_totals,
           rate_limits: snapshot.rate_limits
         }
@@ -165,6 +169,15 @@ defmodule SymphonyElixirWeb.Presenter do
     }
   end
 
+  defp blocked_entry_payload(entry) do
+    %{
+      issue_id: entry.issue_id,
+      issue_identifier: entry.identifier,
+      state: entry.state,
+      reason: block_reason_label(entry.reason)
+    }
+  end
+
   defp workspace_path(issue_identifier, running, retry) do
     (running && Map.get(running, :workspace_path)) ||
       (retry && Map.get(retry, :workspace_path)) ||
@@ -188,6 +201,22 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_agent_message(message)
+
+  defp blocked_counts(blocked_entries) when is_list(blocked_entries) do
+    Enum.reduce(blocked_entries, %{global: 0, local: 0, worker: 0}, fn entry, counts ->
+      case entry.reason do
+        :global_concurrency_cap -> Map.update!(counts, :global, &(&1 + 1))
+        :local_concurrency_cap -> Map.update!(counts, :local, &(&1 + 1))
+        :worker_host_capacity -> Map.update!(counts, :worker, &(&1 + 1))
+        _ -> counts
+      end
+    end)
+  end
+
+  defp block_reason_label(:global_concurrency_cap), do: "blocked by global cap"
+  defp block_reason_label(:local_concurrency_cap), do: "blocked by local cap"
+  defp block_reason_label(:worker_host_capacity), do: "blocked by worker host capacity"
+  defp block_reason_label(other), do: to_string(other)
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

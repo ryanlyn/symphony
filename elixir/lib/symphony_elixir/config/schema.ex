@@ -124,15 +124,12 @@ defmodule SymphonyElixir.Config.Schema do
     use Ecto.Schema
     import Ecto.Changeset
 
-    alias SymphonyElixir.Config.Schema
-
     @primary_key false
     embedded_schema do
       field(:kind, :string, default: "codex")
       field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
-      field(:max_concurrent_agents_by_state, :map, default: %{})
       field(:ensemble_size, :integer, default: 1)
     end
 
@@ -146,7 +143,6 @@ defmodule SymphonyElixir.Config.Schema do
           :max_concurrent_agents,
           :max_turns,
           :max_retry_backoff_ms,
-          :max_concurrent_agents_by_state,
           :ensemble_size
         ],
         empty_values: []
@@ -156,8 +152,6 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
       |> validate_number(:ensemble_size, greater_than: 0)
-      |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
-      |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end
   end
 
@@ -309,6 +303,7 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   embedded_schema do
+    field(:status_overrides, :map, default: %{})
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
@@ -399,9 +394,63 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
+  @doc false
+  @spec normalize_status_overrides(nil | map()) :: map()
+  def normalize_status_overrides(nil), do: %{}
+
+  def normalize_status_overrides(overrides) when is_map(overrides) do
+    Enum.reduce(overrides, %{}, fn {state_name, override}, acc ->
+      Map.put(acc, normalize_issue_state(to_string(state_name)), normalize_status_override(override))
+    end)
+  end
+
+  @doc false
+  @spec validate_status_overrides(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
+  def validate_status_overrides(changeset, field) do
+    validate_change(changeset, field, fn ^field, overrides ->
+      Enum.flat_map(overrides, fn {state_name, override} ->
+        cond do
+          to_string(state_name) == "" ->
+            [{field, "state names must not be blank"}]
+
+          not is_map(override) ->
+            [{field, "status overrides must be maps"}]
+
+          Map.has_key?(override, "agent") and not is_map(override["agent"]) ->
+            [{field, "status override agent settings must be maps"}]
+
+          match?(%{}, override["agent"]) and
+            Map.has_key?(override["agent"], "max_concurrent_agents") and
+              (not is_integer(override["agent"]["max_concurrent_agents"]) or
+                 override["agent"]["max_concurrent_agents"] <= 0) ->
+            [{field, "status override agent.max_concurrent_agents must be a positive integer"}]
+
+          true ->
+            []
+        end
+      end)
+    end)
+  end
+
+  @spec status_override(%__MODULE__{}, term()) :: map()
+  def status_override(%__MODULE__{status_overrides: overrides}, state_name) when is_binary(state_name) do
+    Map.get(overrides || %{}, normalize_issue_state(state_name), %{})
+  end
+
+  def status_override(_settings, _state_name), do: %{}
+
+  @spec resolve_state_settings(%__MODULE__{}, term()) :: %__MODULE__{}
+  def resolve_state_settings(%__MODULE__{} = settings, state_name) when is_binary(state_name) do
+    apply_status_override(settings, status_override(settings, state_name))
+  end
+
+  def resolve_state_settings(%__MODULE__{} = settings, _state_name), do: settings
+
   defp changeset(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [])
+    |> cast(attrs, [:status_overrides], empty_values: [])
+    |> update_change(:status_overrides, &normalize_status_overrides/1)
+    |> validate_status_overrides(:status_overrides)
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
@@ -446,6 +495,46 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_optional_map(nil), do: nil
   defp normalize_optional_map(value) when is_map(value), do: normalize_keys(value)
+
+  @state_override_sections ~w(tracker polling workspace worker agent codex claude hooks observability server)a
+
+  defp apply_status_override(settings, override) when is_map(override) do
+    Enum.reduce(@state_override_sections, settings, fn section, acc ->
+      section_override = Map.get(override, Atom.to_string(section))
+      current_section = Map.get(acc, section)
+      updated_section = merge_section_override(current_section, section_override)
+
+      if updated_section == current_section do
+        acc
+      else
+        Map.put(acc, section, updated_section)
+      end
+    end)
+  end
+
+  defp apply_status_override(settings, _override), do: settings
+
+  defp merge_section_override(%_module{} = current_section, override) when is_map(override) do
+    fields = Map.keys(Map.from_struct(current_section))
+
+    updates =
+      Enum.reduce(fields, %{}, fn field, acc ->
+        override_key = Atom.to_string(field)
+
+        if Map.has_key?(override, override_key) do
+          Map.put(acc, field, Map.get(override, override_key))
+        else
+          acc
+        end
+      end)
+
+    struct(current_section, updates)
+  end
+
+  defp merge_section_override(current_section, _override), do: current_section
+
+  defp normalize_status_override(override) when is_map(override), do: normalize_keys(override)
+  defp normalize_status_override(override), do: override
 
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)

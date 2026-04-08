@@ -801,6 +801,156 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "dispatch is blocked by the global concurrency cap when local capacity remains" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 2,
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => 3}}
+      }
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 2,
+      running: %{
+        {"issue-1", 0} => %{issue: %Issue{state: "Todo"}},
+        {"issue-2", 0} => %{issue: %Issue{state: "In Progress"}}
+      },
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{id: "issue-3", identifier: "MT-2001", title: "Global cap", state: "Todo"}
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(issue, state) ==
+             :global_concurrency_cap
+  end
+
+  test "dispatch is blocked by the local concurrency cap while global capacity remains" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 4,
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => 2}}
+      }
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 4,
+      running: %{
+        {"issue-1", 0} => %{issue: %Issue{state: "Todo"}},
+        {"issue-2", 0} => %{issue: %Issue{state: "Todo"}}
+      },
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{id: "issue-3", identifier: "MT-2002", title: "Local cap", state: "Todo"}
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(issue, state) ==
+             :local_concurrency_cap
+  end
+
+  test "mixed-status dispatch composes global and local caps" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 4,
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => 2}},
+        "In Progress" => %{"agent" => %{"max_concurrent_agents" => 2}}
+      }
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 4,
+      running: %{
+        {"issue-1", 0} => %{issue: %Issue{state: "Todo"}},
+        {"issue-2", 0} => %{issue: %Issue{state: "In Progress"}},
+        {"issue-3", 0} => %{issue: %Issue{state: "In Progress"}}
+      },
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    todo_issue = %Issue{id: "issue-4", identifier: "MT-2003", title: "Todo open", state: "Todo"}
+
+    in_progress_issue = %Issue{
+      id: "issue-5",
+      identifier: "MT-2004",
+      title: "In progress full",
+      state: "In Progress"
+    }
+
+    assert Orchestrator.should_dispatch_issue_for_test(todo_issue, state)
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(todo_issue, state) == nil
+
+    refute Orchestrator.should_dispatch_issue_for_test(in_progress_issue, state)
+
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(in_progress_issue, state) ==
+             :local_concurrency_cap
+  end
+
+  test "statuses without local overrides fall back to global-only dispatch checks" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 3,
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => 1}}
+      }
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{
+        {"issue-1", 0} => %{issue: %Issue{state: "Todo"}},
+        {"issue-2", 0} => %{issue: %Issue{state: "In Progress"}}
+      },
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    review_issue =
+      %Issue{id: "issue-3", identifier: "MT-2005", title: "In progress open", state: "In Progress"}
+
+    assert Orchestrator.should_dispatch_issue_for_test(review_issue, state)
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(review_issue, state) == nil
+    assert Config.local_max_concurrent_agents_for_state("Review") == nil
+  end
+
+  test "lowering a local cap below the current running count blocks new dispatch without preempting running work" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 5,
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => 1}}
+      }
+    )
+
+    running = %{
+      {"issue-1", 0} => %{issue: %Issue{state: "Todo"}},
+      {"issue-2", 0} => %{issue: %Issue{state: "Todo"}}
+    }
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 5,
+      running: running,
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{id: "issue-3", identifier: "MT-2006", title: "Lowered cap", state: "Todo"}
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+    assert map_size(state.running) == 2
+
+    assert Orchestrator.dispatch_capacity_block_reason_for_test(issue, state) ==
+             :local_concurrency_cap
+  end
+
   test "dispatch revalidation skips stale todo issue once a non-terminal blocker appears" do
     stale_issue = %Issue{
       id: "blocked-2",
@@ -1097,7 +1247,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       poll_interval_ms: %{bad: true},
       workspace_root: 123,
       max_retry_backoff_ms: 0,
-      max_concurrent_agents_by_state: %{"Todo" => "1", "Review" => 0, "Done" => "bad"},
+      status_overrides: %{
+        "Todo" => %{"agent" => %{"max_concurrent_agents" => "1"}},
+        "Review" => %{"agent" => %{"max_concurrent_agents" => 0}},
+        "Done" => %{"agent" => %{"max_concurrent_agents" => "bad"}}
+      },
       hook_timeout_ms: 0,
       observability_enabled: "maybe",
       observability_refresh_ms: %{bad: true},
@@ -1202,15 +1356,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.workspace.root == "env:#{workspace_env_var}"
   end
 
-  test "config supports per-state max concurrent agent overrides" do
+  test "config supports per-state status overrides for local concurrency" do
     workflow = """
     ---
     agent:
       max_concurrent_agents: 10
-      max_concurrent_agents_by_state:
-        todo: 1
-        "In Progress": 4
-        "In Review": 2
+    status_overrides:
+      todo:
+        agent:
+          max_concurrent_agents: 1
+      "In Progress":
+        agent:
+          max_concurrent_agents: 4
+      "In Review":
+        agent:
+          max_concurrent_agents: 2
     ---
     """
 
@@ -1222,6 +1382,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.max_concurrent_agents_for_state("In Review") == 2
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
+    assert Config.local_max_concurrent_agents_for_state("Todo") == 1
+    assert Config.local_max_concurrent_agents_for_state("Closed") == nil
 
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
     assert :ok = Config.validate()

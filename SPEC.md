@@ -408,12 +408,17 @@ Fields:
 - `max_retry_backoff_ms` (integer or string integer)
   - Default: `300000` (5 minutes)
   - Changes should be re-applied at runtime and affect future retry scheduling.
-- `max_concurrent_agents_by_state` (map `state_name -> positive integer`)
-  - Default: empty map.
-  - State keys are normalized (`lowercase`) for lookup.
-  - Invalid entries (non-positive or non-numeric) are ignored.
 
-#### 5.3.6 `codex` (object)
+#### 5.3.6 `status_overrides` (object)
+
+Fields:
+
+- `<state_name>.agent.max_concurrent_agents` (integer or string integer)
+  - Optional local concurrency cap for that state.
+  - State keys are normalized (`lowercase`) for lookup.
+  - Invalid entries (non-positive or non-numeric) are rejected.
+
+#### 5.3.7 `codex` (object)
 
 Fields:
 
@@ -571,7 +576,7 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
-- `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
+- `status_overrides`: map keyed by normalized state name, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
@@ -728,8 +733,8 @@ Global limit:
 
 Per-state limit:
 
-- `max_concurrent_agents_by_state[state]` if present (state key normalized)
-- otherwise fallback to global limit
+- `status_overrides[state].agent.max_concurrent_agents` if present (state key normalized)
+- otherwise no local cap applies
 
 The runtime counts issues by their current tracked state in the `running` map.
 

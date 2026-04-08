@@ -42,9 +42,9 @@ defmodule SymphonyElixir.Orchestrator do
       :tick_token,
       active_states: MapSet.new(),
       terminal_states: MapSet.new(),
-      max_concurrent_agents_by_state: %{},
       worker_ssh_hosts: [],
       running: %{},
+      blocked_dispatches: [],
       completed: MapSet.new(),
       claimed: MapSet.new(),
       # Keyed by issue_id (not slot_key). This is intentional: retries re-dispatch
@@ -104,7 +104,6 @@ defmodule SymphonyElixir.Orchestrator do
       state
       | poll_interval_ms: settings.polling.interval_ms,
         max_concurrent_agents: settings.agent.max_concurrent_agents,
-        max_concurrent_agents_by_state: settings.agent.max_concurrent_agents_by_state,
         agent_kind: settings.agent.kind,
         max_retry_backoff_ms: settings.agent.max_retry_backoff_ms,
         worker_ssh_hosts: settings.worker.ssh_hosts,
@@ -295,11 +294,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_dispatch(%State{} = state) do
-    state = reconcile_running_issues(state)
+    state =
+      state
+      |> reconcile_running_issues()
+      |> Map.put(:blocked_dispatches, [])
 
     with :ok <- Config.validate(),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
-         true <- available_slots(state) > 0 do
+         {:ok, issues} <- Tracker.fetch_candidate_issues() do
       choose_issues(issues, state)
     else
       {:error, :missing_linear_api_token} ->
@@ -338,9 +339,6 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-        state
-
-      false ->
         state
     end
   end
@@ -398,6 +396,17 @@ defmodule SymphonyElixir.Orchestrator do
       state_active_state_set(state),
       state_terminal_state_set(state)
     )
+  end
+
+  @doc false
+  @spec dispatch_capacity_block_reason_for_test(Issue.t(), term(), String.t() | nil) ::
+          :global_concurrency_cap | :local_concurrency_cap | :worker_host_capacity | nil
+  def dispatch_capacity_block_reason_for_test(
+        %Issue{} = issue,
+        %State{} = state,
+        preferred_worker_host \\ nil
+      ) do
+    dispatch_capacity_block_reason(issue, state, preferred_worker_host)
   end
 
   @doc false
@@ -653,15 +662,25 @@ defmodule SymphonyElixir.Orchestrator do
     active_states = state_active_state_set(state)
     terminal_states = state_terminal_state_set(state)
 
-    issues
-    |> sort_issues_for_dispatch()
-    |> Enum.reduce(state, fn issue, state_acc ->
-      if should_dispatch_issue?(issue, state_acc, active_states, terminal_states) do
-        dispatch_issue(state_acc, issue)
-      else
-        state_acc
-      end
-    end)
+    {state, blocked_dispatches} =
+      issues
+      |> sort_issues_for_dispatch()
+      |> Enum.reduce({state, []}, fn issue, {state_acc, blocked_acc} ->
+        if issue_dispatch_eligible?(issue, state_acc, active_states, terminal_states) do
+          case dispatch_capacity_block_reason(issue, state_acc) do
+            nil ->
+              {dispatch_issue(state_acc, issue), blocked_acc}
+
+            reason ->
+              log_dispatch_block(issue, state_acc, reason)
+              {state_acc, [dispatch_block_entry(issue, reason) | blocked_acc]}
+          end
+        else
+          {state_acc, blocked_acc}
+        end
+      end)
+
+    %{state | blocked_dispatches: Enum.reverse(blocked_dispatches)}
   end
 
   defp sort_issues_for_dispatch(issues) when is_list(issues) do
@@ -686,26 +705,25 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp should_dispatch_issue?(
          %Issue{} = issue,
-         %State{claimed: claimed} = state,
+         %State{} = state,
          active_states,
          terminal_states
        ) do
-    ensemble_size = resolve_ensemble_size(issue)
-
-    candidate_issue?(issue, active_states, terminal_states) and
-      !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states) and
-      claimed_slot_count_for_issue(claimed, issue.id) < ensemble_size and
-      available_slots(state) > 0 and
-      state_slots_available?(issue, state) and
-      worker_slots_available?(state)
+    issue_dispatch_eligible?(issue, state, active_states, terminal_states) and
+      is_nil(dispatch_capacity_block_reason(issue, state))
   end
 
   defp should_dispatch_issue?(_issue, _state, _active_states, _terminal_states), do: false
 
-  defp state_slots_available?(%Issue{state: issue_state}, %State{} = state) do
-    limit = max_concurrent_agents_for_state(state, issue_state)
-    used = running_issue_count_for_state(state.running, issue_state)
-    limit > used
+  defp state_slots_available?(%Issue{state: issue_state}, %State{} = state) when is_binary(issue_state) do
+    case local_max_concurrent_agents_for_state(state, issue_state) do
+      limit when is_integer(limit) and limit > 0 ->
+        used = running_issue_count_for_state(state.running, issue_state)
+        limit > used
+
+      _ ->
+        true
+    end
   end
 
   defp state_slots_available?(_issue, _state), do: false
@@ -1080,12 +1098,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata) do
+    block_reason =
+      if retry_candidate_issue?(issue, state_active_state_set(state), state_terminal_state_set(state)) do
+        dispatch_capacity_block_reason(issue, state, metadata[:worker_host])
+      end
+
     if retry_candidate_issue?(issue, state_active_state_set(state), state_terminal_state_set(state)) and
-         dispatch_slots_available?(issue, state) and
-         worker_slots_available?(state, metadata[:worker_host]) do
+         is_nil(block_reason) do
       {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host])}
     else
-      Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
+      if block_reason do
+        log_dispatch_block(issue, state, block_reason, metadata[:worker_host])
+      else
+        Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
+      end
 
       {:noreply,
        schedule_issue_retry(
@@ -1094,7 +1120,7 @@ defmodule SymphonyElixir.Orchestrator do
          attempt + 1,
          Map.merge(metadata, %{
            identifier: issue.identifier,
-           error: "no available orchestrator slots"
+           error: dispatch_block_error(block_reason)
          })
        )}
     end
@@ -1179,20 +1205,19 @@ defmodule SymphonyElixir.Orchestrator do
     Map.put(running_entry, key, value)
   end
 
-  defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
-    normalized_state = normalize_issue_state(state_name)
+  defp local_max_concurrent_agents_for_state(%State{}, state_name) when is_binary(state_name) do
     settings = current_or_default_runtime_settings()
 
-    Map.get(
-      state.max_concurrent_agents_by_state || settings.agent.max_concurrent_agents_by_state,
-      normalized_state,
-      state.max_concurrent_agents || settings.agent.max_concurrent_agents
-    )
+    case get_in(Schema.status_override(settings, state_name), ["agent", "max_concurrent_agents"]) do
+      limit when is_integer(limit) and limit > 0 ->
+        Schema.resolve_state_settings(settings, state_name).agent.max_concurrent_agents
+
+      _ ->
+        nil
+    end
   end
 
-  defp max_concurrent_agents_for_state(%State{} = state, _state_name) do
-    state.max_concurrent_agents || current_or_default_runtime_settings().agent.max_concurrent_agents
-  end
+  defp local_max_concurrent_agents_for_state(_state, _state_name), do: nil
 
   defp configured_worker_hosts(%State{worker_ssh_hosts: hosts}) when is_list(hosts) and hosts != [],
     do: hosts
@@ -1241,10 +1266,6 @@ defmodule SymphonyElixir.Orchestrator do
       {_key, %{worker_host: ^worker_host}} -> true
       _ -> false
     end)
-  end
-
-  defp worker_slots_available?(%State{} = state) do
-    select_worker_host(state, nil) != :no_worker_capacity
   end
 
   defp worker_slots_available?(%State{} = state, preferred_worker_host) do
@@ -1367,10 +1388,21 @@ defmodule SymphonyElixir.Orchestrator do
         }
       end)
 
+    blocked =
+      Enum.map(state.blocked_dispatches, fn blocked_entry ->
+        %{
+          issue_id: blocked_entry.issue_id,
+          identifier: blocked_entry.identifier,
+          state: blocked_entry.state,
+          reason: blocked_entry.reason
+        }
+      end)
+
     {:reply,
      %{
        running: running,
        retrying: retrying,
+       blocked: blocked,
        usage_totals: state.usage_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
@@ -1567,9 +1599,64 @@ defmodule SymphonyElixir.Orchestrator do
       !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states)
   end
 
-  defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do
-    available_slots(state) > 0 and state_slots_available?(issue, state)
+  defp issue_dispatch_eligible?(%Issue{} = issue, %State{claimed: claimed}, active_states, terminal_states) do
+    ensemble_size = resolve_ensemble_size(issue)
+
+    candidate_issue?(issue, active_states, terminal_states) and
+      !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states) and
+      claimed_slot_count_for_issue(claimed, issue.id) < ensemble_size
   end
+
+  defp issue_dispatch_eligible?(_issue, _state, _active_states, _terminal_states), do: false
+
+  defp dispatch_capacity_block_reason(%Issue{} = issue, %State{} = state, preferred_worker_host \\ nil) do
+    cond do
+      available_slots(state) <= 0 ->
+        :global_concurrency_cap
+
+      not state_slots_available?(issue, state) ->
+        :local_concurrency_cap
+
+      not worker_slots_available?(state, preferred_worker_host) ->
+        :worker_host_capacity
+
+      true ->
+        nil
+    end
+  end
+
+  defp log_dispatch_block(%Issue{} = issue, %State{} = state, reason, preferred_worker_host \\ nil) do
+    case reason do
+      :global_concurrency_cap ->
+        Logger.debug(
+          "Dispatch blocked by global concurrency cap: #{issue_context(issue)} state=#{inspect(issue.state)} running=#{map_size(state.running)} max_concurrent_agents=#{state.max_concurrent_agents || current_or_default_runtime_settings().agent.max_concurrent_agents}"
+        )
+
+      :local_concurrency_cap ->
+        Logger.debug(
+          "Dispatch blocked by local concurrency cap: #{issue_context(issue)} state=#{inspect(issue.state)} running_in_state=#{running_issue_count_for_state(state.running, issue.state)} max_concurrent_agents=#{local_max_concurrent_agents_for_state(state, issue.state)}"
+        )
+
+      :worker_host_capacity ->
+        Logger.debug(
+          "Dispatch blocked by worker host capacity: #{issue_context(issue)} state=#{inspect(issue.state)} preferred_worker_host=#{inspect(preferred_worker_host)} worker_max_concurrent_agents_per_host=#{inspect(state.worker_max_concurrent_agents_per_host || current_or_default_runtime_settings().worker.max_concurrent_agents_per_host)}"
+        )
+    end
+  end
+
+  defp dispatch_block_entry(%Issue{} = issue, reason) do
+    %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      state: issue.state,
+      reason: reason
+    }
+  end
+
+  defp dispatch_block_error(:global_concurrency_cap), do: "blocked by global concurrency cap"
+  defp dispatch_block_error(:local_concurrency_cap), do: "blocked by local concurrency cap"
+  defp dispatch_block_error(:worker_host_capacity), do: "blocked by worker host capacity"
+  defp dispatch_block_error(_reason), do: "no available orchestrator slots"
 
   defp apply_usage_token_delta(
          %{usage_totals: usage_totals} = state,
