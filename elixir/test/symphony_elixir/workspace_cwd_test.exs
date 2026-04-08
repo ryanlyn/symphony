@@ -236,6 +236,7 @@ defmodule SymphonyElixir.WorkspaceCwdTest do
   test "remote validation surfaces remote home lookup failures" do
     previous_path = System.get_env("PATH")
     previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+    timeout_expected = {:remote_home_lookup_failed, "worker-01", {:ssh_timeout, "worker-01", 10}}
 
     on_exit(fn ->
       restore_env("PATH", previous_path)
@@ -246,7 +247,7 @@ defmodule SymphonyElixir.WorkspaceCwdTest do
       [
         {"empty", fake_ssh_script({:output, ""}), [], {:remote_home_lookup_failed, "worker-01", :empty_home}},
         {"status", fake_ssh_script({:status, 75, "lookup failed"}), [], {:remote_home_lookup_failed, "worker-01", 75, "lookup failed\n"}},
-        {"timeout", fake_ssh_script({:sleep, 1}), [worker_ssh_timeout_ms: 10], {:remote_home_lookup_failed, "worker-01", {:ssh_timeout, "worker-01", 10}}}
+        {"timeout", fake_ssh_script({:sleep, 1}), [worker_ssh_timeout_ms: 10], timeout_expected}
       ],
       fn {suffix, script, workflow_overrides, expected} ->
         test_root =
