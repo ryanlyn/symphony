@@ -123,7 +123,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp normalize_issue_states(states) when is_list(states) do
     states
-    |> Enum.map(&normalize_issue_state/1)
+    |> Enum.map(&Schema.normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
   end
@@ -711,11 +711,11 @@ defmodule SymphonyElixir.Orchestrator do
   defp state_slots_available?(_issue, _state), do: false
 
   defp running_issue_count_for_state(running, issue_state) when is_map(running) do
-    normalized_state = normalize_issue_state(issue_state)
+    normalized_state = Schema.normalize_issue_state(issue_state)
 
     Enum.count(running, fn
       {_key, %{issue: %Issue{state: state_name}}} ->
-        normalize_issue_state(state_name) == normalized_state
+        Schema.normalize_issue_state(state_name) == normalized_state
 
       _ ->
         false
@@ -765,23 +765,19 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp unstarted_issue_state?(state_name, state_type) when is_binary(state_name) do
     case state_type do
-      state_type when is_binary(state_type) -> normalize_issue_state(state_type) == "unstarted"
-      _ -> normalize_issue_state(state_name) == "todo"
+      state_type when is_binary(state_type) -> Schema.normalize_issue_state(state_type) == "unstarted"
+      _ -> Schema.normalize_issue_state(state_name) == "todo"
     end
   end
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
-    Enum.member?(terminal_states, normalize_issue_state(state_name))
+    Enum.member?(terminal_states, Schema.normalize_issue_state(state_name))
   end
 
   defp terminal_issue_state?(_state_name, _terminal_states), do: false
 
   defp active_issue_state?(state_name, active_states) when is_binary(state_name) do
-    Enum.member?(active_states, normalize_issue_state(state_name))
-  end
-
-  defp normalize_issue_state(state_name) when is_binary(state_name) do
-    String.downcase(String.trim(state_name))
+    Enum.member?(active_states, Schema.normalize_issue_state(state_name))
   end
 
   defp state_terminal_state_set(%State{terminal_states: %MapSet{} = terminal_states}) do
@@ -1180,7 +1176,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
-    normalized_state = normalize_issue_state(state_name)
+    normalized_state = Schema.normalize_issue_state(state_name)
     settings = current_or_default_runtime_settings()
 
     Map.get(

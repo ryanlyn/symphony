@@ -781,7 +781,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
-  test "todo issue with terminal blockers remains dispatch-eligible" do
+  test "whitespace-padded todo issue with terminal blockers remains dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
       running: %{},
@@ -794,7 +794,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "ready-1",
       identifier: "MT-1003",
       title: "Ready work",
-      state: "Todo",
+      state: "Todo ",
       blocked_by: [%{id: "blocker-2", identifier: "MT-1004", state: "Closed"}]
     }
 
@@ -1218,7 +1218,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert Config.settings!().agent.max_concurrent_agents == 10
     assert Config.max_concurrent_agents_for_state("Todo") == 1
+    assert Config.max_concurrent_agents_for_state("Todo ") == 1
     assert Config.max_concurrent_agents_for_state("In Progress") == 4
+    assert Config.max_concurrent_agents_for_state(" In Progress ") == 4
     assert Config.max_concurrent_agents_for_state("In Review") == 2
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
@@ -1268,6 +1270,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert {:ok, %{"a" => 1}} = StringOrMap.dump(%{"a" => 1})
     assert :error = StringOrMap.dump(123)
 
+    assert Schema.normalize_issue_state(" In Progress ") == "in progress"
     assert Schema.normalize_state_limits(nil) == %{}
 
     assert Schema.normalize_state_limits(%{"In Progress" => 2, todo: 1}) == %{

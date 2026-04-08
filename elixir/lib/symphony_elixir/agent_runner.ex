@@ -5,6 +5,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   require Logger
   alias SymphonyElixir.{AgentResumeState, Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.Config.Schema
 
   @dialyzer :no_match
 
@@ -301,10 +302,10 @@ defmodule SymphonyElixir.AgentRunner do
   defp worker_host_matches?(stored_worker_host, worker_host), do: stored_worker_host == worker_host
 
   defp active_issue_state?(state_name) when is_binary(state_name) do
-    normalized_state = normalize_issue_state(state_name)
+    normalized_state = Schema.normalize_issue_state(state_name)
 
     Config.settings!().tracker.active_states
-    |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
+    |> Enum.any?(fn active_state -> Schema.normalize_issue_state(active_state) == normalized_state end)
   end
 
   defp active_issue_state?(_state_name), do: false
@@ -331,12 +332,6 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
-
-  defp normalize_issue_state(state_name) when is_binary(state_name) do
-    state_name
-    |> String.trim()
-    |> String.downcase()
-  end
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
