@@ -114,6 +114,11 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec validate(Schema.t()) :: :ok | {:error, term()}
+  def validate(settings) do
+    validate_semantics(settings)
+  end
+
   @spec validate!() :: :ok
   def validate! do
     case validate() do

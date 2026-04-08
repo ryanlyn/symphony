@@ -36,6 +36,7 @@ defmodule SymphonyElixir.Orchestrator do
       :worker_max_concurrent_agents_per_host,
       :codex_stall_timeout_ms,
       :claude_stall_timeout_ms,
+      :runtime_settings,
       :next_poll_due_at_ms,
       :poll_check_in_progress,
       :tick_timer_ref,
@@ -103,6 +104,7 @@ defmodule SymphonyElixir.Orchestrator do
     %{
       state
       | poll_interval_ms: settings.polling.interval_ms,
+        runtime_settings: settings,
         max_concurrent_agents: settings.agent.max_concurrent_agents,
         max_concurrent_agents_by_state: settings.agent.max_concurrent_agents_by_state,
         agent_kind: settings.agent.kind,
@@ -296,9 +298,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
+    settings = runtime_settings_snapshot(state)
 
-    with :ok <- Config.validate(),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
+    with :ok <- Config.validate(settings),
+         {:ok, issues} <- Tracker.fetch_candidate_issues(settings),
          true <- available_slots(state) > 0 do
       choose_issues(issues, state)
     else
@@ -357,8 +360,10 @@ defmodule SymphonyElixir.Orchestrator do
     if running_ids == [] do
       state
     else
-      with :ok <- Config.validate(),
-           {:ok, issues} <- Tracker.fetch_issue_states_by_ids(running_ids) do
+      settings = runtime_settings_snapshot(state)
+
+      with :ok <- Config.validate(settings),
+           {:ok, issues} <- Tracker.fetch_issue_states_by_ids(running_ids, settings) do
         issues
         |> reconcile_running_issue_states(
           state,
@@ -515,8 +520,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp terminate_all_issue_slots(%State{} = state, issue_id, cleanup_workspace) do
     slots =
       state.running
-      |> Enum.filter(fn {{id, _slot}, _} -> id == issue_id end)
-      |> Enum.map(fn {{_id, slot}, _} -> slot end)
+      |> Enum.filter(fn
+        {{id, _slot}, _} -> id == issue_id
+        {id, _} -> id == issue_id
+      end)
+      |> Enum.map(fn
+        {{_id, slot}, _} -> slot
+        {_id, _} -> 0
+      end)
 
     if slots == [] do
       release_all_issue_claims(state, issue_id)
@@ -568,18 +579,12 @@ defmodule SymphonyElixir.Orchestrator do
        do: state
 
   defp reconcile_stalled_running_issues(%State{} = state) do
-    case Config.settings() do
-      {:ok, settings} ->
-        now = DateTime.utc_now()
+    settings = runtime_settings_snapshot(state)
+    now = DateTime.utc_now()
 
-        Enum.reduce(state.running, state, fn {slot_key, running_entry}, state_acc ->
-          reconcile_stalled_running_slot(state_acc, slot_key, running_entry, now, settings)
-        end)
-
-      {:error, reason} ->
-        Logger.warning("Skipping stall reconciliation; config load failed: #{inspect(reason)}")
-        state
-    end
+    Enum.reduce(state.running, state, fn {slot_key, running_entry}, state_acc ->
+      reconcile_stalled_running_slot(state_acc, slot_key, running_entry, now, settings)
+    end)
   end
 
   defp reconcile_stalled_running_slot(
@@ -594,6 +599,11 @@ defmodule SymphonyElixir.Orchestrator do
     if timeout_ms <= 0,
       do: state,
       else: restart_stalled_issue(state, slot_key, issue_id, slot_index, running_entry, now, timeout_ms)
+  end
+
+  defp reconcile_stalled_running_slot(state, issue_id, running_entry, now, settings)
+       when is_binary(issue_id) do
+    reconcile_stalled_running_slot(state, {issue_id, 0}, running_entry, now, settings)
   end
 
   defp restart_stalled_issue(state, slot_key, issue_id, slot_index, running_entry, now, timeout_ms) do
@@ -690,7 +700,7 @@ defmodule SymphonyElixir.Orchestrator do
          active_states,
          terminal_states
        ) do
-    ensemble_size = resolve_ensemble_size(issue)
+    ensemble_size = resolve_ensemble_size(issue, state)
 
     candidate_issue?(issue, active_states, terminal_states) and
       !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states) and
@@ -784,20 +794,42 @@ defmodule SymphonyElixir.Orchestrator do
     String.downcase(String.trim(state_name))
   end
 
-  defp state_terminal_state_set(%State{terminal_states: %MapSet{} = terminal_states}) do
-    if MapSet.size(terminal_states) > 0, do: terminal_states, else: terminal_state_set()
+  defp state_terminal_state_set(%State{} = state) do
+    case state.terminal_states do
+      %MapSet{} = terminal_states ->
+        if MapSet.size(terminal_states) > 0, do: terminal_states, else: terminal_state_set(state)
+
+      _ ->
+        terminal_state_set(state)
+    end
   end
 
   defp state_terminal_state_set(_state), do: terminal_state_set()
 
-  defp state_active_state_set(%State{active_states: %MapSet{} = active_states}) do
-    if MapSet.size(active_states) > 0, do: active_states, else: active_state_set()
+  defp state_active_state_set(%State{} = state) do
+    case state.active_states do
+      %MapSet{} = active_states ->
+        if MapSet.size(active_states) > 0, do: active_states, else: active_state_set(state)
+
+      _ ->
+        active_state_set(state)
+    end
   end
 
   defp state_active_state_set(_state), do: active_state_set()
 
+  defp terminal_state_set(%State{} = state) do
+    runtime_settings_snapshot(state).tracker.terminal_states
+    |> normalize_issue_states()
+  end
+
   defp terminal_state_set do
     current_or_default_runtime_settings().tracker.terminal_states
+    |> normalize_issue_states()
+  end
+
+  defp active_state_set(%State{} = state) do
+    runtime_settings_snapshot(state).tracker.active_states
     |> normalize_issue_states()
   end
 
@@ -807,9 +839,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
+    issue_fetcher = fn issue_ids ->
+      Tracker.fetch_issue_states_by_ids(issue_ids, runtime_settings_snapshot(state))
+    end
+
     case revalidate_issue_for_dispatch(
            issue,
-           &Tracker.fetch_issue_states_by_ids/1,
+           issue_fetcher,
            state_active_state_set(state),
            state_terminal_state_set(state)
          ) do
@@ -832,7 +868,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
-    ensemble_size = resolve_ensemble_size(issue)
+    ensemble_size = resolve_ensemble_size(issue, state)
 
     dispatched_slots =
       state.claimed
@@ -858,13 +894,15 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp spawn_issue_slot(%State{} = state, issue, slot_index, ensemble_size, attempt, worker_host) do
     recipient = self()
+    settings = runtime_settings_snapshot(state)
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient,
              attempt: attempt,
              worker_host: worker_host,
              slot_index: slot_index,
-             ensemble_size: ensemble_size
+             ensemble_size: ensemble_size,
+             settings: settings
            )
          end) do
       {:ok, pid} ->
@@ -877,7 +915,7 @@ defmodule SymphonyElixir.Orchestrator do
           Map.put(state.running, slot_key, %{
             pid: pid,
             ref: ref,
-            agent_kind: state.agent_kind || current_or_default_runtime_settings().agent.kind,
+            agent_kind: state.agent_kind || settings.agent.kind,
             identifier: issue.identifier,
             issue: issue,
             slot_index: slot_index,
@@ -1004,8 +1042,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
-    with :ok <- Config.validate(),
-         {:ok, issues} <- Tracker.fetch_candidate_issues() do
+    settings = runtime_settings_snapshot(state)
+
+    with :ok <- Config.validate(settings),
+         {:ok, issues} <- Tracker.fetch_candidate_issues(settings) do
       issues
       |> find_issue_by_id(issue_id)
       |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
@@ -1127,7 +1167,7 @@ defmodule SymphonyElixir.Orchestrator do
     max_delay_power = min(attempt - 1, 10)
 
     max_retry_backoff_ms =
-      state.max_retry_backoff_ms || current_or_default_runtime_settings().agent.max_retry_backoff_ms ||
+      state.max_retry_backoff_ms || runtime_settings_snapshot(state).agent.max_retry_backoff_ms ||
         @default_max_retry_backoff_ms
 
     min(@failure_retry_base_ms * (1 <<< max_delay_power), max_retry_backoff_ms)
@@ -1181,7 +1221,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
-    settings = current_or_default_runtime_settings()
+    settings = runtime_settings_snapshot(state)
 
     Map.get(
       state.max_concurrent_agents_by_state || settings.agent.max_concurrent_agents_by_state,
@@ -1191,13 +1231,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp max_concurrent_agents_for_state(%State{} = state, _state_name) do
-    state.max_concurrent_agents || current_or_default_runtime_settings().agent.max_concurrent_agents
+    state.max_concurrent_agents || runtime_settings_snapshot(state).agent.max_concurrent_agents
   end
 
   defp configured_worker_hosts(%State{worker_ssh_hosts: hosts}) when is_list(hosts) and hosts != [],
     do: hosts
 
-  defp configured_worker_hosts(_state), do: current_or_default_runtime_settings().worker.ssh_hosts
+  defp configured_worker_hosts(%State{} = state), do: runtime_settings_snapshot(state).worker.ssh_hosts
 
   defp select_worker_host(%State{} = state, preferred_worker_host) do
     case configured_worker_hosts(state) do
@@ -1253,7 +1293,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp worker_host_slots_available?(%State{} = state, worker_host) when is_binary(worker_host) do
     case state.worker_max_concurrent_agents_per_host ||
-           current_or_default_runtime_settings().worker.max_concurrent_agents_per_host do
+           runtime_settings_snapshot(state).worker.max_concurrent_agents_per_host do
       limit when is_integer(limit) and limit > 0 ->
         running_worker_host_count(state.running, worker_host) < limit
 
@@ -1273,14 +1313,21 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp find_slot_for_ref(running, ref) do
-    Enum.find_value(running, fn {{issue_id, slot_index}, entry} ->
-      if entry.ref == ref, do: {issue_id, slot_index}
+    Enum.find_value(running, fn
+      {{issue_id, slot_index}, entry} ->
+        if entry.ref == ref, do: {issue_id, slot_index}
+
+      {issue_id, entry} when is_binary(issue_id) ->
+        if entry.ref == ref, do: {issue_id, 0}
     end)
   end
 
   defp running_slots_for_issue(running, issue_id) do
     running
-    |> Enum.filter(fn {{id, _slot}, _entry} -> id == issue_id end)
+    |> Enum.filter(fn
+      {{id, _slot}, _entry} -> id == issue_id
+      {id, _entry} -> id == issue_id
+    end)
     |> Map.new()
   end
 
@@ -1288,10 +1335,10 @@ defmodule SymphonyElixir.Orchestrator do
     Enum.count(claimed, fn {id, _slot} -> id == issue_id end)
   end
 
-  defp resolve_ensemble_size(issue) do
+  defp resolve_ensemble_size(issue, %State{} = state) do
     case Issue.ensemble_size(issue) do
       n when is_integer(n) and n >= 1 -> n
-      _ -> Config.settings!().agent.ensemble_size
+      _ -> runtime_settings_snapshot(state).agent.ensemble_size
     end
   end
 
@@ -1306,7 +1353,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp available_slots(%State{} = state) do
     max(
-      (state.max_concurrent_agents || current_or_default_runtime_settings().agent.max_concurrent_agents) -
+      (state.max_concurrent_agents || runtime_settings_snapshot(state).agent.max_concurrent_agents) -
         map_size(state.running),
       0
     )
@@ -1558,6 +1605,11 @@ defmodule SymphonyElixir.Orchestrator do
         state
     end
   end
+
+  defp runtime_settings_snapshot(%State{runtime_settings: settings}) when not is_nil(settings),
+    do: settings
+
+  defp runtime_settings_snapshot(_state), do: current_or_default_runtime_settings()
 
   defp agent_stall_timeout_ms(settings, "claude"), do: settings.claude.stall_timeout_ms
   defp agent_stall_timeout_ms(settings, _kind), do: settings.codex.stall_timeout_ms

@@ -125,18 +125,22 @@ defmodule SymphonyElixir.Linear.Client do
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
-    tracker = Config.settings!().tracker
-    project_slug = tracker.project_slug
+    fetch_candidate_issues(Config.settings!().tracker)
+  end
+
+  @spec fetch_candidate_issues(map()) :: {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_candidate_issues(%{} = tracker) do
+    project_slug = Map.get(tracker, :project_slug)
 
     cond do
-      is_nil(tracker.api_key) ->
+      is_nil(Map.get(tracker, :api_key)) ->
         {:error, :missing_linear_api_token}
 
       is_nil(project_slug) ->
         {:error, :missing_linear_project_slug}
 
       true ->
-        with {:ok, assignee_filter} <- routing_assignee_filter() do
+        with {:ok, assignee_filter} <- routing_assignee_filter(tracker) do
           do_fetch_by_states(project_slug, tracker.active_states, assignee_filter)
         end
     end
@@ -144,16 +148,20 @@ defmodule SymphonyElixir.Linear.Client do
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_states(state_names) when is_list(state_names) do
+    fetch_issues_by_states(state_names, Config.settings!().tracker)
+  end
+
+  @spec fetch_issues_by_states([String.t()], map()) :: {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issues_by_states(state_names, %{} = tracker) when is_list(state_names) do
     normalized_states = Enum.map(state_names, &to_string/1) |> Enum.uniq()
 
     if normalized_states == [] do
       {:ok, []}
     else
-      tracker = Config.settings!().tracker
-      project_slug = tracker.project_slug
+      project_slug = Map.get(tracker, :project_slug)
 
       cond do
-        is_nil(tracker.api_key) ->
+        is_nil(Map.get(tracker, :api_key)) ->
           {:error, :missing_linear_api_token}
 
         is_nil(project_slug) ->
@@ -167,6 +175,11 @@ defmodule SymphonyElixir.Linear.Client do
 
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issue_states_by_ids(issue_ids) when is_list(issue_ids) do
+    fetch_issue_states_by_ids(issue_ids, Config.settings!().tracker)
+  end
+
+  @spec fetch_issue_states_by_ids([String.t()], map()) :: {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issue_states_by_ids(issue_ids, %{} = tracker) when is_list(issue_ids) do
     ids = Enum.uniq(issue_ids)
 
     case ids do
@@ -174,7 +187,7 @@ defmodule SymphonyElixir.Linear.Client do
         {:ok, []}
 
       ids ->
-        with {:ok, assignee_filter} <- routing_assignee_filter() do
+        with {:ok, assignee_filter} <- routing_assignee_filter(tracker) do
           do_fetch_issue_states(ids, assignee_filter)
         end
     end
@@ -184,7 +197,8 @@ defmodule SymphonyElixir.Linear.Client do
   def graphql(query, variables \\ %{}, opts \\ [])
       when is_binary(query) and is_map(variables) and is_list(opts) do
     payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
-    request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    tracker = graphql_tracker(opts)
+    request_fun = Keyword.get(opts, :request_fun, &post_graphql_request(&1, &2, tracker))
     sleep_fun = Keyword.get(opts, :sleep_fun, &Process.sleep/1)
     now_fun = Keyword.get(opts, :now_fun, &DateTime.utc_now/0)
 
@@ -197,7 +211,7 @@ defmodule SymphonyElixir.Linear.Client do
       sleep_fun: sleep_fun
     }
 
-    with {:ok, headers} <- graphql_headers() do
+    with {:ok, headers} <- graphql_headers(tracker) do
       graphql_with_retry(payload, headers, retry_opts, 0)
     end
   end
@@ -214,7 +228,7 @@ defmodule SymphonyElixir.Linear.Client do
     assignee_filter =
       case assignee do
         value when is_binary(value) ->
-          case build_assignee_filter(value) do
+          case build_assignee_filter(value, %{assignee: value}) do
             {:ok, filter} -> filter
             {:error, _reason} -> nil
           end
@@ -534,8 +548,8 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp graphql_headers do
-    case Config.settings!().tracker.api_key do
+  defp graphql_headers(tracker) do
+    case Map.get(tracker, :api_key) do
       nil ->
         {:error, :missing_linear_api_token}
 
@@ -548,8 +562,8 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp post_graphql_request(payload, headers) do
-    Req.post(Config.settings!().tracker.endpoint,
+  defp post_graphql_request(payload, headers, tracker) do
+    Req.post(Map.get(tracker, :endpoint),
       headers: headers,
       json: payload,
       connect_options: [timeout: 30_000]
@@ -642,31 +656,31 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp assignee_id(%{} = assignee), do: normalize_assignee_match_value(assignee["id"])
 
-  defp routing_assignee_filter do
-    case Config.settings!().tracker.assignee do
+  defp routing_assignee_filter(tracker) do
+    case Map.get(tracker, :assignee) do
       nil ->
         {:ok, nil}
 
       assignee ->
-        build_assignee_filter(assignee)
+        build_assignee_filter(assignee, tracker)
     end
   end
 
-  defp build_assignee_filter(assignee) when is_binary(assignee) do
+  defp build_assignee_filter(assignee, tracker) when is_binary(assignee) do
     case normalize_assignee_match_value(assignee) do
       nil ->
         {:ok, nil}
 
       "me" ->
-        resolve_viewer_assignee_filter()
+        resolve_viewer_assignee_filter(tracker)
 
       normalized ->
         {:ok, %{configured_assignee: assignee, match_values: MapSet.new([normalized])}}
     end
   end
 
-  defp resolve_viewer_assignee_filter do
-    case graphql(@viewer_query, %{}) do
+  defp resolve_viewer_assignee_filter(tracker) do
+    case graphql(@viewer_query, %{}, tracker: tracker) do
       {:ok, %{"data" => %{"viewer" => viewer}}} when is_map(viewer) ->
         case assignee_id(viewer) do
           nil ->
@@ -681,6 +695,13 @@ defmodule SymphonyElixir.Linear.Client do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp graphql_tracker(opts) do
+    case Keyword.get(opts, :tracker) do
+      %{} = tracker -> tracker
+      _ -> Config.settings!().tracker
     end
   end
 

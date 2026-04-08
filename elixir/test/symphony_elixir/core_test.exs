@@ -171,6 +171,30 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.settings!().tracker.assignee == env_assignee
   end
 
+  test "tracker can reuse a provided settings snapshot after workflow changes" do
+    issue = %Issue{
+      id: "issue-memory-snapshot",
+      identifier: "MT-401",
+      title: "Memory snapshot",
+      description: "Use the provided tracker settings",
+      state: "Todo",
+      labels: []
+    }
+
+    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    settings = Config.settings!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "linear",
+      tracker_api_token: nil,
+      tracker_project_slug: nil
+    )
+
+    assert :ok = Config.validate(settings)
+    assert {:ok, [%Issue{id: "issue-memory-snapshot"}]} = Tracker.fetch_candidate_issues(settings)
+  end
+
   test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
     original_workflow_path = Workflow.workflow_file_path()
 
@@ -1630,6 +1654,119 @@ defmodule SymphonyElixir.CoreTest do
       trace = File.read!(trace_file)
       assert length(String.split(trace, "RUN", trim: true)) == 1
       assert length(Regex.scan(~r/"method":"turn\/start"/, trace)) == 2
+    after
+      System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner keeps using the provided settings snapshot when workflow active states change mid-run" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-settings-snapshot-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# test")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+      printf 'RUN\\n' >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-snapshot"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-snapshot-1"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+          5)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-snapshot-2"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+
+      on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
+        codex_command: "#{codex_binary} app-server",
+        max_turns: 3,
+        tracker_active_states: ["Todo", "In Progress"]
+      )
+
+      settings = Config.settings!()
+      parent = self()
+      {:ok, fetch_counter} = Agent.start_link(fn -> 0 end)
+
+      issue = %Issue{
+        id: "issue-snapshot-active-states",
+        identifier: "MT-402",
+        title: "Use the snapshot",
+        description: "Workflow changes should not affect the active run",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-402",
+        labels: []
+      }
+
+      state_fetcher = fn [_issue_id] ->
+        attempt =
+          Agent.get_and_update(fetch_counter, fn count ->
+            next = count + 1
+            {next, next}
+          end)
+
+        if attempt == 1 do
+          write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ["Todo"])
+          send(parent, :workflow_changed_during_run)
+        end
+
+        state = if attempt == 1, do: "In Progress", else: "Done"
+        {:ok, [%{issue | state: state}]}
+      end
+
+      assert :ok =
+               AgentRunner.run(
+                 issue,
+                 nil,
+                 settings: settings,
+                 issue_state_fetcher: state_fetcher
+               )
+
+      assert_receive :workflow_changed_during_run
+
+      trace = File.read!(trace_file)
+      assert length(Regex.scan(~r/"method":"turn\/start"/, trace)) == 2
+      assert trace =~ "Continuation guidance:"
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
       File.rm_rf(test_root)
