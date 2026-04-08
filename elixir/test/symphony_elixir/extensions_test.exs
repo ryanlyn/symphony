@@ -537,8 +537,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     dashboard_css = response(dashboard_css_conn, 200)
     assert dashboard_css =~ ":root {"
     assert dashboard_css =~ ".status-badge-live"
-    assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
-    assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
+    assert dashboard_css =~ ".status-badge-offline"
+    refute dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
+    refute dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
 
     phoenix_html_js = response(get(build_conn(), phoenix_html_js_path), 200)
     assert phoenix_html_js =~ "phoenix.link.click"
@@ -593,6 +594,11 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
+    disconnected_html = html_response(get(build_conn(), "/"), 200)
+    assert disconnected_html =~ "Offline"
+    assert disconnected_html =~ "status-badge-offline"
+    refute disconnected_html =~ "status-badge-live"
+
     {:ok, view, html} = live(build_conn(), "/")
     assert html =~ "Operations Dashboard"
     assert html =~ "MT-HTTP"
@@ -600,7 +606,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "rendered"
     assert html =~ "Runtime"
     assert html =~ "Live"
-    assert html =~ "Offline"
     assert html =~ "Copy ID"
     assert html =~ "Agent update"
     assert html =~ "CLAUDE"
@@ -609,7 +614,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "Refresh now"
     refute html =~ "Transport"
     assert html =~ "status-badge-live"
-    assert html =~ "status-badge-offline"
+    refute html =~ "status-badge-offline"
 
     updated_snapshot =
       put_in(snapshot.running, [
