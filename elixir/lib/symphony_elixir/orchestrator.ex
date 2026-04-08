@@ -374,50 +374,53 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  @doc false
-  @spec reconcile_issue_states_for_test([Issue.t()], term()) :: term()
-  def reconcile_issue_states_for_test(issues, %State{} = state) when is_list(issues) do
-    reconcile_running_issue_states(
-      issues,
-      state,
-      state_active_state_set(state),
-      state_terminal_state_set(state)
-    )
-  end
+  if Mix.env() == :test do
+    @doc false
+    @spec reconcile_issue_states_for_test([Issue.t()], term()) :: term()
+    def reconcile_issue_states_for_test(issues, %State{} = state) when is_list(issues) do
+      reconcile_running_issue_states(
+        issues,
+        state,
+        state_active_state_set(state),
+        state_terminal_state_set(state)
+      )
+    end
 
-  def reconcile_issue_states_for_test(issues, state) when is_list(issues) do
-    reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
-  end
+    def reconcile_issue_states_for_test(issues, state) when is_list(issues) do
+      reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
+    end
 
-  @doc false
-  @spec should_dispatch_issue_for_test(Issue.t(), term()) :: boolean()
-  def should_dispatch_issue_for_test(%Issue{} = issue, %State{} = state) do
-    should_dispatch_issue?(
-      issue,
-      state,
-      state_active_state_set(state),
-      state_terminal_state_set(state)
-    )
-  end
+    @doc false
+    @spec should_dispatch_issue_for_test(Issue.t(), term()) :: boolean()
+    def should_dispatch_issue_for_test(%Issue{} = issue, %State{} = state) do
+      should_dispatch_issue?(
+        issue,
+        state,
+        state_active_state_set(state),
+        state_terminal_state_set(state)
+      )
+    end
 
-  @doc false
-  @spec revalidate_issue_for_dispatch_for_test(Issue.t(), ([String.t()] -> term())) ::
-          {:ok, Issue.t()} | {:skip, Issue.t() | :missing} | {:error, term()}
-  def revalidate_issue_for_dispatch_for_test(%Issue{} = issue, issue_fetcher)
-      when is_function(issue_fetcher, 1) do
-    revalidate_issue_for_dispatch(issue, issue_fetcher, active_state_set(), terminal_state_set())
-  end
+    @doc false
+    @spec revalidate_issue_for_dispatch_for_test(Issue.t(), ([String.t()] -> term())) ::
+            {:ok, Issue.t()} | {:skip, Issue.t() | :missing} | {:error, term()}
+    def revalidate_issue_for_dispatch_for_test(%Issue{} = issue, issue_fetcher)
+        when is_function(issue_fetcher, 1) do
+      revalidate_issue_for_dispatch(issue, issue_fetcher, active_state_set(), terminal_state_set())
+    end
 
-  @doc false
-  @spec sort_issues_for_dispatch_for_test([Issue.t()]) :: [Issue.t()]
-  def sort_issues_for_dispatch_for_test(issues) when is_list(issues) do
-    sort_issues_for_dispatch(issues)
-  end
+    @doc false
+    @spec sort_issues_for_dispatch_for_test([Issue.t()]) :: [Issue.t()]
+    def sort_issues_for_dispatch_for_test(issues) when is_list(issues) do
+      sort_issues_for_dispatch(issues)
+    end
 
-  @doc false
-  @spec select_worker_host_for_test(term(), String.t() | nil) :: String.t() | nil | :no_worker_capacity
-  def select_worker_host_for_test(%State{} = state, preferred_worker_host) do
-    select_worker_host(state, preferred_worker_host)
+    @doc false
+    @spec select_worker_host_for_test(term(), String.t() | nil) ::
+            String.t() | nil | :no_worker_capacity
+    def select_worker_host_for_test(%State{} = state, preferred_worker_host) do
+      select_worker_host(state, preferred_worker_host)
+    end
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state

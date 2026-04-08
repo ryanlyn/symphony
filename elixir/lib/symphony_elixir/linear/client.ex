@@ -202,55 +202,60 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  @doc false
-  @spec normalize_issue_for_test(map()) :: Issue.t() | nil
-  def normalize_issue_for_test(issue) when is_map(issue) do
-    normalize_issue(issue, nil)
-  end
+  if Mix.env() == :test do
+    @doc false
+    @spec normalize_issue_for_test(map()) :: Issue.t() | nil
+    def normalize_issue_for_test(issue) when is_map(issue) do
+      normalize_issue(issue, nil)
+    end
 
-  @doc false
-  @spec normalize_issue_for_test(map(), String.t() | nil) :: Issue.t() | nil
-  def normalize_issue_for_test(issue, assignee) when is_map(issue) do
-    assignee_filter =
-      case assignee do
-        value when is_binary(value) ->
-          case build_assignee_filter(value) do
-            {:ok, filter} -> filter
-            {:error, _reason} -> nil
-          end
+    @doc false
+    @spec normalize_issue_for_test(map(), String.t() | nil) :: Issue.t() | nil
+    def normalize_issue_for_test(issue, assignee) when is_map(issue) do
+      assignee_filter =
+        case assignee do
+          value when is_binary(value) ->
+            case build_assignee_filter(value) do
+              {:ok, filter} -> filter
+              {:error, _reason} -> nil
+            end
 
-        _ ->
-          nil
+          _ ->
+            nil
+        end
+
+      normalize_issue(issue, assignee_filter)
+    end
+
+    @doc false
+    @spec next_page_cursor_for_test(map()) :: {:ok, String.t()} | :done | {:error, term()}
+    def next_page_cursor_for_test(page_info) when is_map(page_info), do: next_page_cursor(page_info)
+
+    @doc false
+    @spec merge_issue_pages_for_test([[Issue.t()]]) :: [Issue.t()]
+    def merge_issue_pages_for_test(issue_pages) when is_list(issue_pages) do
+      issue_pages
+      |> Enum.reduce([], &prepend_page_issues/2)
+      |> finalize_paginated_issues()
+    end
+
+    @doc false
+    @spec fetch_issue_states_by_ids_for_test(
+            [String.t()],
+            (String.t(), map() -> {:ok, map()} | {:error, term()})
+          ) ::
+            {:ok, [Issue.t()]} | {:error, term()}
+    def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
+        when is_list(issue_ids) and is_function(graphql_fun, 2) do
+      ids = Enum.uniq(issue_ids)
+
+      case ids do
+        [] ->
+          {:ok, []}
+
+        ids ->
+          do_fetch_issue_states(ids, nil, graphql_fun)
       end
-
-    normalize_issue(issue, assignee_filter)
-  end
-
-  @doc false
-  @spec next_page_cursor_for_test(map()) :: {:ok, String.t()} | :done | {:error, term()}
-  def next_page_cursor_for_test(page_info) when is_map(page_info), do: next_page_cursor(page_info)
-
-  @doc false
-  @spec merge_issue_pages_for_test([[Issue.t()]]) :: [Issue.t()]
-  def merge_issue_pages_for_test(issue_pages) when is_list(issue_pages) do
-    issue_pages
-    |> Enum.reduce([], &prepend_page_issues/2)
-    |> finalize_paginated_issues()
-  end
-
-  @doc false
-  @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
-          {:ok, [Issue.t()]} | {:error, term()}
-  def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
-      when is_list(issue_ids) and is_function(graphql_fun, 2) do
-    ids = Enum.uniq(issue_ids)
-
-    case ids do
-      [] ->
-        {:ok, []}
-
-      ids ->
-        do_fetch_issue_states(ids, nil, graphql_fun)
     end
   end
 
