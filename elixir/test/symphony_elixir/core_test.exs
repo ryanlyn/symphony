@@ -1572,7 +1572,7 @@ defmodule SymphonyElixir.CoreTest do
 
         state =
           if attempt == 1 do
-            "In Progress"
+            "In Progress "
           else
             "Done"
           end
@@ -1594,7 +1594,7 @@ defmodule SymphonyElixir.CoreTest do
         identifier: "MT-247",
         title: "Continue until done",
         description: "Still active after first turn",
-        state: "In Progress",
+        state: "In Progress ",
         url: "https://example.org/issues/MT-247",
         labels: []
       }
