@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
+  alias SymphonyElixir.AgentExecutor.Support
   alias SymphonyElixir.{Codex.DynamicTool, Config, SSH, WorkspaceCwd}
 
   @initialize_id 1
@@ -43,7 +44,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
          {:ok, port} <- start_port(expanded_workspace, worker_host) do
-      metadata = port_metadata(port, worker_host)
+      metadata = Support.port_metadata(port, :codex_app_server_pid, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
            {:ok, thread_id} <- do_open_or_resume_session(port, expanded_workspace, session_policies, opts) do
@@ -61,7 +62,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          }}
       else
         {:error, reason} ->
-          stop_port(port)
+          Support.stop_port(port)
           {:error, reason}
       end
     end
@@ -142,7 +143,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   @spec stop_session(session()) :: :ok
   def stop_session(%{port: port}) when is_port(port) do
-    stop_port(port)
+    Support.stop_port(port)
   end
 
   defp start_port(workspace, nil) do
@@ -176,7 +177,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
-      "cd #{shell_escape(workspace)}",
+      "cd #{Support.shell_escape(workspace)}",
       "exec #{Config.settings!().codex.command}"
     ]
     |> Enum.join(" && ")
@@ -187,22 +188,6 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> Enum.map(fn {key, value} ->
       {String.to_charlist(key), String.to_charlist(value)}
     end)
-  end
-
-  defp port_metadata(port, worker_host) when is_port(port) do
-    base_metadata =
-      case :erlang.port_info(port, :os_pid) do
-        {:os_pid, os_pid} ->
-          %{codex_app_server_pid: to_string(os_pid)}
-
-        _ ->
-          %{}
-      end
-
-    case worker_host do
-      host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
-      _ -> base_metadata
-    end
   end
 
   defp send_initialize(port) do
@@ -987,29 +972,13 @@ defmodule SymphonyElixir.Codex.AppServer do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 
-  defp stop_port(port) when is_port(port) do
-    case :erlang.port_info(port) do
-      :undefined ->
-        :ok
-
-      _ ->
-        try do
-          Port.close(port)
-          :ok
-        rescue
-          ArgumentError ->
-            :ok
-        end
-    end
-  end
-
   defp emit_message(on_message, event, details, metadata) when is_function(on_message, 1) do
     message = metadata |> Map.merge(details) |> Map.put(:event, event) |> Map.put(:timestamp, DateTime.utc_now())
     on_message.(message)
   end
 
   defp metadata_from_message(port, payload) do
-    port |> port_metadata(nil) |> maybe_set_usage(payload)
+    port |> Support.port_metadata(:codex_app_server_pid, nil) |> maybe_set_usage(payload)
   end
 
   defp maybe_set_usage(metadata, payload) when is_map(payload) do
@@ -1023,10 +992,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_set_usage(metadata, _payload), do: metadata
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
-  end
 
   defp default_on_message(_message), do: :ok
 
