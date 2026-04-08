@@ -1137,7 +1137,7 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 1, ensemble_size: 3)
 
     assert prompt =~ "You are working on a Linear ticket `MT-777`"
-    assert prompt =~ "You are independent agent `1` out of `3` agents"
+    assert prompt =~ "You are independent agent with 0-indexed id: `1` (out of `3` total agents)"
     assert prompt =~ "Come up with independent work on the ticket yourself"
     assert prompt =~ "your own tracking workpad comment"
     assert prompt =~ "Status: COMPLETE"

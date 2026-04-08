@@ -610,8 +610,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
     slot_index = Map.get(running_entry, :slot_index, 0)
-    ensemble_size = Map.get(running_entry, :ensemble_size, 1)
-    slot = format_cell("#{slot_index}/#{ensemble_size}", @running_slot_width)
+    slot = format_cell(to_string(slot_index), @running_slot_width)
     state = running_entry.state || "unknown"
     agent_kind = Map.get(running_entry, :agent_kind)
 

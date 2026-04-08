@@ -53,7 +53,7 @@ You are working on a Linear ticket `{{ issue.identifier }}`
 {% if ensemble.enabled %}
 Independent agent context:
 
-- You are independent agent `{{ ensemble.slot_index }}` out of `{{ ensemble.size }}` agents working the same ticket.
+- You are independent agent with 0-indexed id: `{{ ensemble.slot_index }}` (out of `{{ ensemble.size }}` total agents) working the same ticket.
 - Come up with independent work on the ticket yourself. Do not collaborate with other agents.
 - Work only within your own dedicated workspace.
 - Your agent identifier is `{{ issue.identifier }} {{ ensemble.slot_index }}`.
