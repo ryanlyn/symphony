@@ -1,6 +1,9 @@
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Orchestrator.RunningEntry
+
   defmacro __using__(_opts) do
     quote do
       use ExUnit.Case
@@ -125,7 +128,7 @@ defmodule SymphonyElixir.TestSupport do
       Map.get(
         overrides,
         :issue,
-        %SymphonyElixir.Linear.Issue{
+        %Issue{
           id: "issue-1",
           identifier: "T-1",
           title: "Test",
@@ -133,7 +136,7 @@ defmodule SymphonyElixir.TestSupport do
         }
       )
 
-    SymphonyElixir.Orchestrator.RunningEntry.new(
+    RunningEntry.new(
       Map.merge(
         %{
           pid: self(),

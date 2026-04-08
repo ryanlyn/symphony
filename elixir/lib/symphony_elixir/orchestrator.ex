@@ -86,9 +86,10 @@ defmodule SymphonyElixir.Orchestrator do
               retry_attempt: 0,
               started_at: nil
 
-    @spec new(map() | keyword()) :: t()
-    def new(attrs \\ [])
+    @spec new() :: t()
+    def new, do: new(%{})
 
+    @spec new(map() | keyword()) :: t()
     def new(attrs) when is_list(attrs) do
       attrs
       |> Enum.into(%{})

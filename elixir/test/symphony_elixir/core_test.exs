@@ -280,6 +280,49 @@ defmodule SymphonyElixir.CoreTest do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
   end
 
+  test "running entry constructor normalizes defaults, keyword attrs, and usage totals" do
+    issue = %Issue{id: "issue-running-entry", identifier: "MT-ENTRY", title: "Entry", state: "In Progress"}
+
+    default_entry = Orchestrator.RunningEntry.new()
+    assert %Orchestrator.RunningEntry{} = default_entry
+    assert default_entry.usage_totals == %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
+
+    entry =
+      Orchestrator.RunningEntry.new(
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        usage_totals: %{input_tokens: -1, output_tokens: 2, total_tokens: 3, seconds_running: -4}
+      )
+
+    assert %Orchestrator.RunningEntry{
+             pid: pid,
+             identifier: "MT-ENTRY",
+             issue: ^issue,
+             usage_totals: %{input_tokens: 0, output_tokens: 2, total_tokens: 3, seconds_running: 0}
+           } = entry
+
+    assert pid == self()
+
+    assert Orchestrator.RunningEntry.new(%{usage_totals: :bad}).usage_totals == %{
+             input_tokens: 0,
+             output_tokens: 0,
+             total_tokens: 0,
+             seconds_running: 0
+           }
+  end
+
+  test "running entry ref matching ignores malformed entries" do
+    ref = make_ref()
+
+    assert Orchestrator.RunningEntry.ref_matches?(%{ref: ref}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{pid: self(), ref: make_ref()}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{pid: self()}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(:not_a_map, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{ref: ref}, "not-a-ref")
+  end
+
   test "non-active issue state stops running agent without cleaning workspace" do
     test_root =
       Path.join(
