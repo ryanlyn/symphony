@@ -22,9 +22,9 @@ defmodule SymphonyElixir.EnsembleTest do
   describe "workspace slot paths" do
     test "different slots create different workspace directories" do
       write_workflow_file!(Workflow.workflow_file_path())
-      {:ok, ws0} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 0)
-      {:ok, ws1} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 1)
-      {:ok, ws2} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 2)
+      {:ok, ws0} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 0, ensemble_size: 3)
+      {:ok, ws1} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 1, ensemble_size: 3)
+      {:ok, ws2} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 2, ensemble_size: 3)
 
       assert ws0 != ws1
       assert ws1 != ws2
@@ -35,6 +35,41 @@ defmodule SymphonyElixir.EnsembleTest do
       assert File.dir?(ws0)
       assert File.dir?(ws1)
       assert File.dir?(ws2)
+    end
+
+    test "ensemble mode keeps the issue root as a slot container only" do
+      workspace_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-ensemble-container-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        write_workflow_file!(Workflow.workflow_file_path(),
+          workspace_root: workspace_root,
+          hook_after_create: "echo slot-content > README.md"
+        )
+
+        issue_root = Path.join(workspace_root, "ENSEMBLE-2")
+        assert {:ok, canonical_issue_root} = SymphonyElixir.PathSafety.canonicalize(issue_root)
+        {:ok, ws0} = Workspace.create_for_issue("ENSEMBLE-2", nil, slot_index: 0, ensemble_size: 2)
+        {:ok, ws1} = Workspace.create_for_issue("ENSEMBLE-2", nil, slot_index: 1, ensemble_size: 2)
+
+        assert ws0 == Path.join(canonical_issue_root, "0")
+        assert ws1 == Path.join(canonical_issue_root, "1")
+
+        assert File.dir?(canonical_issue_root)
+        assert File.dir?(ws0)
+        assert File.dir?(ws1)
+
+        assert File.exists?(Path.join(ws0, "README.md"))
+        assert File.exists?(Path.join(ws1, "README.md"))
+
+        refute File.exists?(Path.join(canonical_issue_root, "README.md"))
+        refute File.exists?(Path.join(canonical_issue_root, ".git"))
+      after
+        File.rm_rf(workspace_root)
+      end
     end
   end
 

@@ -56,10 +56,31 @@ defmodule SymphonyElixir.Orchestrator do
     ]
   end
 
+  @spec child_spec(keyword()) :: Supervisor.child_spec()
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_if_enabled, [opts]}
+    }
+  end
+
+  @spec start_if_enabled(keyword()) :: GenServer.on_start() | :ignore
+  def start_if_enabled(opts \\ []) do
+    if start_on_boot?() do
+      start_link(opts)
+    else
+      :ignore
+    end
+  end
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  defp start_on_boot? do
+    Application.get_env(:symphony_elixir, :start_orchestrator, true)
   end
 
   @impl true

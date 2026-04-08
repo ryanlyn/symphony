@@ -109,7 +109,7 @@ defmodule SymphonyElixir.TestSupport do
   def create_git_workspace!(test_root, issue_identifier) do
     template_repo = Path.join(test_root, "source")
     workspace_root = Path.join(test_root, "workspaces")
-    workspace = Path.join([workspace_root, issue_identifier, "0"])
+    workspace = Path.join([workspace_root, issue_identifier])
 
     File.rm_rf!(template_repo)
     File.mkdir_p!(template_repo)

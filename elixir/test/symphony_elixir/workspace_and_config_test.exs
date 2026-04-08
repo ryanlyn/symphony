@@ -51,10 +51,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:ok, first_workspace} = Workspace.create_for_issue("MT/Det")
     assert {:ok, second_workspace} = Workspace.create_for_issue("MT/Det")
+    assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
     assert first_workspace == second_workspace
-    assert Path.basename(Path.dirname(first_workspace)) == "MT_Det"
-    assert Path.basename(first_workspace) == "0"
+    assert Path.basename(first_workspace) == "MT_Det"
+    assert Path.dirname(first_workspace) == canonical_workspace_root
   end
 
   test "workspace reuses existing issue directory without deleting local changes" do
@@ -101,8 +102,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       )
 
     try do
-      stale_workspace = Path.join([workspace_root, "MT-STALE", "0"])
-      File.mkdir_p!(Path.join(workspace_root, "MT-STALE"))
+      stale_workspace = Path.join([workspace_root, "MT-STALE"])
+      File.mkdir_p!(workspace_root)
       File.write!(stale_workspace, "old state\n")
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
@@ -134,12 +135,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, canonical_outside_root_with_slot} =
-               SymphonyElixir.PathSafety.canonicalize(Path.join(outside_root, "0"))
+      assert {:ok, canonical_outside_root} =
+               SymphonyElixir.PathSafety.canonicalize(outside_root)
 
       assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
-      assert {:error, {:workspace_outside_root, ^canonical_outside_root_with_slot, ^canonical_workspace_root}} =
+      assert {:error, {:workspace_outside_root, ^canonical_outside_root, ^canonical_workspace_root}} =
                Workspace.create_for_issue("MT-SYM")
     after
       File.rm_rf(test_root)
@@ -163,7 +164,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: linked_root)
 
       assert {:ok, canonical_workspace} =
-               SymphonyElixir.PathSafety.canonicalize(Path.join([actual_root, "MT-LINK", "0"]))
+               SymphonyElixir.PathSafety.canonicalize(Path.join([actual_root, "MT-LINK"]))
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-LINK")
       assert workspace == canonical_workspace
@@ -245,7 +246,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      workspace = Path.join([workspace_root, "MT-608", "0"])
+      workspace = Path.join([workspace_root, "MT-608"])
       assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
 
       assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-608")
@@ -298,7 +299,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert :ok = Workspace.remove_issue_workspaces(nil)
   end
 
-  test "workspace slot_index defaults to 0 and appends /0 to path" do
+  test "workspace slot_index defaults to the issue root for solo runs" do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
@@ -307,16 +308,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+      assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
       assert {:ok, workspace} = Workspace.create_for_issue("SLOT-DEFAULT")
-      assert Path.basename(workspace) == "0"
-      assert Path.basename(Path.dirname(workspace)) == "SLOT-DEFAULT"
+      assert Path.basename(workspace) == "SLOT-DEFAULT"
+      assert Path.dirname(workspace) == canonical_workspace_root
     after
       File.rm_rf(workspace_root)
     end
   end
 
-  test "workspace slot_index: 0 appends /0 to path" do
+  test "workspace slot_index: 0 appends /0 for ensemble runs" do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
@@ -326,7 +328,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-ZERO", nil, slot_index: 0)
+      assert {:ok, workspace} =
+               Workspace.create_for_issue("SLOT-ZERO", nil, slot_index: 0, ensemble_size: 2)
+
       assert Path.basename(workspace) == "0"
       assert Path.basename(Path.dirname(workspace)) == "SLOT-ZERO"
     after
@@ -344,7 +348,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-TWO", nil, slot_index: 2)
+      assert {:ok, workspace} =
+               Workspace.create_for_issue("SLOT-TWO", nil, slot_index: 2, ensemble_size: 3)
+
       assert Path.basename(workspace) == "2"
       assert Path.basename(Path.dirname(workspace)) == "SLOT-TWO"
     after
@@ -362,9 +368,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, workspace_0} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 0)
-      assert {:ok, workspace_1} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 1)
-      assert {:ok, workspace_2} = Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 2)
+      assert {:ok, workspace_0} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 0, ensemble_size: 3)
+
+      assert {:ok, workspace_1} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 1, ensemble_size: 3)
+
+      assert {:ok, workspace_2} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 2, ensemble_size: 3)
 
       assert workspace_0 != workspace_1
       assert workspace_1 != workspace_2
@@ -1354,6 +1365,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     config = Config.settings!()
     assert config.tracker.api_key == "env:#{api_key_env_var}"
     assert config.workspace.root == "env:#{workspace_env_var}"
+  end
+
+  test "SYMPHONY_WORKSPACE_ROOT overrides workspace.root from workflow config" do
+    workspace_root = Path.join("/tmp", "symphony-workspace-override")
+    previous_workspace_root = System.get_env("SYMPHONY_WORKSPACE_ROOT")
+
+    System.put_env("SYMPHONY_WORKSPACE_ROOT", workspace_root)
+
+    on_exit(fn ->
+      restore_env("SYMPHONY_WORKSPACE_ROOT", previous_workspace_root)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: "/tmp/workflow-root")
+
+    assert Config.settings!().workspace.root == Path.expand(workspace_root)
   end
 
   test "config supports per-state status overrides for local concurrency" do
