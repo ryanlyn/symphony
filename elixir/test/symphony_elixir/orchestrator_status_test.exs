@@ -1503,10 +1503,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     on_exit(fn ->
       Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
 
-      if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
+      if is_pid(default_orchestrator_pid) and is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
+          :ignore -> :ok
+          {:error, :not_found} -> :ok
         end
       end
     end)

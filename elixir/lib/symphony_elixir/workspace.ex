@@ -15,11 +15,12 @@ defmodule SymphonyElixir.Workspace do
   def create_for_issue(issue_or_identifier, worker_host \\ nil, opts \\ []) do
     issue_context = issue_context(issue_or_identifier)
     slot_index = Keyword.get(opts, :slot_index, 0)
+    ensemble_size = Keyword.get(opts, :ensemble_size, 1)
 
     try do
       safe_id = safe_identifier(issue_context.issue_identifier)
 
-      with {:ok, workspace} <- workspace_path_for_issue(safe_id, slot_index, worker_host),
+      with {:ok, workspace} <- workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host),
            :ok <- validate_workspace_path(workspace, worker_host),
            {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
            :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
@@ -200,17 +201,19 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp workspace_path_for_issue(safe_id, slot_index, nil) when is_binary(safe_id) and is_integer(slot_index) do
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, nil)
+       when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) do
     Config.settings!().workspace.root
     |> Path.join(safe_id)
-    |> Path.join(Integer.to_string(slot_index))
+    |> maybe_append_slot_path(slot_index, ensemble_size)
     |> PathSafety.canonicalize()
   end
 
-  defp workspace_path_for_issue(safe_id, slot_index, worker_host)
-       when is_binary(safe_id) and is_integer(slot_index) and is_binary(worker_host) do
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host)
+       when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) and
+              is_binary(worker_host) do
     with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
-      {:ok, workspace_root |> Path.join(safe_id) |> Path.join(Integer.to_string(slot_index))}
+      {:ok, workspace_root |> Path.join(safe_id) |> maybe_append_slot_path(slot_index, ensemble_size)}
     end
   end
 
@@ -223,6 +226,15 @@ defmodule SymphonyElixir.Workspace do
   defp issue_base_path(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
     with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
       {:ok, Path.join(workspace_root, safe_id)}
+    end
+  end
+
+  defp maybe_append_slot_path(base_path, slot_index, ensemble_size)
+       when is_binary(base_path) and is_integer(slot_index) and is_integer(ensemble_size) do
+    if ensemble_size > 1 do
+      Path.join(base_path, Integer.to_string(slot_index))
+    else
+      base_path
     end
   end
 
