@@ -33,7 +33,7 @@ defmodule SymphonyElixir.StatusDashboard do
   @ansi_dim IO.ANSI.faint()
   @ansi_green IO.ANSI.green()
   @ansi_red IO.ANSI.red()
-  @ansi_orange IO.ANSI.yellow()
+  @ansi_orange IO.ANSI.color(208)
   @ansi_yellow IO.ANSI.yellow()
   @ansi_magenta IO.ANSI.magenta()
 
