@@ -38,7 +38,10 @@ defmodule SymphonyElixir.AgentRunner do
 
     Logger.info("Starting worker attempt for #{issue_context(issue)} agent_kind=#{agent_kind} worker_host=#{worker_host_for_log(worker_host)} slot=#{slot_index}/#{ensemble_size}")
 
-    case Workspace.create_for_issue(issue, worker_host, slot_index: slot_index) do
+    case Workspace.create_for_issue(issue, worker_host,
+           slot_index: slot_index,
+           ensemble_size: ensemble_size
+         ) do
       {:ok, workspace} ->
         send_worker_runtime_info(update_recipient, issue, worker_host, workspace, agent_kind, slot_index, ensemble_size)
 

@@ -22,9 +22,9 @@ defmodule SymphonyElixir.EnsembleTest do
   describe "workspace slot paths" do
     test "different slots create different workspace directories" do
       write_workflow_file!(Workflow.workflow_file_path())
-      {:ok, ws0} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 0)
-      {:ok, ws1} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 1)
-      {:ok, ws2} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 2)
+      {:ok, ws0} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 0, ensemble_size: 3)
+      {:ok, ws1} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 1, ensemble_size: 3)
+      {:ok, ws2} = Workspace.create_for_issue("ENSEMBLE-1", nil, slot_index: 2, ensemble_size: 3)
 
       assert ws0 != ws1
       assert ws1 != ws2

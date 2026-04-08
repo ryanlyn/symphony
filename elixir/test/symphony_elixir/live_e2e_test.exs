@@ -519,19 +519,23 @@ defmodule SymphonyElixir.LiveE2ETest do
 
       assert :ok = complete_project(project["id"], completed_project_status["id"])
     after
-      restart_orchestrator_if_needed()
+      restart_orchestrator_if_needed(is_pid(orchestrator_pid))
       LiveWorkerSupport.cleanup_worker_setup(worker_setup)
       Workflow.set_workflow_file_path(original_workflow_path)
       File.rm_rf(test_root)
     end
   end
 
-  defp restart_orchestrator_if_needed do
+  defp restart_orchestrator_if_needed(true) do
     if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
       case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
         {:ok, _pid} -> :ok
         {:error, {:already_started, _pid}} -> :ok
+        :ignore -> :ok
+        {:error, :not_found} -> :ok
       end
     end
   end
+
+  defp restart_orchestrator_if_needed(false), do: :ok
 end
