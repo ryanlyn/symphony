@@ -548,7 +548,7 @@ defmodule SymphonyElixir.Workspace do
        when is_binary(worker_host) and is_binary(script) and is_integer(timeout_ms) and timeout_ms > 0 do
     task =
       Task.async(fn ->
-        SSH.run(worker_host, script, stderr_to_stdout: true)
+        SSH.run(worker_host, script, stderr_to_stdout: true, timeout: timeout_ms)
       end)
 
     case Task.yield(task, timeout_ms) do

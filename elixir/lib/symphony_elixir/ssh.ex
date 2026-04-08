@@ -1,10 +1,29 @@
 defmodule SymphonyElixir.SSH do
   @moduledoc false
 
-  @spec run(String.t(), String.t(), keyword()) :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
+  alias SymphonyElixir.Config
+
+  @type run_result :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
+
+  @spec run(String.t(), String.t(), keyword()) :: run_result()
   def run(host, command, opts \\ []) when is_binary(host) and is_binary(command) do
-    with {:ok, executable} <- ssh_executable() do
-      {:ok, System.cmd(executable, ssh_args(host, command), opts)}
+    {timeout_ms, cmd_opts} = Keyword.pop_lazy(opts, :timeout, &Config.ssh_timeout_ms/0)
+
+    with {:ok, executable} <- ssh_executable(),
+         {:ok, timeout_ms} <- validate_timeout(timeout_ms) do
+      task =
+        Task.async(fn ->
+          System.cmd(executable, ssh_args(host, command), cmd_opts)
+        end)
+
+      case Task.yield(task, timeout_ms) do
+        {:ok, cmd_result} ->
+          {:ok, cmd_result}
+
+        nil ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, {:ssh_timeout, host, timeout_ms}}
+      end
     end
   end
 
@@ -54,13 +73,18 @@ defmodule SymphonyElixir.SSH do
       when is_binary(host) and is_binary(path) do
     contents_binary = IO.iodata_to_binary(contents)
 
+    ssh_opts =
+      opts
+      |> Keyword.drop([:mode])
+      |> Keyword.put(:stderr_to_stdout, true)
+
     command = """
     mkdir -p #{shell_escape(Path.dirname(path))}
     printf '%s' #{shell_escape(contents_binary)} > #{shell_escape(path)}
     #{chmod_command(Keyword.get(opts, :mode), path)}
     """
 
-    case run(host, command, stderr_to_stdout: true) do
+    case run(host, command, ssh_opts) do
       {:ok, {_output, 0}} -> :ok
       {:ok, {output, status}} -> {:error, {:remote_write_failed, status, output}}
       {:error, reason} -> {:error, reason}
@@ -124,6 +148,11 @@ defmodule SymphonyElixir.SSH do
 
   defp maybe_put_port(args, nil), do: args
   defp maybe_put_port(args, port), do: args ++ ["-p", port]
+
+  defp validate_timeout(timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0,
+    do: {:ok, timeout_ms}
+
+  defp validate_timeout(timeout_ms), do: {:error, {:invalid_ssh_timeout, timeout_ms}}
 
   defp parse_target(target) when is_binary(target) do
     trimmed_target = String.trim(target)

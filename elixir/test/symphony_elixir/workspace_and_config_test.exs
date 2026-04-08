@@ -996,6 +996,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert config.worker.ssh_timeout_ms == 60_000
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.kind == "codex"
     assert config.agent.max_concurrent_agents == 10
@@ -1081,6 +1082,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 0)
     assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "worker.max_concurrent_agents_per_host"
+
+    write_workflow_file!(Workflow.workflow_file_path(), worker_ssh_timeout_ms: 0)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "worker.ssh_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_timeout_ms: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate()
@@ -1251,9 +1256,60 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
 
-    write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_timeout_ms: 12_345,
+      worker_max_concurrent_agents_per_host: 2
+    )
+
     assert :ok = Config.validate()
+    assert Config.ssh_timeout_ms() == 12_345
+    assert Config.settings!().worker.ssh_timeout_ms == 12_345
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
+  end
+
+  test "workspace create surfaces remote home ssh timeouts" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-workspace-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+      sleep 1
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "~/.symphony-remote-workspaces",
+        worker_ssh_timeout_ms: 10
+      )
+
+      assert {:error, {:remote_home_lookup_failed, "worker-01", {:ssh_timeout, "worker-01", 10}}} =
+               Workspace.create_for_issue("MT-SSH-TIMEOUT", "worker-01")
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "config exposes claude runtime settings and executor selection" do
@@ -1711,12 +1767,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         worker_ssh_hosts: ["worker-01:2200"],
+        worker_ssh_timeout_ms: 45_000,
         hook_before_run: "echo before-run",
         hook_after_run: "echo after-run",
         hook_before_remove: "echo before-remove"
       )
 
       assert Config.settings!().worker.ssh_hosts == ["worker-01:2200"]
+      assert Config.settings!().worker.ssh_timeout_ms == 45_000
       assert Config.settings!().workspace.root == workspace_root
       assert {:ok, ^workspace_path} = Workspace.create_for_issue("MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_before_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")
