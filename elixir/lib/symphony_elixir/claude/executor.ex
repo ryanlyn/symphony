@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Claude.Executor do
   @behaviour SymphonyElixir.AgentExecutor
   require Logger
 
+  alias SymphonyElixir.AgentExecutor.Support
   alias SymphonyElixir.Claude.{Mcp, McpAuth, McpTunnelManager}
   alias SymphonyElixir.{Config, HttpServer, SSH, WorkspaceCwd}
 
@@ -95,7 +96,7 @@ defmodule SymphonyElixir.Claude.Executor do
 
   @impl true
   def stop_session(%{port: port} = session) when is_port(port) do
-    stop_port(port)
+    Support.stop_port(port)
     cleanup_mcp_resources(session)
   end
 
@@ -133,13 +134,13 @@ defmodule SymphonyElixir.Claude.Executor do
           ]
         )
 
-      {:ok, port, port_metadata(port, session.worker_host)}
+      {:ok, port, Support.port_metadata(port, :executor_pid, session.worker_host)}
     end
   end
 
   defp start_port(%{worker_host: worker_host} = session, issue) when is_binary(worker_host) do
     case SSH.start_port(worker_host, remote_launch_command(session, issue), line: @port_line_bytes) do
-      {:ok, port} -> {:ok, port, port_metadata(port, worker_host)}
+      {:ok, port} -> {:ok, port, Support.port_metadata(port, :executor_pid, worker_host)}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -148,12 +149,12 @@ defmodule SymphonyElixir.Claude.Executor do
     claude = Config.settings!().claude
     argv = launch_argv(session, issue, claude)
 
-    "exec #{claude.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"
+    "exec #{claude.command} #{Enum.map_join(argv, " ", &Support.shell_escape/1)}"
   end
 
   defp remote_launch_command(%{workspace: workspace} = session, issue)
        when is_binary(workspace) do
-    "cd #{SSH.shell_escape(workspace)} && #{launch_command(session, issue)}"
+    "cd #{Support.shell_escape(workspace)} && #{launch_command(session, issue)}"
   end
 
   defp launch_argv(session, issue, claude) do
@@ -559,19 +560,6 @@ defmodule SymphonyElixir.Claude.Executor do
     end
   end
 
-  defp port_metadata(port, worker_host) when is_port(port) do
-    base_metadata =
-      case :erlang.port_info(port, :os_pid) do
-        {:os_pid, os_pid} -> %{executor_pid: Integer.to_string(os_pid)}
-        _ -> %{}
-      end
-
-    case worker_host do
-      host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
-      _ -> base_metadata
-    end
-  end
-
   defp complete_start_session(base_session, port, metadata) do
     {:ok, %{base_session | port: port, metadata: metadata}}
   end
@@ -665,24 +653,17 @@ defmodule SymphonyElixir.Claude.Executor do
         {:ok, session}
 
       {:error, reason} ->
-        stop_port(port)
+        Support.stop_port(port)
         {:error, reason}
     end
   rescue
     exception ->
-      stop_port(port)
+      Support.stop_port(port)
       reraise exception, __STACKTRACE__
   catch
     kind, reason ->
-      stop_port(port)
+      Support.stop_port(port)
       :erlang.raise(kind, reason, __STACKTRACE__)
-  end
-
-  defp stop_port(port) when is_port(port) do
-    Port.close(port)
-    :ok
-  catch
-    :error, _reason -> :ok
   end
 
   defp send_port_command(port, data) when is_port(port) and is_binary(data) do
