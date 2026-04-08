@@ -1266,7 +1266,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     )
 
     assert Config.agent_kind() == "claude"
-    assert Config.agent_executor() == SymphonyElixir.Claude.Executor
+
+    assert SymphonyElixir.AgentExecutor.module_for_kind(Config.agent_kind()) ==
+             SymphonyElixir.Claude.Executor
+
     assert Config.agent_stall_timeout_ms("claude") == 9_876
 
     claude = Config.settings!().claude
