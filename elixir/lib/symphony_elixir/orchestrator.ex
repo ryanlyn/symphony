@@ -665,22 +665,31 @@ defmodule SymphonyElixir.Orchestrator do
     {state, blocked_dispatches} =
       issues
       |> sort_issues_for_dispatch()
-      |> Enum.reduce({state, []}, fn issue, {state_acc, blocked_acc} ->
-        if issue_dispatch_eligible?(issue, state_acc, active_states, terminal_states) do
-          case dispatch_capacity_block_reason(issue, state_acc) do
-            nil ->
-              {dispatch_issue(state_acc, issue), blocked_acc}
-
-            reason ->
-              log_dispatch_block(issue, state_acc, reason)
-              {state_acc, [dispatch_block_entry(issue, reason) | blocked_acc]}
-          end
-        else
-          {state_acc, blocked_acc}
-        end
-      end)
+      |> Enum.reduce(
+        {state, []},
+        &accumulate_dispatch_decision(&1, &2, active_states, terminal_states)
+      )
 
     %{state | blocked_dispatches: Enum.reverse(blocked_dispatches)}
+  end
+
+  defp accumulate_dispatch_decision(issue, {state_acc, blocked_acc}, active_states, terminal_states) do
+    if issue_dispatch_eligible?(issue, state_acc, active_states, terminal_states) do
+      apply_dispatch_capacity_decision(issue, state_acc, blocked_acc)
+    else
+      {state_acc, blocked_acc}
+    end
+  end
+
+  defp apply_dispatch_capacity_decision(issue, state_acc, blocked_acc) do
+    case dispatch_capacity_block_reason(issue, state_acc) do
+      nil ->
+        {dispatch_issue(state_acc, issue), blocked_acc}
+
+      reason ->
+        log_dispatch_block(issue, state_acc, reason)
+        {state_acc, [dispatch_block_entry(issue, reason) | blocked_acc]}
+    end
   end
 
   defp sort_issues_for_dispatch(issues) when is_list(issues) do
@@ -712,8 +721,6 @@ defmodule SymphonyElixir.Orchestrator do
     issue_dispatch_eligible?(issue, state, active_states, terminal_states) and
       is_nil(dispatch_capacity_block_reason(issue, state))
   end
-
-  defp should_dispatch_issue?(_issue, _state, _active_states, _terminal_states), do: false
 
   defp state_slots_available?(%Issue{state: issue_state}, %State{} = state) when is_binary(issue_state) do
     case local_max_concurrent_agents_for_state(state, issue_state) do

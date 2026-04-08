@@ -41,6 +41,7 @@ defmodule SymphonyElixir.TestSupport do
         workflow_file = Path.join(workflow_root, "WORKFLOW.md")
         write_workflow_file!(workflow_file)
         Workflow.set_workflow_file_path(workflow_file)
+        {:ok, _started_apps} = Application.ensure_all_started(:symphony_elixir)
         if Process.whereis(SymphonyElixir.WorkflowStore), do: SymphonyElixir.WorkflowStore.force_reload()
         stop_default_http_server()
 
@@ -77,15 +78,25 @@ defmodule SymphonyElixir.TestSupport do
   def restore_env(key, value), do: System.put_env(key, value)
 
   def stop_default_http_server do
+    case Process.whereis(SymphonyElixir.Supervisor) do
+      pid when is_pid(pid) ->
+        stop_http_server_child()
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp stop_http_server_child do
     case Enum.find(Supervisor.which_children(SymphonyElixir.Supervisor), fn
-           {SymphonyElixir.HttpServer, _pid, _type, _modules} -> true
+           {SymphonyElixir.HttpServer, _child_pid, _type, _modules} -> true
            _child -> false
          end) do
-      {SymphonyElixir.HttpServer, pid, _type, _modules} when is_pid(pid) ->
+      {SymphonyElixir.HttpServer, http_pid, _type, _modules} when is_pid(http_pid) ->
         :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
 
-        if Process.alive?(pid) do
-          Process.exit(pid, :normal)
+        if Process.alive?(http_pid) do
+          Process.exit(http_pid, :normal)
         end
 
         :ok

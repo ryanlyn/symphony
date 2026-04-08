@@ -1446,6 +1446,53 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              limits: {"state names must not be blank", []},
              limits: {"limits must be positive integers", []}
            ]
+
+    valid_changeset =
+      {%{}, %{limits: :map}}
+      |> Changeset.cast(%{limits: %{"todo" => 1}}, [:limits])
+      |> Schema.validate_state_limits(:limits)
+
+    assert valid_changeset.errors == []
+
+    assert Schema.normalize_status_overrides(nil) == %{}
+
+    assert Schema.normalize_status_overrides(%{
+             "In Progress" => %{"agent" => %{"max_concurrent_agents" => 2}},
+             "todo" => %{"worker" => %{"ssh_hosts" => ["worker-a"]}},
+             "broken" => "bad"
+           }) == %{
+             "broken" => "bad",
+             "in progress" => %{"agent" => %{"max_concurrent_agents" => 2}},
+             "todo" => %{"worker" => %{"ssh_hosts" => ["worker-a"]}}
+           }
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "" => %{},
+                 "broken" => "bad",
+                 "agent-shape" => %{"agent" => "bad"},
+                 "limit-shape" => %{"agent" => %{"max_concurrent_agents" => 0}}
+               }
+             })
+
+    assert message =~ "state names must not be blank"
+    assert message =~ "status overrides must be maps"
+    assert message =~ "status override agent settings must be maps"
+    assert message =~ "status override agent.max_concurrent_agents must be a positive integer"
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "Todo" => %{"agent" => %{}}
+               }
+             })
+
+    assert Schema.status_override(settings, :todo) == %{}
+    assert Schema.resolve_state_settings(settings, :todo) == settings
+
+    weird_settings = %{settings | status_overrides: %{"todo" => "bad"}}
+    assert Schema.resolve_state_settings(weird_settings, "Todo") == weird_settings
   end
 
   test "schema parse normalizes policy keys and env-backed fallbacks" do

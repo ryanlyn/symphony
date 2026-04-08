@@ -408,31 +408,11 @@ defmodule SymphonyElixir.Config.Schema do
   @spec validate_status_overrides(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
   def validate_status_overrides(changeset, field) do
     validate_change(changeset, field, fn ^field, overrides ->
-      Enum.flat_map(overrides, fn {state_name, override} ->
-        cond do
-          to_string(state_name) == "" ->
-            [{field, "state names must not be blank"}]
-
-          not is_map(override) ->
-            [{field, "status overrides must be maps"}]
-
-          Map.has_key?(override, "agent") and not is_map(override["agent"]) ->
-            [{field, "status override agent settings must be maps"}]
-
-          match?(%{}, override["agent"]) and
-            Map.has_key?(override["agent"], "max_concurrent_agents") and
-              (not is_integer(override["agent"]["max_concurrent_agents"]) or
-                 override["agent"]["max_concurrent_agents"] <= 0) ->
-            [{field, "status override agent.max_concurrent_agents must be a positive integer"}]
-
-          true ->
-            []
-        end
-      end)
+      Enum.flat_map(overrides, &status_override_errors(field, &1))
     end)
   end
 
-  @spec status_override(%__MODULE__{}, term()) :: map()
+  @spec status_override(%__MODULE__{}, term()) :: term()
   def status_override(%__MODULE__{status_overrides: overrides}, state_name) when is_binary(state_name) do
     Map.get(overrides || %{}, normalize_issue_state(state_name), %{})
   end
@@ -441,7 +421,10 @@ defmodule SymphonyElixir.Config.Schema do
 
   @spec resolve_state_settings(%__MODULE__{}, term()) :: %__MODULE__{}
   def resolve_state_settings(%__MODULE__{} = settings, state_name) when is_binary(state_name) do
-    apply_status_override(settings, status_override(settings, state_name))
+    case status_override(settings, state_name) do
+      %{} = override -> apply_status_override(settings, override)
+      _override -> settings
+    end
   end
 
   def resolve_state_settings(%__MODULE__{} = settings, _state_name), do: settings
@@ -512,8 +495,6 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
-  defp apply_status_override(settings, _override), do: settings
-
   defp merge_section_override(%_module{} = current_section, override) when is_map(override) do
     fields = Map.keys(Map.from_struct(current_section))
 
@@ -535,6 +516,40 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_status_override(override) when is_map(override), do: normalize_keys(override)
   defp normalize_status_override(override), do: override
+
+  defp status_override_errors(field, {state_name, override}) do
+    blank_state_error(field, state_name) ||
+      invalid_status_override_error(field, override) ||
+      invalid_status_override_agent_error(field, override) ||
+      invalid_status_override_agent_limit_error(field, override) ||
+      []
+  end
+
+  defp blank_state_error(field, state_name) do
+    if to_string(state_name) == "" do
+      [{field, "state names must not be blank"}]
+    end
+  end
+
+  defp invalid_status_override_error(field, override) do
+    if not is_map(override) do
+      [{field, "status overrides must be maps"}]
+    end
+  end
+
+  defp invalid_status_override_agent_error(field, override) do
+    if is_map(override) and Map.has_key?(override, "agent") and not is_map(override["agent"]) do
+      [{field, "status override agent settings must be maps"}]
+    end
+  end
+
+  defp invalid_status_override_agent_limit_error(field, override) do
+    case if(is_map(override), do: get_in(override, ["agent", "max_concurrent_agents"])) do
+      limit when is_integer(limit) and limit > 0 -> nil
+      nil -> nil
+      _other -> [{field, "status override agent.max_concurrent_agents must be a positive integer"}]
+    end
+  end
 
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)
