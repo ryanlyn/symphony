@@ -203,12 +203,29 @@ defmodule SymphonyElixir.CoreTest do
              Workflow.load(workflow_path)
   end
 
-  test "workflow load accepts unterminated front matter with an empty prompt" do
+  test "workflow load preserves content when front matter is unterminated" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
-    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt\n")
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
+    assert {:ok,
+            %{
+              config: %{},
+              prompt: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt",
+              prompt_template: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt"
+            }} =
              Workflow.load(workflow_path)
+  end
+
+  test "workflow load accepts valid front matter with a prompt body" do
+    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "VALID_FRONT_MATTER_WORKFLOW.md")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n---\nPrompt body\n")
+
+    assert {:ok,
+            %{
+              config: %{"tracker" => %{"kind" => "linear"}},
+              prompt: "Prompt body",
+              prompt_template: "Prompt body"
+            }} = Workflow.load(workflow_path)
   end
 
   test "workflow load rejects non-map front matter" do
@@ -224,10 +241,12 @@ defmodule SymphonyElixir.CoreTest do
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
-      if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
+      if is_pid(orchestrator_pid) and is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
+          :ignore -> :ok
+          {:error, :not_found} -> :ok
         end
       end
     end)
@@ -244,13 +263,30 @@ defmodule SymphonyElixir.CoreTest do
 
   test "application restarts downstream children when orchestrator crashes" do
     previous_server_port_override = Application.get_env(:symphony_elixir, :server_port_override)
+    previous_start_orchestrator = Application.get_env(:symphony_elixir, :start_orchestrator)
 
     Application.put_env(:symphony_elixir, :server_port_override, 0)
+    Application.put_env(:symphony_elixir, :start_orchestrator, true)
 
     on_exit(fn ->
       stop_default_http_server()
+      Application.put_env(:symphony_elixir, :start_orchestrator, previous_start_orchestrator)
+
+      if Process.whereis(SymphonyElixir.Orchestrator) do
+        assert :ok =
+                 Supervisor.terminate_child(
+                   SymphonyElixir.Supervisor,
+                   SymphonyElixir.Orchestrator
+                 )
+      end
+
       restore_app_env(:server_port_override, previous_server_port_override)
     end)
+
+    case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
 
@@ -278,6 +314,49 @@ defmodule SymphonyElixir.CoreTest do
 
   test "linear issue state reconciliation fetch with no running issues is a no-op" do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
+  end
+
+  test "running entry constructor normalizes defaults, keyword attrs, and usage totals" do
+    issue = %Issue{id: "issue-running-entry", identifier: "MT-ENTRY", title: "Entry", state: "In Progress"}
+
+    default_entry = Orchestrator.RunningEntry.new()
+    assert %Orchestrator.RunningEntry{} = default_entry
+    assert default_entry.usage_totals == %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
+
+    entry =
+      Orchestrator.RunningEntry.new(
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        usage_totals: %{input_tokens: -1, output_tokens: 2, total_tokens: 3, seconds_running: -4}
+      )
+
+    assert %Orchestrator.RunningEntry{
+             pid: pid,
+             identifier: "MT-ENTRY",
+             issue: ^issue,
+             usage_totals: %{input_tokens: 0, output_tokens: 2, total_tokens: 3, seconds_running: 0}
+           } = entry
+
+    assert pid == self()
+
+    assert Orchestrator.RunningEntry.new(%{usage_totals: :bad}).usage_totals == %{
+             input_tokens: 0,
+             output_tokens: 0,
+             total_tokens: 0,
+             seconds_running: 0
+           }
+  end
+
+  test "running entry ref matching ignores malformed entries" do
+    ref = make_ref()
+
+    assert Orchestrator.RunningEntry.ref_matches?(%{ref: ref}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{pid: self(), ref: make_ref()}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{pid: self()}, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(:not_a_map, ref)
+    refute Orchestrator.RunningEntry.ref_matches?(%{ref: ref}, "not-a-ref")
   end
 
   test "non-active issue state stops running agent without cleaning workspace" do
@@ -310,13 +389,13 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          {issue_id, 0} => %{
-            pid: agent_pid,
-            ref: nil,
-            identifier: issue_identifier,
-            issue: %Issue{id: issue_id, state: "Todo", identifier: issue_identifier},
-            started_at: DateTime.utc_now()
-          }
+          {issue_id, 0} =>
+            build_running_entry(%{
+              pid: agent_pid,
+              ref: nil,
+              identifier: issue_identifier,
+              issue: %Issue{id: issue_id, state: "Todo", identifier: issue_identifier}
+            })
         },
         claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -373,13 +452,13 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          {issue_id, 0} => %{
-            pid: agent_pid,
-            ref: nil,
-            identifier: issue_identifier,
-            issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier},
-            started_at: DateTime.utc_now()
-          }
+          {issue_id, 0} =>
+            build_running_entry(%{
+              pid: agent_pid,
+              ref: nil,
+              identifier: issue_identifier,
+              issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier}
+            })
         },
         claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -455,13 +534,13 @@ defmodule SymphonyElixir.CoreTest do
 
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: agent_pid,
-        ref: nil,
-        identifier: issue_identifier,
-        issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier},
-        started_at: DateTime.utc_now()
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: agent_pid,
+          ref: nil,
+          identifier: issue_identifier,
+          issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier}
+        })
 
       tick_token = make_ref()
 
@@ -493,17 +572,17 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        {issue_id, 0} => %{
-          pid: self(),
-          ref: nil,
-          identifier: "MT-557",
-          issue: %Issue{
-            id: issue_id,
+        {issue_id, 0} =>
+          build_running_entry(%{
+            pid: self(),
+            ref: nil,
             identifier: "MT-557",
-            state: "Todo"
-          },
-          started_at: DateTime.utc_now()
-        }
+            issue: %Issue{
+              id: issue_id,
+              identifier: "MT-557",
+              state: "Todo"
+            }
+          })
       },
       claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -539,18 +618,18 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        {issue_id, 0} => %{
-          pid: agent_pid,
-          ref: nil,
-          identifier: "MT-561",
-          issue: %Issue{
-            id: issue_id,
+        {issue_id, 0} =>
+          build_running_entry(%{
+            pid: agent_pid,
+            ref: nil,
             identifier: "MT-561",
-            state: "In Progress",
-            assigned_to_worker: true
-          },
-          started_at: DateTime.utc_now()
-        }
+            issue: %Issue{
+              id: issue_id,
+              identifier: "MT-561",
+              state: "In Progress",
+              assigned_to_worker: true
+            }
+          })
       },
       claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -588,13 +667,13 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
-      pid: self(),
-      ref: ref,
-      identifier: "MT-558",
-      issue: %Issue{id: issue_id, identifier: "MT-558", state: "In Progress"},
-      started_at: DateTime.utc_now()
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: ref,
+        identifier: "MT-558",
+        issue: %Issue{id: issue_id, identifier: "MT-558", state: "In Progress"}
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -613,6 +692,20 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref} = state.retry_attempts[issue_id]
     assert is_reference(timer_ref)
     assert_retry_deadline_in_range(due_at_ms, before_send_ms, 1_000, 1_500)
+  end
+
+  test "down message ignores malformed running entries without a ref" do
+    issue_id = "issue-missing-ref"
+    ref = make_ref()
+
+    state = %Orchestrator.State{
+      running: %{{issue_id, 0} => %{pid: self()}},
+      claimed: MapSet.new([{issue_id, 0}]),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    assert {:noreply, ^state} = Orchestrator.handle_info({:DOWN, ref, :process, self(), :normal}, state)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -648,15 +741,15 @@ defmodule SymphonyElixir.CoreTest do
                  workspace_path: workspace
                })
 
-      running_entry = %{
-        pid: self(),
-        ref: ref,
-        identifier: "MT-559",
-        retry_attempt: 2,
-        issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
-        workspace_path: workspace,
-        started_at: DateTime.utc_now()
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: self(),
+          ref: ref,
+          identifier: "MT-559",
+          retry_attempt: 2,
+          issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
+          workspace_path: workspace
+        })
 
       :sys.replace_state(pid, fn _ ->
         initial_state
@@ -695,13 +788,13 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
-      pid: self(),
-      ref: ref,
-      identifier: "MT-560",
-      issue: %Issue{id: issue_id, identifier: "MT-560", state: "In Progress"},
-      started_at: DateTime.utc_now()
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: ref,
+        identifier: "MT-560",
+        issue: %Issue{id: issue_id, identifier: "MT-560", state: "In Progress"}
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -1241,9 +1334,7 @@ defmodule SymphonyElixir.CoreTest do
 
       issue_dir = Path.join(workspace_root, workspace_name)
       assert File.exists?(issue_dir)
-      workspace = Path.join(issue_dir, "0")
-      assert File.exists?(workspace)
-      assert File.exists?(Path.join(workspace, "README.md"))
+      assert File.exists?(Path.join(issue_dir, "README.md"))
     after
       File.rm_rf(test_root)
     end
@@ -1481,7 +1572,7 @@ defmodule SymphonyElixir.CoreTest do
 
         state =
           if attempt == 1 do
-            "In Progress"
+            "In Progress "
           else
             "Done"
           end
@@ -1503,7 +1594,7 @@ defmodule SymphonyElixir.CoreTest do
         identifier: "MT-247",
         title: "Continue until done",
         description: "Still active after first turn",
-        state: "In Progress",
+        state: "In Progress ",
         url: "https://example.org/issues/MT-247",
         labels: []
       }

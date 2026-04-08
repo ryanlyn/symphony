@@ -1,6 +1,9 @@
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Orchestrator.RunningEntry
+
   defmacro __using__(_opts) do
     quote do
       use ExUnit.Case
@@ -23,6 +26,7 @@ defmodule SymphonyElixir.TestSupport do
 
       import SymphonyElixir.TestSupport,
         only: [
+          build_running_entry: 1,
           write_workflow_file!: 1,
           write_workflow_file!: 2,
           restore_env: 2,
@@ -98,7 +102,7 @@ defmodule SymphonyElixir.TestSupport do
   def create_git_workspace!(test_root, issue_identifier) do
     template_repo = Path.join(test_root, "source")
     workspace_root = Path.join(test_root, "workspaces")
-    workspace = Path.join([workspace_root, issue_identifier, "0"])
+    workspace = Path.join([workspace_root, issue_identifier])
 
     File.rm_rf!(template_repo)
     File.mkdir_p!(template_repo)
@@ -117,6 +121,49 @@ defmodule SymphonyElixir.TestSupport do
       workspace: workspace,
       canonical_workspace: canonical_workspace
     }
+  end
+
+  def build_running_entry(overrides \\ %{}) when is_map(overrides) do
+    issue =
+      Map.get(
+        overrides,
+        :issue,
+        %Issue{
+          id: "issue-1",
+          identifier: "T-1",
+          title: "Test",
+          state: "In Progress"
+        }
+      )
+
+    RunningEntry.new(
+      Map.merge(
+        %{
+          pid: self(),
+          ref: make_ref(),
+          agent_kind: "codex",
+          identifier: issue.identifier,
+          issue: issue,
+          slot_index: 0,
+          ensemble_size: 1,
+          worker_host: nil,
+          workspace_path: nil,
+          session_id: nil,
+          executor_pid: nil,
+          usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+          usage_last_reported_input_tokens: 0,
+          usage_last_reported_output_tokens: 0,
+          usage_last_reported_total_tokens: 0,
+          last_agent_message: nil,
+          last_agent_timestamp: nil,
+          last_agent_event: nil,
+          turn_count: 0,
+          retry_attempt: 0,
+          started_at: DateTime.utc_now()
+        },
+        overrides
+      )
+    )
   end
 
   defp workflow_content(overrides) do

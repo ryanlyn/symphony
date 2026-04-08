@@ -369,7 +369,9 @@ defmodule SymphonyElixir.Config.Schema do
 
   @spec normalize_issue_state(String.t()) :: String.t()
   def normalize_issue_state(state_name) when is_binary(state_name) do
-    String.downcase(state_name)
+    state_name
+    |> String.trim()
+    |> String.downcase()
   end
 
   @doc false
@@ -417,6 +419,12 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp finalize_settings(settings) do
+    workspace_root =
+      case System.get_env("SYMPHONY_WORKSPACE_ROOT") do
+        value when is_binary(value) and value != "" -> value
+        _ -> settings.workspace.root
+      end
+
     tracker = %{
       settings.tracker
       | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
@@ -425,7 +433,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(workspace_root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
     }
 
     codex = %{

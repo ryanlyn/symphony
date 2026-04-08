@@ -167,6 +167,8 @@ Notes:
 - If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot. If a later
   reload fails, it keeps running with the last known good configuration and logs the error.
 - `~` is expanded to the home directory in path values. For env-backed paths, use `$VAR`.
+- `SYMPHONY_WORKSPACE_ROOT` overrides `workspace.root` at runtime. This is useful for isolated
+  test and CI runs that should not touch shared local workspaces.
 - The `codex.command` value is a shell command string - `$VAR` expansion happens in the shell, not
   in Symphony.
 - When `codex.turn_sandbox_policy` is omitted, Symphony auto-generates a `workspaceWrite` policy
