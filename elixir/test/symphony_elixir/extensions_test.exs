@@ -17,13 +17,28 @@ defmodule SymphonyElixir.ExtensionsTest do
       {:ok, [:candidate]}
     end
 
+    def fetch_candidate_issues(tracker) do
+      send(self(), {:fetch_candidate_issues_with_settings_called, tracker.project_slug})
+      {:ok, [:candidate_with_settings]}
+    end
+
     def fetch_issues_by_states(states) do
       send(self(), {:fetch_issues_by_states_called, states})
       {:ok, states}
     end
 
+    def fetch_issues_by_states(states, tracker) do
+      send(self(), {:fetch_issues_by_states_with_settings_called, states, tracker.project_slug})
+      {:ok, states}
+    end
+
     def fetch_issue_states_by_ids(issue_ids) do
       send(self(), {:fetch_issue_states_by_ids_called, issue_ids})
+      {:ok, issue_ids}
+    end
+
+    def fetch_issue_states_by_ids(issue_ids, tracker) do
+      send(self(), {:fetch_issue_states_by_ids_with_settings_called, issue_ids, tracker.project_slug})
       {:ok, issue_ids}
     end
 
@@ -188,12 +203,17 @@ defmodule SymphonyElixir.ExtensionsTest do
     Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
     Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    settings = Config.settings!()
 
-    assert Config.settings!().tracker.kind == "memory"
+    assert settings.tracker.kind == "memory"
     assert SymphonyElixir.Tracker.adapter() == Memory
+    assert SymphonyElixir.Tracker.adapter(settings) == Memory
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues(settings)
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42], settings)
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"], settings)
     assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
     assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
@@ -205,19 +225,30 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+    assert SymphonyElixir.Tracker.adapter(Config.settings!()) == Adapter
   end
 
   test "linear adapter delegates reads and validates mutation responses" do
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
+    settings = Config.settings!()
 
     assert {:ok, [:candidate]} = Adapter.fetch_candidate_issues()
     assert_receive :fetch_candidate_issues_called
 
+    assert {:ok, [:candidate_with_settings]} = Adapter.fetch_candidate_issues(settings)
+    assert_receive {:fetch_candidate_issues_with_settings_called, "project"}
+
     assert {:ok, ["Todo"]} = Adapter.fetch_issues_by_states(["Todo"])
     assert_receive {:fetch_issues_by_states_called, ["Todo"]}
 
+    assert {:ok, ["Todo"]} = Adapter.fetch_issues_by_states(["Todo"], settings)
+    assert_receive {:fetch_issues_by_states_with_settings_called, ["Todo"], "project"}
+
     assert {:ok, ["issue-1"]} = Adapter.fetch_issue_states_by_ids(["issue-1"])
     assert_receive {:fetch_issue_states_by_ids_called, ["issue-1"]}
+
+    assert {:ok, ["issue-1"]} = Adapter.fetch_issue_states_by_ids(["issue-1"], settings)
+    assert_receive {:fetch_issue_states_by_ids_with_settings_called, ["issue-1"], "project"}
 
     Process.put(
       {FakeLinearClient, :graphql_result},

@@ -12,7 +12,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, update_recipient \\ nil, opts \\ []) do
-    settings = Config.settings!()
+    settings = Keyword.get(opts, :settings, Config.settings!())
     agent_kind = settings.agent.kind
     # The orchestrator owns host retries so one worker lifetime never hops machines.
     worker_host = selected_worker_host(Keyword.get(opts, :worker_host), settings.worker.ssh_hosts)
@@ -22,7 +22,7 @@ defmodule SymphonyElixir.AgentRunner do
 
     Logger.info("Starting agent run for #{issue_context(issue)} agent_kind=#{agent_kind} worker_host=#{worker_host_for_log(worker_host)} slot=#{slot_index}/#{ensemble_size}")
 
-    case run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind) do
+    case run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind, settings) do
       :ok ->
         :ok
 
@@ -32,7 +32,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind) do
+  defp run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind, settings) do
     slot_index = Keyword.get(opts, :slot_index, 0)
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
 
@@ -47,7 +47,7 @@ defmodule SymphonyElixir.AgentRunner do
 
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
-            run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host)
+            run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host, settings)
           end
         after
           Workspace.run_after_run_hook(workspace, issue, worker_host)
@@ -88,11 +88,17 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace, _agent_kind, _slot_index, _ensemble_size), do: :ok
 
-  defp run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host) do
-    max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
-    issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+  defp run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host, settings) do
+    max_turns = Keyword.get(opts, :max_turns, settings.agent.max_turns)
+
+    issue_state_fetcher =
+      Keyword.get(opts, :issue_state_fetcher, fn issue_ids ->
+        Tracker.fetch_issue_states_by_ids(issue_ids, settings)
+      end)
+
     slot_index = Keyword.get(opts, :slot_index, 0)
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
+    prompt_opts = Keyword.delete(opts, :settings)
 
     ctx = %{
       executor: executor,
@@ -100,14 +106,15 @@ defmodule SymphonyElixir.AgentRunner do
       update_recipient: update_recipient,
       opts:
         Keyword.merge(
-          opts,
+          prompt_opts,
           slot_index: slot_index,
           ensemble_size: ensemble_size,
           issue_id: issue.id
         ),
       issue_state_fetcher: issue_state_fetcher,
       max_turns: max_turns,
-      worker_host: worker_host
+      worker_host: worker_host,
+      settings: settings
     }
 
     with {:ok, session} <-
@@ -116,6 +123,7 @@ defmodule SymphonyElixir.AgentRunner do
              workspace,
              issue,
              worker_host,
+             settings,
              slot_index: slot_index,
              ensemble_size: ensemble_size
            ) do
@@ -139,7 +147,8 @@ defmodule SymphonyElixir.AgentRunner do
       opts: opts,
       issue_state_fetcher: issue_state_fetcher,
       max_turns: max_turns,
-      worker_host: worker_host
+      worker_host: worker_host,
+      settings: settings
     } = ctx
 
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
@@ -151,11 +160,11 @@ defmodule SymphonyElixir.AgentRunner do
            on_message: executor_message_handler(update_recipient, issue, Keyword.get(opts, :slot_index, 0))
          ) do
       {:ok, updated_session, turn_result} ->
-        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(updated_session))
+        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(updated_session), settings)
 
         Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_result[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-        case continue_with_issue?(issue, issue_state_fetcher) do
+        case continue_with_issue?(issue, issue_state_fetcher, settings) do
           {:continue, refreshed_issue} when turn_number < max_turns ->
             Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
@@ -192,10 +201,11 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
+  defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher, settings)
+       when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
       {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if active_issue_state?(refreshed_issue.state) do
+        if active_issue_state?(refreshed_issue.state, settings) do
           {:continue, refreshed_issue}
         else
           {:done, refreshed_issue}
@@ -209,10 +219,10 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
+  defp continue_with_issue?(issue, _issue_state_fetcher, _settings), do: {:done, issue}
 
-  defp start_session(executor, workspace, %Issue{} = issue, worker_host, opts) do
-    resume_metadata = resume_metadata(workspace, issue, worker_host, Config.agent_kind())
+  defp start_session(executor, workspace, %Issue{} = issue, worker_host, settings, opts) do
+    resume_metadata = resume_metadata(workspace, issue, worker_host, settings.agent.kind)
     slot_opts = Keyword.take(opts, [:slot_index, :ensemble_size])
 
     case executor.start_session(
@@ -221,7 +231,7 @@ defmodule SymphonyElixir.AgentRunner do
              slot_opts
          ) do
       {:ok, session} ->
-        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(session))
+        persist_resume_state(workspace, worker_host, issue, executor.resume_metadata(session), settings)
         {:ok, session}
 
       {:error, reason} ->
@@ -253,13 +263,13 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp persist_resume_state(workspace, worker_host, %Issue{} = issue, resume_metadata)
+  defp persist_resume_state(workspace, worker_host, %Issue{} = issue, resume_metadata, settings)
        when is_binary(workspace) and is_map(resume_metadata) do
     resume_id = Map.get(resume_metadata, :resume_id)
 
     if is_binary(workspace) and is_binary(resume_id) and resume_id != "" do
       attrs = %{
-        agent_kind: Map.get(resume_metadata, :agent_kind) || Config.agent_kind(),
+        agent_kind: Map.get(resume_metadata, :agent_kind) || settings.agent.kind,
         resume_id: resume_id,
         session_id: Map.get(resume_metadata, :session_id),
         issue_id: issue.id,
@@ -284,7 +294,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp persist_resume_state(_workspace, _worker_host, _issue, _resume_metadata), do: :ok
+  defp persist_resume_state(_workspace, _worker_host, _issue, _resume_metadata, _settings), do: :ok
 
   defp resume_state_matches_issue?(resume_state, %Issue{} = issue, workspace, worker_host, agent_kind)
        when is_map(resume_state) do
@@ -303,14 +313,14 @@ defmodule SymphonyElixir.AgentRunner do
   defp worker_host_matches?(nil, _worker_host), do: false
   defp worker_host_matches?(stored_worker_host, worker_host), do: stored_worker_host == worker_host
 
-  defp active_issue_state?(state_name) when is_binary(state_name) do
+  defp active_issue_state?(state_name, settings) when is_binary(state_name) do
     normalized_state = normalize_issue_state(state_name)
 
-    Config.settings!().tracker.active_states
+    settings.tracker.active_states
     |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
   end
 
-  defp active_issue_state?(_state_name), do: false
+  defp active_issue_state?(_state_name, _settings), do: false
 
   defp executor_module(opts, agent_kind) do
     Keyword.get(opts, :executor, SymphonyElixir.AgentExecutor.module_for_kind(agent_kind))
