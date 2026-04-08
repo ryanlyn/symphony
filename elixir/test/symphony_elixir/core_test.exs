@@ -203,12 +203,29 @@ defmodule SymphonyElixir.CoreTest do
              Workflow.load(workflow_path)
   end
 
-  test "workflow load accepts unterminated front matter with an empty prompt" do
+  test "workflow load preserves content when front matter is unterminated" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
-    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt\n")
 
-    assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
+    assert {:ok,
+            %{
+              config: %{},
+              prompt: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt",
+              prompt_template: "---\ntracker:\n  kind: linear\nnote: this line should stay in the prompt"
+            }} =
              Workflow.load(workflow_path)
+  end
+
+  test "workflow load accepts valid front matter with a prompt body" do
+    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "VALID_FRONT_MATTER_WORKFLOW.md")
+    File.write!(workflow_path, "---\ntracker:\n  kind: linear\n---\nPrompt body\n")
+
+    assert {:ok,
+            %{
+              config: %{"tracker" => %{"kind" => "linear"}},
+              prompt: "Prompt body",
+              prompt_template: "Prompt body"
+            }} = Workflow.load(workflow_path)
   end
 
   test "workflow load rejects non-map front matter" do
