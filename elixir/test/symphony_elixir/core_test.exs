@@ -310,13 +310,13 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          {issue_id, 0} => %{
-            pid: agent_pid,
-            ref: nil,
-            identifier: issue_identifier,
-            issue: %Issue{id: issue_id, state: "Todo", identifier: issue_identifier},
-            started_at: DateTime.utc_now()
-          }
+          {issue_id, 0} =>
+            build_running_entry(%{
+              pid: agent_pid,
+              ref: nil,
+              identifier: issue_identifier,
+              issue: %Issue{id: issue_id, state: "Todo", identifier: issue_identifier}
+            })
         },
         claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -373,13 +373,13 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          {issue_id, 0} => %{
-            pid: agent_pid,
-            ref: nil,
-            identifier: issue_identifier,
-            issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier},
-            started_at: DateTime.utc_now()
-          }
+          {issue_id, 0} =>
+            build_running_entry(%{
+              pid: agent_pid,
+              ref: nil,
+              identifier: issue_identifier,
+              issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier}
+            })
         },
         claimed: MapSet.new([{issue_id, 0}]),
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -455,13 +455,13 @@ defmodule SymphonyElixir.CoreTest do
 
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: agent_pid,
-        ref: nil,
-        identifier: issue_identifier,
-        issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier},
-        started_at: DateTime.utc_now()
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: agent_pid,
+          ref: nil,
+          identifier: issue_identifier,
+          issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier}
+        })
 
       tick_token = make_ref()
 
@@ -493,17 +493,17 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        {issue_id, 0} => %{
-          pid: self(),
-          ref: nil,
-          identifier: "MT-557",
-          issue: %Issue{
-            id: issue_id,
+        {issue_id, 0} =>
+          build_running_entry(%{
+            pid: self(),
+            ref: nil,
             identifier: "MT-557",
-            state: "Todo"
-          },
-          started_at: DateTime.utc_now()
-        }
+            issue: %Issue{
+              id: issue_id,
+              identifier: "MT-557",
+              state: "Todo"
+            }
+          })
       },
       claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -539,18 +539,18 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        {issue_id, 0} => %{
-          pid: agent_pid,
-          ref: nil,
-          identifier: "MT-561",
-          issue: %Issue{
-            id: issue_id,
+        {issue_id, 0} =>
+          build_running_entry(%{
+            pid: agent_pid,
+            ref: nil,
             identifier: "MT-561",
-            state: "In Progress",
-            assigned_to_worker: true
-          },
-          started_at: DateTime.utc_now()
-        }
+            issue: %Issue{
+              id: issue_id,
+              identifier: "MT-561",
+              state: "In Progress",
+              assigned_to_worker: true
+            }
+          })
       },
       claimed: MapSet.new([{issue_id, 0}]),
       usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
@@ -588,13 +588,13 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
-      pid: self(),
-      ref: ref,
-      identifier: "MT-558",
-      issue: %Issue{id: issue_id, identifier: "MT-558", state: "In Progress"},
-      started_at: DateTime.utc_now()
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: ref,
+        identifier: "MT-558",
+        issue: %Issue{id: issue_id, identifier: "MT-558", state: "In Progress"}
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -613,6 +613,20 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms, timer_ref: timer_ref} = state.retry_attempts[issue_id]
     assert is_reference(timer_ref)
     assert_retry_deadline_in_range(due_at_ms, before_send_ms, 1_000, 1_500)
+  end
+
+  test "down message ignores malformed running entries without a ref" do
+    issue_id = "issue-missing-ref"
+    ref = make_ref()
+
+    state = %Orchestrator.State{
+      running: %{{issue_id, 0} => %{pid: self()}},
+      claimed: MapSet.new([{issue_id, 0}]),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    assert {:noreply, ^state} = Orchestrator.handle_info({:DOWN, ref, :process, self(), :normal}, state)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
@@ -648,15 +662,15 @@ defmodule SymphonyElixir.CoreTest do
                  workspace_path: workspace
                })
 
-      running_entry = %{
-        pid: self(),
-        ref: ref,
-        identifier: "MT-559",
-        retry_attempt: 2,
-        issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
-        workspace_path: workspace,
-        started_at: DateTime.utc_now()
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: self(),
+          ref: ref,
+          identifier: "MT-559",
+          retry_attempt: 2,
+          issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
+          workspace_path: workspace
+        })
 
       :sys.replace_state(pid, fn _ ->
         initial_state
@@ -695,13 +709,13 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
-      pid: self(),
-      ref: ref,
-      identifier: "MT-560",
-      issue: %Issue{id: issue_id, identifier: "MT-560", state: "In Progress"},
-      started_at: DateTime.utc_now()
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: ref,
+        identifier: "MT-560",
+        issue: %Issue{id: issue_id, identifier: "MT-560", state: "In Progress"}
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state

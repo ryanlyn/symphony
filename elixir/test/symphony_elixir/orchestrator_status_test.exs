@@ -59,18 +59,19 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: make_ref(),
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      turn_count: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
 
     state_with_issue =
       initial_state
@@ -141,22 +142,23 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      turn_count: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -237,23 +239,24 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      agent_kind: "claude",
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      executor_pid: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        agent_kind: "claude",
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        executor_pid: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -348,21 +351,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -421,21 +425,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -532,21 +537,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -611,21 +617,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -697,21 +704,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -769,21 +777,22 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
@@ -1085,18 +1094,19 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: make_ref(),
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      turn_count: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn state ->
       tick_token = make_ref()
@@ -1189,18 +1199,19 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: worker_pid,
-        ref: make_ref(),
-        identifier: "MT-STALL",
-        issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
-        session_id: "thread-stall-turn-stall",
-        workspace_path: workspace,
-        last_agent_message: nil,
-        last_agent_timestamp: stale_activity_at,
-        last_agent_event: :notification,
-        started_at: stale_activity_at
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: worker_pid,
+          ref: make_ref(),
+          identifier: "MT-STALL",
+          issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
+          session_id: "thread-stall-turn-stall",
+          workspace_path: workspace,
+          last_agent_message: nil,
+          last_agent_timestamp: stale_activity_at,
+          last_agent_event: :notification,
+          started_at: stale_activity_at
+        })
 
       tick_token = make_ref()
 
@@ -1283,19 +1294,20 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: worker_pid,
-        ref: make_ref(),
-        agent_kind: "claude",
-        identifier: "MT-CLAUDE-STALL",
-        issue: %Issue{id: issue_id, identifier: "MT-CLAUDE-STALL", state: "In Progress"},
-        session_id: "claude-stall",
-        workspace_path: workspace,
-        last_agent_message: nil,
-        last_agent_timestamp: stale_activity_at,
-        last_agent_event: :assistant_message,
-        started_at: stale_activity_at
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: worker_pid,
+          ref: make_ref(),
+          agent_kind: "claude",
+          identifier: "MT-CLAUDE-STALL",
+          issue: %Issue{id: issue_id, identifier: "MT-CLAUDE-STALL", state: "In Progress"},
+          session_id: "claude-stall",
+          workspace_path: workspace,
+          last_agent_message: nil,
+          last_agent_timestamp: stale_activity_at,
+          last_agent_event: :assistant_message,
+          started_at: stale_activity_at
+        })
 
       tick_token = make_ref()
 

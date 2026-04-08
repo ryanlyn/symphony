@@ -87,31 +87,16 @@ defmodule SymphonyElixir.EnsembleTest do
   end
 
   defp running_entry_for(issue_id, slot_index, overrides \\ %{}) do
-    Map.merge(
-      %{
-        pid: self(),
-        ref: make_ref(),
-        agent_kind: "codex",
-        identifier: "T-1",
-        issue: %Issue{id: issue_id, identifier: "T-1", title: "Test", state: "In Progress"},
-        slot_index: slot_index,
-        ensemble_size: 2,
-        worker_host: nil,
-        workspace_path: nil,
-        session_id: nil,
-        executor_pid: nil,
-        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-        usage_last_reported_input_tokens: 0,
-        usage_last_reported_output_tokens: 0,
-        usage_last_reported_total_tokens: 0,
-        last_agent_message: nil,
-        last_agent_timestamp: nil,
-        last_agent_event: nil,
-        turn_count: 0,
-        retry_attempt: 0,
-        started_at: DateTime.utc_now()
-      },
-      overrides
+    build_running_entry(
+      Map.merge(
+        %{
+          identifier: "T-1",
+          issue: %Issue{id: issue_id, identifier: "T-1", title: "Test", state: "In Progress"},
+          slot_index: slot_index,
+          ensemble_size: 2
+        },
+        overrides
+      )
     )
   end
 
