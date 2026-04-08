@@ -10,6 +10,12 @@ defmodule SymphonyElixir.Workspace do
 
   @type worker_host :: String.t() | nil
 
+  @doc false
+  @spec safe_identifier(String.t() | nil) :: String.t()
+  def safe_identifier(identifier) do
+    String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
+  end
+
   @spec create_for_issue(map() | String.t() | nil, worker_host(), keyword()) ::
           {:ok, Path.t()} | {:error, term()}
   def create_for_issue(issue_or_identifier, worker_host \\ nil, opts \\ []) do
@@ -266,10 +272,6 @@ defmodule SymphonyElixir.Workspace do
       {:error, reason} ->
         {:error, {:remote_home_lookup_failed, worker_host, reason}}
     end
-  end
-
-  defp safe_identifier(identifier) do
-    String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
   end
 
   defp maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
