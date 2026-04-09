@@ -141,8 +141,10 @@ defmodule SymphonyElixir.SSHTest do
     exit 0
     """)
 
-    assert {:error, {:ssh_timeout, "localhost", 10}} =
-             SSH.run("localhost", "printf ok", stderr_to_stdout: true, timeout: 10)
+    timeout_ms = 100
+
+    assert {:error, {:ssh_timeout, "localhost", ^timeout_ms}} =
+             SSH.run("localhost", "printf ok", stderr_to_stdout: true, timeout: timeout_ms)
 
     FakeSshSupport.wait_for_trace!(trace_file)
     trace = File.read!(trace_file)

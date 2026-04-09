@@ -1221,8 +1221,16 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       before_send_ms = System.monotonic_time(:millisecond)
       send(pid, {:tick, tick_token})
-      Process.sleep(100)
-      state = :sys.get_state(pid)
+
+      state =
+        wait_for_state(
+          pid,
+          fn state ->
+            not Map.has_key?(state.running, {issue_id, 0}) and
+              Map.has_key?(state.retry_attempts, issue_id)
+          end,
+          2_000
+        )
 
       refute Process.alive?(worker_pid)
       refute Map.has_key?(state.running, {issue_id, 0})
@@ -1317,8 +1325,16 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       before_send_ms = System.monotonic_time(:millisecond)
       send(pid, {:tick, tick_token})
-      Process.sleep(100)
-      state = :sys.get_state(pid)
+
+      state =
+        wait_for_state(
+          pid,
+          fn state ->
+            not Map.has_key?(state.running, {issue_id, 0}) and
+              Map.has_key?(state.retry_attempts, issue_id)
+          end,
+          2_000
+        )
 
       refute Process.alive?(worker_pid)
       refute Map.has_key?(state.running, {issue_id, 0})
@@ -2075,6 +2091,34 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         Process.sleep(5)
         do_wait_for_snapshot(pid, predicate, deadline_ms)
       end
+    end
+  end
+
+  defp wait_for_state(pid, predicate, timeout_ms) when is_function(predicate, 1) do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_for_state(pid, predicate, deadline_ms)
+  end
+
+  defp do_wait_for_state(pid, predicate, deadline_ms) do
+    timeout_ms = max(deadline_ms - System.monotonic_time(:millisecond), 1)
+
+    state =
+      try do
+        :sys.get_state(pid, min(timeout_ms, 100))
+      catch
+        :exit, _reason -> :state_unavailable
+      end
+
+    cond do
+      state != :state_unavailable and predicate.(state) ->
+        state
+
+      System.monotonic_time(:millisecond) >= deadline_ms ->
+        flunk("timed out waiting for orchestrator state: #{inspect(state)}")
+
+      true ->
+        Process.sleep(10)
+        do_wait_for_state(pid, predicate, deadline_ms)
     end
   end
 

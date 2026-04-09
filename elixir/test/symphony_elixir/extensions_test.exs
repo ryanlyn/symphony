@@ -207,6 +207,25 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert SymphonyElixir.Tracker.adapter() == Adapter
   end
 
+  test "tracker returns config errors instead of raising on invalid workflow config" do
+    write_workflow_file!(Workflow.workflow_file_path(), poll_interval_ms: %{bad: true})
+
+    assert {:error, {:invalid_workflow_config, _message}} =
+             SymphonyElixir.Tracker.fetch_candidate_issues()
+
+    assert {:error, {:invalid_workflow_config, _message}} =
+             SymphonyElixir.Tracker.fetch_issues_by_states(["Todo"])
+
+    assert {:error, {:invalid_workflow_config, _message}} =
+             SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
+
+    assert {:error, {:invalid_workflow_config, _message}} =
+             SymphonyElixir.Tracker.create_comment("issue-1", "comment")
+
+    assert {:error, {:invalid_workflow_config, _message}} =
+             SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
+  end
+
   test "linear adapter delegates reads and validates mutation responses" do
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 
