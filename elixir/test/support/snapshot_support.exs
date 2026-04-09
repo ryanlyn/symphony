@@ -56,8 +56,7 @@ defmodule SymphonyElixir.TestSupport.Snapshot do
       |> strip_ansi()
       |> normalize_content()
       |> String.split("\n")
-      |> Enum.map(&String.trim_trailing/1)
-      |> Enum.join("\n")
+      |> Enum.map_join("\n", &String.trim_trailing/1)
       |> String.trim_trailing("\n")
 
     "```text\n#{plain}\n```\n"
