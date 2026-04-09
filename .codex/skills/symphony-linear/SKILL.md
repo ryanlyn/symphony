@@ -377,6 +377,9 @@ mutation FileUpload(
 
 - Use `linear_graphql` for comment edits, uploads, and ad-hoc Linear API
   queries.
+- Do not upload `.md`, `.txt`, or other text documents as attachments unless
+  the user explicitly asks or the content is too large to reasonably inline;
+  prefer fenced code blocks in comments instead.
 - Prefer the narrowest issue lookup that matches what you already know:
   key -> identifier search -> internal id.
 - For state transitions, fetch team states first and use the exact `stateId`
