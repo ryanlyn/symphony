@@ -14,13 +14,14 @@ defmodule SymphonyElixir.Codex.Executor do
 
     runtime_settings = Keyword.get(opts, :runtime_settings)
 
-    with {:ok, app_session} <-
-           AppServer.start_session(
-             workspace,
-             worker_host: Keyword.get(opts, :worker_host),
-             resume_thread_id: resume_id,
-             runtime_settings: runtime_settings
-           ) do
+    app_server_opts =
+      [
+        worker_host: Keyword.get(opts, :worker_host),
+        resume_thread_id: resume_id
+      ]
+      |> maybe_put_runtime_settings(runtime_settings)
+
+    with {:ok, app_session} <- AppServer.start_session(workspace, app_server_opts) do
       {:ok,
        %{
          agent_kind: "codex",
@@ -80,6 +81,9 @@ defmodule SymphonyElixir.Codex.Executor do
   end
 
   defp maybe_put_executor_pid(update), do: update
+
+  defp maybe_put_runtime_settings(opts, nil), do: opts
+  defp maybe_put_runtime_settings(opts, runtime_settings), do: Keyword.put(opts, :runtime_settings, runtime_settings)
 
   defp default_on_message(_update), do: :ok
 end
