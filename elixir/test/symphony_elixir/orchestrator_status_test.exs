@@ -917,14 +917,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{polling: %{checking?: true, next_poll_in_ms: nil}} = snapshot
   end
 
-  test "orchestrator triggers an immediate poll cycle shortly after startup" do
+  test "orchestrator can defer startup polling until explicitly requested" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       poll_interval_ms: 5_000
     )
 
     orchestrator_name = Module.concat(__MODULE__, :ImmediateStartupOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name, startup_poll_delay_ms: :manual)
 
     on_exit(fn ->
       if Process.alive?(pid) do
@@ -932,18 +932,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end
     end)
 
-    assert %{polling: %{checking?: true}} =
-             wait_for_snapshot(
-               pid,
-               fn
-                 %{polling: %{checking?: true}} ->
-                   true
+    assert %{polling: %{checking?: false, next_poll_in_ms: nil, poll_interval_ms: 5_000}} =
+             GenServer.call(pid, :snapshot)
 
-                 _ ->
-                   false
-               end,
-               500
-             )
+    assert %{queued: true, coalesced: false, operations: ["poll", "reconcile"]} =
+             Orchestrator.request_refresh(orchestrator_name)
 
     assert %{
              polling: %{
@@ -962,7 +955,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
                  _ ->
                    false
                end,
-               500
+               1_000
              )
 
     assert is_integer(next_poll_in_ms)
