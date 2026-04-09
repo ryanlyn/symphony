@@ -1086,6 +1086,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
+    slot_key = {issue_id, 0}
 
     running_entry =
       build_running_entry(%{
@@ -1106,8 +1107,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       %{
         state
-        | running: %{issue_id => running_entry},
-          claimed: MapSet.put(state.claimed, issue_id),
+        | running: %{slot_key => running_entry},
+          claimed: MapSet.put(state.claimed, slot_key),
           tick_timer_ref: nil,
           tick_token: tick_token
       }
@@ -1139,8 +1140,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     state = :sys.get_state(pid)
 
     assert Process.alive?(pid)
-    assert Map.has_key?(state.running, issue_id)
-    assert MapSet.member?(state.claimed, issue_id)
+    assert Map.has_key?(state.running, slot_key)
+    assert MapSet.member?(state.claimed, slot_key)
     assert state.poll_interval_ms == initial_state.poll_interval_ms
     assert state.max_concurrent_agents == initial_state.max_concurrent_agents
     assert %{running: [%{issue_id: ^issue_id}], polling: %{poll_interval_ms: 30_000}} = snapshot
