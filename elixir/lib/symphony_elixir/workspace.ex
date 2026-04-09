@@ -24,11 +24,13 @@ defmodule SymphonyElixir.Workspace do
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
 
     try do
+      settings = Config.settings!()
       safe_id = safe_identifier(issue_context.issue_identifier)
 
-      with {:ok, workspace} <- workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host),
-           :ok <- validate_workspace_path(workspace, worker_host),
-           {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
+      with {:ok, workspace} <-
+             workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host, settings),
+           :ok <- validate_workspace_path(workspace, worker_host, settings),
+           {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host, settings),
            :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
         {:ok, workspace}
       end
@@ -39,13 +41,13 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp ensure_workspace(workspace, nil) do
+  defp ensure_workspace(workspace, nil, settings) do
     case PathSafety.ensure_directory(workspace) do
       {:ok, canonical_workspace, created?} ->
         {:ok, canonical_workspace, created?}
 
       {:error, {:path_create_failed, ^workspace, {:unsafe_symlink, _candidate_path}}} ->
-        case validate_workspace_path(workspace, nil) do
+        case validate_workspace_path(workspace, nil, settings) do
           {:error, reason} -> {:error, reason}
           :ok -> {:error, {:workspace_prepare_failed, workspace, :unsafe_symlink}}
         end
@@ -55,7 +57,7 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp ensure_workspace(workspace, worker_host) when is_binary(worker_host) do
+  defp ensure_workspace(workspace, worker_host, settings) when is_binary(worker_host) do
     script =
       [
         "set -eu",
@@ -76,7 +78,7 @@ defmodule SymphonyElixir.Workspace do
       |> Enum.reject(&(&1 == ""))
       |> Enum.join("\n")
 
-    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
+    case run_remote_command(worker_host, script, settings.hooks.timeout_ms) do
       {:ok, {output, 0}} ->
         parse_remote_workspace_output(output)
 
@@ -200,18 +202,18 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, nil)
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, nil, settings)
        when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) do
-    Config.settings!().workspace.root
+    settings.workspace.root
     |> Path.join(safe_id)
     |> maybe_append_slot_path(slot_index, ensemble_size)
     |> PathSafety.canonicalize()
   end
 
-  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host)
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host, settings)
        when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) and
               is_binary(worker_host) do
-    with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
+    with {:ok, workspace_root} <- remote_workspace_root(worker_host, settings.workspace.root) do
       {:ok, workspace_root |> Path.join(safe_id) |> maybe_append_slot_path(slot_index, ensemble_size)}
     end
   end
@@ -416,9 +418,9 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp validate_workspace_path(workspace, nil) when is_binary(workspace) do
+  defp validate_workspace_path(workspace, nil, settings) when is_binary(workspace) do
     expanded_workspace = Path.expand(workspace)
-    expanded_root = Path.expand(Config.settings!().workspace.root)
+    expanded_root = Path.expand(settings.workspace.root)
     expanded_root_prefix = expanded_root <> "/"
 
     with {:ok, canonical_workspace} <- PathSafety.canonicalize(expanded_workspace),
@@ -444,15 +446,19 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp validate_workspace_path(workspace, worker_host)
+  defp validate_workspace_path(workspace, worker_host, settings)
        when is_binary(workspace) and is_binary(worker_host) do
-    case remote_workspace_path_within_root(workspace, worker_host) do
+    case remote_workspace_path_within_root(workspace, worker_host, settings) do
       {:ok, _validated_workspace} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp remote_workspace_path_within_root(workspace, worker_host)
+  defp validate_workspace_path(workspace, worker_host) do
+    validate_workspace_path(workspace, worker_host, Config.settings!())
+  end
+
+  defp remote_workspace_path_within_root(workspace, worker_host, settings)
        when is_binary(workspace) and is_binary(worker_host) do
     cond do
       String.trim(workspace) == "" ->
@@ -462,12 +468,16 @@ defmodule SymphonyElixir.Workspace do
         {:error, {:workspace_path_unreadable, workspace, :invalid_characters}}
 
       true ->
-        with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root),
+        with {:ok, workspace_root} <- remote_workspace_root(worker_host, settings.workspace.root),
              {:ok, expanded_workspace} <-
                expand_remote_workspace_path(workspace, worker_host, workspace_root) do
           validate_remote_workspace_containment(expanded_workspace, Path.expand(workspace_root))
         end
     end
+  end
+
+  defp remote_workspace_path_within_root(workspace, worker_host) do
+    remote_workspace_path_within_root(workspace, worker_host, Config.settings!())
   end
 
   defp expand_remote_workspace_path("~", worker_host, _workspace_root) when is_binary(worker_host) do
