@@ -222,9 +222,14 @@ Use this only when completion is blocked by missing required tools or missing au
     - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
     - Never leave completed work unchecked in the plan.
     - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
-5.  Run validation/tests required for the scope.
+5.  Run validation/tests/proof-of-work required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
+    - Treat ticket-provided `Validation`/`Test Plan`/`Testing` requirements as the lowest acceptable bar, not the ceiling.
+    - Exceed that bar when there are obviously better validation, test, or proof-of-work paths.
     - Prefer a targeted proof that directly demonstrates the behavior you changed.
+    - For UX changes, prefer a short video or GIF.
+    - For UI changes, prefer screenshots in all relevant screen sizes.
+    - Prefer TUI renders when terminal output or terminal UX changed.
     - You may make temporary local proof edits to validate assumptions (for example: tweak a local build input for `make`, or hardcode a UI account / response path) when this increases confidence.
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
