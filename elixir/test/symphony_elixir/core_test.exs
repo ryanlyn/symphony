@@ -1387,6 +1387,32 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "retry attempt #2"
   end
 
+  test "in-repo WORKFLOW_ALPHA_EVOLVE.md renders correctly" do
+    workflow_path = Workflow.workflow_file_path()
+    Workflow.set_workflow_file_path(Path.expand("WORKFLOW_ALPHA_EVOLVE.md", File.cwd!()))
+
+    issue = %Issue{
+      identifier: "MT-888",
+      title: "Evolve stronger candidate selection for workflow docs",
+      description: "Render AlphaEvolve-style guidance from the selected workflow template",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-888/evolve-stronger-candidate-selection-for-workflow-docs",
+      labels: ["workflow", "ensemble:3"]
+    }
+
+    on_exit(fn -> Workflow.set_workflow_file_path(workflow_path) end)
+
+    prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 2, ensemble_size: 3)
+
+    assert prompt =~ "You are working on a Linear ticket `MT-888`"
+    assert prompt =~ "Independent population-member context:"
+    assert prompt =~ "Treat the ticket as a search problem, not a single-shot implementation task."
+    assert prompt =~ "### Candidate Ledger"
+    assert prompt =~ "Status: COMPLETE"
+    assert prompt =~ "move the ticket to `Agent Review`"
+    assert prompt =~ "retry attempt #2"
+  end
+
   test "prompt builder adds continuation guidance for retries" do
     workflow_prompt = "{% if attempt %}Retry #" <> "{{ attempt }}" <> "{% endif %}"
     write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
