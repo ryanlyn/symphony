@@ -1749,7 +1749,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute plain =~ " notification "
   end
 
-  test "status dashboard surfaces agent kind in the running row" do
+  test "status dashboard renders agent kind and stage in separate columns" do
     row =
       StatusDashboard.format_running_summary_for_test(%{
         identifier: "MT-CLAUDE",
@@ -1767,7 +1767,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
 
-    assert plain =~ "claude/running"
+    assert plain =~ "claude"
+    assert plain =~ "running"
+    refute plain =~ "claude/running"
     assert plain =~ "9999"
     assert plain =~ " 0 "
     refute plain =~ "0/2"
