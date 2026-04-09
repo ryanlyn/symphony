@@ -886,7 +886,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp truncate_plain(value, width) do
-    if byte_size(value) <= width do
+    if String.length(value) <= width do
       value
     else
       String.slice(value, 0, width - 3) <> "..."

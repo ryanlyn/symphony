@@ -1837,6 +1837,31 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert plain =~ "turn completed (completed)"
   end
 
+  test "status dashboard does not truncate multi-byte messages that fit the event width" do
+    message = String.duplicate("é", 20)
+
+    row =
+      StatusDashboard.format_running_summary_for_test(
+        %{
+          identifier: "MONO-140",
+          state: "running",
+          session_id: "thread-1",
+          executor_pid: "4242",
+          usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 12, seconds_running: 0},
+          runtime_seconds: 15,
+          last_agent_event: :notification,
+          last_agent_message: message
+        },
+        120
+      )
+
+    plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
+
+    assert plain =~ message
+    refute plain =~ "#{message}..."
+    refute plain =~ "..."
+  end
+
   test "status dashboard humanizes full codex app-server event set" do
     event_cases = [
       {"turn/started", %{"params" => %{"turn" => %{"id" => "turn-1"}}}, "turn started"},
