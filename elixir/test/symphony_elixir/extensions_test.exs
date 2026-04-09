@@ -673,6 +673,44 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "snapshot_unavailable"
   end
 
+  test "dashboard mount survives pubsub subscription failure and keeps runtime tick fallback" do
+    pubsub_child_id = Phoenix.PubSub.Supervisor
+
+    on_exit(fn ->
+      if Process.whereis(SymphonyElixir.PubSub) == nil do
+        assert {:ok, _pid} =
+                 Supervisor.restart_child(SymphonyElixir.Supervisor, pubsub_child_id)
+      end
+    end)
+
+    orchestrator_name = Module.concat(__MODULE__, :FallbackDashboardOrchestrator)
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: static_snapshot()})
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    assert is_pid(Process.whereis(SymphonyElixir.PubSub))
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, pubsub_child_id)
+    refute Process.whereis(SymphonyElixir.PubSub)
+
+    {:ok, socket} =
+      SymphonyElixirWeb.DashboardLive.mount(
+        %{},
+        %{},
+        %Phoenix.LiveView.Socket{transport_pid: self()}
+      )
+
+    assert socket.assigns.live_connected
+    assert_receive :runtime_tick, 1_100
+
+    initial_now = socket.assigns.now
+    Process.sleep(10)
+
+    {:noreply, updated_socket} =
+      SymphonyElixirWeb.DashboardLive.handle_info(:runtime_tick, socket)
+
+    assert DateTime.compare(updated_socket.assigns.now, initial_now) == :gt
+    assert_receive :runtime_tick, 1_100
+  end
+
   test "http server serves embedded assets, accepts form posts, and rejects invalid hosts" do
     spec = HttpServer.child_spec(port: 0)
     assert spec.id == HttpServer

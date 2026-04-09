@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
+  require Logger
 
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
   @runtime_tick_ms 1_000
@@ -19,8 +20,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
       |> assign(:live_connected, live_connected)
 
     if live_connected do
-      :ok = ObservabilityPubSub.subscribe()
       schedule_runtime_tick()
+      maybe_subscribe_to_updates()
     end
 
     {:ok, socket}
@@ -251,6 +252,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
+  end
+
+  defp maybe_subscribe_to_updates do
+    case ObservabilityPubSub.subscribe() do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("DashboardLive failed to subscribe to observability PubSub; using runtime_tick fallback reason=#{inspect(reason)}")
+
+        :ok
+    end
   end
 
   defp orchestrator do
