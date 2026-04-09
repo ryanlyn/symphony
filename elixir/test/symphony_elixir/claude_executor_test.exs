@@ -473,6 +473,67 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor flushes a trailing partial line before reporting port exit" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-flush-exit-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-FLUSH-EXIT")
+
+      fake_claude = Path.join(test_root, "fake-claude")
+
+      File.write!(
+        fake_claude,
+        fake_persistent_claude_script(
+          Path.join(test_root, "flush-exit.trace"),
+          "session-flush-exit",
+          """
+          case "$count" in
+            1)
+              printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"session-flush-exit","usage":{"inputTokens":1,"outputTokens":1}}'
+              printf '%s' 'diagnostic tail without newline'
+              exit 17
+              ;;
+          esac
+          """
+        )
+      )
+
+      File.chmod!(fake_claude, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: fake_claude
+      )
+
+      issue = %Issue{
+        id: "issue-claude-flush-exit",
+        identifier: "MT-CLAUDE-FLUSH-EXIT",
+        title: "Claude flush exit",
+        description: "Exercise pending output flush on port exit",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-FLUSH-EXIT",
+        labels: []
+      }
+
+      assert {:ok, session} = Executor.start_session(workspace)
+      assert {:ok, session, _result} = Executor.run_turn(session, "First turn", issue)
+      assert_port_closed(session.port)
+
+      assert {:error, {:port_exit, 17}} =
+               Executor.run_turn(session, "Second turn", issue, on_message: &send(self(), {:claude_update, &1}))
+
+      assert_receive {:claude_update, %{event: :malformed, raw: "diagnostic tail without newline"}}
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "claude executor resets turn timeout after streamed output" do
     test_root =
       Path.join(
