@@ -36,7 +36,9 @@
       "Bash(claude export:*)",
       "Bash(claude transcript:*)",
       "Bash(claude view:*)",
-      "Bash(ln:*)"
+      "Bash(ln:*)",
+      "mcp__claude_ai_Linear__get_issue",
+      "mcp__claude_ai_Linear__save_comment"
     ]
   }
 }

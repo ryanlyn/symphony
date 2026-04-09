@@ -284,7 +284,7 @@ Use this only when completion is blocked by missing required tools or missing au
    - Include a clear title, description, and acceptance criteria, assign it to the same project, link the current issue as `related`, and use `blockedBy` when the follow-up truly depends on the current issue.
    - Apply appropriate labels for the finding and issue context, but do not block on taxonomy.
 9. Record in the workpad which non-blocking findings were converted into Backlog issues versus intentionally left as comments only.
-10. All else being equal, bias toward merging
+10. Take an adversarial approach when reviewing but all else being equal, bias toward merging
 
 ## Step 4: Human Review
 
