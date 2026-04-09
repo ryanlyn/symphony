@@ -1457,6 +1457,55 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
   end
 
+  test "config deep-merges map-valued codex status overrides" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               codex: %{
+                 approval_policy: %{
+                   reject: %{
+                     sandbox_approval: true,
+                     rules: true,
+                     mcp_elicitations: true
+                   }
+                 },
+                 turn_sandbox_policy: %{
+                   mode: "workspace-write",
+                   network_access: false,
+                   nested: %{keep: true, flip: false}
+                 }
+               },
+               status_overrides: %{
+                 "In Progress" => %{
+                   codex: %{
+                     approval_policy: %{
+                       reject: %{sandbox_approval: false}
+                     },
+                     turn_sandbox_policy: %{
+                       network_access: true,
+                       nested: %{flip: true}
+                     }
+                   }
+                 }
+               }
+             })
+
+    resolved = Schema.resolve_status_override(settings, "In Progress")
+
+    assert resolved.codex.approval_policy == %{
+             "reject" => %{
+               "sandbox_approval" => false,
+               "rules" => true,
+               "mcp_elicitations" => true
+             }
+           }
+
+    assert resolved.codex.turn_sandbox_policy == %{
+             "mode" => "workspace-write",
+             "network_access" => true,
+             "nested" => %{"keep" => true, "flip" => true}
+           }
+  end
+
   test "config rejects legacy and unsupported status override keys" do
     legacy_workflow = """
     ---

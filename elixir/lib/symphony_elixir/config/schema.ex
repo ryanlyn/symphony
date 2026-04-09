@@ -657,9 +657,40 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp merge_override_section(settings, _section, nil), do: settings
 
+  defp merge_override_section(settings, :codex, override) when is_map(override) do
+    current = Map.fetch!(settings, :codex)
+
+    merged_override =
+      override
+      |> maybe_deep_merge_override_field(current, :approval_policy)
+      |> maybe_deep_merge_override_field(current, :turn_sandbox_policy)
+
+    Map.put(settings, :codex, struct(current, merged_override))
+  end
+
   defp merge_override_section(settings, section, override) when is_map(override) do
     current = Map.fetch!(settings, section)
     Map.put(settings, section, struct(current, override))
+  end
+
+  defp maybe_deep_merge_override_field(override, current, field) do
+    case {Map.get(current, field), Map.get(override, field)} do
+      {%{} = current_value, %{} = override_value} ->
+        Map.put(override, field, deep_merge_maps(current_value, override_value))
+
+      _ ->
+        override
+    end
+  end
+
+  defp deep_merge_maps(current, override) do
+    Map.merge(current, override, fn _key, current_value, override_value ->
+      if is_map(current_value) and is_map(override_value) do
+        deep_merge_maps(current_value, override_value)
+      else
+        override_value
+      end
+    end)
   end
 
   defp finalize_settings(settings) do
