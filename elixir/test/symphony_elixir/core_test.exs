@@ -1405,9 +1405,9 @@ defmodule SymphonyElixir.CoreTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2, slot_index: 2, ensemble_size: 3)
 
     assert prompt =~ "You are working on a Linear ticket `MT-888`"
-    assert prompt =~ "Independent population-member context:"
-    assert prompt =~ "Treat the ticket as a search problem, not a single-shot implementation task."
-    assert prompt =~ "### Candidate Ledger"
+    assert prompt =~ "Independent agent context:"
+    assert prompt =~ "Treat the ticket as a search problem, not a single-shot task."
+    assert prompt =~ "### Approaches"
     assert prompt =~ "Status: COMPLETE"
     assert prompt =~ "move the ticket to `Agent Review`"
     assert prompt =~ "retry attempt #2"
