@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Claude.Executor do
 
   @type session :: %{
           agent_kind: String.t(),
+          claude: map(),
           config_path: String.t(),
           metadata: map(),
           mcp_auth_token: String.t() | nil,
@@ -28,6 +29,7 @@ defmodule SymphonyElixir.Claude.Executor do
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
     start_port_fn = Keyword.get(opts, :start_port_fn, &start_port/2)
+    runtime_settings = Keyword.get(opts, :runtime_settings, Config.settings!())
 
     complete_start_session_fn =
       Keyword.get(opts, :complete_start_session_fn, &complete_start_session/3)
@@ -43,6 +45,7 @@ defmodule SymphonyElixir.Claude.Executor do
 
       base_session = %{
         agent_kind: "claude",
+        claude: runtime_settings.claude,
         config_path: config_path,
         mcp_auth_token: mcp_auth_token,
         metadata: %{},
@@ -50,7 +53,7 @@ defmodule SymphonyElixir.Claude.Executor do
         port: nil,
         resume_id: Map.get(resume_metadata, :resume_id),
         session_id: Map.get(resume_metadata, :session_id),
-        turn_timeout_ms: Config.settings!().claude.turn_timeout_ms,
+        turn_timeout_ms: runtime_settings.claude.turn_timeout_ms,
         worker_host: worker_host,
         workspace: expanded_workspace
       }
@@ -145,8 +148,7 @@ defmodule SymphonyElixir.Claude.Executor do
     end
   end
 
-  defp launch_command(session, issue) do
-    claude = Config.settings!().claude
+  defp launch_command(%{claude: claude} = session, issue) do
     argv = launch_argv(session, issue, claude)
 
     "exec #{claude.command} #{Enum.map_join(argv, " ", &Support.shell_escape/1)}"
