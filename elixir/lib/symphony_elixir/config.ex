@@ -52,16 +52,34 @@ defmodule SymphonyElixir.Config do
 
   @spec max_concurrent_agents_for_state(term()) :: pos_integer()
   def max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
-    config = settings!()
-
-    Map.get(
-      config.agent.max_concurrent_agents_by_state,
-      Schema.normalize_issue_state(state_name),
-      config.agent.max_concurrent_agents
-    )
+    settings_for_issue_state!(state_name).agent.max_concurrent_agents
   end
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
+
+  @spec settings_for_issue_state(term()) :: {:ok, Schema.t()} | {:error, term()}
+  def settings_for_issue_state(state_name) when is_binary(state_name) do
+    case settings() do
+      {:ok, settings} ->
+        {:ok, Schema.resolve_status_override(settings, state_name)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def settings_for_issue_state(_state_name), do: settings()
+
+  @spec settings_for_issue_state!(term()) :: Schema.t()
+  def settings_for_issue_state!(state_name) do
+    case settings_for_issue_state(state_name) do
+      {:ok, settings} ->
+        settings
+
+      {:error, reason} ->
+        raise ArgumentError, message: format_config_error(reason)
+    end
+  end
 
   @spec agent_kind() :: String.t()
   def agent_kind do
@@ -142,15 +160,21 @@ defmodule SymphonyElixir.Config do
           {:ok, codex_runtime_settings()} | {:error, term()}
   def codex_runtime_settings(workspace \\ nil, opts \\ []) do
     with {:ok, settings} <- settings() do
-      with {:ok, turn_sandbox_policy} <-
-             Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
-        {:ok,
-         %{
-           approval_policy: settings.codex.approval_policy,
-           thread_sandbox: settings.codex.thread_sandbox,
-           turn_sandbox_policy: turn_sandbox_policy
-         }}
-      end
+      codex_runtime_settings(settings, workspace, opts)
+    end
+  end
+
+  @spec codex_runtime_settings(Schema.t(), Path.t() | nil, keyword()) ::
+          {:ok, codex_runtime_settings()} | {:error, term()}
+  def codex_runtime_settings(%Schema{} = settings, workspace, opts) do
+    with {:ok, turn_sandbox_policy} <-
+           Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
+      {:ok,
+       %{
+         approval_policy: settings.codex.approval_policy,
+         thread_sandbox: settings.codex.thread_sandbox,
+         turn_sandbox_policy: turn_sandbox_policy
+       }}
     end
   end
 

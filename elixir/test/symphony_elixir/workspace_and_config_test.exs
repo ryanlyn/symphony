@@ -1233,21 +1233,46 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.settings!().workspace.root == Path.expand(workspace_root)
   end
 
-  test "config supports per-state max concurrent agent overrides" do
+  test "config resolves status overrides with partial per-section merges" do
     workflow = """
     ---
     agent:
+      kind: codex
       max_concurrent_agents: 10
-      max_concurrent_agents_by_state:
-        todo: 1
-        "In Progress": 4
-        "In Review": 2
+      max_turns: 20
+    codex:
+      approval_policy:
+        reject:
+          sandbox_approval: true
+          rules: true
+    claude:
+      model: "claude-opus-4-6"
+      permission_mode: "dontAsk"
+    status_overrides:
+      todo:
+        agent:
+          kind: claude
+          max_concurrent_agents: 1
+          max_turns: 8
+        claude:
+          model: "claude-sonnet-4"
+      "In Progress":
+        agent:
+          max_concurrent_agents: 4
+        codex:
+          approval_policy: "on-request"
+      "In Review":
+        agent:
+          max_concurrent_agents: 2
+        claude:
+          permission_mode: "acceptEdits"
     ---
     """
 
     File.write!(Workflow.workflow_file_path(), workflow)
 
     assert Config.settings!().agent.max_concurrent_agents == 10
+    assert Config.settings!().agent.kind == "codex"
     assert Config.max_concurrent_agents_for_state("Todo") == 1
     assert Config.max_concurrent_agents_for_state("Todo ") == 1
     assert Config.max_concurrent_agents_for_state("In Progress") == 4
@@ -1255,6 +1280,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.max_concurrent_agents_for_state("In Review") == 2
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
+
+    assert todo_settings = Config.settings_for_issue_state!("Todo")
+    assert todo_settings.agent.kind == "claude"
+    assert todo_settings.agent.max_turns == 8
+    assert todo_settings.claude.model == "claude-sonnet-4"
+    assert todo_settings.claude.permission_mode == "dontAsk"
+
+    assert in_progress_settings = Config.settings_for_issue_state!("In Progress")
+    assert in_progress_settings.agent.kind == "codex"
+    assert in_progress_settings.agent.max_concurrent_agents == 4
+    assert in_progress_settings.codex.approval_policy == "on-request"
+
+    assert in_review_settings = Config.settings_for_issue_state!("In Review")
+    assert in_review_settings.agent.kind == "codex"
+    assert in_review_settings.claude.permission_mode == "acceptEdits"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_ssh_timeout_ms: 12_345,
@@ -1265,6 +1305,58 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.ssh_timeout_ms() == 12_345
     assert Config.settings!().worker.ssh_timeout_ms == 12_345
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
+  end
+
+  test "config rejects legacy and unsupported status override keys" do
+    legacy_workflow = """
+    ---
+    agent:
+      max_concurrent_agents_by_state:
+        todo: 1
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), legacy_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "agent.max_concurrent_agents_by_state has been removed"
+
+    invalid_override_section_workflow = """
+    ---
+    status_overrides:
+      todo:
+        worker:
+          ssh_timeout_ms: 5
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), invalid_override_section_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "status_overrides.todo contains unsupported keys: worker"
+
+    invalid_override_field_workflow = """
+    ---
+    status_overrides:
+      "In Progress":
+        agent:
+          max_concurrent_agents_by_state: 2
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), invalid_override_field_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "status_overrides.in progress.agent contains unsupported keys: max_concurrent_agents_by_state"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: %{bogus: 1}}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent contains unsupported keys: bogus"
   end
 
   test "workspace create surfaces remote home ssh timeouts" do

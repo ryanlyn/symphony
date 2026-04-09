@@ -2175,6 +2175,75 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
+  test "agent runner resolves executor kind and Claude runtime settings from issue status" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-claude-agent-runner-status-override-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: _workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-STATUS-OVERRIDE")
+
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude-status-override.trace")
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          session_id='claude-status-override'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":5,\\"output_tokens\\":2}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "codex",
+        codex_command: "/definitely/missing-codex app-server",
+        claude_command: "/definitely/missing-claude",
+        status_overrides: %{
+          "Todo" => %{
+            "agent" => %{"kind" => "claude"},
+            "claude" => %{
+              "command" => claude_binary,
+              "model" => "claude-sonnet-4",
+              "permission_mode" => "acceptEdits"
+            }
+          }
+        }
+      )
+
+      issue = %Issue{
+        id: "issue-claude-status-override",
+        identifier: "MT-CLAUDE-STATUS-OVERRIDE",
+        title: "Resolved Claude status override",
+        description: "Use the status override to select Claude with override runtime settings",
+        state: "Todo",
+        url: "https://example.org/issues/MT-CLAUDE-STATUS-OVERRIDE",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "--model claude-sonnet-4"
+      assert trace =~ "--permission-mode acceptEdits"
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
   test "agent runner resumes from persisted Claude resume state" do
     test_root =
       Path.join(
@@ -2399,6 +2468,90 @@ defmodule SymphonyElixir.CoreTest do
       assert persisted["agent_kind"] == "claude"
       assert persisted["resume_id"] == "claude-new-status"
       assert persisted["issue_state"] == "In Progress"
+    after
+      System.delete_env("SYMP_TEST_CLAUDE_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner starts fresh when the resolved executor kind changed" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-kind-fresh-start-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace, canonical_workspace: canonical_workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-304")
+
+      resume_path = Path.join(workspace, ".git/symphony/resume.json")
+      claude_binary = Path.join(test_root, "fake-claude")
+      trace_file = Path.join(test_root, "claude-kind-fresh.trace")
+
+      write_resume_state_fixture!(resume_path, %{
+        "agent_kind" => "codex",
+        "resume_id" => "codex-thread-stale",
+        "thread_id" => "codex-thread-stale",
+        "issue_id" => "issue-claude-kind-fresh",
+        "issue_identifier" => "MT-CLAUDE-304",
+        "issue_state" => "Todo",
+        "workspace_path" => canonical_workspace
+      })
+
+      File.write!(
+        claude_binary,
+        fake_streaming_claude_script(
+          """
+          if printf '%s' "$*" | grep -q -- '--resume '; then
+            exit 5
+          fi
+
+          session_id='claude-kind-fresh'
+          """,
+          """
+          printf '%s\\n' "{\\"type\\":\\"system\\",\\"subtype\\":\\"init\\",\\"session_id\\":\\"$session_id\\"}"
+          printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"done\\",\\"session_id\\":\\"$session_id\\",\\"usage\\":{\\"input_tokens\\":4,\\"output_tokens\\":1}}"
+          """
+        )
+      )
+
+      File.chmod!(claude_binary, 0o755)
+      System.put_env("SYMP_TEST_CLAUDE_TRACE", trace_file)
+      on_exit(fn -> System.delete_env("SYMP_TEST_CLAUDE_TRACE") end)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "codex",
+        codex_command: "/definitely/missing-codex app-server",
+        claude_command: "/definitely/missing-claude",
+        status_overrides: %{
+          "Todo" => %{
+            "agent" => %{"kind" => "claude"},
+            "claude" => %{"command" => claude_binary}
+          }
+        }
+      )
+
+      issue = %Issue{
+        id: "issue-claude-kind-fresh",
+        identifier: "MT-CLAUDE-304",
+        title: "Fresh Claude session on executor change",
+        description: "An executor change should force a fresh Claude resume id",
+        state: "Todo",
+        url: "https://example.org/issues/MT-CLAUDE-304",
+        labels: []
+      }
+
+      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: fn _ -> {:ok, []} end)
+
+      trace = File.read!(trace_file)
+      refute trace =~ "--resume "
+
+      persisted = Jason.decode!(File.read!(resume_path))
+      assert persisted["agent_kind"] == "claude"
+      assert persisted["resume_id"] == "claude-kind-fresh"
+      assert persisted["issue_state"] == "Todo"
     after
       System.delete_env("SYMP_TEST_CLAUDE_TRACE")
       File.rm_rf(test_root)

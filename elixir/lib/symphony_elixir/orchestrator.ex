@@ -52,6 +52,7 @@ defmodule SymphonyElixir.Orchestrator do
             workspace_path: String.t() | nil,
             session_id: String.t() | nil,
             executor_pid: String.t() | nil,
+            stall_timeout_ms: non_neg_integer() | nil,
             usage_totals: usage_totals_t,
             usage_last_reported_input_tokens: non_neg_integer(),
             usage_last_reported_output_tokens: non_neg_integer(),
@@ -75,6 +76,7 @@ defmodule SymphonyElixir.Orchestrator do
               workspace_path: nil,
               session_id: nil,
               executor_pid: nil,
+              stall_timeout_ms: nil,
               usage_totals: @empty_usage_totals,
               usage_last_reported_input_tokens: 0,
               usage_last_reported_output_tokens: 0,
@@ -129,18 +131,14 @@ defmodule SymphonyElixir.Orchestrator do
     defstruct [
       :poll_interval_ms,
       :max_concurrent_agents,
-      :agent_kind,
       :max_retry_backoff_ms,
       :worker_max_concurrent_agents_per_host,
-      :codex_stall_timeout_ms,
-      :claude_stall_timeout_ms,
       :next_poll_due_at_ms,
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
       active_states: MapSet.new(),
       terminal_states: MapSet.new(),
-      max_concurrent_agents_by_state: %{},
       worker_ssh_hosts: [],
       running: %{},
       completed: MapSet.new(),
@@ -223,13 +221,9 @@ defmodule SymphonyElixir.Orchestrator do
       state
       | poll_interval_ms: settings.polling.interval_ms,
         max_concurrent_agents: settings.agent.max_concurrent_agents,
-        max_concurrent_agents_by_state: settings.agent.max_concurrent_agents_by_state,
-        agent_kind: settings.agent.kind,
         max_retry_backoff_ms: settings.agent.max_retry_backoff_ms,
         worker_ssh_hosts: settings.worker.ssh_hosts,
         worker_max_concurrent_agents_per_host: settings.worker.max_concurrent_agents_per_host,
-        codex_stall_timeout_ms: settings.codex.stall_timeout_ms,
-        claude_stall_timeout_ms: settings.claude.stall_timeout_ms,
         active_states: normalize_issue_states(settings.tracker.active_states),
         terminal_states: normalize_issue_states(settings.tracker.terminal_states)
     }
@@ -711,7 +705,9 @@ defmodule SymphonyElixir.Orchestrator do
          now,
          settings
        ) do
-    timeout_ms = agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
+    timeout_ms =
+      Map.get(running_entry, :stall_timeout_ms) ||
+        agent_stall_timeout_ms(settings, Map.get(running_entry, :agent_kind))
 
     if timeout_ms <= 0,
       do: state,
@@ -976,10 +972,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp spawn_issue_slot(%State{} = state, issue, slot_index, ensemble_size, attempt, worker_host) do
     recipient = self()
+    runtime_settings = runtime_settings_for_issue_state(issue.state)
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient,
              attempt: attempt,
+             runtime_settings: runtime_settings,
              worker_host: worker_host,
              slot_index: slot_index,
              ensemble_size: ensemble_size
@@ -998,12 +996,13 @@ defmodule SymphonyElixir.Orchestrator do
             RunningEntry.new(%{
               pid: pid,
               ref: ref,
-              agent_kind: state.agent_kind || current_or_default_runtime_settings().agent.kind,
+              agent_kind: runtime_settings.agent.kind,
               identifier: issue.identifier,
               issue: issue,
               slot_index: slot_index,
               ensemble_size: ensemble_size,
               worker_host: worker_host,
+              stall_timeout_ms: agent_stall_timeout_ms(runtime_settings, runtime_settings.agent.kind),
               retry_attempt: normalize_retry_attempt(attempt),
               started_at: DateTime.utc_now()
             })
@@ -1290,15 +1289,9 @@ defmodule SymphonyElixir.Orchestrator do
     update_running_entry(running_entry, %{key => value})
   end
 
-  defp max_concurrent_agents_for_state(%State{} = state, state_name) when is_binary(state_name) do
-    normalized_state = Schema.normalize_issue_state(state_name)
-    settings = current_or_default_runtime_settings()
-
-    Map.get(
-      state.max_concurrent_agents_by_state || settings.agent.max_concurrent_agents_by_state,
-      normalized_state,
-      state.max_concurrent_agents || settings.agent.max_concurrent_agents
-    )
+  defp max_concurrent_agents_for_state(%State{} = _state, state_name) when is_binary(state_name) do
+    runtime_settings = runtime_settings_for_issue_state(state_name)
+    runtime_settings.agent.max_concurrent_agents
   end
 
   defp max_concurrent_agents_for_state(%State{} = state, _state_name) do
@@ -1402,7 +1395,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp resolve_ensemble_size(issue) do
     case Issue.ensemble_size(issue) do
       n when is_integer(n) and n >= 1 -> n
-      _ -> Config.settings!().agent.ensemble_size
+      _ -> runtime_settings_for_issue_state(Map.get(issue, :state)).agent.ensemble_size
     end
   end
 
@@ -1421,6 +1414,13 @@ defmodule SymphonyElixir.Orchestrator do
         map_size(state.running),
       0
     )
+  end
+
+  defp runtime_settings_for_issue_state(state_name) do
+    case Config.settings_for_issue_state(state_name) do
+      {:ok, settings} -> settings
+      {:error, _reason} -> current_or_default_runtime_settings()
+    end
   end
 
   @spec request_refresh() :: map() | :unavailable
