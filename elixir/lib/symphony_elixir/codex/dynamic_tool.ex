@@ -5,9 +5,10 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Tools
 
-  @spec execute(String.t() | nil, term(), keyword()) :: map()
-  def execute(tool, arguments, opts \\ [])
+  @spec execute(String.t() | nil, term()) :: map()
+  def execute(tool, arguments), do: execute(tool, arguments, [])
 
+  @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(nil, _arguments, _opts) do
     dynamic_tool_response(false, Tools.encode_payload(missing_tool_payload()))
   end
