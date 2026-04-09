@@ -475,6 +475,13 @@ defmodule SymphonyElixir.Claude.Executor do
 
   defp normalize_stream_event(payload, raw, metadata, session) do
     session = update_session_from_payload(session, payload)
+
+    Logger.debug(fn ->
+      "Claude stream event fell back to notification for unknown type=#{inspect(Map.get(payload, "type"))} " <>
+        "#{issue_context(metadata)} session_id=#{session_log_id(session)} " <>
+        "payload=#{inspect(payload, printable_limit: 200, limit: 20)}"
+    end)
+
     update = base_update(session, metadata, :notification, payload, raw)
     {:continue, session, update}
   end
@@ -587,6 +594,15 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp issue_context(%{identifier: identifier}) when is_binary(identifier) do
+    "issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(%{issue_id: issue_id, issue_identifier: identifier})
+       when is_binary(issue_id) and is_binary(identifier) do
+    "issue_id=#{issue_id} issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(%{issue_identifier: identifier}) when is_binary(identifier) do
     "issue_identifier=#{identifier}"
   end
 

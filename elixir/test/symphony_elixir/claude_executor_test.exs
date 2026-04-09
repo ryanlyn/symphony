@@ -741,6 +741,74 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     end
   end
 
+  test "claude executor logs unknown stream event types before falling back to notification" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-claude-unknown-event-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      %{workspace_root: workspace_root, workspace: workspace} =
+        create_git_workspace!(test_root, "MT-CLAUDE-UNKNOWN")
+
+      fake_claude = Path.join(test_root, "fake-claude")
+
+      File.write!(
+        fake_claude,
+        fake_persistent_claude_script(
+          Path.join(test_root, "unknown-event.trace"),
+          "session-unknown",
+          """
+          printf '%s\\n' '{"type":"future_protocol_event","detail":"surprise"}'
+          printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"session-unknown","usage":{"inputTokens":1,"outputTokens":1}}'
+          """
+        )
+      )
+
+      File.chmod!(fake_claude, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        agent_kind: "claude",
+        claude_command: fake_claude
+      )
+
+      issue = %Issue{
+        id: "issue-claude-unknown",
+        identifier: "MT-CLAUDE-UNKNOWN",
+        title: "Claude unknown event",
+        description: "Exercise unknown Claude stream event handling",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CLAUDE-UNKNOWN",
+        labels: []
+      }
+
+      assert {:ok, session} = Executor.start_session(workspace)
+
+      log =
+        capture_log([level: :debug], fn ->
+          assert {:ok, _updated_session, %{"result" => "ok"}} =
+                   Executor.run_turn(session, "Handle the unknown event", issue, on_message: &send(self(), {:claude_update, &1}))
+        end)
+
+      assert_receive {:claude_update, %{event: :session_started, session_id: "session-unknown"}}
+      assert_receive {:claude_update, %{event: :turn_started}}
+
+      assert_receive {:claude_update, %{event: :notification, payload: %{"type" => "future_protocol_event"}}}
+
+      assert_receive {:claude_update, %{event: :turn_completed}}
+
+      assert log =~
+               "Claude stream event fell back to notification for unknown type=\"future_protocol_event\""
+
+      assert log =~ "issue_id=issue-claude-unknown issue_identifier=MT-CLAUDE-UNKNOWN"
+      assert log =~ "session_id=session-unknown"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   defp fake_persistent_claude_script(trace_file, session_id, turn_body)
        when is_binary(trace_file) and is_binary(session_id) and is_binary(turn_body) do
     """
