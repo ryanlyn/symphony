@@ -1088,6 +1088,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
+    slot_key = {issue_id, 0}
 
     running_entry =
       build_running_entry(%{

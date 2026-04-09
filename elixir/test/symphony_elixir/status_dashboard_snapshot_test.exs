@@ -169,6 +169,37 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     refute backoff_line =~ "\\n"
   end
 
+  test "backoff queue row preserves commas inside retry errors" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [
+           retry_entry(%{
+             identifier: "MONO-120",
+             attempt: 2,
+             due_in_ms: 1_500,
+             error: "first, second"
+           })
+         ],
+         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 0.0)
+
+    backoff_lines =
+      rendered
+      |> String.split("\n")
+      |> Enum.filter(&String.contains?(&1, "MONO-120"))
+
+    assert length(backoff_lines) == 1
+
+    [backoff_line] = backoff_lines
+
+    assert backoff_line =~ "error=first, second"
+  end
+
   test "snapshot fixture: unlimited credits variant" do
     snapshot_data =
       {:ok,
