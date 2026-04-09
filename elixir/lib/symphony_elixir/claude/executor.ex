@@ -186,10 +186,14 @@ defmodule SymphonyElixir.Claude.Executor do
   defp maybe_add_flag(argv, _value, _flag), do: argv
 
   defp flush_pending_messages(session, on_message) do
-    do_flush_pending_messages(session, on_message)
+    do_flush_pending_messages(session, on_message, nil)
   end
 
-  defp do_flush_pending_messages(%{port: port, pending_line: pending_line} = session, on_message) do
+  defp do_flush_pending_messages(
+         %{port: port, pending_line: pending_line} = session,
+         on_message,
+         exit_status
+       ) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         case process_nonterminal_line(
@@ -197,22 +201,38 @@ defmodule SymphonyElixir.Claude.Executor do
                pending_line <> to_string(chunk),
                on_message
              ) do
-          {:ok, session} -> do_flush_pending_messages(session, on_message)
+          {:ok, session} -> do_flush_pending_messages(session, on_message, exit_status)
           {:error, reason} -> {:error, reason}
         end
 
       {^port, {:data, {:noeol, chunk}}} ->
         do_flush_pending_messages(
           %{session | pending_line: pending_line <> to_string(chunk)},
-          on_message
+          on_message,
+          exit_status
         )
 
       {^port, {:exit_status, status}} ->
-        {:error, {:port_exit, status}}
+        do_flush_pending_messages(session, on_message, exit_status || status)
     after
       0 ->
-        {:ok, session}
+        case exit_status do
+          nil ->
+            {:ok, session}
+
+          status ->
+            case flush_pending_line(session, pending_line, on_message) do
+              {:ok, _session} -> {:error, {:port_exit, status}}
+              {:error, reason} -> {:error, reason}
+            end
+        end
     end
+  end
+
+  defp flush_pending_line(session, "", _on_message), do: {:ok, session}
+
+  defp flush_pending_line(session, pending_line, on_message) do
+    process_nonterminal_line(%{session | pending_line: ""}, pending_line, on_message)
   end
 
   defp process_nonterminal_line(session, data, on_message) do
