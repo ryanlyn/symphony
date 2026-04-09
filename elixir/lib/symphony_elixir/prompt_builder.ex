@@ -3,18 +3,14 @@ defmodule SymphonyElixir.PromptBuilder do
   Builds agent prompts from Linear issue data.
   """
 
-  alias SymphonyElixir.{Config, Workflow}
+  alias SymphonyElixir.Workflow
 
   @render_opts [strict_variables: true, strict_filters: true]
 
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
-    template =
-      Workflow.current()
-      |> prompt_template!()
-      |> parse_template!()
-
-    template
+    Workflow.current()
+    |> parsed_template!()
     |> Solid.render!(
       %{
         "attempt" => Keyword.get(opts, :attempt),
@@ -37,20 +33,15 @@ defmodule SymphonyElixir.PromptBuilder do
     }
   end
 
-  defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
+  defp parsed_template!({:ok, %{parsed_prompt_template: {:ok, template}}}), do: template
 
-  defp prompt_template!({:error, reason}) do
-    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
+  defp parsed_template!({:ok, %{parsed_prompt_template: {:error, message}} = workflow}) do
+    raise RuntimeError,
+          "template_parse_error: #{message} template=#{inspect(Workflow.effective_prompt_template(workflow))}"
   end
 
-  defp parse_template!(prompt) when is_binary(prompt) do
-    Solid.parse!(prompt)
-  rescue
-    error ->
-      reraise %RuntimeError{
-                message: "template_parse_error: #{Exception.message(error)} template=#{inspect(prompt)}"
-              },
-              __STACKTRACE__
+  defp parsed_template!({:error, reason}) do
+    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
   end
 
   defp to_solid_map(map) when is_map(map) do
@@ -65,12 +56,4 @@ defmodule SymphonyElixir.PromptBuilder do
   defp to_solid_value(value) when is_map(value), do: to_solid_map(value)
   defp to_solid_value(value) when is_list(value), do: Enum.map(value, &to_solid_value/1)
   defp to_solid_value(value), do: value
-
-  defp default_prompt(prompt) when is_binary(prompt) do
-    if String.trim(prompt) == "" do
-      Config.workflow_prompt()
-    else
-      prompt
-    end
-  end
 end

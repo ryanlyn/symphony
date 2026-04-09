@@ -8,20 +8,6 @@ defmodule SymphonyElixir.Config do
 
   @default_ssh_timeout_ms 60_000
 
-  @default_prompt_template """
-  You are working on a Linear issue.
-
-  Identifier: {{ issue.identifier }}
-  Title: {{ issue.title }}
-
-  Body:
-  {% if issue.description %}
-  {{ issue.description }}
-  {% else %}
-  No description provided.
-  {% endif %}
-  """
-
   @type codex_runtime_settings :: %{
           approval_policy: String.t() | map(),
           thread_sandbox: String.t(),
@@ -122,11 +108,11 @@ defmodule SymphonyElixir.Config do
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
     case Workflow.current() do
-      {:ok, %{prompt_template: prompt}} ->
-        if String.trim(prompt) == "", do: @default_prompt_template, else: prompt
+      {:ok, workflow} ->
+        Workflow.effective_prompt_template(workflow)
 
       _ ->
-        @default_prompt_template
+        Workflow.default_prompt_template()
     end
   end
 

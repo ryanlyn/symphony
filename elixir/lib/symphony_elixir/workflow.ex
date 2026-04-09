@@ -6,6 +6,19 @@ defmodule SymphonyElixir.Workflow do
   alias SymphonyElixir.WorkflowStore
 
   @workflow_file_name "WORKFLOW.md"
+  @default_prompt_template """
+  You are working on a Linear issue.
+
+  Identifier: {{ issue.identifier }}
+  Title: {{ issue.title }}
+
+  Body:
+  {% if issue.description %}
+  {{ issue.description }}
+  {% else %}
+  No description provided.
+  {% endif %}
+  """
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
@@ -28,11 +41,28 @@ defmodule SymphonyElixir.Workflow do
     :ok
   end
 
+  @type parsed_prompt_template :: {:ok, term()} | {:error, String.t()}
   @type loaded_workflow :: %{
           config: map(),
           prompt: String.t(),
-          prompt_template: String.t()
+          prompt_template: String.t(),
+          parsed_prompt_template: parsed_prompt_template()
         }
+
+  @spec default_prompt_template() :: String.t()
+  def default_prompt_template, do: @default_prompt_template
+
+  @spec effective_prompt_template(loaded_workflow() | String.t()) :: String.t()
+  def effective_prompt_template(%{prompt_template: prompt_template}),
+    do: effective_prompt_template(prompt_template)
+
+  def effective_prompt_template(prompt_template) when is_binary(prompt_template) do
+    if String.trim(prompt_template) == "" do
+      @default_prompt_template
+    else
+      prompt_template
+    end
+  end
 
   @spec current() :: {:ok, loaded_workflow()} | {:error, term()}
   def current do
@@ -72,7 +102,8 @@ defmodule SymphonyElixir.Workflow do
          %{
            config: front_matter,
            prompt: prompt,
-           prompt_template: prompt
+           prompt_template: prompt,
+           parsed_prompt_template: prompt |> effective_prompt_template() |> parse_prompt_template()
          }}
 
       {:error, :workflow_front_matter_not_a_map} ->
@@ -112,6 +143,12 @@ defmodule SymphonyElixir.Workflow do
         {:error, reason} -> {:error, reason}
       end
     end
+  end
+
+  defp parse_prompt_template(prompt_template) when is_binary(prompt_template) do
+    {:ok, Solid.parse!(prompt_template)}
+  rescue
+    error -> {:error, Exception.message(error)}
   end
 
   defp maybe_reload_store do

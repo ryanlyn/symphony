@@ -1,6 +1,38 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
   alias Elixir.Config.Reader, as: ElixirConfigReader
+  @solid_parse_fun String.to_atom("parse!")
+
+  defp trace_solid_parse_calls(fun) when is_function(fun, 0) do
+    :erlang.trace(self(), true, [:call])
+    :erlang.trace_pattern({Solid, @solid_parse_fun, 1}, true, [:local])
+
+    try do
+      fun.()
+      drain_solid_parse_calls(0)
+    after
+      :erlang.trace_pattern({Solid, @solid_parse_fun, 1}, false, [:local])
+      :erlang.trace(self(), false, [:call])
+      flush_trace_messages()
+    end
+  end
+
+  defp drain_solid_parse_calls(count) do
+    receive do
+      {:trace, _pid, :call, {Solid, @solid_parse_fun, [_]}} ->
+        drain_solid_parse_calls(count + 1)
+    after
+      0 -> count
+    end
+  end
+
+  defp flush_trace_messages do
+    receive do
+      {:trace, _pid, _kind, _detail} -> flush_trace_messages()
+    after
+      0 -> :ok
+    end
+  end
 
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -232,12 +264,20 @@ defmodule SymphonyElixir.CoreTest do
     assert Workflow.workflow_file_path() == app_workflow_path
   end
 
+  test "workflow prompt helpers use the default template for blank prompts" do
+    assert Workflow.effective_prompt_template("") == Workflow.default_prompt_template()
+    assert Workflow.effective_prompt_template(%{prompt_template: "   "}) == Workflow.default_prompt_template()
+    assert Workflow.effective_prompt_template(%{prompt_template: "Prompt body"}) == "Prompt body"
+  end
+
   test "workflow load accepts prompt-only files without front matter" do
     workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "PROMPT_ONLY_WORKFLOW.md")
     File.write!(workflow_path, "Prompt only\n")
 
-    assert {:ok, %{config: %{}, prompt: "Prompt only", prompt_template: "Prompt only"}} =
+    assert {:ok, %{config: %{}, prompt: "Prompt only", prompt_template: "Prompt only"} = workflow} =
              Workflow.load(workflow_path)
+
+    assert match?({:ok, _template}, workflow.parsed_prompt_template)
   end
 
   test "workflow load preserves content when front matter is unterminated" do
@@ -1092,6 +1132,28 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "attempt=3"
   end
 
+  test "prompt builder reuses cached parsed templates across repeated calls" do
+    workflow_prompt = "Ticket {{ issue.identifier }} attempt={{ attempt }}"
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
+
+    issue = %Issue{
+      identifier: "MONO-142",
+      title: "Cache parsed prompt template",
+      description: "Avoid reparsing",
+      state: "In Progress",
+      url: "https://example.org/issues/MONO-142",
+      labels: ["improvement"]
+    }
+
+    parse_calls =
+      trace_solid_parse_calls(fn ->
+        assert PromptBuilder.build_prompt(issue, attempt: 1) == "Ticket MONO-142 attempt=1"
+        assert PromptBuilder.build_prompt(issue, attempt: 2) == "Ticket MONO-142 attempt=2"
+      end)
+
+    assert parse_calls == 0
+  end
+
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
 
@@ -1216,6 +1278,25 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Identifier: MT-778"
     assert prompt =~ "Title: Handle empty body"
     assert prompt =~ "No description provided."
+  end
+
+  test "config workflow_prompt falls back to the default template when workflow is unavailable" do
+    original_workflow_path = Workflow.workflow_file_path()
+    workflow_store_pid = Process.whereis(SymphonyElixir.WorkflowStore)
+
+    on_exit(fn ->
+      Workflow.set_workflow_file_path(original_workflow_path)
+
+      if is_pid(workflow_store_pid) and is_nil(Process.whereis(SymphonyElixir.WorkflowStore)) do
+        Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
+      end
+    end)
+
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
+
+    Workflow.set_workflow_file_path(Path.join(System.tmp_dir!(), "missing-workflow-#{System.unique_integer([:positive])}.md"))
+
+    assert Config.workflow_prompt() == Workflow.default_prompt_template()
   end
 
   test "prompt builder reports workflow load failures separately from template parse errors" do
