@@ -178,6 +178,8 @@ defmodule SymphonyElixir.Codex.AppServer do
     Support.stop_port(port)
   end
 
+  def stop_session(_session), do: :ok
+
   defp start_port(workspace, nil, runtime_settings) do
     executable = System.find_executable("bash")
 
@@ -331,10 +333,8 @@ defmodule SymphonyElixir.Codex.AppServer do
          turn_sandbox_policy,
          read_timeout_ms
        ) do
-    send_message(port, %{
-      "method" => "turn/start",
-      "id" => @turn_start_id,
-      "params" => %{
+    params =
+      %{
         "threadId" => thread_id,
         "input" => [
           %{
@@ -343,10 +343,15 @@ defmodule SymphonyElixir.Codex.AppServer do
           }
         ],
         "cwd" => workspace,
-        "title" => "#{issue.identifier}: #{issue.title}",
         "approvalPolicy" => approval_policy,
         "sandboxPolicy" => turn_sandbox_policy
       }
+      |> maybe_put("title", issue_name(issue))
+
+    send_message(port, %{
+      "method" => "turn/start",
+      "id" => @turn_start_id,
+      "params" => params
     })
 
     case await_response(port, @turn_start_id, read_timeout_ms) do
@@ -1093,9 +1098,25 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> String.starts_with?("{")
   end
 
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
+  defp issue_name(%{identifier: identifier, title: title})
+       when is_binary(identifier) and is_binary(title) do
+    "#{identifier}: #{title}"
+  end
+
+  defp issue_name(%{identifier: identifier}) when is_binary(identifier), do: identifier
+  defp issue_name(_issue), do: nil
+
+  defp issue_context(%{id: issue_id, identifier: identifier})
+       when is_binary(issue_id) and is_binary(identifier) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
+
+  defp issue_context(%{id: issue_id}) when is_binary(issue_id), do: "issue_id=#{issue_id}"
+  defp issue_context(_issue), do: "issue_id=unknown"
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp emit_message(on_message, event, details, metadata) when is_function(on_message, 1) do
     message = metadata |> Map.merge(details) |> Map.put(:event, event) |> Map.put(:timestamp, DateTime.utc_now())

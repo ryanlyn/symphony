@@ -1084,8 +1084,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       url: "https://example.org/issues/MT-INVALID-TICK"
     }
 
+    slot_key = {issue_id, 0}
+
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
+    slot_key = {issue_id, 0}
 
     running_entry =
       build_running_entry(%{
@@ -1106,8 +1109,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       %{
         state
-        | running: %{issue_id => running_entry},
-          claimed: MapSet.put(state.claimed, issue_id),
+        | running: %{slot_key => running_entry},
+          claimed: MapSet.put(state.claimed, slot_key),
           tick_timer_ref: nil,
           tick_token: tick_token
       }
@@ -1139,8 +1142,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     state = :sys.get_state(pid)
 
     assert Process.alive?(pid)
-    assert Map.has_key?(state.running, issue_id)
-    assert MapSet.member?(state.claimed, issue_id)
+    assert Map.has_key?(state.running, slot_key)
+    assert MapSet.member?(state.claimed, slot_key)
     assert state.poll_interval_ms == initial_state.poll_interval_ms
     assert state.max_concurrent_agents == initial_state.max_concurrent_agents
     assert %{running: [%{issue_id: ^issue_id}], polling: %{poll_interval_ms: 30_000}} = snapshot
@@ -1749,7 +1752,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute plain =~ " notification "
   end
 
-  test "status dashboard surfaces agent kind in the running row" do
+  test "status dashboard renders agent kind and stage in separate columns" do
     row =
       StatusDashboard.format_running_summary_for_test(%{
         identifier: "MT-CLAUDE",
@@ -1767,7 +1770,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
 
-    assert plain =~ "claude/running"
+    assert plain =~ "claude"
+    assert plain =~ "running"
+    refute plain =~ "claude/running"
     assert plain =~ "9999"
     assert plain =~ " 0 "
     refute plain =~ "0/2"
@@ -1831,6 +1836,31 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert String.length(plain) == terminal_columns
     assert plain =~ "turn completed (completed)"
+  end
+
+  test "status dashboard does not truncate multi-byte messages that fit the event width" do
+    message = String.duplicate("é", 20)
+
+    row =
+      StatusDashboard.format_running_summary_for_test(
+        %{
+          identifier: "MONO-140",
+          state: "running",
+          session_id: "thread-1",
+          executor_pid: "4242",
+          usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 12, seconds_running: 0},
+          runtime_seconds: 15,
+          last_agent_event: :notification,
+          last_agent_message: message
+        },
+        120
+      )
+
+    plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
+
+    assert plain =~ message
+    refute plain =~ "#{message}..."
+    refute plain =~ "..."
   end
 
   test "status dashboard humanizes full codex app-server event set" do

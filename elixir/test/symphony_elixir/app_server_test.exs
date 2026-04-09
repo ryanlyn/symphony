@@ -1,6 +1,18 @@
 defmodule SymphonyElixir.AppServerTest do
   use SymphonyElixir.TestSupport
 
+  test "stop_session ignores partial sessions without a live port" do
+    assert :ok = AppServer.stop_session(%{port: nil})
+    assert :ok = AppServer.stop_session(%{})
+  end
+
+  test "stop_session closes open ports" do
+    port = open_idle_port!()
+
+    assert :ok = AppServer.stop_session(%{port: port})
+    assert_port_closed(port)
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(
@@ -288,6 +300,110 @@ defmodule SymphonyElixir.AppServerTest do
                    false
                  end
                end)
+      end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server tolerates missing issue fields when building turn titles" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-issue-name-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1001")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-issue-name.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-issue-name.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-issue-name"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-issue-name"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue_cases = [
+        {%{id: "issue-full", identifier: "MT-1001", title: "Keep the full title"}, "MT-1001: Keep the full title"},
+        {%{id: "issue-identifier-only", identifier: "MT-1001"}, "MT-1001"},
+        {%{id: "issue-title-only", title: "Title without identifier"}, :absent},
+        {%{id: "issue-missing-both"}, :absent}
+      ]
+
+      Enum.each(issue_cases, fn {issue, expected_title} ->
+        File.rm(trace_file)
+
+        assert {:ok, _result} = AppServer.run(workspace, "Validate malformed issue handling", issue)
+
+        turn_start_payload =
+          trace_file
+          |> File.read!()
+          |> String.split("\n", trim: true)
+          |> Enum.find_value(fn line ->
+            if String.starts_with?(line, "JSON:") do
+              payload =
+                line
+                |> String.trim_leading("JSON:")
+                |> Jason.decode!()
+
+              if payload["method"] == "turn/start", do: payload
+            end
+          end)
+
+        assert turn_start_payload
+
+        case expected_title do
+          :absent ->
+            refute Map.has_key?(turn_start_payload["params"], "title")
+
+          title ->
+            assert get_in(turn_start_payload, ["params", "title"]) == title
+        end
       end)
     after
       File.rm_rf(test_root)
@@ -1696,4 +1812,25 @@ defmodule SymphonyElixir.AppServerTest do
       File.rm_rf(test_root)
     end
   end
+
+  defp open_idle_port! do
+    executable = System.find_executable("cat") || flunk("cat executable not found")
+
+    Port.open({:spawn_executable, String.to_charlist(executable)}, [:binary, :exit_status])
+  end
+
+  defp assert_port_closed(port, attempts \\ 20)
+
+  defp assert_port_closed(port, attempts) when attempts > 0 do
+    case Port.info(port) do
+      nil ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        assert_port_closed(port, attempts - 1)
+    end
+  end
+
+  defp assert_port_closed(_port, 0), do: flunk("port remained open")
 end
