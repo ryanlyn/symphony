@@ -4,8 +4,10 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Claude.McpAuth
   alias SymphonyElixir.Linear.Adapter
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixirWeb.StaticAssets
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -351,7 +353,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "issue_identifier" => "MT-HTTP",
                  "state" => "In Progress",
                  "worker_host" => nil,
-                 "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
+                 "usage_totals" => %{
+                   "input_tokens" => 4,
+                   "output_tokens" => 8,
+                   "total_tokens" => 12,
+                   "seconds_running" => 0
+                 },
                  "workspace_path" => nil,
                  "session_id" => "thread-http",
                  "turn_count" => 7,
@@ -398,7 +405,12 @@ defmodule SymphonyElixir.ExtensionsTest do
                "agent_kind" => "claude",
                "executor_pid" => nil,
                "worker_host" => nil,
-               "usage_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 0},
+               "usage_totals" => %{
+                 "input_tokens" => 4,
+                 "output_tokens" => 8,
+                 "total_tokens" => 12,
+                 "seconds_running" => 0
+               },
                "workspace_path" => nil,
                "session_id" => "thread-http",
                "turn_count" => 7,
@@ -485,6 +497,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "dashboard bootstraps liveview from embedded static assets" do
     orchestrator_name = Module.concat(__MODULE__, :AssetOrchestrator)
+    dashboard_css_path = StaticAssets.asset_path(:dashboard_css)
+    phoenix_html_js_path = StaticAssets.asset_path(:phoenix_html_js)
+    phoenix_js_path = StaticAssets.asset_path(:phoenix_js)
+    phoenix_live_view_js_path = StaticAssets.asset_path(:phoenix_live_view_js)
 
     {:ok, _pid} =
       StaticOrchestrator.start_link(
@@ -501,29 +517,63 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
     html = html_response(get(build_conn(), "/"), 200)
-    assert html =~ "/dashboard.css"
-    assert html =~ "/vendor/phoenix_html/phoenix_html.js"
-    assert html =~ "/vendor/phoenix/phoenix.js"
-    assert html =~ "/vendor/phoenix_live_view/phoenix_live_view.js"
+    assert html =~ dashboard_css_path
+    assert html =~ phoenix_html_js_path
+    assert html =~ phoenix_js_path
+    assert html =~ phoenix_live_view_js_path
+    refute html =~ ~s(href="/dashboard.css")
+    refute html =~ ~s(src="/vendor/phoenix_html/phoenix_html.js")
+    refute html =~ ~s(src="/vendor/phoenix/phoenix.js")
+    refute html =~ ~s(src="/vendor/phoenix_live_view/phoenix_live_view.js")
     refute html =~ "/assets/app.js"
     refute html =~ "<style>"
 
-    dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
+    dashboard_css_conn = get(build_conn(), dashboard_css_path)
+
+    assert Plug.Conn.get_resp_header(dashboard_css_conn, "cache-control") == [
+             "public, max-age=31536000"
+           ]
+
+    dashboard_css = response(dashboard_css_conn, 200)
     assert dashboard_css =~ ":root {"
     assert dashboard_css =~ ".status-badge-live"
-    assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
-    assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
+    assert dashboard_css =~ ".status-badge-offline"
+    refute dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
+    refute dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
 
-    phoenix_html_js = response(get(build_conn(), "/vendor/phoenix_html/phoenix_html.js"), 200)
+    phoenix_html_js = response(get(build_conn(), phoenix_html_js_path), 200)
     assert phoenix_html_js =~ "phoenix.link.click"
 
-    phoenix_js = response(get(build_conn(), "/vendor/phoenix/phoenix.js"), 200)
+    phoenix_js = response(get(build_conn(), phoenix_js_path), 200)
     assert phoenix_js =~ "var Phoenix = (() => {"
 
     live_view_js =
-      response(get(build_conn(), "/vendor/phoenix_live_view/phoenix_live_view.js"), 200)
+      response(get(build_conn(), phoenix_live_view_js_path), 200)
 
     assert live_view_js =~ "var LiveView = (() => {"
+    assert response(get(build_conn(), "/dashboard.css"), 200) == dashboard_css
+  end
+
+  test "static asset paths are fingerprinted from embedded content" do
+    fingerprinted_path = fn stable_path, body ->
+      digest =
+        :crypto.hash(:sha256, body)
+        |> Base.encode16(case: :lower)
+        |> binary_part(0, 12)
+
+      "#{Path.rootname(stable_path)}-#{digest}#{Path.extname(stable_path)}"
+    end
+
+    for {key, stable_path, content_type} <- [
+          {:dashboard_css, "/dashboard.css", "text/css"},
+          {:phoenix_html_js, "/vendor/phoenix_html/phoenix_html.js", "application/javascript"},
+          {:phoenix_js, "/vendor/phoenix/phoenix.js", "application/javascript"},
+          {:phoenix_live_view_js, "/vendor/phoenix_live_view/phoenix_live_view.js", "application/javascript"}
+        ] do
+      assert {:ok, ^content_type, body} = StaticAssets.fetch(stable_path)
+      assert StaticAssets.asset_path(key) == fingerprinted_path.(stable_path, body)
+      assert StaticAssets.fetch(StaticAssets.asset_path(key)) == {:ok, content_type, body}
+    end
   end
 
   test "dashboard liveview renders and refreshes over pubsub" do
@@ -544,6 +594,11 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
+    disconnected_html = html_response(get(build_conn(), "/"), 200)
+    assert disconnected_html =~ "Offline"
+    assert disconnected_html =~ "status-badge-offline"
+    refute disconnected_html =~ "status-badge-live"
+
     {:ok, view, html} = live(build_conn(), "/")
     assert html =~ "Operations Dashboard"
     assert html =~ "MT-HTTP"
@@ -551,7 +606,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "rendered"
     assert html =~ "Runtime"
     assert html =~ "Live"
-    assert html =~ "Offline"
     assert html =~ "Copy ID"
     assert html =~ "Agent update"
     assert html =~ "CLAUDE"
@@ -560,7 +614,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "Refresh now"
     refute html =~ "Transport"
     assert html =~ "status-badge-live"
-    assert html =~ "status-badge-offline"
+    refute html =~ "status-badge-offline"
 
     updated_snapshot =
       put_in(snapshot.running, [
@@ -587,7 +641,12 @@ defmodule SymphonyElixir.ExtensionsTest do
             }
           },
           last_agent_timestamp: DateTime.utc_now(),
-          usage_totals: %{input_tokens: 10, output_tokens: 12, total_tokens: 22, seconds_running: 0},
+          usage_totals: %{
+            input_tokens: 10,
+            output_tokens: 12,
+            total_tokens: 22,
+            seconds_running: 0
+          },
           started_at: DateTime.utc_now()
         }
       ])
@@ -650,13 +709,16 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert response.status == 200
     assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
 
-    dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
+    dashboard_css = Req.get!("http://127.0.0.1:#{port}#{StaticAssets.asset_path(:dashboard_css)}")
     assert dashboard_css.status == 200
     assert dashboard_css.body =~ ":root {"
 
-    phoenix_js = Req.get!("http://127.0.0.1:#{port}/vendor/phoenix/phoenix.js")
+    phoenix_js = Req.get!("http://127.0.0.1:#{port}#{StaticAssets.asset_path(:phoenix_js)}")
     assert phoenix_js.status == 200
     assert phoenix_js.body =~ "var Phoenix = (() => {"
+
+    legacy_dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
+    assert legacy_dashboard_css.status == 200
 
     refresh_response =
       Req.post!("http://127.0.0.1:#{port}/api/v1/refresh",
@@ -677,6 +739,78 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert method_not_allowed_response.body["error"]["code"] == "method_not_allowed"
 
     assert {:error, _reason} = HttpServer.start_link(host: "bad host", port: 0)
+  end
+
+  test "http server preserves the configured secret key base across startups" do
+    expected_secret = String.duplicate("t", 64)
+
+    endpoint_config =
+      :symphony_elixir
+      |> Application.get_env(SymphonyElixirWeb.Endpoint, [])
+      |> Keyword.put(:secret_key_base, expected_secret)
+
+    Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+
+    Enum.each(1..2, fn _attempt ->
+      assert {:ok, pid} = HttpServer.start_link(host: "127.0.0.1", port: 0)
+
+      assert Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])[:secret_key_base] ==
+               expected_secret
+
+      assert :ok = Supervisor.stop(pid)
+    end)
+  end
+
+  test "claude MCP endpoint authorizes bearer tokens and supports multiple valid sessions" do
+    start_supervised!({HttpServer, host: "127.0.0.1", port: 0})
+    port = wait_for_bound_port()
+
+    {:ok, token_one} = McpAuth.issue_token()
+    {:ok, token_two} = McpAuth.issue_token()
+
+    tools_list_one =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [
+          {"authorization", "Bearer #{token_one}"},
+          {"content-type", "application/json"}
+        ],
+        json: %{"jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"}
+      )
+
+    assert tools_list_one.status == 200
+    assert get_in(tools_list_one.body, ["result", "tools"]) == SymphonyElixir.Tools.tool_specs()
+
+    tools_call_two =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [
+          {"authorization", "Bearer #{token_two}"},
+          {"content-type", "application/json"}
+        ],
+        json: %{
+          "jsonrpc" => "2.0",
+          "id" => 2,
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "linear_graphql",
+            "arguments" => %{}
+          }
+        }
+      )
+
+    assert tools_call_two.status == 200
+    assert get_in(tools_call_two.body, ["result", "isError"]) == true
+
+    assert get_in(tools_call_two.body, ["result", "content", Access.at(0), "text"]) =~
+             "requires a non-empty `query` string"
+
+    unauthorized =
+      Req.post!("http://127.0.0.1:#{port}/claude-mcp",
+        headers: [{"content-type", "application/json"}],
+        json: %{"jsonrpc" => "2.0", "id" => 3, "method" => "tools/list"}
+      )
+
+    assert unauthorized.status == 401
+    assert unauthorized.body["error"]["code"] == "unauthorized"
   end
 
   defp start_test_endpoint(overrides) do

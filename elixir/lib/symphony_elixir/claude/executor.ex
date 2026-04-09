@@ -2,16 +2,20 @@ defmodule SymphonyElixir.Claude.Executor do
   @moduledoc false
 
   @behaviour SymphonyElixir.AgentExecutor
+  require Logger
 
-  alias SymphonyElixir.Claude.Mcp
-  alias SymphonyElixir.{Config, SSH, WorkspaceCwd}
+  alias SymphonyElixir.AgentExecutor.Support
+  alias SymphonyElixir.Claude.{Mcp, McpAuth, McpTunnelManager}
+  alias SymphonyElixir.{Config, HttpServer, SSH, WorkspaceCwd}
 
   @port_line_bytes 1_048_576
 
   @type session :: %{
           agent_kind: String.t(),
+          claude: map(),
           config_path: String.t(),
           metadata: map(),
+          mcp_auth_token: String.t() | nil,
           pending_line: String.t(),
           port: port(),
           resume_id: String.t() | nil,
@@ -24,49 +28,83 @@ defmodule SymphonyElixir.Claude.Executor do
   @impl true
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    start_port_fn = Keyword.get(opts, :start_port_fn, &start_port/2)
+    runtime_settings = Keyword.get(opts, :runtime_settings, Config.settings!())
+
+    complete_start_session_fn =
+      Keyword.get(opts, :complete_start_session_fn, &complete_start_session/3)
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
-         {:ok, %{config_path: config_path, sidecar_path: _sidecar_path}} <-
-           Mcp.prepare(expanded_workspace, worker_host) do
+         {:ok, %{host: _host, port: local_port}} <-
+           HttpServer.ensure_started(port: Config.server_port() || 0),
+         {:ok, mcp_auth_token} <- McpAuth.issue_token(),
+         {:ok, config_path} <-
+           prepare_mcp_config(expanded_workspace, worker_host, local_port, mcp_auth_token) do
       resume_metadata = Keyword.get(opts, :resume_metadata, %{})
       issue = Keyword.get(opts, :issue)
 
       base_session = %{
         agent_kind: "claude",
+        claude: runtime_settings.claude,
         config_path: config_path,
+        mcp_auth_token: mcp_auth_token,
         metadata: %{},
         pending_line: "",
         port: nil,
         resume_id: Map.get(resume_metadata, :resume_id),
         session_id: Map.get(resume_metadata, :session_id),
-        turn_timeout_ms: Config.settings!().claude.turn_timeout_ms,
+        turn_timeout_ms: runtime_settings.claude.turn_timeout_ms,
         worker_host: worker_host,
         workspace: expanded_workspace
       }
 
-      case start_port(base_session, issue) do
-        {:ok, port, metadata} ->
-          {:ok, %{base_session | port: port, metadata: metadata}}
+      case start_started_session(base_session, issue, start_port_fn, complete_start_session_fn) do
+        {:ok, session} ->
+          {:ok, session}
 
         {:error, reason} ->
+          cleanup_mcp_resources(base_session)
           {:error, reason}
       end
     end
   end
 
   @impl true
-  def run_turn(session, prompt, _issue, opts \\ []) when is_map(session) and is_binary(prompt) do
+  def run_turn(session, prompt, issue, opts \\ []) when is_map(session) and is_binary(prompt) do
     on_message = Keyword.get(opts, :on_message, &default_on_message/1)
+    session = attach_issue_context(session, issue)
+
+    Logger.info("Claude turn started for #{issue_context(issue)} session_id=#{session_log_id(session)}")
 
     with {:ok, session} <- flush_pending_messages(session, on_message),
          {:ok, session} <- send_turn_input(session, prompt, on_message) do
-      await_turn_completion(session, on_message)
+      case await_turn_completion(session, on_message) do
+        {:ok, updated_session, result} ->
+          Logger.info("Claude turn completed for #{issue_context(issue)} session_id=#{session_log_id(updated_session)}")
+
+          {:ok, updated_session, result}
+
+        {:error, reason} = error ->
+          Logger.warning("Claude turn ended with error for #{issue_context(issue)} session_id=#{session_log_id(session)}: #{inspect(reason)}")
+
+          error
+      end
+    else
+      {:error, reason} = error ->
+        Logger.error("Claude turn failed for #{issue_context(issue)} session_id=#{session_log_id(session)}: #{inspect(reason)}")
+
+        error
     end
   end
 
   @impl true
-  def stop_session(%{port: port}) when is_port(port) do
-    stop_port(port)
+  def stop_session(%{port: port} = session) when is_port(port) do
+    Support.stop_port(port)
+    cleanup_mcp_resources(session)
+  end
+
+  def stop_session(%{mcp_auth_token: _token} = session) do
+    cleanup_mcp_resources(session)
   end
 
   def stop_session(_session), do: :ok
@@ -99,25 +137,26 @@ defmodule SymphonyElixir.Claude.Executor do
           ]
         )
 
-      {:ok, port, port_metadata(port, session.worker_host)}
+      {:ok, port, Support.port_metadata(port, :executor_pid, session.worker_host)}
     end
   end
 
   defp start_port(%{worker_host: worker_host} = session, issue) when is_binary(worker_host) do
     case SSH.start_port(worker_host, remote_launch_command(session, issue), line: @port_line_bytes) do
-      {:ok, port} -> {:ok, port, port_metadata(port, worker_host)}
+      {:ok, port} -> {:ok, port, Support.port_metadata(port, :executor_pid, worker_host)}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp launch_command(session, issue) do
-    claude = Config.settings!().claude
+  defp launch_command(%{claude: claude} = session, issue) do
     argv = launch_argv(session, issue, claude)
-    "exec #{claude.command} #{Enum.map_join(argv, " ", &SSH.shell_escape/1)}"
+
+    "exec #{claude.command} #{Enum.map_join(argv, " ", &Support.shell_escape/1)}"
   end
 
-  defp remote_launch_command(%{workspace: workspace} = session, issue) when is_binary(workspace) do
-    "cd #{SSH.shell_escape(workspace)} && #{launch_command(session, issue)}"
+  defp remote_launch_command(%{workspace: workspace} = session, issue)
+       when is_binary(workspace) do
+    "cd #{Support.shell_escape(workspace)} && #{launch_command(session, issue)}"
   end
 
   defp launch_argv(session, issue, claude) do
@@ -153,13 +192,20 @@ defmodule SymphonyElixir.Claude.Executor do
   defp do_flush_pending_messages(%{port: port, pending_line: pending_line} = session, on_message) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
-        case process_nonterminal_line(%{session | pending_line: ""}, pending_line <> to_string(chunk), on_message) do
+        case process_nonterminal_line(
+               %{session | pending_line: ""},
+               pending_line <> to_string(chunk),
+               on_message
+             ) do
           {:ok, session} -> do_flush_pending_messages(session, on_message)
           {:error, reason} -> {:error, reason}
         end
 
       {^port, {:data, {:noeol, chunk}}} ->
-        do_flush_pending_messages(%{session | pending_line: pending_line <> to_string(chunk)}, on_message)
+        do_flush_pending_messages(
+          %{session | pending_line: pending_line <> to_string(chunk)},
+          on_message
+        )
 
       {^port, {:exit_status, status}} ->
         {:error, {:port_exit, status}}
@@ -191,7 +237,9 @@ defmodule SymphonyElixir.Claude.Executor do
         end
 
       {:error, _reason} ->
-        update = base_update(session, session.metadata, :malformed, payload_string, payload_string)
+        update =
+          base_update(session, session.metadata, :malformed, payload_string, payload_string)
+
         emit_update(on_message, update)
         {:ok, %{session | pending_line: ""}}
     end
@@ -219,34 +267,30 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp await_turn_completion(session, on_message) do
-    started_at_ms = System.monotonic_time(:millisecond)
-    receive_loop(session, on_message, started_at_ms)
+    receive_loop(session, on_message)
   end
 
-  defp receive_loop(%{port: port, pending_line: pending_line} = session, on_message, started_at_ms) do
-    timeout_ms = max(1, session.turn_timeout_ms - (System.monotonic_time(:millisecond) - started_at_ms))
-
+  defp receive_loop(%{port: port, pending_line: pending_line} = session, on_message) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         handle_line(
           %{session | pending_line: ""},
           pending_line <> to_string(chunk),
-          on_message,
-          started_at_ms
+          on_message
         )
 
       {^port, {:data, {:noeol, chunk}}} ->
-        receive_loop(%{session | pending_line: pending_line <> to_string(chunk)}, on_message, started_at_ms)
+        receive_loop(%{session | pending_line: pending_line <> to_string(chunk)}, on_message)
 
       {^port, {:exit_status, status}} ->
         {:error, {:port_exit, status}}
     after
-      timeout_ms ->
+      session.turn_timeout_ms ->
         {:error, :turn_timeout}
     end
   end
 
-  defp handle_line(session, data, on_message, started_at_ms) do
+  defp handle_line(session, data, on_message) do
     payload_string = to_string(data)
 
     case Jason.decode(payload_string) do
@@ -254,7 +298,7 @@ defmodule SymphonyElixir.Claude.Executor do
         case normalize_stream_event(payload, payload_string, session.metadata, session) do
           {:continue, updated_session, update} ->
             emit_update(on_message, update)
-            receive_loop(%{updated_session | pending_line: ""}, on_message, started_at_ms)
+            receive_loop(%{updated_session | pending_line: ""}, on_message)
 
           {:done, updated_session, update, result} ->
             emit_update(on_message, update)
@@ -265,17 +309,24 @@ defmodule SymphonyElixir.Claude.Executor do
             {:error, reason}
 
           {:ignore, updated_session} ->
-            receive_loop(%{updated_session | pending_line: ""}, on_message, started_at_ms)
+            receive_loop(%{updated_session | pending_line: ""}, on_message)
         end
 
       {:error, _reason} ->
-        update = base_update(session, session.metadata, :malformed, payload_string, payload_string)
+        update =
+          base_update(session, session.metadata, :malformed, payload_string, payload_string)
+
         emit_update(on_message, update)
-        receive_loop(%{session | pending_line: ""}, on_message, started_at_ms)
+        receive_loop(%{session | pending_line: ""}, on_message)
     end
   end
 
-  defp normalize_stream_event(%{"type" => "system", "subtype" => "init"} = payload, raw, metadata, session) do
+  defp normalize_stream_event(
+         %{"type" => "system", "subtype" => "init"} = payload,
+         raw,
+         metadata,
+         session
+       ) do
     session = update_session_from_payload(session, payload)
     update = base_update(session, metadata, :session_started, payload, raw)
     {:continue, session, update}
@@ -298,7 +349,12 @@ defmodule SymphonyElixir.Claude.Executor do
     {:continue, session, update}
   end
 
-  defp normalize_stream_event(%{"type" => "user", "tool_use_result" => _} = payload, raw, metadata, session) do
+  defp normalize_stream_event(
+         %{"type" => "user", "tool_use_result" => _} = payload,
+         raw,
+         metadata,
+         session
+       ) do
     session = update_session_from_payload(session, payload)
     update = base_update(session, metadata, :tool_result, payload, raw)
     {:continue, session, update}
@@ -340,7 +396,12 @@ defmodule SymphonyElixir.Claude.Executor do
     {:continue, session, update}
   end
 
-  defp normalize_stream_event(%{"type" => "streamlined_tool_use_summary"} = payload, raw, metadata, session) do
+  defp normalize_stream_event(
+         %{"type" => "streamlined_tool_use_summary"} = payload,
+         raw,
+         metadata,
+         session
+       ) do
     session = update_session_from_payload(session, payload)
     update = base_update(session, metadata, :notification, payload, raw)
     {:continue, session, update}
@@ -364,7 +425,12 @@ defmodule SymphonyElixir.Claude.Executor do
     {:error, {:unsupported_control_protocol, payload}, update}
   end
 
-  defp normalize_stream_event(%{"type" => "control_cancel_request"} = payload, raw, metadata, session) do
+  defp normalize_stream_event(
+         %{"type" => "control_cancel_request"} = payload,
+         raw,
+         metadata,
+         session
+       ) do
     session = update_session_from_payload(session, payload)
     update = base_update(session, metadata, :notification, payload, raw)
     {:continue, session, update}
@@ -380,7 +446,12 @@ defmodule SymphonyElixir.Claude.Executor do
     {:ignore, session}
   end
 
-  defp normalize_stream_event(%{"type" => "result", "is_error" => false} = payload, raw, metadata, session) do
+  defp normalize_stream_event(
+         %{"type" => "result", "is_error" => false} = payload,
+         raw,
+         metadata,
+         session
+       ) do
     session = update_session_from_payload(session, payload)
 
     update =
@@ -408,8 +479,9 @@ defmodule SymphonyElixir.Claude.Executor do
     {:continue, session, update}
   end
 
-  defp result_error_event(%{"permission_denials" => denials}) when is_list(denials) and denials != [],
-    do: :permission_denied
+  defp result_error_event(%{"permission_denials" => denials})
+       when is_list(denials) and denials != [],
+       do: :permission_denied
 
   defp result_error_event(_payload), do: :turn_failed
 
@@ -434,6 +506,9 @@ defmodule SymphonyElixir.Claude.Executor do
       session_id: session.session_id,
       executor_pid: metadata[:executor_pid]
     }
+    |> maybe_put_metadata_field(:issue_id, metadata[:issue_id])
+    |> maybe_put_metadata_field(:issue_identifier, metadata[:issue_identifier])
+    |> maybe_put_metadata_field(:issue_title, metadata[:issue_title])
   end
 
   defp maybe_put_usage(update, payload) when is_map(update) and is_map(payload) do
@@ -444,7 +519,10 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp normalize_usage(%{"usage" => usage}) when is_map(usage), do: normalize_usage_map(usage)
-  defp normalize_usage(%{"message" => %{"usage" => usage}}) when is_map(usage), do: normalize_usage_map(usage)
+
+  defp normalize_usage(%{"message" => %{"usage" => usage}}) when is_map(usage),
+    do: normalize_usage_map(usage)
+
   defp normalize_usage(_payload), do: nil
 
   defp normalize_usage_map(usage) when is_map(usage) do
@@ -484,24 +562,110 @@ defmodule SymphonyElixir.Claude.Executor do
     end
   end
 
-  defp port_metadata(port, worker_host) when is_port(port) do
-    base_metadata =
-      case :erlang.port_info(port, :os_pid) do
-        {:os_pid, os_pid} -> %{executor_pid: Integer.to_string(os_pid)}
-        _ -> %{}
-      end
+  defp complete_start_session(base_session, port, metadata) do
+    {:ok, %{base_session | port: port, metadata: metadata}}
+  end
 
-    case worker_host do
-      host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
-      _ -> base_metadata
+  defp attach_issue_context(%{metadata: metadata} = session, issue) when is_map(metadata) do
+    %{session | metadata: Map.merge(metadata, issue_metadata(issue))}
+  end
+
+  defp attach_issue_context(session, _issue), do: session
+
+  defp issue_metadata(issue) when is_map(issue) do
+    %{}
+    |> maybe_put_metadata_field(:issue_id, Map.get(issue, :id))
+    |> maybe_put_metadata_field(:issue_identifier, Map.get(issue, :identifier))
+    |> maybe_put_metadata_field(:issue_title, Map.get(issue, :title))
+  end
+
+  defp issue_metadata(_issue), do: %{}
+
+  defp issue_context(%{id: issue_id, identifier: identifier})
+       when is_binary(issue_id) and is_binary(identifier) do
+    "issue_id=#{issue_id} issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(%{identifier: identifier}) when is_binary(identifier) do
+    "issue_identifier=#{identifier}"
+  end
+
+  defp issue_context(_issue), do: "issue=unknown"
+
+  defp session_log_id(%{session_id: session_id}) when is_binary(session_id), do: session_id
+  defp session_log_id(%{resume_id: resume_id}) when is_binary(resume_id), do: resume_id
+  defp session_log_id(_session), do: "pending"
+
+  defp maybe_put_metadata_field(metadata, _key, nil), do: metadata
+  defp maybe_put_metadata_field(metadata, _key, ""), do: metadata
+  defp maybe_put_metadata_field(metadata, key, value), do: Map.put(metadata, key, value)
+
+  defp start_started_session(base_session, issue, start_port_fn, complete_start_session_fn) do
+    case start_port_fn.(base_session, issue) do
+      {:ok, port, metadata} ->
+        with_started_port(port, fn ->
+          complete_start_session_fn.(base_session, port, metadata)
+        end)
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp stop_port(port) when is_port(port) do
-    Port.close(port)
+  defp claude_mcp_url(nil, local_port) do
+    {:ok, HttpServer.local_url(Mcp.path(), local_port)}
+  end
+
+  defp claude_mcp_url(worker_host, local_port) when is_binary(worker_host) do
+    case McpTunnelManager.acquire(worker_host, "127.0.0.1", local_port) do
+      {:ok, remote_port} ->
+        {:ok, "http://127.0.0.1:#{remote_port}#{Mcp.path()}"}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp prepare_mcp_config(expanded_workspace, worker_host, local_port, mcp_auth_token)
+       when is_binary(expanded_workspace) and is_integer(local_port) and local_port > 0 and
+              is_binary(mcp_auth_token) do
+    with {:ok, server_url} <- claude_mcp_url(worker_host, local_port),
+         {:ok, %{config_path: config_path}} <-
+           Mcp.prepare(expanded_workspace, server_url, mcp_auth_token, worker_host) do
+      {:ok, config_path}
+    else
+      {:error, reason} ->
+        if is_binary(worker_host), do: McpTunnelManager.release(worker_host)
+        McpAuth.revoke_token(mcp_auth_token)
+        {:error, reason}
+    end
+  end
+
+  defp cleanup_mcp_resources(%{mcp_auth_token: token, worker_host: worker_host}) do
+    if is_binary(token), do: McpAuth.revoke_token(token)
+    if is_binary(worker_host), do: McpTunnelManager.release(worker_host)
     :ok
+  end
+
+  defp cleanup_mcp_resources(_session), do: :ok
+
+  defp with_started_port(port, fun) when is_port(port) and is_function(fun, 0) do
+    case fun.() do
+      {:ok, session} ->
+        {:ok, session}
+
+      {:error, reason} ->
+        Support.stop_port(port)
+        {:error, reason}
+    end
+  rescue
+    exception ->
+      Support.stop_port(port)
+      reraise exception, __STACKTRACE__
   catch
-    :error, _reason -> :ok
+    kind, reason ->
+      Support.stop_port(port)
+      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp send_port_command(port, data) when is_port(port) and is_binary(data) do

@@ -92,7 +92,7 @@ defmodule SymphonyElixir.Workflow do
 
         case rest do
           ["---" | prompt_lines] -> {front, prompt_lines}
-          _ -> {front, []}
+          _ -> {[], lines}
         end
 
       _ ->

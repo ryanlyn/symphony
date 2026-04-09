@@ -8,23 +8,24 @@ defmodule SymphonyElixir.StatusDashboard do
 
   alias SymphonyElixir.{Config, HttpServer}
   alias SymphonyElixir.Orchestrator
-  alias SymphonyElixirWeb.ObservabilityPubSub
+  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub}
 
   @minimum_idle_rerender_ms 1_000
   @throughput_window_ms 5_000
   @throughput_graph_window_ms 10 * 60 * 1000
-  @throughput_graph_columns 24
-  @sparkline_blocks ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
   @running_id_width 8
+  @running_slot_width 5
+  @running_agent_width 8
   @running_stage_width 14
   @running_pid_width 8
   @running_age_width 12
   @running_tokens_width 10
   @running_session_width 14
-  @running_event_default_width 44
+  @running_event_default_width 38
   @running_event_min_width 12
-  @running_row_chrome_width 10
+  @running_row_chrome_width 12
   @default_terminal_columns 115
+  @snapshot_timeout_ms 15_000
 
   @ansi_reset IO.ANSI.reset()
   @ansi_bold IO.ANSI.bright()
@@ -33,9 +34,15 @@ defmodule SymphonyElixir.StatusDashboard do
   @ansi_dim IO.ANSI.faint()
   @ansi_green IO.ANSI.green()
   @ansi_red IO.ANSI.red()
-  @ansi_orange IO.ANSI.yellow()
+  @ansi_orange IO.ANSI.color(208)
   @ansi_yellow IO.ANSI.yellow()
   @ansi_magenta IO.ANSI.magenta()
+
+  if Mix.env() == :test do
+    @throughput_graph_columns 24
+    @sparkline_blocks ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+  end
+
   @ansi_gray IO.ANSI.light_black()
 
   defstruct [
@@ -94,6 +101,7 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
+  @impl true
   @spec init(keyword()) :: {:ok, t()}
   def init(opts) do
     refresh_ms_override = keyword_override(opts, :refresh_ms)
@@ -144,6 +152,7 @@ defmodule SymphonyElixir.StatusDashboard do
       :ok
   end
 
+  @impl true
   @spec handle_info(term(), t()) :: {:noreply, t()}
   def handle_info(:tick, %{enabled: true} = state) do
     state = refresh_runtime_config(state)
@@ -528,48 +537,66 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  @doc false
-  @spec format_timestamp_for_test(DateTime.t()) :: String.t()
-  def format_timestamp_for_test(%DateTime{} = datetime), do: format_timestamp(datetime)
+  if Mix.env() == :test do
+    @doc false
+    @spec format_timestamp_for_test(DateTime.t()) :: String.t()
+    def format_timestamp_for_test(%DateTime{} = datetime), do: format_timestamp(datetime)
 
-  @doc false
-  @spec format_snapshot_content_for_test(term(), number()) :: String.t()
-  def format_snapshot_content_for_test(snapshot_data, tps), do: format_snapshot_content(snapshot_data, tps)
+    @doc false
+    @spec format_snapshot_content_for_test(term(), number()) :: String.t()
+    def format_snapshot_content_for_test(snapshot_data, tps), do: format_snapshot_content(snapshot_data, tps)
 
-  @doc false
-  @spec format_snapshot_content_for_test(term(), number(), integer() | nil) :: String.t()
-  def format_snapshot_content_for_test(snapshot_data, tps, terminal_columns),
-    do: format_snapshot_content(snapshot_data, tps, terminal_columns)
+    @doc false
+    @spec format_snapshot_content_for_test(term(), number(), integer() | nil) :: String.t()
+    def format_snapshot_content_for_test(snapshot_data, tps, terminal_columns),
+      do: format_snapshot_content(snapshot_data, tps, terminal_columns)
 
-  @doc false
-  @spec dashboard_url_for_test(String.t(), non_neg_integer() | nil, non_neg_integer() | nil) ::
-          String.t() | nil
-  def dashboard_url_for_test(host, configured_port, bound_port),
-    do: dashboard_url(host, configured_port, bound_port)
+    @doc false
+    @spec dashboard_url_for_test(String.t(), non_neg_integer() | nil, non_neg_integer() | nil) ::
+            String.t() | nil
+    def dashboard_url_for_test(host, configured_port, bound_port),
+      do: dashboard_url(host, configured_port, bound_port)
+
+    @doc false
+    @spec snapshot_payload_for_test() :: {:ok, map()} | :error
+    def snapshot_payload_for_test, do: snapshot_payload()
+  end
 
   defp snapshot_payload do
-    if Process.whereis(Orchestrator) do
-      case Orchestrator.snapshot() do
-        %{
-          running: running,
-          retrying: retrying,
-          usage_totals: usage_totals
-        } = snapshot
-        when is_list(running) and is_list(retrying) ->
-          {:ok,
-           %{
-             running: running,
-             retrying: retrying,
-             usage_totals: usage_totals,
-             rate_limits: Map.get(snapshot, :rate_limits),
-             polling: Map.get(snapshot, :polling)
-           }}
+    case Orchestrator.snapshot(orchestrator(), @snapshot_timeout_ms) do
+      %{
+        running: running,
+        retrying: retrying,
+        usage_totals: usage_totals
+      } = snapshot
+      when is_list(running) and is_list(retrying) ->
+        {:ok,
+         %{
+           running: running,
+           retrying: retrying,
+           usage_totals: usage_totals,
+           rate_limits: Map.get(snapshot, :rate_limits),
+           polling: Map.get(snapshot, :polling)
+         }}
 
-        _ ->
-          :error
-      end
-    else
-      :error
+      _ ->
+        :error
+    end
+  end
+
+  defp orchestrator do
+    endpoint_config(:orchestrator, Orchestrator)
+  end
+
+  defp endpoint_config(key, default) do
+    case :ets.whereis(Endpoint) do
+      :undefined ->
+        :symphony_elixir
+        |> Application.get_env(Endpoint, [])
+        |> Keyword.get(key, default)
+
+      _table ->
+        Endpoint.config(key) || default
     end
   end
 
@@ -581,7 +608,7 @@ defmodule SymphonyElixir.StatusDashboard do
       ]
     else
       running
-      |> Enum.sort_by(& &1.identifier)
+      |> Enum.sort_by(&{&1.identifier, Map.get(&1, :slot_index, 0)})
       |> Enum.map(&format_running_summary(&1, running_event_width))
     end
   end
@@ -589,11 +616,14 @@ defmodule SymphonyElixir.StatusDashboard do
   # credo:disable-for-next-line
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
+    slot_index = Map.get(running_entry, :slot_index, 0)
+    slot = format_cell(to_string(slot_index), @running_slot_width)
     state = running_entry.state || "unknown"
-    agent_kind = Map.get(running_entry, :agent_kind)
+    agent_kind = running_entry |> Map.get(:agent_kind) |> agent_kind_label() |> format_cell(@running_agent_width)
 
     state_display =
-      agent_state_label(agent_kind, state)
+      state
+      |> to_string()
       |> format_cell(@running_stage_width)
 
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
@@ -633,6 +663,10 @@ defmodule SymphonyElixir.StatusDashboard do
       " ",
       colorize(issue, @ansi_cyan),
       " ",
+      colorize(slot, @ansi_gray),
+      " ",
+      colorize(agent_kind, @ansi_cyan),
+      " ",
       colorize(state_display, status_color),
       " ",
       colorize(pid, @ansi_yellow),
@@ -648,22 +682,26 @@ defmodule SymphonyElixir.StatusDashboard do
     |> Enum.join("")
   end
 
-  @doc false
-  @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
-  def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
-    do: format_running_summary(running_entry, running_event_width(terminal_columns))
+  if Mix.env() == :test do
+    @doc false
+    @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
+    def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
+      do: format_running_summary(running_entry, running_event_width(terminal_columns))
+  end
 
-  defp agent_state_label(nil, state), do: to_string(state)
-  defp agent_state_label("", state), do: to_string(state)
-  defp agent_state_label(agent_kind, state), do: "#{agent_kind}/#{state}"
+  defp agent_kind_label(nil), do: "n/a"
+  defp agent_kind_label(""), do: "n/a"
+  defp agent_kind_label(agent_kind), do: to_string(agent_kind)
 
-  @doc false
-  @spec format_tps_for_test(number()) :: String.t()
-  def format_tps_for_test(value), do: format_tps(value)
+  if Mix.env() == :test do
+    @doc false
+    @spec format_tps_for_test(number()) :: String.t()
+    def format_tps_for_test(value), do: format_tps(value)
 
-  @doc false
-  @spec tps_graph_for_test([{integer(), integer()}], integer(), integer()) :: String.t()
-  def tps_graph_for_test(samples, now_ms, current_tokens), do: tps_graph(samples, now_ms, current_tokens)
+    @doc false
+    @spec tps_graph_for_test([{integer(), integer()}], integer(), integer()) :: String.t()
+    def tps_graph_for_test(samples, now_ms, current_tokens), do: tps_graph(samples, now_ms, current_tokens)
+  end
 
   defp format_retry_rows(retrying) do
     if retrying == [] do
@@ -671,8 +709,7 @@ defmodule SymphonyElixir.StatusDashboard do
     else
       retrying
       |> Enum.sort_by(& &1.due_in_ms)
-      |> Enum.map_join(", ", &format_retry_summary/1)
-      |> String.split(", ")
+      |> Enum.map(&format_retry_summary/1)
     end
   end
 
@@ -760,6 +797,8 @@ defmodule SymphonyElixir.StatusDashboard do
     header =
       [
         format_cell("ID", @running_id_width),
+        format_cell("SLOT", @running_slot_width),
+        format_cell("AGENT", @running_agent_width),
         format_cell("STAGE", @running_stage_width),
         format_cell("PID", @running_pid_width),
         format_cell("AGE / TURN", @running_age_width),
@@ -775,12 +814,14 @@ defmodule SymphonyElixir.StatusDashboard do
   defp running_table_separator_row(running_event_width) do
     separator_width =
       @running_id_width +
+        @running_slot_width +
+        @running_agent_width +
         @running_stage_width +
         @running_pid_width +
         @running_age_width +
         @running_tokens_width +
         @running_session_width +
-        running_event_width + 6
+        running_event_width + 8
 
     "│   " <> colorize(String.duplicate("─", separator_width), @ansi_gray)
   end
@@ -796,6 +837,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp fixed_running_width do
     @running_id_width +
+      @running_slot_width +
+      @running_agent_width +
       @running_stage_width +
       @running_pid_width +
       @running_age_width +
@@ -842,7 +885,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp truncate_plain(value, width) do
-    if byte_size(value) <= width do
+    if String.length(value) <= width do
       value
     else
       String.slice(value, 0, width - 3) <> "..."
@@ -881,64 +924,66 @@ defmodule SymphonyElixir.StatusDashboard do
     |> group_thousands()
   end
 
-  defp tps_graph(samples, now_ms, current_tokens) do
-    bucket_ms = div(@throughput_graph_window_ms, @throughput_graph_columns)
-    active_bucket_start = div(now_ms, bucket_ms) * bucket_ms
-    graph_window_start = active_bucket_start - (@throughput_graph_columns - 1) * bucket_ms
+  if Mix.env() == :test do
+    defp tps_graph(samples, now_ms, current_tokens) do
+      bucket_ms = div(@throughput_graph_window_ms, @throughput_graph_columns)
+      active_bucket_start = div(now_ms, bucket_ms) * bucket_ms
+      graph_window_start = active_bucket_start - (@throughput_graph_columns - 1) * bucket_ms
 
-    rates =
-      [{now_ms, current_tokens} | samples]
-      |> prune_graph_samples(now_ms)
-      |> Enum.sort_by(&elem(&1, 0))
-      |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.map(fn [{start_ms, start_tokens}, {end_ms, end_tokens}] ->
-        elapsed_ms = end_ms - start_ms
-        delta_tokens = max(0, end_tokens - start_tokens)
-        tps = if elapsed_ms <= 0, do: 0.0, else: delta_tokens / (elapsed_ms / 1000.0)
-        {end_ms, tps}
+      rates =
+        [{now_ms, current_tokens} | samples]
+        |> prune_graph_samples(now_ms)
+        |> Enum.sort_by(&elem(&1, 0))
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.map(fn [{start_ms, start_tokens}, {end_ms, end_tokens}] ->
+          elapsed_ms = end_ms - start_ms
+          delta_tokens = max(0, end_tokens - start_tokens)
+          tps = if elapsed_ms <= 0, do: 0.0, else: delta_tokens / (elapsed_ms / 1000.0)
+          {end_ms, tps}
+        end)
+
+      bucketed_tps =
+        0..(@throughput_graph_columns - 1)
+        |> Enum.map(fn bucket_idx ->
+          bucket_start = graph_window_start + bucket_idx * bucket_ms
+          bucket_end = bucket_start + bucket_ms
+          last_bucket? = bucket_idx == @throughput_graph_columns - 1
+
+          values =
+            rates
+            |> Enum.filter(fn {timestamp, _tps} ->
+              in_bucket?(timestamp, bucket_start, bucket_end, last_bucket?)
+            end)
+            |> Enum.map(fn {_timestamp, tps} -> tps end)
+
+          if values == [] do
+            0.0
+          else
+            Enum.sum(values) / length(values)
+          end
+        end)
+
+      max_tps = Enum.max(bucketed_tps, fn -> 0.0 end)
+
+      bucketed_tps
+      |> Enum.map_join(fn value ->
+        index =
+          if max_tps <= 0 do
+            0
+          else
+            round(value / max_tps * (length(@sparkline_blocks) - 1))
+          end
+
+        Enum.at(@sparkline_blocks, index, "▁")
       end)
+    end
 
-    bucketed_tps =
-      0..(@throughput_graph_columns - 1)
-      |> Enum.map(fn bucket_idx ->
-        bucket_start = graph_window_start + bucket_idx * bucket_ms
-        bucket_end = bucket_start + bucket_ms
-        last_bucket? = bucket_idx == @throughput_graph_columns - 1
+    defp in_bucket?(timestamp, bucket_start, bucket_end, true),
+      do: timestamp >= bucket_start and timestamp <= bucket_end
 
-        values =
-          rates
-          |> Enum.filter(fn {timestamp, _tps} ->
-            in_bucket?(timestamp, bucket_start, bucket_end, last_bucket?)
-          end)
-          |> Enum.map(fn {_timestamp, tps} -> tps end)
-
-        if values == [] do
-          0.0
-        else
-          Enum.sum(values) / length(values)
-        end
-      end)
-
-    max_tps = Enum.max(bucketed_tps, fn -> 0.0 end)
-
-    bucketed_tps
-    |> Enum.map_join(fn value ->
-      index =
-        if max_tps <= 0 do
-          0
-        else
-          round(value / max_tps * (length(@sparkline_blocks) - 1))
-        end
-
-      Enum.at(@sparkline_blocks, index, "▁")
-    end)
+    defp in_bucket?(timestamp, bucket_start, bucket_end, false),
+      do: timestamp >= bucket_start and timestamp < bucket_end
   end
-
-  defp in_bucket?(timestamp, bucket_start, bucket_end, true),
-    do: timestamp >= bucket_start and timestamp <= bucket_end
-
-  defp in_bucket?(timestamp, bucket_start, bucket_end, false),
-    do: timestamp >= bucket_start and timestamp < bucket_end
 
   defp format_rate_limits(nil), do: colorize("unavailable", @ansi_gray)
 
@@ -1071,10 +1116,12 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp snapshot_total_tokens(_snapshot_data), do: 0
 
-  defp format_timestamp(datetime) do
-    datetime
-    |> DateTime.truncate(:second)
-    |> DateTime.to_string()
+  if Mix.env() == :test do
+    defp format_timestamp(datetime) do
+      datetime
+      |> DateTime.truncate(:second)
+      |> DateTime.to_string()
+    end
   end
 
   defp normalize_status_lines(content) do

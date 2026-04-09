@@ -26,6 +26,8 @@ defmodule SymphonyElixir.Application do
     children = [
       {Phoenix.PubSub, name: SymphonyElixir.PubSub},
       {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+      SymphonyElixir.Claude.McpAuth,
+      SymphonyElixir.Claude.McpTunnelManager,
       SymphonyElixir.WorkflowStore,
       SymphonyElixir.Orchestrator,
       SymphonyElixir.HttpServer,
@@ -34,7 +36,7 @@ defmodule SymphonyElixir.Application do
 
     Supervisor.start_link(
       children,
-      strategy: :one_for_one,
+      strategy: :rest_for_one,
       name: SymphonyElixir.Supervisor
     )
   end

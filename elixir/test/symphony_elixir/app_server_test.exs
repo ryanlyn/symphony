@@ -1,6 +1,18 @@
 defmodule SymphonyElixir.AppServerTest do
   use SymphonyElixir.TestSupport
 
+  test "stop_session ignores partial sessions without a live port" do
+    assert :ok = AppServer.stop_session(%{port: nil})
+    assert :ok = AppServer.stop_session(%{})
+  end
+
+  test "stop_session closes open ports" do
+    port = open_idle_port!()
+
+    assert :ok = AppServer.stop_session(%{port: port})
+    assert_port_closed(port)
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(
@@ -71,6 +83,117 @@ defmodule SymphonyElixir.AppServerTest do
 
       assert {:error, {:invalid_workspace_cwd, :symlink_escape, ^symlink_workspace, _root}} =
                AppServer.run(symlink_workspace, "guard", issue)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server uses resolved status override runtime settings when provided" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-status-override-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-STATUS-OVERRIDE")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-status-override.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-status-override.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-status-override"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-status-override"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "/definitely/missing-codex app-server",
+        status_overrides: %{
+          "In Progress" => %{
+            "codex" => %{
+              "command" => "#{codex_binary} app-server",
+              "approval_policy" => "on-request"
+            }
+          }
+        }
+      )
+
+      issue = %Issue{
+        id: "issue-status-override",
+        identifier: "MT-STATUS-OVERRIDE",
+        title: "Use resolved codex runtime settings",
+        description: "Validate AppServer uses injected status-specific codex settings",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-STATUS-OVERRIDE",
+        labels: ["backend"]
+      }
+
+      runtime_settings = Config.settings_for_issue_state!("In Progress")
+
+      assert {:ok, _result} =
+               AppServer.run(
+                 workspace,
+                 "Use the resolved codex settings",
+                 issue,
+                 runtime_settings: runtime_settings
+               )
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 line
+                 |> String.trim_leading("JSON:")
+                 |> Jason.decode!()
+                 |> then(fn payload ->
+                   payload["method"] == "thread/start" &&
+                     get_in(payload, ["params", "approvalPolicy"]) == "on-request"
+                 end)
+               else
+                 false
+               end
+             end)
     after
       File.rm_rf(test_root)
     end
@@ -177,6 +300,110 @@ defmodule SymphonyElixir.AppServerTest do
                    false
                  end
                end)
+      end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server tolerates missing issue fields when building turn titles" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-issue-name-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1001")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-issue-name.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-issue-name.trace}"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-issue-name"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-issue-name"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue_cases = [
+        {%{id: "issue-full", identifier: "MT-1001", title: "Keep the full title"}, "MT-1001: Keep the full title"},
+        {%{id: "issue-identifier-only", identifier: "MT-1001"}, "MT-1001"},
+        {%{id: "issue-title-only", title: "Title without identifier"}, :absent},
+        {%{id: "issue-missing-both"}, :absent}
+      ]
+
+      Enum.each(issue_cases, fn {issue, expected_title} ->
+        File.rm(trace_file)
+
+        assert {:ok, _result} = AppServer.run(workspace, "Validate malformed issue handling", issue)
+
+        turn_start_payload =
+          trace_file
+          |> File.read!()
+          |> String.split("\n", trim: true)
+          |> Enum.find_value(fn line ->
+            if String.starts_with?(line, "JSON:") do
+              payload =
+                line
+                |> String.trim_leading("JSON:")
+                |> Jason.decode!()
+
+              if payload["method"] == "turn/start", do: payload
+            end
+          end)
+
+        assert turn_start_payload
+
+        case expected_title do
+          :absent ->
+            refute Map.has_key?(turn_start_payload["params"], "title")
+
+          title ->
+            assert get_in(turn_start_payload, ["params", "title"]) == title
+        end
       end)
     after
       File.rm_rf(test_root)
@@ -620,7 +847,8 @@ defmodule SymphonyElixir.AppServerTest do
                    AppServer.run(workspace, "Handle dead port approval reply", issue)
         end)
 
-      assert log =~ "Codex send_message failed: port is dead"
+      assert log =~ "Codex send_message failed: port is dead" or
+               log =~ "Codex session ended with error"
     after
       File.rm_rf(test_root)
     end
@@ -1467,32 +1695,38 @@ defmodule SymphonyElixir.AppServerTest do
       File.write!(fake_ssh, """
       #!/bin/sh
       trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
-      count=0
       printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+      eval "remote_cmd=\\${$#}"
 
-      while IFS= read -r line; do
-        count=$((count + 1))
-        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+      if printf '%s' "$remote_cmd" | grep -q "fake-remote-codex app-server"; then
+        count=0
 
-        case "$count" in
-          1)
-            printf '%s\\n' '{"id":1,"result":{}}'
-            ;;
-          2)
-            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-remote"}}}'
-            ;;
-          3)
-            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-remote"}}}'
-            ;;
-          4)
-            printf '%s\\n' '{"method":"turn/completed"}'
-            exit 0
-            ;;
-          *)
-            exit 0
-            ;;
-        esac
-      done
+        while IFS= read -r line; do
+          count=$((count + 1))
+          printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+          case "$count" in
+            1)
+              printf '%s\\n' '{"id":1,"result":{}}'
+              ;;
+            2)
+              printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-remote"}}}'
+              ;;
+            3)
+              printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-remote"}}}'
+              ;;
+            4)
+              printf '%s\\n' '{"method":"turn/completed"}'
+              exit 0
+              ;;
+            *)
+              exit 0
+              ;;
+          esac
+        done
+      else
+        exec /bin/sh -c "$remote_cmd"
+      fi
       """)
 
       File.chmod!(fake_ssh, 0o755)
@@ -1523,7 +1757,14 @@ defmodule SymphonyElixir.AppServerTest do
       trace = File.read!(trace_file)
       lines = String.split(trace, "\n", trim: true)
 
-      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert Enum.any?(lines, &String.contains?(&1, "pwd -P"))
+
+      assert argv_line =
+               Enum.find(lines, fn line ->
+                 String.starts_with?(line, "ARGV:") &&
+                   String.contains?(line, "fake-remote-codex app-server")
+               end)
+
       assert argv_line =~ "-T -p 2200 worker-01 bash -lc"
       assert argv_line =~ "cd "
       assert argv_line =~ remote_workspace
@@ -1571,4 +1812,25 @@ defmodule SymphonyElixir.AppServerTest do
       File.rm_rf(test_root)
     end
   end
+
+  defp open_idle_port! do
+    executable = System.find_executable("cat") || flunk("cat executable not found")
+
+    Port.open({:spawn_executable, String.to_charlist(executable)}, [:binary, :exit_status])
+  end
+
+  defp assert_port_closed(port, attempts \\ 20)
+
+  defp assert_port_closed(port, attempts) when attempts > 0 do
+    case Port.info(port) do
+      nil ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        assert_port_closed(port, attempts - 1)
+    end
+  end
+
+  defp assert_port_closed(_port, 0), do: flunk("port remained open")
 end

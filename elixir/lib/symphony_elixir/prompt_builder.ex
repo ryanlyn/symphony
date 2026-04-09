@@ -18,11 +18,23 @@ defmodule SymphonyElixir.PromptBuilder do
     |> Solid.render!(
       %{
         "attempt" => Keyword.get(opts, :attempt),
+        "ensemble" => ensemble_context(opts),
         "issue" => issue |> Map.from_struct() |> to_solid_map()
       },
       @render_opts
     )
     |> IO.iodata_to_binary()
+  end
+
+  defp ensemble_context(opts) do
+    ensemble_size = Keyword.get(opts, :ensemble_size, 1)
+    slot_index = Keyword.get(opts, :slot_index, 0)
+
+    %{
+      "enabled" => ensemble_size > 1,
+      "slot_index" => slot_index,
+      "size" => ensemble_size
+    }
   end
 
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)

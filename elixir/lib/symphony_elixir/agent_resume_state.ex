@@ -196,18 +196,13 @@ defmodule SymphonyElixir.AgentResumeState do
   @spec encode_state(map()) :: {:ok, iodata()} | {:error, term()}
   defp encode_state(attrs) when is_map(attrs) do
     resume_id = Map.get(attrs, :resume_id) || Map.get(attrs, :thread_id)
+    agent_kind = Map.get(attrs, :agent_kind)
 
-    case resume_id do
-      value when is_binary(value) and value != "" ->
-        agent_kind =
-          case Map.get(attrs, :agent_kind) do
-            kind when is_binary(kind) and kind != "" -> kind
-            _ -> "codex"
-          end
-
+    case {resume_id, agent_kind} do
+      {value, kind} when is_binary(value) and value != "" and is_binary(kind) and kind != "" ->
         payload =
           %{
-            "agent_kind" => agent_kind,
+            "agent_kind" => kind,
             "resume_id" => value,
             "session_id" => Map.get(attrs, :session_id),
             "issue_id" => Map.get(attrs, :issue_id),
@@ -217,7 +212,7 @@ defmodule SymphonyElixir.AgentResumeState do
             "worker_host" => Map.get(attrs, :worker_host),
             "updated_at" => Map.get(attrs, :updated_at)
           }
-          |> maybe_put_thread_id(agent_kind, value)
+          |> maybe_put_thread_id(kind, value)
 
         {:ok, Jason.encode_to_iodata!(payload)}
 

@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
+  alias SymphonyElixir.AgentExecutor.Support
   alias SymphonyElixir.{Codex.DynamicTool, Config, SSH, WorkspaceCwd}
 
   @initialize_id 1
@@ -19,7 +20,10 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata: map(),
           approval_policy: String.t() | map(),
           auto_approve_requests: boolean(),
+          command: String.t(),
+          read_timeout_ms: pos_integer(),
           thread_sandbox: String.t(),
+          turn_timeout_ms: pos_integer(),
           turn_sandbox_policy: map(),
           thread_id: String.t(),
           workspace: Path.t(),
@@ -40,20 +44,31 @@ defmodule SymphonyElixir.Codex.AppServer do
   @spec start_session(Path.t(), keyword()) :: {:ok, session()} | {:error, term()}
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    runtime_settings = Keyword.get(opts, :runtime_settings, Config.settings!())
 
     with {:ok, expanded_workspace} <- WorkspaceCwd.validate(workspace, worker_host),
-         {:ok, port} <- start_port(expanded_workspace, worker_host) do
-      metadata = port_metadata(port, worker_host)
+         {:ok, port} <- start_port(expanded_workspace, worker_host, runtime_settings) do
+      metadata = Support.port_metadata(port, :codex_app_server_pid, worker_host)
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <- do_open_or_resume_session(port, expanded_workspace, session_policies, opts) do
+      with {:ok, session_policies} <- session_policies(runtime_settings, expanded_workspace, worker_host),
+           {:ok, thread_id} <-
+             do_open_or_resume_session(
+               port,
+               expanded_workspace,
+               session_policies,
+               runtime_settings.codex.read_timeout_ms,
+               opts
+             ) do
         {:ok,
          %{
            port: port,
            metadata: metadata,
            approval_policy: session_policies.approval_policy,
            auto_approve_requests: session_policies.approval_policy == "never",
+           command: runtime_settings.codex.command,
+           read_timeout_ms: runtime_settings.codex.read_timeout_ms,
            thread_sandbox: session_policies.thread_sandbox,
+           turn_timeout_ms: runtime_settings.codex.turn_timeout_ms,
            turn_sandbox_policy: session_policies.turn_sandbox_policy,
            thread_id: thread_id,
            workspace: expanded_workspace,
@@ -61,7 +76,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          }}
       else
         {:error, reason} ->
-          stop_port(port)
+          Support.stop_port(port)
           {:error, reason}
       end
     end
@@ -74,7 +89,9 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata: metadata,
           approval_policy: approval_policy,
           auto_approve_requests: auto_approve_requests,
+          read_timeout_ms: read_timeout_ms,
           turn_sandbox_policy: turn_sandbox_policy,
+          turn_timeout_ms: turn_timeout_ms,
           thread_id: thread_id,
           workspace: workspace
         },
@@ -89,7 +106,16 @@ defmodule SymphonyElixir.Codex.AppServer do
         DynamicTool.execute(tool, arguments)
       end)
 
-    case start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
+    case start_turn(
+           port,
+           thread_id,
+           prompt,
+           issue,
+           workspace,
+           approval_policy,
+           turn_sandbox_policy,
+           read_timeout_ms
+         ) do
       {:ok, turn_id} ->
         session_id = "#{thread_id}-#{turn_id}"
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
@@ -105,7 +131,14 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata
         )
 
-        case await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
+        case await_turn_completion(
+               port,
+               on_message,
+               tool_executor,
+               auto_approve_requests,
+               turn_timeout_ms,
+               read_timeout_ms
+             ) do
           {:ok, result} ->
             Logger.info("Codex session completed for #{issue_context(issue)} session_id=#{session_id}")
 
@@ -142,10 +175,12 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   @spec stop_session(session()) :: :ok
   def stop_session(%{port: port}) when is_port(port) do
-    stop_port(port)
+    Support.stop_port(port)
   end
 
-  defp start_port(workspace, nil) do
+  def stop_session(_session), do: :ok
+
+  defp start_port(workspace, nil, runtime_settings) do
     executable = System.find_executable("bash")
 
     if is_nil(executable) do
@@ -158,7 +193,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+            args: [~c"-lc", String.to_charlist(runtime_settings.codex.command)],
             env: inherited_env(),
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
@@ -169,15 +204,15 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace, worker_host) when is_binary(worker_host) do
-    remote_command = remote_launch_command(workspace)
+  defp start_port(workspace, worker_host, runtime_settings) when is_binary(worker_host) do
+    remote_command = remote_launch_command(workspace, runtime_settings)
     SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
   end
 
-  defp remote_launch_command(workspace) when is_binary(workspace) do
+  defp remote_launch_command(workspace, runtime_settings) when is_binary(workspace) do
     [
-      "cd #{shell_escape(workspace)}",
-      "exec #{Config.settings!().codex.command}"
+      "cd #{Support.shell_escape(workspace)}",
+      "exec #{runtime_settings.codex.command}"
     ]
     |> Enum.join(" && ")
   end
@@ -189,23 +224,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end)
   end
 
-  defp port_metadata(port, worker_host) when is_port(port) do
-    base_metadata =
-      case :erlang.port_info(port, :os_pid) do
-        {:os_pid, os_pid} ->
-          %{codex_app_server_pid: to_string(os_pid)}
-
-        _ ->
-          %{}
-      end
-
-    case worker_host do
-      host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
-      _ -> base_metadata
-    end
-  end
-
-  defp send_initialize(port) do
+  defp send_initialize(port, read_timeout_ms) do
     payload = %{
       "method" => "initialize",
       "id" => @initialize_id,
@@ -223,38 +242,43 @@ defmodule SymphonyElixir.Codex.AppServer do
 
     send_message(port, payload)
 
-    with {:ok, _} <- await_response(port, @initialize_id) do
+    with {:ok, _} <- await_response(port, @initialize_id, read_timeout_ms) do
       send_message(port, %{"method" => "initialized", "params" => %{}})
       :ok
     end
   end
 
-  defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+  defp session_policies(runtime_settings, workspace, nil) do
+    Config.codex_runtime_settings(runtime_settings, workspace, [])
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
-    Config.codex_runtime_settings(workspace, remote: true)
+  defp session_policies(runtime_settings, workspace, worker_host) when is_binary(worker_host) do
+    Config.codex_runtime_settings(runtime_settings, workspace, remote: true)
   end
 
-  defp do_open_or_resume_session(port, workspace, session_policies, opts) do
-    case send_initialize(port) do
-      :ok -> open_or_resume_thread(port, workspace, session_policies, opts)
+  defp do_open_or_resume_session(port, workspace, session_policies, read_timeout_ms, opts) do
+    case send_initialize(port, read_timeout_ms) do
+      :ok -> open_or_resume_thread(port, workspace, session_policies, read_timeout_ms, opts)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp open_or_resume_thread(port, workspace, session_policies, opts) do
+  defp open_or_resume_thread(port, workspace, session_policies, read_timeout_ms, opts) do
     case Keyword.get(opts, :resume_thread_id) do
       thread_id when is_binary(thread_id) and thread_id != "" ->
-        resume_thread(port, workspace, session_policies, thread_id)
+        resume_thread(port, workspace, session_policies, thread_id, read_timeout_ms)
 
       _ ->
-        start_thread(port, workspace, session_policies)
+        start_thread(port, workspace, session_policies, read_timeout_ms)
     end
   end
 
-  defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}) do
+  defp start_thread(
+         port,
+         workspace,
+         %{approval_policy: approval_policy, thread_sandbox: thread_sandbox},
+         read_timeout_ms
+       ) do
     send_message(port, %{
       "method" => "thread/start",
       "id" => @thread_start_id,
@@ -267,7 +291,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     })
 
     port
-    |> await_response(@thread_start_id)
+    |> await_response(@thread_start_id, read_timeout_ms)
     |> decode_thread_response()
   end
 
@@ -275,7 +299,8 @@ defmodule SymphonyElixir.Codex.AppServer do
          port,
          workspace,
          %{approval_policy: approval_policy, thread_sandbox: thread_sandbox},
-         thread_id
+         thread_id,
+         read_timeout_ms
        ) do
     send_message(port, %{
       "method" => "thread/resume",
@@ -290,7 +315,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     })
 
     port
-    |> await_response(@thread_resume_id)
+    |> await_response(@thread_resume_id, read_timeout_ms)
     |> decode_thread_response()
   end
 
@@ -298,11 +323,18 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp decode_thread_response({:ok, %{"thread" => thread_payload}}), do: {:error, {:invalid_thread_payload, thread_payload}}
   defp decode_thread_response(other), do: other
 
-  defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
-    send_message(port, %{
-      "method" => "turn/start",
-      "id" => @turn_start_id,
-      "params" => %{
+  defp start_turn(
+         port,
+         thread_id,
+         prompt,
+         issue,
+         workspace,
+         approval_policy,
+         turn_sandbox_policy,
+         read_timeout_ms
+       ) do
+    params =
+      %{
         "threadId" => thread_id,
         "input" => [
           %{
@@ -311,34 +343,64 @@ defmodule SymphonyElixir.Codex.AppServer do
           }
         ],
         "cwd" => workspace,
-        "title" => "#{issue.identifier}: #{issue.title}",
         "approvalPolicy" => approval_policy,
         "sandboxPolicy" => turn_sandbox_policy
       }
+      |> maybe_put("title", issue_name(issue))
+
+    send_message(port, %{
+      "method" => "turn/start",
+      "id" => @turn_start_id,
+      "params" => params
     })
 
-    case await_response(port, @turn_start_id) do
+    case await_response(port, @turn_start_id, read_timeout_ms) do
       {:ok, %{"turn" => %{"id" => turn_id}}} -> {:ok, turn_id}
       other -> other
     end
   end
 
-  defp await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
+  defp await_turn_completion(
+         port,
+         on_message,
+         tool_executor,
+         auto_approve_requests,
+         turn_timeout_ms,
+         read_timeout_ms
+       ) do
     receive_loop(
       port,
       on_message,
-      Config.settings!().codex.turn_timeout_ms,
+      turn_timeout_ms,
       "",
       tool_executor,
-      auto_approve_requests
+      auto_approve_requests,
+      read_timeout_ms
     )
   end
 
-  defp receive_loop(port, on_message, timeout_ms, pending_line, tool_executor, auto_approve_requests) do
+  defp receive_loop(
+         port,
+         on_message,
+         timeout_ms,
+         pending_line,
+         tool_executor,
+         auto_approve_requests,
+         read_timeout_ms
+       ) do
     receive do
       {^port, {:data, {:eol, chunk}}} ->
         complete_line = pending_line <> to_string(chunk)
-        handle_incoming(port, on_message, complete_line, timeout_ms, tool_executor, auto_approve_requests)
+
+        handle_incoming(
+          port,
+          on_message,
+          complete_line,
+          timeout_ms,
+          tool_executor,
+          auto_approve_requests,
+          read_timeout_ms
+        )
 
       {^port, {:data, {:noeol, chunk}}} ->
         receive_loop(
@@ -347,7 +409,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           timeout_ms,
           pending_line <> to_string(chunk),
           tool_executor,
-          auto_approve_requests
+          auto_approve_requests,
+          read_timeout_ms
         )
 
       {^port, {:exit_status, status}} ->
@@ -358,7 +421,15 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp handle_incoming(port, on_message, data, timeout_ms, tool_executor, auto_approve_requests) do
+  defp handle_incoming(
+         port,
+         on_message,
+         data,
+         timeout_ms,
+         tool_executor,
+         auto_approve_requests,
+         read_timeout_ms
+       ) do
     payload_string = to_string(data)
 
     case Jason.decode(payload_string) do
@@ -393,14 +464,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:ok, %{"method" => method} = payload}
       when is_binary(method) ->
         handle_turn_method(
-          port,
-          on_message,
+          %{
+            port: port,
+            on_message: on_message,
+            timeout_ms: timeout_ms,
+            tool_executor: tool_executor,
+            auto_approve_requests: auto_approve_requests,
+            read_timeout_ms: read_timeout_ms
+          },
           payload,
           payload_string,
-          method,
-          timeout_ms,
-          tool_executor,
-          auto_approve_requests
+          method
         )
 
       {:ok, payload} ->
@@ -414,7 +488,15 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata_from_message(port, payload)
         )
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(
+          port,
+          on_message,
+          timeout_ms,
+          "",
+          tool_executor,
+          auto_approve_requests,
+          read_timeout_ms
+        )
 
       {:error, _reason} ->
         log_non_json_stream_line(payload_string, "turn stream")
@@ -431,7 +513,15 @@ defmodule SymphonyElixir.Codex.AppServer do
           )
         end
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(
+          port,
+          on_message,
+          timeout_ms,
+          "",
+          tool_executor,
+          auto_approve_requests,
+          read_timeout_ms
+        )
     end
   end
 
@@ -449,14 +539,17 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp handle_turn_method(
-         port,
-         on_message,
+         %{
+           port: port,
+           on_message: on_message,
+           timeout_ms: timeout_ms,
+           tool_executor: tool_executor,
+           auto_approve_requests: auto_approve_requests,
+           read_timeout_ms: read_timeout_ms
+         },
          payload,
          payload_string,
-         method,
-         timeout_ms,
-         tool_executor,
-         auto_approve_requests
+         method
        ) do
     metadata = metadata_from_message(port, payload)
 
@@ -480,8 +573,19 @@ defmodule SymphonyElixir.Codex.AppServer do
 
         {:error, {:turn_input_required, payload}}
 
+      {:port_exited, status} ->
+        {:error, {:port_exit, status}}
+
       :approved ->
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+        receive_loop(
+          port,
+          on_message,
+          timeout_ms,
+          "",
+          tool_executor,
+          auto_approve_requests,
+          read_timeout_ms
+        )
 
       :approval_required ->
         emit_message(
@@ -515,7 +619,16 @@ defmodule SymphonyElixir.Codex.AppServer do
           )
 
           Logger.debug("Codex notification: #{inspect(method)}")
-          receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+
+          receive_loop(
+            port,
+            on_message,
+            timeout_ms,
+            "",
+            tool_executor,
+            auto_approve_requests,
+            read_timeout_ms
+          )
         end
     end
   end
@@ -726,16 +839,18 @@ defmodule SymphonyElixir.Codex.AppServer do
          metadata,
          true
        ) do
-    send_message(port, %{"id" => id, "result" => %{"decision" => decision}})
+    if port_open?(port) and send_message(port, %{"id" => id, "result" => %{"decision" => decision}}) do
+      emit_message(
+        on_message,
+        :approval_auto_approved,
+        %{payload: payload, raw: payload_string, decision: decision},
+        metadata
+      )
 
-    emit_message(
-      on_message,
-      :approval_auto_approved,
-      %{payload: payload, raw: payload_string, decision: decision},
-      metadata
-    )
-
-    :approved
+      :approved
+    else
+      {:port_exited, poll_port_exit_status(port)}
+    end
   end
 
   defp approve_or_require(
@@ -916,8 +1031,8 @@ defmodule SymphonyElixir.Codex.AppServer do
     String.starts_with?(normalized_label, "approve") or String.starts_with?(normalized_label, "allow")
   end
 
-  defp await_response(port, request_id) do
-    with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "")
+  defp await_response(port, request_id, read_timeout_ms) do
+    with_timeout_response(port, request_id, read_timeout_ms, "")
   end
 
   defp with_timeout_response(port, request_id, timeout_ms, pending_line) do
@@ -983,25 +1098,25 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> String.starts_with?("{")
   end
 
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
+  defp issue_name(%{identifier: identifier, title: title})
+       when is_binary(identifier) and is_binary(title) do
+    "#{identifier}: #{title}"
+  end
+
+  defp issue_name(%{identifier: identifier}) when is_binary(identifier), do: identifier
+  defp issue_name(_issue), do: nil
+
+  defp issue_context(%{id: issue_id, identifier: identifier})
+       when is_binary(issue_id) and is_binary(identifier) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
 
-  defp stop_port(port) when is_port(port) do
-    case :erlang.port_info(port) do
-      :undefined ->
-        :ok
+  defp issue_context(%{id: issue_id}) when is_binary(issue_id), do: "issue_id=#{issue_id}"
+  defp issue_context(_issue), do: "issue_id=unknown"
 
-      _ ->
-        try do
-          Port.close(port)
-          :ok
-        rescue
-          ArgumentError ->
-            :ok
-        end
-    end
-  end
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, _key, ""), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp emit_message(on_message, event, details, metadata) when is_function(on_message, 1) do
     message = metadata |> Map.merge(details) |> Map.put(:event, event) |> Map.put(:timestamp, DateTime.utc_now())
@@ -1009,7 +1124,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp metadata_from_message(port, payload) do
-    port |> port_metadata(nil) |> maybe_set_usage(payload)
+    port |> Support.port_metadata(:codex_app_server_pid, nil) |> maybe_set_usage(payload)
   end
 
   defp maybe_set_usage(metadata, payload) when is_map(payload) do
@@ -1023,10 +1138,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_set_usage(metadata, _payload), do: metadata
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
-  end
 
   defp default_on_message(_message), do: :ok
 
@@ -1053,19 +1164,52 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"
+    result = send_port_command(port, line)
 
-    unless send_port_command(port, line) do
+    unless result do
       Logger.warning("Codex send_message failed: port is dead")
     end
+
+    result
   end
 
   defp send_port_command(port, data) when is_port(port) and is_binary(data) do
-    Port.command(port, data)
-  catch
-    :error, _reason -> false
+    if port_open?(port) do
+      previous_trap_exit = Process.flag(:trap_exit, true)
+
+      result =
+        try do
+          Port.command(port, data)
+        catch
+          :error, _reason -> false
+          :exit, _reason -> false
+        end
+
+      result =
+        receive do
+          {:EXIT, ^port, _reason} -> false
+        after
+          0 -> result
+        end
+
+      Process.flag(:trap_exit, previous_trap_exit)
+      result
+    else
+      false
+    end
   end
 
   defp send_port_command(_port, _data), do: false
+
+  defp port_open?(port) when is_port(port), do: Port.info(port) != nil
+
+  defp poll_port_exit_status(port) when is_port(port) do
+    receive do
+      {^port, {:exit_status, status}} -> status
+    after
+      0 -> 0
+    end
+  end
 
   defp needs_input?(method, payload)
        when is_binary(method) and is_map(payload) do

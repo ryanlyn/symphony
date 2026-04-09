@@ -1,6 +1,20 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  defmodule StaticDashboardOrchestrator do
+    use GenServer
+
+    def start_link(opts) do
+      name = Keyword.fetch!(opts, :name)
+      snapshot = Keyword.fetch!(opts, :snapshot)
+      GenServer.start_link(__MODULE__, snapshot, name: name)
+    end
+
+    def init(snapshot), do: {:ok, snapshot}
+
+    def handle_call(:snapshot, _from, snapshot), do: {:reply, snapshot, snapshot}
+  end
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -45,23 +59,24 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: make_ref(),
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      turn_count: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
 
     state_with_issue =
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
 
     :sys.replace_state(pid, fn _ -> state_with_issue end)
 
@@ -127,27 +142,28 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      turn_count: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -223,28 +239,29 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      agent_kind: "claude",
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      executor_pid: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        agent_kind: "claude",
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        executor_pid: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -334,26 +351,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -407,26 +425,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     now = DateTime.utc_now()
@@ -518,26 +537,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     rate_limits = %{
@@ -597,26 +617,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -683,26 +704,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     for usage <- [
@@ -755,26 +777,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
-      pid: self(),
-      ref: process_ref,
-      identifier: issue.identifier,
-      issue: issue,
-      session_id: nil,
-      last_agent_message: nil,
-      last_agent_timestamp: nil,
-      last_agent_event: nil,
-      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      usage_last_reported_input_tokens: 0,
-      usage_last_reported_output_tokens: 0,
-      usage_last_reported_total_tokens: 0,
-      started_at: started_at
-    }
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+        usage_last_reported_input_tokens: 0,
+        usage_last_reported_output_tokens: 0,
+        usage_last_reported_total_tokens: 0,
+        started_at: started_at
+      })
 
     :sys.replace_state(pid, fn _ ->
       initial_state
-      |> Map.put(:running, %{issue_id => running_entry})
-      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
     end)
 
     send(
@@ -894,14 +917,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{polling: %{checking?: true, next_poll_in_ms: nil}} = snapshot
   end
 
-  test "orchestrator triggers an immediate poll cycle shortly after startup" do
+  test "orchestrator can defer startup polling until explicitly requested" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       poll_interval_ms: 5_000
     )
 
     orchestrator_name = Module.concat(__MODULE__, :ImmediateStartupOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name, startup_poll_delay_ms: :manual)
 
     on_exit(fn ->
       if Process.alive?(pid) do
@@ -909,18 +932,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end
     end)
 
-    assert %{polling: %{checking?: true}} =
-             wait_for_snapshot(
-               pid,
-               fn
-                 %{polling: %{checking?: true}} ->
-                   true
+    assert %{polling: %{checking?: false, next_poll_in_ms: nil, poll_interval_ms: 5_000}} =
+             GenServer.call(pid, :snapshot)
 
-                 _ ->
-                   false
-               end,
-               500
-             )
+    assert %{queued: true, coalesced: false, operations: ["poll", "reconcile"]} =
+             Orchestrator.request_refresh(orchestrator_name)
 
     assert %{
              polling: %{
@@ -939,7 +955,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
                  _ ->
                    false
                end,
-               500
+               1_000
              )
 
     assert is_integer(next_poll_in_ms)
@@ -995,6 +1011,144 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert next_poll_in_ms <= 50
   end
 
+  test "orchestrator stays alive when startup workflow config is invalid" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      poll_interval_ms: %{bad: true}
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :InvalidStartupConfigOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    snapshot =
+      wait_for_snapshot(
+        pid,
+        fn
+          %{polling: %{checking?: false, poll_interval_ms: 30_000, next_poll_in_ms: next_poll_in_ms}}
+          when is_integer(next_poll_in_ms) and next_poll_in_ms <= 30_000 ->
+            true
+
+          _ ->
+            false
+        end,
+        500
+      )
+
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(pid)
+    assert state.poll_interval_ms == 30_000
+    assert state.max_concurrent_agents == 10
+    assert %{polling: %{poll_interval_ms: 30_000, checking?: false}} = snapshot
+  end
+
+  test "orchestrator keeps running state when tick refresh sees invalid workflow config" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      poll_interval_ms: 30_000
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :InvalidTickConfigOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    wait_for_snapshot(
+      pid,
+      fn
+        %{polling: %{checking?: false}} -> true
+        _ -> false
+      end,
+      500
+    )
+
+    issue_id = "issue-invalid-tick"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-INVALID-TICK",
+      title: "Invalid tick config",
+      description: "Keep running state alive",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-INVALID-TICK"
+    }
+
+    slot_key = {issue_id, 0}
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+    slot_key = {issue_id, 0}
+
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: make_ref(),
+        identifier: issue.identifier,
+        issue: issue,
+        session_id: nil,
+        turn_count: 0,
+        last_agent_message: nil,
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        started_at: started_at
+      })
+
+    :sys.replace_state(pid, fn state ->
+      tick_token = make_ref()
+
+      %{
+        state
+        | running: %{slot_key => running_entry},
+          claimed: MapSet.put(state.claimed, slot_key),
+          tick_timer_ref: nil,
+          tick_token: tick_token
+      }
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "memory",
+      tracker_api_token: nil,
+      poll_interval_ms: %{bad: true}
+    )
+
+    tick_token = :sys.get_state(pid).tick_token
+    send(pid, {:tick, tick_token})
+
+    snapshot =
+      wait_for_snapshot(
+        pid,
+        fn
+          %{running: [running_snapshot], polling: %{checking?: false, poll_interval_ms: 30_000}}
+          when running_snapshot.issue_id == issue_id ->
+            true
+
+          _ ->
+            false
+        end,
+        500
+      )
+
+    state = :sys.get_state(pid)
+
+    assert Process.alive?(pid)
+    assert Map.has_key?(state.running, slot_key)
+    assert MapSet.member?(state.claimed, slot_key)
+    assert state.poll_interval_ms == initial_state.poll_interval_ms
+    assert state.max_concurrent_agents == initial_state.max_concurrent_agents
+    assert %{running: [%{issue_id: ^issue_id}], polling: %{poll_interval_ms: 30_000}} = snapshot
+  end
+
   test "orchestrator restarts stalled workers with retry backoff" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1030,6 +1184,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       assert :ok =
                SymphonyElixir.AgentResumeState.write(workspace, %{
+                 agent_kind: "codex",
                  thread_id: "thread-stall",
                  issue_id: issue_id,
                  issue_identifier: "MT-STALL",
@@ -1040,44 +1195,48 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: worker_pid,
-        ref: make_ref(),
-        identifier: "MT-STALL",
-        issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
-        session_id: "thread-stall-turn-stall",
-        workspace_path: workspace,
-        last_agent_message: nil,
-        last_agent_timestamp: stale_activity_at,
-        last_agent_event: :notification,
-        started_at: stale_activity_at
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: worker_pid,
+          ref: make_ref(),
+          identifier: "MT-STALL",
+          issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
+          session_id: "thread-stall-turn-stall",
+          workspace_path: workspace,
+          last_agent_message: nil,
+          last_agent_timestamp: stale_activity_at,
+          last_agent_event: :notification,
+          started_at: stale_activity_at
+        })
+
+      tick_token = make_ref()
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
+        |> Map.put(:tick_timer_ref, nil)
+        |> Map.put(:tick_token, tick_token)
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
-      send(pid, :tick)
+      before_send_ms = System.monotonic_time(:millisecond)
+      send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 
       refute Process.alive?(worker_pid)
-      refute Map.has_key?(state.running, issue_id)
+      refute Map.has_key?(state.running, {issue_id, 0})
 
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      assert is_integer(due_at_ms)
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_150
+      assert is_reference(timer_ref)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 10_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1131,44 +1290,49 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
-        pid: worker_pid,
-        ref: make_ref(),
-        agent_kind: "claude",
-        identifier: "MT-CLAUDE-STALL",
-        issue: %Issue{id: issue_id, identifier: "MT-CLAUDE-STALL", state: "In Progress"},
-        session_id: "claude-stall",
-        workspace_path: workspace,
-        last_agent_message: nil,
-        last_agent_timestamp: stale_activity_at,
-        last_agent_event: :assistant_message,
-        started_at: stale_activity_at
-      }
+      running_entry =
+        build_running_entry(%{
+          pid: worker_pid,
+          ref: make_ref(),
+          agent_kind: "claude",
+          identifier: "MT-CLAUDE-STALL",
+          issue: %Issue{id: issue_id, identifier: "MT-CLAUDE-STALL", state: "In Progress"},
+          session_id: "claude-stall",
+          workspace_path: workspace,
+          last_agent_message: nil,
+          last_agent_timestamp: stale_activity_at,
+          last_agent_event: :assistant_message,
+          started_at: stale_activity_at
+        })
+
+      tick_token = make_ref()
 
       :sys.replace_state(pid, fn _ ->
         initial_state
-        |> Map.put(:running, %{issue_id => running_entry})
-        |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        |> Map.put(:running, %{{issue_id, 0} => running_entry})
+        |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
+        |> Map.put(:tick_timer_ref, nil)
+        |> Map.put(:tick_token, tick_token)
       end)
 
-      tick_sent_at_ms = System.monotonic_time(:millisecond)
-      send(pid, :tick)
+      before_send_ms = System.monotonic_time(:millisecond)
+      send(pid, {:tick, tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 
       refute Process.alive?(worker_pid)
-      refute Map.has_key?(state.running, issue_id)
+      refute Map.has_key?(state.running, {issue_id, 0})
 
       assert %{
                attempt: 1,
                due_at_ms: due_at_ms,
+               timer_ref: timer_ref,
                identifier: "MT-CLAUDE-STALL",
                error: "stalled for " <> _
              } = state.retry_attempts[issue_id]
 
-      scheduled_delay_ms = due_at_ms - tick_sent_at_ms
-      assert scheduled_delay_ms >= 10_000
-      assert scheduled_delay_ms <= 10_250
+      assert is_reference(timer_ref)
+      assert_retry_deadline_in_range(due_at_ms, before_send_ms, 10_000, 10_500)
       refute File.exists?(resume_path)
     after
       File.rm_rf(test_root)
@@ -1339,23 +1503,97 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert rendered |> String.split("\n") |> List.last() == "╰─"
   end
 
-  test "status dashboard coalesces rapid updates to one render per interval" do
-    dashboard_name = Module.concat(__MODULE__, :RenderDashboard)
-    parent = self()
-    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+  test "status dashboard uses configured endpoint orchestrator" do
+    orchestrator_name = Module.concat(__MODULE__, :ConfiguredDashboardOrchestrator)
+    endpoint_config = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])
+    default_orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
-      if is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
+      Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+
+      if is_pid(default_orchestrator_pid) and is_nil(Process.whereis(SymphonyElixir.Orchestrator)) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
+          :ignore -> :ok
+          {:error, :not_found} -> :ok
         end
       end
     end)
 
-    if is_pid(orchestrator_pid) do
+    if is_pid(default_orchestrator_pid) do
       assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
     end
+
+    snapshot = %{
+      running: [
+        %{
+          identifier: "MT-CUSTOM",
+          state: "running",
+          session_id: "thread-custom",
+          executor_pid: "1234",
+          usage_totals: %{input_tokens: 1, output_tokens: 2, total_tokens: 3, seconds_running: 0},
+          runtime_seconds: 5,
+          turn_count: 1,
+          last_agent_event: :notification,
+          last_agent_message: nil
+        }
+      ],
+      retrying: [],
+      usage_totals: %{input_tokens: 1, output_tokens: 2, total_tokens: 3, seconds_running: 5},
+      rate_limits: nil
+    }
+
+    {:ok, orchestrator_pid} =
+      StaticDashboardOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+
+    on_exit(fn ->
+      if Process.alive?(orchestrator_pid) do
+        Process.exit(orchestrator_pid, :normal)
+      end
+    end)
+
+    Application.put_env(
+      :symphony_elixir,
+      SymphonyElixirWeb.Endpoint,
+      Keyword.put(endpoint_config, :orchestrator, orchestrator_name)
+    )
+
+    assert {:ok, rendered_snapshot} = StatusDashboard.snapshot_payload_for_test()
+    assert [%{identifier: "MT-CUSTOM"}] = rendered_snapshot.running
+  end
+
+  test "status dashboard coalesces rapid updates to one render per interval" do
+    dashboard_name = Module.concat(__MODULE__, :RenderDashboard)
+    orchestrator_name = Module.concat(__MODULE__, :RenderDashboardOrchestrator)
+    parent = self()
+    endpoint_config = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, [])
+
+    snapshot = %{
+      running: [],
+      retrying: [],
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      rate_limits: nil
+    }
+
+    on_exit(fn ->
+      Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
+    end)
+
+    {:ok, orchestrator_pid} =
+      StaticDashboardOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+
+    Application.put_env(
+      :symphony_elixir,
+      SymphonyElixirWeb.Endpoint,
+      Keyword.put(endpoint_config, :orchestrator, orchestrator_name)
+    )
+
+    on_exit(fn ->
+      if Process.alive?(orchestrator_pid) do
+        Process.exit(orchestrator_pid, :normal)
+      end
+    end)
 
     {:ok, pid} =
       StatusDashboard.start_link(
@@ -1514,10 +1752,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute plain =~ " notification "
   end
 
-  test "status dashboard surfaces agent kind in the running row" do
+  test "status dashboard renders agent kind and stage in separate columns" do
     row =
       StatusDashboard.format_running_summary_for_test(%{
         identifier: "MT-CLAUDE",
+        slot_index: 0,
+        ensemble_size: 2,
         agent_kind: "claude",
         state: "running",
         session_id: "session-1234567890",
@@ -1530,8 +1770,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
 
-    assert plain =~ "claude/running"
+    assert plain =~ "claude"
+    assert plain =~ "running"
+    refute plain =~ "claude/running"
     assert plain =~ "9999"
+    assert plain =~ " 0 "
+    refute plain =~ "0/2"
   end
 
   test "status dashboard strips ANSI and control bytes from last codex message" do
@@ -1592,6 +1836,31 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert String.length(plain) == terminal_columns
     assert plain =~ "turn completed (completed)"
+  end
+
+  test "status dashboard does not truncate multi-byte messages that fit the event width" do
+    message = String.duplicate("é", 20)
+
+    row =
+      StatusDashboard.format_running_summary_for_test(
+        %{
+          identifier: "MONO-140",
+          state: "running",
+          session_id: "thread-1",
+          executor_pid: "4242",
+          usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 12, seconds_running: 0},
+          runtime_seconds: 15,
+          last_agent_event: :notification,
+          last_agent_message: message
+        },
+        120
+      )
+
+    plain = Regex.replace(~r/\e\[[\d;]*m/, row, "")
+
+    assert plain =~ message
+    refute plain =~ "#{message}..."
+    refute plain =~ "..."
   end
 
   test "status dashboard humanizes full codex app-server event set" do
@@ -1837,5 +2106,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp assert_retry_deadline_in_range(due_at_ms, started_at_ms, min_delay_ms, max_delay_ms) do
+    scheduled_delay_ms = due_at_ms - started_at_ms
+
+    assert is_integer(due_at_ms)
+    assert scheduled_delay_ms >= min_delay_ms
+    assert scheduled_delay_ms <= max_delay_ms
   end
 end

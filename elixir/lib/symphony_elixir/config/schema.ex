@@ -108,13 +108,15 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:ssh_hosts, {:array, :string}, default: [])
+      field(:ssh_timeout_ms, :integer, default: 60_000)
       field(:max_concurrent_agents_per_host, :integer)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:ssh_hosts, :max_concurrent_agents_per_host], empty_values: [])
+      |> cast(attrs, [:ssh_hosts, :ssh_timeout_ms, :max_concurrent_agents_per_host], empty_values: [])
+      |> validate_number(:ssh_timeout_ms, greater_than: 0)
       |> validate_number(:max_concurrent_agents_per_host, greater_than: 0)
     end
   end
@@ -124,15 +126,13 @@ defmodule SymphonyElixir.Config.Schema do
     use Ecto.Schema
     import Ecto.Changeset
 
-    alias SymphonyElixir.Config.Schema
-
     @primary_key false
     embedded_schema do
       field(:kind, :string, default: "codex")
       field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
-      field(:max_concurrent_agents_by_state, :map, default: %{})
+      field(:ensemble_size, :integer, default: 1)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -140,15 +140,20 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :kind,
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :ensemble_size
+        ],
         empty_values: []
       )
       |> validate_inclusion(:kind, ["codex", "claude"])
       |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
-      |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
-      |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
+      |> validate_number(:ensemble_size, greater_than: 0)
     end
   end
 
@@ -214,7 +219,6 @@ defmodule SymphonyElixir.Config.Schema do
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:stall_timeout_ms, :integer, default: 300_000)
       field(:strict_mcp_config, :boolean, default: true)
-      field(:mcp_server_python, :string, default: "python3")
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -228,12 +232,107 @@ defmodule SymphonyElixir.Config.Schema do
           :permission_mode,
           :turn_timeout_ms,
           :stall_timeout_ms,
-          :strict_mcp_config,
-          :mcp_server_python
+          :strict_mcp_config
         ],
         empty_values: []
       )
-      |> validate_required([:command, :permission_mode, :mcp_server_python])
+      |> validate_required([:command, :permission_mode])
+      |> validate_number(:turn_timeout_ms, greater_than: 0)
+      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
+    end
+  end
+
+  defmodule AgentOverride do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:kind, :string)
+      field(:max_concurrent_agents, :integer)
+      field(:max_turns, :integer)
+      field(:max_retry_backoff_ms, :integer)
+      field(:ensemble_size, :integer)
+    end
+
+    @spec allowed_fields() :: [atom()]
+    def allowed_fields,
+      do: [:kind, :max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :ensemble_size]
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, allowed_fields(), empty_values: [])
+      |> validate_inclusion(:kind, ["codex", "claude"])
+      |> validate_number(:max_concurrent_agents, greater_than: 0)
+      |> validate_number(:max_turns, greater_than: 0)
+      |> validate_number(:max_retry_backoff_ms, greater_than: 0)
+      |> validate_number(:ensemble_size, greater_than: 0)
+    end
+  end
+
+  defmodule CodexOverride do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:command, :string)
+      field(:approval_policy, StringOrMap)
+      field(:thread_sandbox, :string)
+      field(:turn_sandbox_policy, :map)
+      field(:turn_timeout_ms, :integer)
+      field(:read_timeout_ms, :integer)
+      field(:stall_timeout_ms, :integer)
+    end
+
+    @spec allowed_fields() :: [atom()]
+    def allowed_fields,
+      do: [
+        :command,
+        :approval_policy,
+        :thread_sandbox,
+        :turn_sandbox_policy,
+        :turn_timeout_ms,
+        :read_timeout_ms,
+        :stall_timeout_ms
+      ]
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, allowed_fields(), empty_values: [])
+      |> validate_number(:turn_timeout_ms, greater_than: 0)
+      |> validate_number(:read_timeout_ms, greater_than: 0)
+      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
+    end
+  end
+
+  defmodule ClaudeOverride do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:command, :string)
+      field(:model, :string)
+      field(:permission_mode, :string)
+      field(:turn_timeout_ms, :integer)
+      field(:stall_timeout_ms, :integer)
+      field(:strict_mcp_config, :boolean)
+    end
+
+    @spec allowed_fields() :: [atom()]
+    def allowed_fields,
+      do: [:command, :model, :permission_mode, :turn_timeout_ms, :stall_timeout_ms, :strict_mcp_config]
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, allowed_fields(), empty_values: [])
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
     end
@@ -312,23 +411,46 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
+    field(:status_overrides, :map, default: %{})
   end
 
   @spec parse(map()) :: {:ok, %__MODULE__{}} | {:error, {:invalid_workflow_config, String.t()}}
   def parse(config) when is_map(config) do
-    config
-    |> normalize_keys()
-    |> drop_nil_values()
-    |> changeset()
-    |> apply_action(:validate)
-    |> case do
-      {:ok, settings} ->
-        {:ok, finalize_settings(settings)}
+    with {:ok, normalized_config} <-
+           config
+           |> normalize_keys()
+           |> drop_nil_values()
+           |> normalize_config() do
+      normalized_config
+      |> changeset()
+      |> apply_action(:validate)
+      |> case do
+        {:ok, settings} ->
+          {:ok, finalize_settings(settings)}
 
-      {:error, changeset} ->
-        {:error, {:invalid_workflow_config, format_errors(changeset)}}
+        {:error, changeset} ->
+          {:error, {:invalid_workflow_config, format_errors(changeset)}}
+      end
     end
   end
+
+  @spec resolve_status_override(%__MODULE__{}, String.t() | term()) :: %__MODULE__{}
+  def resolve_status_override(%__MODULE__{} = settings, state_name) when is_binary(state_name) do
+    normalized_state = normalize_issue_state(state_name)
+
+    case Map.get(settings.status_overrides, normalized_state) do
+      nil ->
+        settings
+
+      override when is_map(override) ->
+        settings
+        |> merge_override_section(:agent, Map.get(override, :agent))
+        |> merge_override_section(:codex, Map.get(override, :codex))
+        |> merge_override_section(:claude, Map.get(override, :claude))
+    end
+  end
+
+  def resolve_status_override(%__MODULE__{} = settings, _state_name), do: settings
 
   @spec resolve_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil) :: map()
   def resolve_turn_sandbox_policy(settings, workspace \\ nil) do
@@ -360,7 +482,9 @@ defmodule SymphonyElixir.Config.Schema do
 
   @spec normalize_issue_state(String.t()) :: String.t()
   def normalize_issue_state(state_name) when is_binary(state_name) do
-    String.downcase(state_name)
+    state_name
+    |> String.trim()
+    |> String.downcase()
   end
 
   @doc false
@@ -394,7 +518,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp changeset(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [])
+    |> cast(attrs, [:status_overrides], empty_values: [])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
@@ -407,7 +531,144 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:server, with: &Server.changeset/2)
   end
 
+  defp normalize_config(config) when is_map(config) do
+    with :ok <- reject_legacy_agent_state_limits(config),
+         {:ok, status_overrides} <- normalize_status_overrides(Map.get(config, "status_overrides")) do
+      {:ok, Map.put(config, "status_overrides", status_overrides)}
+    end
+  end
+
+  defp reject_legacy_agent_state_limits(config) when is_map(config) do
+    case get_in(config, ["agent", "max_concurrent_agents_by_state"]) do
+      nil ->
+        :ok
+
+      _value ->
+        {:error, {:invalid_workflow_config, "agent.max_concurrent_agents_by_state has been removed; use status_overrides.<state>.agent.max_concurrent_agents instead"}}
+    end
+  end
+
+  defp normalize_status_overrides(nil), do: {:ok, %{}}
+
+  defp normalize_status_overrides(status_overrides) when is_map(status_overrides) do
+    Enum.reduce_while(status_overrides, {:ok, %{}}, fn {state_name, override}, {:ok, acc} ->
+      case normalize_status_override_entry(state_name, override) do
+        {:ok, normalized_state, normalized_override} ->
+          {:cont, {:ok, Map.put(acc, normalized_state, normalized_override)}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:invalid_workflow_config, reason}}}
+      end
+    end)
+  end
+
+  defp normalize_status_overrides(_status_overrides) do
+    {:error, {:invalid_workflow_config, "status_overrides must be a map"}}
+  end
+
+  defp normalize_status_override_entry(state_name, override) do
+    normalized_state = normalize_issue_state(to_string(state_name))
+    path = "status_overrides.#{normalized_state}"
+
+    cond do
+      normalized_state == "" ->
+        {:error, "status_overrides state names must not be blank"}
+
+      not is_map(override) ->
+        {:error, "#{path} must be a map"}
+
+      true ->
+        with :ok <- ensure_allowed_keys(override, ~w(agent codex claude), path),
+             {:ok, agent_override} <-
+               normalize_override_section(Map.get(override, "agent"), AgentOverride, "#{path}.agent"),
+             {:ok, codex_override} <-
+               normalize_override_section(Map.get(override, "codex"), CodexOverride, "#{path}.codex"),
+             {:ok, claude_override} <-
+               normalize_override_section(Map.get(override, "claude"), ClaudeOverride, "#{path}.claude") do
+          normalized_override =
+            %{}
+            |> maybe_put_override(:agent, agent_override)
+            |> maybe_put_override(:codex, codex_override)
+            |> maybe_put_override(:claude, claude_override)
+
+          {:ok, normalized_state, normalized_override}
+        end
+    end
+  end
+
+  defp normalize_override_section(nil, _module, _path), do: {:ok, nil}
+
+  defp normalize_override_section(raw_override, module, path) when is_map(raw_override) do
+    allowed_keys =
+      module.allowed_fields()
+      |> Enum.map(&Atom.to_string/1)
+
+    with :ok <- ensure_allowed_keys(raw_override, allowed_keys, path) do
+      changeset = module.changeset(struct(module), raw_override)
+
+      case apply_action(changeset, :validate) do
+        {:ok, override} ->
+          {:ok, normalize_override_map(override)}
+
+        {:error, changeset} ->
+          {:error, format_errors(changeset, path)}
+      end
+    end
+  end
+
+  defp normalize_override_section(_raw_override, _module, path) do
+    {:error, "#{path} must be a map"}
+  end
+
+  defp ensure_allowed_keys(value, allowed_keys, path) when is_map(value) do
+    unknown_keys =
+      value
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> Enum.reject(&(&1 in allowed_keys))
+
+    case unknown_keys do
+      [] -> :ok
+      _ -> {:error, "#{path} contains unsupported keys: #{Enum.join(Enum.sort(unknown_keys), ", ")}"}
+    end
+  end
+
+  defp normalize_override_map(override) do
+    override
+    |> Map.from_struct()
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+    |> then(fn override_map ->
+      override_map
+      |> maybe_normalize_override_map_value(:approval_policy)
+      |> maybe_normalize_override_map_value(:turn_sandbox_policy)
+    end)
+  end
+
+  defp maybe_normalize_override_map_value(override_map, key) do
+    case Map.fetch(override_map, key) do
+      {:ok, value} when is_map(value) -> Map.put(override_map, key, normalize_keys(value))
+      _ -> override_map
+    end
+  end
+
+  defp maybe_put_override(override, _key, nil), do: override
+  defp maybe_put_override(override, key, value), do: Map.put(override, key, value)
+
+  defp merge_override_section(settings, _section, nil), do: settings
+
+  defp merge_override_section(settings, section, override) when is_map(override) do
+    current = Map.fetch!(settings, section)
+    Map.put(settings, section, struct(current, override))
+  end
+
   defp finalize_settings(settings) do
+    workspace_root =
+      case System.get_env("SYMPHONY_WORKSPACE_ROOT") do
+        value when is_binary(value) and value != "" -> value
+        _ -> settings.workspace.root
+      end
+
     tracker = %{
       settings.tracker
       | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
@@ -416,7 +677,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(workspace_root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
     }
 
     codex = %{
@@ -425,7 +686,41 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    status_overrides =
+      settings.status_overrides
+      |> Enum.map(fn {state_name, override} ->
+        normalized_override =
+          override
+          |> maybe_normalize_override_section(:codex)
+
+        {state_name, normalized_override}
+      end)
+      |> Map.new()
+
+    %{settings | tracker: tracker, workspace: workspace, codex: codex, status_overrides: status_overrides}
+  end
+
+  defp maybe_normalize_override_section(override, section) when is_map(override) do
+    case Map.get(override, section) do
+      nil ->
+        override
+
+      section_override ->
+        Map.put(
+          override,
+          section,
+          section_override
+          |> maybe_normalize_override_field(:approval_policy)
+          |> maybe_normalize_override_field(:turn_sandbox_policy)
+        )
+    end
+  end
+
+  defp maybe_normalize_override_field(override, field) when is_map(override) do
+    case Map.fetch(override, field) do
+      {:ok, value} when is_map(value) -> Map.put(override, field, normalize_keys(value))
+      _ -> override
+    end
   end
 
   defp normalize_keys(value) when is_map(value) do
@@ -563,14 +858,12 @@ defmodule SymphonyElixir.Config.Schema do
     Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))
   end
 
-  defp format_errors(changeset) do
+  defp format_errors(changeset, prefix \\ nil) do
     changeset
     |> traverse_errors(&translate_error/1)
-    |> flatten_errors()
+    |> flatten_errors(prefix)
     |> Enum.join(", ")
   end
-
-  defp flatten_errors(errors, prefix \\ nil)
 
   defp flatten_errors(errors, prefix) when is_map(errors) do
     Enum.flat_map(errors, fn {key, value} ->

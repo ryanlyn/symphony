@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Claude.Mcp
   alias SymphonyElixir.Codex.DynamicTool
 
   test "tool_specs advertises the linear_graphql input contract" do
@@ -20,6 +21,11 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
            ] = DynamicTool.tool_specs()
 
     assert description =~ "Linear"
+  end
+
+  test "claude and codex expose the same linear_graphql tool name" do
+    assert Enum.map(DynamicTool.tool_specs(), & &1["name"]) == ["linear_graphql"]
+    assert Mcp.tool_names() == ["mcp__symphony_linear__linear_graphql"]
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
@@ -294,6 +300,26 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "reason" => ":boom"
              }
            }
+  end
+
+  test "linear_graphql delegates to the shared tools backend" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_graphql",
+        %{
+          "query" => "query Viewer { viewer { id } }",
+          "variables" => %{}
+        },
+        linear_client: fn query, variables, _opts ->
+          send(test_pid, {:linear_client_called, query, variables})
+          {:ok, %{"data" => %{"viewer" => %{"id" => "usr_123"}}}}
+        end
+      )
+
+    assert response["success"] == true
+    assert_receive {:linear_client_called, _, _}
   end
 
   test "linear_graphql falls back to inspect for non-JSON payloads" do

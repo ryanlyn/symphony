@@ -1,10 +1,29 @@
 defmodule SymphonyElixir.SSH do
   @moduledoc false
 
-  @spec run(String.t(), String.t(), keyword()) :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
+  alias SymphonyElixir.Config
+
+  @type run_result :: {:ok, {String.t(), non_neg_integer()}} | {:error, term()}
+
+  @spec run(String.t(), String.t(), keyword()) :: run_result()
   def run(host, command, opts \\ []) when is_binary(host) and is_binary(command) do
-    with {:ok, executable} <- ssh_executable() do
-      {:ok, System.cmd(executable, ssh_args(host, command), opts)}
+    {timeout_ms, cmd_opts} = Keyword.pop_lazy(opts, :timeout, &Config.ssh_timeout_ms/0)
+
+    with {:ok, executable} <- ssh_executable(),
+         {:ok, timeout_ms} <- validate_timeout(timeout_ms) do
+      task =
+        Task.async(fn ->
+          System.cmd(executable, ssh_args(host, command), cmd_opts)
+        end)
+
+      case Task.yield(task, timeout_ms) do
+        {:ok, cmd_result} ->
+          {:ok, cmd_result}
+
+        nil ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, {:ssh_timeout, host, timeout_ms}}
+      end
     end
   end
 
@@ -26,10 +45,38 @@ defmodule SymphonyElixir.SSH do
     end
   end
 
+  @spec start_reverse_tunnel(String.t(), pos_integer(), String.t(), pos_integer()) ::
+          {:ok, port()} | {:error, term()}
+  def start_reverse_tunnel(host, remote_port, local_host, local_port)
+      when is_binary(host) and is_integer(remote_port) and remote_port > 0 and
+             is_binary(local_host) and is_integer(local_port) and local_port > 0 do
+    with {:ok, executable} <- ssh_executable() do
+      args =
+        reverse_tunnel_args(host, remote_port, local_host, local_port)
+        |> Enum.map(&String.to_charlist/1)
+
+      {:ok,
+       Port.open(
+         {:spawn_executable, String.to_charlist(executable)},
+         [
+           :binary,
+           :exit_status,
+           :stderr_to_stdout,
+           args: args
+         ]
+       )}
+    end
+  end
+
   @spec write_file(String.t(), Path.t(), iodata(), keyword()) :: :ok | {:error, term()}
   def write_file(host, path, contents, opts \\ [])
       when is_binary(host) and is_binary(path) do
     contents_binary = IO.iodata_to_binary(contents)
+
+    ssh_opts =
+      opts
+      |> Keyword.drop([:mode])
+      |> Keyword.put(:stderr_to_stdout, true)
 
     command = """
     mkdir -p #{shell_escape(Path.dirname(path))}
@@ -37,7 +84,7 @@ defmodule SymphonyElixir.SSH do
     #{chmod_command(Keyword.get(opts, :mode), path)}
     """
 
-    case run(host, command, stderr_to_stdout: true) do
+    case run(host, command, ssh_opts) do
       {:ok, {_output, 0}} -> :ok
       {:ok, {output, status}} -> {:error, {:remote_write_failed, status, output}}
       {:error, reason} -> {:error, reason}
@@ -76,6 +123,16 @@ defmodule SymphonyElixir.SSH do
     |> Kernel.++([destination, remote_shell_command(command)])
   end
 
+  defp reverse_tunnel_args(host, remote_port, local_host, local_port) do
+    %{destination: destination, port: port} = parse_target(host)
+
+    []
+    |> maybe_put_config()
+    |> Kernel.++(["-T", "-N", "-o", "ExitOnForwardFailure=yes"])
+    |> maybe_put_port(port)
+    |> Kernel.++(["-R", "#{remote_port}:#{local_host}:#{local_port}", destination])
+  end
+
   defp maybe_put_line_option(port_opts, nil), do: port_opts
   defp maybe_put_line_option(port_opts, line_bytes), do: Keyword.put(port_opts, :line, line_bytes)
 
@@ -91,6 +148,11 @@ defmodule SymphonyElixir.SSH do
 
   defp maybe_put_port(args, nil), do: args
   defp maybe_put_port(args, port), do: args ++ ["-p", port]
+
+  defp validate_timeout(timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0,
+    do: {:ok, timeout_ms}
+
+  defp validate_timeout(timeout_ms), do: {:error, {:invalid_ssh_timeout, timeout_ms}}
 
   defp parse_target(target) when is_binary(target) do
     trimmed_target = String.trim(target)

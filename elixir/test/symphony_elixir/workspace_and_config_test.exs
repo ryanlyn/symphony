@@ -51,9 +51,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:ok, first_workspace} = Workspace.create_for_issue("MT/Det")
     assert {:ok, second_workspace} = Workspace.create_for_issue("MT/Det")
+    assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
     assert first_workspace == second_workspace
     assert Path.basename(first_workspace) == "MT_Det"
+    assert Path.dirname(first_workspace) == canonical_workspace_root
   end
 
   test "workspace reuses existing issue directory without deleting local changes" do
@@ -100,7 +102,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       )
 
     try do
-      stale_workspace = Path.join(workspace_root, "MT-STALE")
+      stale_workspace = Path.join([workspace_root, "MT-STALE"])
       File.mkdir_p!(workspace_root)
       File.write!(stale_workspace, "old state\n")
 
@@ -133,7 +135,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert {:ok, canonical_outside_root} = SymphonyElixir.PathSafety.canonicalize(outside_root)
+      assert {:ok, canonical_outside_root} =
+               SymphonyElixir.PathSafety.canonicalize(outside_root)
+
       assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
       assert {:error, {:workspace_outside_root, ^canonical_outside_root, ^canonical_workspace_root}} =
@@ -160,7 +164,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: linked_root)
 
       assert {:ok, canonical_workspace} =
-               SymphonyElixir.PathSafety.canonicalize(Path.join(actual_root, "MT-LINK"))
+               SymphonyElixir.PathSafety.canonicalize(Path.join([actual_root, "MT-LINK"]))
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-LINK")
       assert workspace == canonical_workspace
@@ -242,7 +246,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      workspace = Path.join(workspace_root, "MT-608")
+      workspace = Path.join([workspace_root, "MT-608"])
       assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
 
       assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-608")
@@ -295,6 +299,93 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert :ok = Workspace.remove_issue_workspaces(nil)
   end
 
+  test "workspace slot_index defaults to the issue root for solo runs" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-default-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+      assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
+
+      assert {:ok, workspace} = Workspace.create_for_issue("SLOT-DEFAULT")
+      assert Path.basename(workspace) == "SLOT-DEFAULT"
+      assert Path.dirname(workspace) == canonical_workspace_root
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace slot_index: 0 appends /0 for ensemble runs" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-0-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace} =
+               Workspace.create_for_issue("SLOT-ZERO", nil, slot_index: 0, ensemble_size: 2)
+
+      assert Path.basename(workspace) == "0"
+      assert Path.basename(Path.dirname(workspace)) == "SLOT-ZERO"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace slot_index: 2 appends /2 to path" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-2-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace} =
+               Workspace.create_for_issue("SLOT-TWO", nil, slot_index: 2, ensemble_size: 3)
+
+      assert Path.basename(workspace) == "2"
+      assert Path.basename(Path.dirname(workspace)) == "SLOT-TWO"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace different slot indices produce different paths" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-slot-diff-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, workspace_0} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 0, ensemble_size: 3)
+
+      assert {:ok, workspace_1} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 1, ensemble_size: 3)
+
+      assert {:ok, workspace_2} =
+               Workspace.create_for_issue("SLOT-DIFF", nil, slot_index: 2, ensemble_size: 3)
+
+      assert workspace_0 != workspace_1
+      assert workspace_1 != workspace_2
+      assert Path.dirname(workspace_0) == Path.dirname(workspace_1)
+      assert Path.dirname(workspace_1) == Path.dirname(workspace_2)
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "linear issue helpers" do
     issue = %Issue{
       id: "abc",
@@ -314,7 +405,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       "title" => "Blocked todo",
       "description" => "Needs dependency",
       "priority" => 2,
-      "state" => %{"name" => "Todo"},
+      "state" => %{"name" => "Todo", "type" => "unstarted"},
       "branchName" => "mt-1",
       "url" => "https://example.org/issues/MT-1",
       "assignee" => %{
@@ -351,6 +442,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert issue.labels == ["backend"]
     assert issue.priority == 2
     assert issue.state == "Todo"
+    assert issue.state_type == "unstarted"
     assert issue.assignee_id == "user-1"
     assert issue.assigned_to_worker
   end
@@ -458,6 +550,143 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
 
+  test "linear client retries 429 responses using retry-after seconds before succeeding" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:ok, %{"data" => %{"viewer" => %{"id" => "user-1"}}}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 case attempt do
+                   1 ->
+                     {:ok,
+                      %{
+                        status: 429,
+                        headers: %{"retry-after" => ["2"]},
+                        body: %{"errors" => [%{"message" => "rate limited"}]}
+                      }}
+
+                   2 ->
+                     {:ok,
+                      %{
+                        status: 200,
+                        body: %{"data" => %{"viewer" => %{"id" => "user-1"}}}
+                      }}
+                 end
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 2_000}
+    assert_receive {:request_attempt, 2}
+  end
+
+  test "linear client retries 429 responses using exponential backoff when retry-after is absent" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:ok, %{"data" => %{"viewer" => %{"id" => "user-1"}}}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 case attempt do
+                   1 ->
+                     {:ok, %{status: 429, body: %{"errors" => [%{"message" => "burst limit"}]}}}
+
+                   2 ->
+                     {:ok, %{status: 429, body: %{"errors" => [%{"message" => "burst limit"}]}}}
+
+                   3 ->
+                     {:ok, %{status: 200, body: %{"data" => %{"viewer" => %{"id" => "user-1"}}}}}
+                 end
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50,
+               rate_limit_max_delay_ms: 1_000
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 50}
+    assert_receive {:request_attempt, 2}
+    assert_receive {:sleep_delay, 100}
+    assert_receive {:request_attempt, 3}
+  end
+
+  test "linear client stops retrying 429 responses after the retry budget is exhausted" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+    retry_after_at = "Mon, 06 Apr 2026 03:00:02 GMT"
+
+    assert {:error, {:linear_api_status, 429}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 {:ok,
+                  %{
+                    status: 429,
+                    headers: %{"retry-after" => [retry_after_at]},
+                    body: %{"errors" => [%{"message" => "still rate limited"}]}
+                  }}
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               now_fun: fn -> DateTime.from_unix!(1_775_444_400, :second) end,
+               rate_limit_max_retries: 1,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    assert_receive {:sleep_delay, 2_000}
+    assert_receive {:request_attempt, 2}
+    refute_receive {:sleep_delay, _delay_ms}
+    assert :counters.get(attempt_counter, 1) == 2
+  end
+
+  test "linear client does not retry non-429 graphql responses" do
+    test_pid = self()
+    attempt_counter = :counters.new(1, [])
+
+    assert {:error, {:linear_api_status, 503}} =
+             Client.graphql(
+               "query Viewer { viewer { id } }",
+               %{},
+               request_fun: fn _payload, _headers ->
+                 :ok = :counters.add(attempt_counter, 1, 1)
+                 attempt = :counters.get(attempt_counter, 1)
+                 send(test_pid, {:request_attempt, attempt})
+
+                 {:ok,
+                  %{
+                    status: 503,
+                    body: %{"errors" => [%{"message" => "upstream unavailable"}]}
+                  }}
+               end,
+               sleep_fun: fn delay_ms -> send(test_pid, {:sleep_delay, delay_ms}) end,
+               rate_limit_base_delay_ms: 50
+             )
+
+    assert_receive {:request_attempt, 1}
+    refute_receive {:sleep_delay, _delay_ms}
+    assert :counters.get(attempt_counter, 1) == 1
+  end
+
   test "orchestrator sorts dispatch by priority then oldest created_at" do
     issue_same_priority_older = %Issue{
       id: "issue-old-high",
@@ -516,6 +745,31 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "custom unstarted issue with non-terminal blocker is not dispatch-eligible" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_active_states: ["Ready", "In Progress"]
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "blocked-ready-1",
+      identifier: "MT-1001A",
+      title: "Blocked ready work",
+      state: "Ready",
+      state_type: "unstarted",
+      blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
   test "issue assigned to another worker is not dispatch-eligible" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_assignee: "dev@example.com")
 
@@ -538,7 +792,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
-  test "todo issue with terminal blockers remains dispatch-eligible" do
+  test "whitespace-padded todo issue with terminal blockers remains dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
       running: %{},
@@ -551,7 +805,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "ready-1",
       identifier: "MT-1003",
       title: "Ready work",
-      state: "Todo",
+      state: "Todo ",
       blocked_by: [%{id: "blocker-2", identifier: "MT-1004", state: "Closed"}]
     }
 
@@ -742,6 +996,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert config.worker.ssh_timeout_ms == 60_000
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.kind == "codex"
     assert config.agent.max_concurrent_agents == 10
@@ -751,7 +1006,6 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.claude.turn_timeout_ms == 3_600_000
     assert config.claude.stall_timeout_ms == 300_000
     assert config.claude.strict_mcp_config == true
-    assert config.claude.mcp_server_python == "python3"
 
     assert config.codex.approval_policy == %{
              "reject" => %{
@@ -814,39 +1068,43 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
            }
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "tracker.active_states"
 
     write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "agent.max_concurrent_agents"
 
     write_workflow_file!(Workflow.workflow_file_path(), agent_kind: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "agent.kind"
 
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 0)
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "worker.max_concurrent_agents_per_host"
 
+    write_workflow_file!(Workflow.workflow_file_path(), worker_ssh_timeout_ms: 0)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "worker.ssh_timeout_ms"
+
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.turn_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_read_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.read_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_stall_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), claude_turn_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "claude.turn_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(), claude_stall_timeout_ms: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "claude.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -864,19 +1122,20 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       server_host: 123
     )
 
-    assert {:error, {:invalid_workflow_config, _message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, _message}} = Config.validate()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
     assert Config.settings!().codex.approval_policy == ""
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "")
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
     assert Config.settings!().codex.thread_sandbox == ""
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "codex.turn_sandbox_policy"
+    assert_raise ArgumentError, ~r/codex\.turn_sandbox_policy/, fn -> Config.validate!() end
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_approval_policy: "future-policy",
@@ -891,7 +1150,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.approval_policy == "future-policy"
     assert config.codex.thread_sandbox == "future-sandbox"
 
-    assert :ok = Config.validate!()
+    assert :ok = Config.validate()
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "futureSandbox",
@@ -959,30 +1218,263 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.workspace.root == "env:#{workspace_env_var}"
   end
 
-  test "config supports per-state max concurrent agent overrides" do
+  test "SYMPHONY_WORKSPACE_ROOT overrides workspace.root from workflow config" do
+    workspace_root = Path.join("/tmp", "symphony-workspace-override")
+    previous_workspace_root = System.get_env("SYMPHONY_WORKSPACE_ROOT")
+
+    System.put_env("SYMPHONY_WORKSPACE_ROOT", workspace_root)
+
+    on_exit(fn ->
+      restore_env("SYMPHONY_WORKSPACE_ROOT", previous_workspace_root)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: "/tmp/workflow-root")
+
+    assert Config.settings!().workspace.root == Path.expand(workspace_root)
+  end
+
+  test "config resolves status overrides with partial per-section merges" do
     workflow = """
     ---
     agent:
+      kind: codex
       max_concurrent_agents: 10
-      max_concurrent_agents_by_state:
-        todo: 1
-        "In Progress": 4
-        "In Review": 2
+      max_turns: 20
+    codex:
+      approval_policy:
+        reject:
+          sandbox_approval: true
+          rules: true
+    claude:
+      model: "claude-opus-4-6"
+      permission_mode: "dontAsk"
+    status_overrides:
+      todo:
+        agent:
+          kind: claude
+          max_concurrent_agents: 1
+          max_turns: 8
+        claude:
+          model: "claude-sonnet-4"
+      "In Progress":
+        agent:
+          max_concurrent_agents: 4
+        codex:
+          approval_policy: "on-request"
+      "In Review":
+        agent:
+          max_concurrent_agents: 2
+        claude:
+          permission_mode: "acceptEdits"
     ---
     """
 
     File.write!(Workflow.workflow_file_path(), workflow)
 
     assert Config.settings!().agent.max_concurrent_agents == 10
+    assert Config.settings!().agent.kind == "codex"
     assert Config.max_concurrent_agents_for_state("Todo") == 1
+    assert Config.max_concurrent_agents_for_state("Todo ") == 1
     assert Config.max_concurrent_agents_for_state("In Progress") == 4
+    assert Config.max_concurrent_agents_for_state(" In Progress ") == 4
     assert Config.max_concurrent_agents_for_state("In Review") == 2
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
 
-    write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
-    assert :ok = Config.validate!()
+    assert todo_settings = Config.settings_for_issue_state!("Todo")
+    assert todo_settings.agent.kind == "claude"
+    assert todo_settings.agent.max_turns == 8
+    assert todo_settings.claude.model == "claude-sonnet-4"
+    assert todo_settings.claude.permission_mode == "dontAsk"
+
+    assert in_progress_settings = Config.settings_for_issue_state!("In Progress")
+    assert in_progress_settings.agent.kind == "codex"
+    assert in_progress_settings.agent.max_concurrent_agents == 4
+    assert in_progress_settings.codex.approval_policy == "on-request"
+
+    assert in_review_settings = Config.settings_for_issue_state!("In Review")
+    assert in_review_settings.agent.kind == "codex"
+    assert in_review_settings.claude.permission_mode == "acceptEdits"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_ssh_timeout_ms: 12_345,
+      worker_max_concurrent_agents_per_host: 2
+    )
+
+    assert :ok = Config.validate()
+    assert Config.ssh_timeout_ms() == 12_345
+    assert Config.settings!().worker.ssh_timeout_ms == 12_345
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
+  end
+
+  test "config rejects legacy and unsupported status override keys" do
+    legacy_workflow = """
+    ---
+    agent:
+      max_concurrent_agents_by_state:
+        todo: 1
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), legacy_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "agent.max_concurrent_agents_by_state has been removed"
+
+    invalid_override_section_workflow = """
+    ---
+    status_overrides:
+      todo:
+        worker:
+          ssh_timeout_ms: 5
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), invalid_override_section_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "status_overrides.todo contains unsupported keys: worker"
+
+    invalid_override_field_workflow = """
+    ---
+    status_overrides:
+      "In Progress":
+        agent:
+          max_concurrent_agents_by_state: 2
+    ---
+    """
+
+    File.write!(Workflow.workflow_file_path(), invalid_override_field_workflow)
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "status_overrides.in progress.agent contains unsupported keys: max_concurrent_agents_by_state"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: %{bogus: 1}}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent contains unsupported keys: bogus"
+  end
+
+  test "status override schema helpers cover invalid shapes and map normalization" do
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{status_overrides: []})
+
+    assert message =~ "status_overrides must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "   " => %{agent: %{kind: "claude"}}
+               }
+             })
+
+    assert message =~ "status_overrides state names must not be blank"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: []
+               }
+             })
+
+    assert message =~ "status_overrides.todo must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: "claude"}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: %{max_turns: 0}}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent.max_turns"
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "Todo" => %{
+                   codex: %{
+                     approval_policy: %{reject: %{sandbox_approval: true}},
+                     turn_sandbox_policy: %{type: "futureSandbox", nested: %{flag: true}}
+                   }
+                 }
+               }
+             })
+
+    assert get_in(settings.status_overrides, ["todo", :codex, :approval_policy]) == %{
+             "reject" => %{"sandbox_approval" => true}
+           }
+
+    assert get_in(settings.status_overrides, ["todo", :codex, :turn_sandbox_policy]) == %{
+             "type" => "futureSandbox",
+             "nested" => %{"flag" => true}
+           }
+
+    assert Schema.resolve_status_override(settings, :not_a_string) == settings
+
+    changeset =
+      {%{}, %{limits: :map}}
+      |> Changeset.cast(%{limits: %{todo: 1, review: 2}}, [:limits])
+      |> Schema.validate_state_limits(:limits)
+
+    assert changeset.errors == []
+  end
+
+  test "workspace create surfaces remote home ssh timeouts" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-workspace-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+      sleep 1
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "~/.symphony-remote-workspaces",
+        worker_ssh_timeout_ms: 10
+      )
+
+      assert {:error, {:remote_home_lookup_failed, "worker-01", {:ssh_timeout, "worker-01", 10}}} =
+               Workspace.create_for_issue("MT-SSH-TIMEOUT", "worker-01")
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "config exposes claude runtime settings and executor selection" do
@@ -993,12 +1485,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       claude_permission_mode: "dontAsk",
       claude_turn_timeout_ms: 12_345,
       claude_stall_timeout_ms: 9_876,
-      claude_strict_mcp_config: false,
-      claude_mcp_server_python: "/usr/bin/python3"
+      claude_strict_mcp_config: false
     )
 
     assert Config.agent_kind() == "claude"
-    assert Config.agent_executor() == SymphonyElixir.Claude.Executor
+
+    assert SymphonyElixir.AgentExecutor.module_for_kind(Config.agent_kind()) ==
+             SymphonyElixir.Claude.Executor
+
     assert Config.agent_stall_timeout_ms("claude") == 9_876
 
     claude = Config.settings!().claude
@@ -1008,7 +1502,6 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert claude.turn_timeout_ms == 12_345
     assert claude.stall_timeout_ms == 9_876
     assert claude.strict_mcp_config == false
-    assert claude.mcp_server_python == "/usr/bin/python3"
   end
 
   test "schema helpers cover custom type and state limit validation" do
@@ -1027,6 +1520,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert {:ok, %{"a" => 1}} = StringOrMap.dump(%{"a" => 1})
     assert :error = StringOrMap.dump(123)
 
+    assert Schema.normalize_issue_state(" In Progress ") == "in progress"
     assert Schema.normalize_state_limits(nil) == %{}
 
     assert Schema.normalize_state_limits(%{"In Progress" => 2, todo: 1}) == %{
@@ -1333,6 +1827,67 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "remote workspace removal normalizes traversal paths before containment checks" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-remote-workspace-remove-traversal-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+      workspace_root = "~/.symphony-remote-workspaces"
+      remote_root = "/remote/home/.symphony-remote-workspaces"
+      traversal_workspace = "~/.symphony-remote-workspaces/../outside-root"
+      normalized_outside = "/remote/home/outside-root"
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      if printf '%s' "$*" | grep -q '\\$HOME'; then
+        printf '%s\\n' '/remote/home'
+      fi
+
+      exit 0
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        worker_ssh_hosts: ["worker-01:2200"],
+        hook_before_remove: "echo before-remove"
+      )
+
+      assert {:error, {:workspace_outside_root, ^normalized_outside, ^remote_root}, ""} =
+               Workspace.remove(traversal_workspace, "worker-01:2200")
+
+      trace = File.read!(trace_file)
+      assert trace =~ "-p 2200 worker-01 bash -lc"
+      assert trace =~ "$HOME"
+      refute trace =~ "echo before-remove"
+      refute trace =~ "rm -rf"
+      refute trace =~ normalized_outside
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "remote workspace lifecycle uses ssh host aliases from worker config" do
     test_root =
       Path.join(
@@ -1377,12 +1932,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         worker_ssh_hosts: ["worker-01:2200"],
+        worker_ssh_timeout_ms: 45_000,
         hook_before_run: "echo before-run",
         hook_after_run: "echo after-run",
         hook_before_remove: "echo before-remove"
       )
 
       assert Config.settings!().worker.ssh_hosts == ["worker-01:2200"]
+      assert Config.settings!().worker.ssh_timeout_ms == 45_000
       assert Config.settings!().workspace.root == workspace_root
       assert {:ok, ^workspace_path} = Workspace.create_for_issue("MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_before_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")

@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Config do
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Workflow
 
+  @default_ssh_timeout_ms 60_000
+
   @default_prompt_template """
   You are working on a Linear issue.
 
@@ -50,20 +52,49 @@ defmodule SymphonyElixir.Config do
 
   @spec max_concurrent_agents_for_state(term()) :: pos_integer()
   def max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
-    config = settings!()
-
-    Map.get(
-      config.agent.max_concurrent_agents_by_state,
-      Schema.normalize_issue_state(state_name),
-      config.agent.max_concurrent_agents
-    )
+    settings_for_issue_state!(state_name).agent.max_concurrent_agents
   end
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
 
+  @spec settings_for_issue_state(term()) :: {:ok, Schema.t()} | {:error, term()}
+  def settings_for_issue_state(state_name) when is_binary(state_name) do
+    case settings() do
+      {:ok, settings} ->
+        {:ok, Schema.resolve_status_override(settings, state_name)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def settings_for_issue_state(_state_name), do: settings()
+
+  @spec settings_for_issue_state!(term()) :: Schema.t()
+  def settings_for_issue_state!(state_name) do
+    case settings_for_issue_state(state_name) do
+      {:ok, settings} ->
+        settings
+
+      {:error, reason} ->
+        raise ArgumentError, message: format_config_error(reason)
+    end
+  end
+
   @spec agent_kind() :: String.t()
   def agent_kind do
     settings!().agent.kind
+  end
+
+  @spec ssh_timeout_ms() :: pos_integer()
+  def ssh_timeout_ms do
+    case settings() do
+      {:ok, settings} when is_integer(settings.worker.ssh_timeout_ms) and settings.worker.ssh_timeout_ms > 0 ->
+        settings.worker.ssh_timeout_ms
+
+      _ ->
+        @default_ssh_timeout_ms
+    end
   end
 
   @spec agent_executor() :: module()
@@ -107,10 +138,21 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  @spec validate!() :: :ok | {:error, term()}
-  def validate! do
+  @spec validate() :: :ok | {:error, term()}
+  def validate do
     with {:ok, settings} <- settings() do
       validate_semantics(settings)
+    end
+  end
+
+  @spec validate!() :: :ok
+  def validate! do
+    case validate() do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError, message: format_config_error(reason)
     end
   end
 
@@ -118,15 +160,21 @@ defmodule SymphonyElixir.Config do
           {:ok, codex_runtime_settings()} | {:error, term()}
   def codex_runtime_settings(workspace \\ nil, opts \\ []) do
     with {:ok, settings} <- settings() do
-      with {:ok, turn_sandbox_policy} <-
-             Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
-        {:ok,
-         %{
-           approval_policy: settings.codex.approval_policy,
-           thread_sandbox: settings.codex.thread_sandbox,
-           turn_sandbox_policy: turn_sandbox_policy
-         }}
-      end
+      codex_runtime_settings(settings, workspace, opts)
+    end
+  end
+
+  @spec codex_runtime_settings(Schema.t(), Path.t() | nil, keyword()) ::
+          {:ok, codex_runtime_settings()} | {:error, term()}
+  def codex_runtime_settings(%Schema{} = settings, workspace, opts) do
+    with {:ok, turn_sandbox_policy} <-
+           Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
+      {:ok,
+       %{
+         approval_policy: settings.codex.approval_policy,
+         thread_sandbox: settings.codex.thread_sandbox,
+         turn_sandbox_policy: turn_sandbox_policy
+       }}
     end
   end
 
@@ -164,7 +212,22 @@ defmodule SymphonyElixir.Config do
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
 
       other ->
-        "Invalid WORKFLOW.md config: #{inspect(other)}"
+        format_validation_config_error(other)
     end
   end
+
+  defp format_validation_config_error(:missing_tracker_kind),
+    do: "Tracker kind missing in WORKFLOW.md"
+
+  defp format_validation_config_error(:missing_linear_api_token),
+    do: "Linear API token missing in WORKFLOW.md"
+
+  defp format_validation_config_error(:missing_linear_project_slug),
+    do: "Linear project slug missing in WORKFLOW.md"
+
+  defp format_validation_config_error({:unsupported_tracker_kind, kind}),
+    do: "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
+
+  defp format_validation_config_error(other),
+    do: "Invalid WORKFLOW.md config: #{inspect(other)}"
 end

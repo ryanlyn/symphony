@@ -1,5 +1,5 @@
 defmodule SymphonyElixir.AgentRunnerTimeoutWorkspace do
-  def create_for_issue(_issue_or_identifier, _worker_host) do
+  def create_for_issue(_issue_or_identifier, _worker_host, _opts \\ []) do
     maybe_sleep(:create)
     workspace = config!() |> Map.fetch!(:workspace)
     {:ok, workspace}

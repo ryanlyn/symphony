@@ -215,7 +215,6 @@ pre,
 }
 
 .status-badge-live {
-  display: none;
   background: var(--accent-soft);
   border-color: rgba(16, 163, 127, 0.18);
   color: var(--accent-ink);
@@ -225,14 +224,6 @@ pre,
   background: #f5f5f7;
   border-color: var(--line-strong);
   color: var(--muted);
-}
-
-[data-phx-main].phx-connected .status-badge-live {
-  display: inline-flex;
-}
-
-[data-phx-main].phx-connected .status-badge-offline {
-  display: none;
 }
 
 .metric-grid {

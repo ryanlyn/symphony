@@ -80,8 +80,9 @@ tracker:
   active_states:                     # issue states that trigger agent work
     - Todo                           #   default: ["Todo", "In Progress"]
     - In Progress
-    - Merging                        # custom states are supported; add them in
-    - Rework                         #   Linear under Team Settings -> Workflow
+    - Agent Review                   # custom states are supported; add them in
+    - Merging                        #   Linear under Team Settings -> Workflow
+    - Rework
 
   terminal_states:                   # issue states that stop agents and clean up workspaces
     - Closed                         #   default: ["Closed", "Cancelled", "Canceled",
@@ -102,6 +103,7 @@ worker:
   ssh_hosts:                         # optional; run agents on remote SSH hosts
     - worker1.example.com            #   workspaces are synced via rsync over SSH
     - worker2.example.com            #   set SYMPHONY_SSH_CONFIG to use a custom SSH config file
+  ssh_timeout_ms: 60000              # optional; default timeout for SSH.run/3 calls; default: 60000
   max_concurrent_agents_per_host: 2  # optional; cap agents per SSH host
 
 agent:
@@ -138,7 +140,6 @@ claude:                              # Claude-specific settings (used when agent
   stall_timeout_ms: 300000           # kill turn after this long without output; default: 300000
   strict_mcp_config: true            # only use MCP servers from the injected config,
                                      #   ignoring user/project MCP settings; default: true
-  mcp_server_python: python3         # Python interpreter for the Linear MCP sidecar; default: python3
 
 hooks:
   after_create: |                    # runs after workspace directory is created
@@ -167,6 +168,10 @@ Notes:
 - If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot. If a later
   reload fails, it keeps running with the last known good configuration and logs the error.
 - `~` is expanded to the home directory in path values. For env-backed paths, use `$VAR`.
+- `SYMPHONY_WORKSPACE_ROOT` overrides `workspace.root` at runtime. This is useful for isolated
+  test and CI runs that should not touch shared local workspaces.
+- `SYMPHONY_SECRET_KEY_BASE` and `SYMPHONY_LIVE_VIEW_SIGNING_SALT` optionally override the Phoenix
+  endpoint defaults at boot.
 - The `codex.command` value is a shell command string - `$VAR` expansion happens in the shell, not
   in Symphony.
 - When `codex.turn_sandbox_policy` is omitted, Symphony auto-generates a `workspaceWrite` policy
@@ -182,8 +187,8 @@ Prerequisites:
 2. Set it as the `LINEAR_API_KEY` environment variable (or `tracker.api_key: $LINEAR_API_KEY`)
 3. Find your project slug by right-clicking the project in Linear and copying its URL - the slug
    is in the path
-4. The example workflow files in this repo use non-standard Linear issue states (`Rework`, `Human
-   Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
+4. The example workflow files in this repo use non-standard Linear issue states (`Agent Review`,
+   `Rework`, `Human Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
    `active_states` / `terminal_states` to match your existing workflow.
 
 ### Workflow prompt
@@ -219,7 +224,7 @@ workflow files:
 
 Copy these to your target repo's `.codex/skills/` directory if your workflow references them. The
 `symphony-linear` skill uses the `linear_graphql` tool injected by Symphony (via Codex app-server
-tool or Claude MCP sidecar).
+tool or Symphony's `/claude-mcp` endpoint for Claude).
 
 ## Web dashboard
 
@@ -280,6 +285,11 @@ SYMPHONY_RUN_REAL_CODEX_RESUME_E2E=1 mise exec -- mix test test/symphony_elixir/
 # Claude resume + MCP
 SYMPHONY_RUN_REAL_CLAUDE_RESUME_E2E=1 LINEAR_API_KEY=... mise exec -- mix test test/symphony_elixir/live_claude_resume_e2e_test.exs
 ```
+
+For the remote Claude resume scenario, set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to real SSH workers, or
+let the test boot disposable docker SSH workers automatically by providing
+`SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN` (or `CLAUDE_CODE_OAUTH_TOKEN`) so Claude inside the
+worker container can authenticate.
 
 ## License
 

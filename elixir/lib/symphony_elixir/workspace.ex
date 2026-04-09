@@ -10,15 +10,23 @@ defmodule SymphonyElixir.Workspace do
 
   @type worker_host :: String.t() | nil
 
-  @spec create_for_issue(map() | String.t() | nil, worker_host()) ::
+  @doc false
+  @spec safe_identifier(String.t() | nil) :: String.t()
+  def safe_identifier(identifier) do
+    String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
+  end
+
+  @spec create_for_issue(map() | String.t() | nil, worker_host(), keyword()) ::
           {:ok, Path.t()} | {:error, term()}
-  def create_for_issue(issue_or_identifier, worker_host \\ nil) do
+  def create_for_issue(issue_or_identifier, worker_host \\ nil, opts \\ []) do
     issue_context = issue_context(issue_or_identifier)
+    slot_index = Keyword.get(opts, :slot_index, 0)
+    ensemble_size = Keyword.get(opts, :ensemble_size, 1)
 
     try do
       safe_id = safe_identifier(issue_context.issue_identifier)
 
-      with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
+      with {:ok, workspace} <- workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host),
            :ok <- validate_workspace_path(workspace, worker_host),
            {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
            :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
@@ -32,16 +40,18 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp ensure_workspace(workspace, nil) do
-    cond do
-      File.dir?(workspace) ->
-        {:ok, workspace, false}
+    case PathSafety.ensure_directory(workspace) do
+      {:ok, canonical_workspace, created?} ->
+        {:ok, canonical_workspace, created?}
 
-      File.exists?(workspace) ->
-        File.rm_rf!(workspace)
-        create_workspace(workspace)
+      {:error, {:path_create_failed, ^workspace, {:unsafe_symlink, _candidate_path}}} ->
+        case validate_workspace_path(workspace, nil) do
+          {:error, reason} -> {:error, reason}
+          :ok -> {:error, {:workspace_prepare_failed, workspace, :unsafe_symlink}}
+        end
 
-      true ->
-        create_workspace(workspace)
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -76,12 +86,6 @@ defmodule SymphonyElixir.Workspace do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp create_workspace(workspace) do
-    File.rm_rf!(workspace)
-    File.mkdir_p!(workspace)
-    {:ok, workspace, true}
   end
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
@@ -140,7 +144,7 @@ defmodule SymphonyElixir.Workspace do
   def remove_issue_workspaces(identifier, worker_host) when is_binary(identifier) and is_binary(worker_host) do
     safe_id = safe_identifier(identifier)
 
-    case workspace_path_for_issue(safe_id, worker_host) do
+    case issue_base_path(safe_id, worker_host) do
       {:ok, workspace} -> remove(workspace, worker_host)
       {:error, _reason} -> :ok
     end
@@ -151,16 +155,13 @@ defmodule SymphonyElixir.Workspace do
   def remove_issue_workspaces(identifier, nil) when is_binary(identifier) do
     safe_id = safe_identifier(identifier)
 
-    case Config.settings!().worker.ssh_hosts do
-      [] ->
-        case workspace_path_for_issue(safe_id, nil) do
-          {:ok, workspace} -> remove(workspace, nil)
-          {:error, _reason} -> :ok
-        end
-
-      worker_hosts ->
-        Enum.each(worker_hosts, &remove_issue_workspaces(identifier, &1))
+    case issue_base_path(safe_id, nil) do
+      {:ok, workspace} -> remove(workspace, nil)
+      {:error, _reason} -> :ok
     end
+
+    Config.settings!().worker.ssh_hosts
+    |> Enum.each(&remove_issue_workspaces(identifier, &1))
 
     :ok
   end
@@ -199,15 +200,40 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp workspace_path_for_issue(safe_id, nil) when is_binary(safe_id) do
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, nil)
+       when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) do
+    Config.settings!().workspace.root
+    |> Path.join(safe_id)
+    |> maybe_append_slot_path(slot_index, ensemble_size)
+    |> PathSafety.canonicalize()
+  end
+
+  defp workspace_path_for_issue(safe_id, slot_index, ensemble_size, worker_host)
+       when is_binary(safe_id) and is_integer(slot_index) and is_integer(ensemble_size) and
+              is_binary(worker_host) do
+    with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
+      {:ok, workspace_root |> Path.join(safe_id) |> maybe_append_slot_path(slot_index, ensemble_size)}
+    end
+  end
+
+  defp issue_base_path(safe_id, nil) when is_binary(safe_id) do
     Config.settings!().workspace.root
     |> Path.join(safe_id)
     |> PathSafety.canonicalize()
   end
 
-  defp workspace_path_for_issue(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
+  defp issue_base_path(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
     with {:ok, workspace_root} <- remote_workspace_root(worker_host, Config.settings!().workspace.root) do
       {:ok, Path.join(workspace_root, safe_id)}
+    end
+  end
+
+  defp maybe_append_slot_path(base_path, slot_index, ensemble_size)
+       when is_binary(base_path) and is_integer(slot_index) and is_integer(ensemble_size) do
+    if ensemble_size > 1 do
+      Path.join(base_path, Integer.to_string(slot_index))
+    else
+      base_path
     end
   end
 
@@ -239,10 +265,6 @@ defmodule SymphonyElixir.Workspace do
       {:error, reason} ->
         {:error, {:remote_home_lookup_failed, worker_host, reason}}
     end
-  end
-
-  defp safe_identifier(identifier) do
-    String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
   end
 
   defp maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
@@ -464,17 +486,19 @@ defmodule SymphonyElixir.Workspace do
 
   defp validate_remote_workspace_containment(expanded_workspace, expanded_root)
        when is_binary(expanded_workspace) and is_binary(expanded_root) do
-    expanded_root_prefix = expanded_root <> "/"
+    normalized_workspace = Path.expand(expanded_workspace)
+    normalized_root = Path.expand(expanded_root)
+    normalized_root_prefix = normalized_root <> "/"
 
     cond do
-      expanded_workspace == expanded_root ->
-        {:error, {:workspace_equals_root, expanded_workspace, expanded_root}}
+      normalized_workspace == normalized_root ->
+        {:error, {:workspace_equals_root, normalized_workspace, normalized_root}}
 
-      String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
-        {:ok, expanded_workspace}
+      String.starts_with?(normalized_workspace <> "/", normalized_root_prefix) ->
+        {:ok, normalized_workspace}
 
       true ->
-        {:error, {:workspace_outside_root, expanded_workspace, expanded_root}}
+        {:error, {:workspace_outside_root, normalized_workspace, normalized_root}}
     end
   end
 
@@ -517,7 +541,7 @@ defmodule SymphonyElixir.Workspace do
        when is_binary(worker_host) and is_binary(script) and is_integer(timeout_ms) and timeout_ms > 0 do
     task =
       Task.async(fn ->
-        SSH.run(worker_host, script, stderr_to_stdout: true)
+        SSH.run(worker_host, script, stderr_to_stdout: true, timeout: timeout_ms)
       end)
 
     case Task.yield(task, timeout_ms) do

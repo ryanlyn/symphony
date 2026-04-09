@@ -10,12 +10,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    live_connected = connected?(socket)
+
     socket =
       socket
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
+      |> assign(:live_connected, live_connected)
 
-    if connected?(socket) do
+    if live_connected do
       :ok = ObservabilityPubSub.subscribe()
       schedule_runtime_tick()
     end
@@ -56,13 +59,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </div>
 
           <div class="status-stack">
-            <span class="status-badge status-badge-live">
+            <span class={["status-badge", connection_status_badge_class(@live_connected)]}>
               <span class="status-badge-dot"></span>
-              Live
-            </span>
-            <span class="status-badge status-badge-offline">
-              <span class="status-badge-dot"></span>
-              Offline
+              <%= connection_status_label(@live_connected) %>
             </span>
           </div>
         </div>
@@ -321,6 +320,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
       true -> base
     end
   end
+
+  defp connection_status_badge_class(true), do: "status-badge-live"
+  defp connection_status_badge_class(false), do: "status-badge-offline"
+
+  defp connection_status_label(true), do: "Live"
+  defp connection_status_label(false), do: "Offline"
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
