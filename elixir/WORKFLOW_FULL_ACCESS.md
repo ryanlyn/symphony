@@ -379,5 +379,5 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 
 ### Agent Reviews
 
-- <agent review notes with timestamps and classifications>
+- <agent review notes with timestamps>
 ````
