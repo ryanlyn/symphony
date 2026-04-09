@@ -57,6 +57,14 @@ defmodule SymphonyElixir.Config do
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
 
+  @spec local_max_concurrent_agents_for_state(term()) :: pos_integer() | nil
+  def local_max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
+    settings!()
+    |> local_max_concurrent_agents_for_state_from_settings(state_name)
+  end
+
+  def local_max_concurrent_agents_for_state(_state_name), do: nil
+
   @spec settings_for_issue_state(term()) :: {:ok, Schema.t()} | {:error, term()}
   def settings_for_issue_state(state_name) when is_binary(state_name) do
     case settings() do
@@ -194,6 +202,19 @@ defmodule SymphonyElixir.Config do
 
       true ->
         :ok
+    end
+  end
+
+  defp local_max_concurrent_agents_for_state_from_settings(%Schema{} = settings, state_name)
+       when is_binary(state_name) do
+    normalized_state = Schema.normalize_issue_state(state_name)
+
+    case get_in(settings.status_overrides, [normalized_state, :agent, :max_concurrent_agents]) do
+      limit when is_integer(limit) and limit > 0 ->
+        limit
+
+      _ ->
+        nil
     end
   end
 

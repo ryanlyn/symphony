@@ -17,5 +17,9 @@
 ├─ Backoff queue
 │
 │  No queued retries
+│
+├─ Dispatch blocks
+│
+│  No capacity-blocked issues
 ╰─
 ```

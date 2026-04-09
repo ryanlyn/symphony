@@ -166,6 +166,33 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     refute backoff_line =~ "\\n"
   end
 
+  test "dashboard renders dispatch block reasons when eligible issues are blocked" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [],
+         blocked: [
+           %{issue_id: "issue-1", identifier: "MT-301", state: "Todo", reason: :global_concurrency_cap},
+           %{issue_id: "issue-2", identifier: "MT-302", state: "Todo", reason: :local_concurrency_cap},
+           %{issue_id: "issue-3", identifier: "MT-303", state: "In Progress", reason: :worker_host_capacity}
+         ],
+         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 0.0)
+
+    assert rendered =~ "Dispatch blocks"
+    assert rendered =~ "global=1"
+    assert rendered =~ "local=1"
+    assert rendered =~ "worker=1"
+    assert rendered =~ "MT-301"
+    assert rendered =~ "global cap"
+    assert rendered =~ "local cap"
+    assert rendered =~ "worker host capacity"
+  end
+
   test "snapshot fixture: unlimited credits variant" do
     snapshot_data =
       {:ok,
