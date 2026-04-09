@@ -7,8 +7,6 @@ defmodule SymphonyElixir.AgentRunner do
   alias SymphonyElixir.{AgentResumeState, Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
   alias SymphonyElixir.Config.Schema
 
-  @dialyzer :no_match
-
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -254,6 +252,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
+  @dialyzer {:no_match, [persist_resume_state: 4]}
   defp persist_resume_state(workspace, worker_host, %Issue{} = issue, resume_metadata)
        when is_binary(workspace) and is_map(resume_metadata) do
     resume_id = Map.get(resume_metadata, :resume_id)
