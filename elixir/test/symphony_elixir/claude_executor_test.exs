@@ -916,20 +916,27 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
     Port.open({:spawn_executable, String.to_charlist(executable)}, [:binary, :exit_status])
   end
 
-  defp assert_port_closed(port, attempts \\ 20)
+  defp assert_port_closed(port, timeout_ms \\ 2_000)
 
-  defp assert_port_closed(port, attempts) when attempts > 0 do
+  defp assert_port_closed(port, timeout_ms) when timeout_ms > 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    wait_for_port_close(port, deadline)
+  end
+
+  defp wait_for_port_close(port, deadline_ms) do
     case Port.info(port) do
       nil ->
         :ok
 
-      _ ->
-        Process.sleep(10)
-        assert_port_closed(port, attempts - 1)
+      info ->
+        if System.monotonic_time(:millisecond) >= deadline_ms do
+          flunk("port remained open: #{inspect(info)}")
+        else
+          Process.sleep(10)
+          wait_for_port_close(port, deadline_ms)
+        end
     end
   end
-
-  defp assert_port_closed(_port, 0), do: flunk("port remained open")
 
   defp fake_remote_ssh_script(trace_file, fail_config_write?) when is_binary(trace_file) do
     """
