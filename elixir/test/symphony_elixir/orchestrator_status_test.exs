@@ -1084,8 +1084,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       url: "https://example.org/issues/MT-INVALID-TICK"
     }
 
-    slot_key = {issue_id, 0}
-
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
     slot_key = {issue_id, 0}
@@ -2046,6 +2044,137 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              "agent message streaming: writing workpad reconciliation update"
 
     assert StatusDashboard.humanize_codex_message(fallback_reasoning) == "reasoning update"
+  end
+
+  test "snapshot retains finished run history after a worker exits" do
+    issue_id = "issue-history-finished"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-HISTORY",
+      title: "Run history",
+      description: "Capture finished attempt details",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-HISTORY"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :RunHistoryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now() |> DateTime.add(-2, :second)
+
+    running_entry =
+      build_running_entry(%{
+        pid: self(),
+        ref: process_ref,
+        run_id: "run-1",
+        issue: issue,
+        started_at: started_at,
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
+      })
+
+    run_record = %{
+      id: "run-1",
+      issue_id: issue_id,
+      issue_identifier: issue.identifier,
+      issue_title: issue.title,
+      state: issue.state,
+      slot_index: 0,
+      ensemble_size: 1,
+      agent_kind: "codex",
+      worker_host: nil,
+      workspace_path: nil,
+      resume_id: nil,
+      session_id: nil,
+      executor_pid: nil,
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      turn_count: 0,
+      retry_attempt: 0,
+      last_agent_timestamp: nil,
+      last_agent_event: nil,
+      last_agent_message: nil,
+      started_at: started_at,
+      ended_at: nil,
+      outcome: :running,
+      failure_reason: nil,
+      cost: %{estimated_cost_usd: nil}
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{{issue_id, 0} => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, {issue_id, 0}))
+      |> Map.put(:next_run_id, 2)
+      |> Map.put(:run_history, [run_record])
+    end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :session_started,
+         session_id: "thread-history-turn-1",
+         resume_id: "thread-history",
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_started,
+         timestamp: now
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "thread/tokenUsage/updated",
+           "params" => %{
+             "tokenUsage" => %{
+               "total" => %{"inputTokens" => 12, "outputTokens" => 5, "totalTokens" => 17}
+             }
+           }
+         },
+         timestamp: now,
+         executor_pid: "4242"
+       }}
+    )
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+
+    snapshot =
+      wait_for_snapshot(pid, fn snapshot ->
+        match?([%{id: "run-1", outcome: :success}], snapshot.run_history)
+      end)
+
+    assert [%{id: "run-1"} = run] = snapshot.run_history
+    assert run.issue_id == issue_id
+    assert run.issue_identifier == "MT-HISTORY"
+    assert run.session_id == "thread-history-turn-1"
+    assert run.resume_id == "thread-history"
+    assert run.executor_pid == "4242"
+    assert run.turn_count == 2
+    assert run.usage_totals.total_tokens == 17
+    assert run.outcome == :success
+    assert run.failure_reason == nil
+    assert %DateTime{} = run.ended_at
+    assert is_integer(run.duration_ms) and run.duration_ms >= 0
   end
 
   test "application stop renders offline status" do

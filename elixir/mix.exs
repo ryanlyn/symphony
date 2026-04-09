@@ -20,6 +20,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Orchestrator.State,
           SymphonyElixir.AgentRunner,
           SymphonyElixir.CLI,
+          Mix.Tasks.Symphony.Runs,
           SymphonyElixir.AgentResumeState,
           SymphonyElixir.Claude.Executor,
           SymphonyElixir.Claude.Mcp,

@@ -24,6 +24,23 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
     end
   end
 
+  @spec runs(Conn.t(), map()) :: Conn.t()
+  def runs(conn, params) do
+    case Presenter.runs_payload(params, orchestrator(), snapshot_timeout_ms()) do
+      {:ok, payload} ->
+        json(conn, payload)
+
+      {:error, :run_not_found} ->
+        error_response(conn, 404, "run_not_found", "Run not found")
+
+      {:error, :snapshot_timeout} ->
+        error_response(conn, 503, "snapshot_timeout", "Snapshot timed out")
+
+      {:error, :snapshot_unavailable} ->
+        error_response(conn, 503, "snapshot_unavailable", "Snapshot unavailable")
+    end
+  end
+
   @spec refresh(Conn.t(), map()) :: Conn.t()
   def refresh(conn, _params) do
     case Presenter.refresh_payload(orchestrator()) do
