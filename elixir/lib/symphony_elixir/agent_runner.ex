@@ -143,12 +143,9 @@ defmodule SymphonyElixir.AgentRunner do
   defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace, _agent_kind, _slot_index, _ensemble_size), do: :ok
 
   defp run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host) do
-    runtime_settings =
-      Keyword.get_lazy(opts, :runtime_settings, fn ->
-        Config.settings_for_issue_state!(issue.state)
-      end)
+    runtime_settings = initial_runtime_settings(issue, opts)
 
-    max_turns = Keyword.get(opts, :max_turns, runtime_settings.agent.max_turns)
+    max_turns = resolved_max_turns(opts, runtime_settings)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
     slot_index = Keyword.get(opts, :slot_index, 0)
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
@@ -157,15 +154,9 @@ defmodule SymphonyElixir.AgentRunner do
       executor: executor,
       workspace: workspace,
       update_recipient: update_recipient,
-      opts:
-        Keyword.merge(
-          opts,
-          runtime_settings: runtime_settings,
-          slot_index: slot_index,
-          ensemble_size: ensemble_size,
-          issue_id: issue.id
-        ),
+      opts: runner_opts(opts, runtime_settings, slot_index, ensemble_size, issue.id),
       issue_state_fetcher: issue_state_fetcher,
+      runtime_settings: runtime_settings,
       max_turns: max_turns,
       worker_host: worker_host
     }
@@ -217,15 +208,8 @@ defmodule SymphonyElixir.AgentRunner do
         Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_result[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
         case continue_with_issue?(issue, issue_state_fetcher) do
-          {:continue, refreshed_issue} when turn_number < max_turns ->
-            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
-
-            do_run_agent_turns(ctx, updated_session, refreshed_issue, turn_number + 1)
-
           {:continue, refreshed_issue} ->
-            Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
-
-            {:ok, updated_session}
+            continue_active_issue(ctx, updated_session, refreshed_issue, turn_number)
 
           {:done, _refreshed_issue} ->
             {:ok, updated_session}
@@ -271,6 +255,96 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
+
+  defp continue_active_issue(ctx, updated_session, refreshed_issue, turn_number) do
+    case refreshed_continuation_ctx(ctx, refreshed_issue) do
+      {:continue, %{max_turns: refreshed_max_turns} = next_ctx}
+      when turn_number < refreshed_max_turns ->
+        Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{next_ctx.max_turns}")
+
+        do_run_agent_turns(next_ctx, updated_session, refreshed_issue, turn_number + 1)
+
+      {:continue, next_ctx} ->
+        Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator turn=#{turn_number}/#{next_ctx.max_turns}")
+
+        {:ok, updated_session}
+
+      {:restart, reason} ->
+        Logger.info("Ending agent run for #{issue_context(refreshed_issue)} after state refresh so the orchestrator can restart with updated runtime settings: #{reason}")
+        {:ok, updated_session}
+    end
+  end
+
+  defp initial_runtime_settings(issue, opts) do
+    Keyword.get_lazy(opts, :runtime_settings, fn -> resolve_runtime_settings(issue, opts) end)
+  end
+
+  defp resolve_runtime_settings(%Issue{} = issue, opts) do
+    Keyword.get(opts, :runtime_settings_resolver, &Config.settings_for_issue_state!/1).(issue.state)
+  end
+
+  defp resolved_max_turns(opts, %Schema{} = runtime_settings) do
+    Keyword.get(opts, :max_turns, runtime_settings.agent.max_turns)
+  end
+
+  defp runner_opts(opts, runtime_settings, slot_index, ensemble_size, issue_id) do
+    Keyword.merge(
+      opts,
+      runtime_settings: runtime_settings,
+      slot_index: slot_index,
+      ensemble_size: ensemble_size,
+      issue_id: issue_id
+    )
+  end
+
+  defp refreshed_continuation_ctx(%{opts: opts, runtime_settings: runtime_settings} = ctx, %Issue{} = refreshed_issue) do
+    refreshed_runtime_settings = resolve_runtime_settings(refreshed_issue, opts)
+    refreshed_max_turns = resolved_max_turns(opts, refreshed_runtime_settings)
+
+    if continuation_requires_restart?(runtime_settings, refreshed_runtime_settings) do
+      {:restart, continuation_restart_reason(runtime_settings, refreshed_runtime_settings)}
+    else
+      {:continue,
+       %{
+         ctx
+         | runtime_settings: refreshed_runtime_settings,
+           max_turns: refreshed_max_turns,
+           opts:
+             runner_opts(
+               opts,
+               refreshed_runtime_settings,
+               Keyword.get(opts, :slot_index, 0),
+               Keyword.get(opts, :ensemble_size, 1),
+               Keyword.get(opts, :issue_id, refreshed_issue.id)
+             )
+       }}
+    end
+  end
+
+  defp continuation_requires_restart?(%Schema{} = current_runtime, %Schema{} = refreshed_runtime) do
+    current_runtime.agent.kind != refreshed_runtime.agent.kind or
+      continuation_runtime_profile(current_runtime) != continuation_runtime_profile(refreshed_runtime)
+  end
+
+  defp continuation_runtime_profile(%Schema{} = runtime_settings) do
+    case runtime_settings.agent.kind do
+      "claude" ->
+        %{agent_kind: "claude", claude: runtime_settings.claude}
+
+      agent_kind ->
+        %{agent_kind: agent_kind, codex: runtime_settings.codex}
+    end
+  end
+
+  defp continuation_restart_reason(%Schema{} = current_runtime, %Schema{} = refreshed_runtime) do
+    case {current_runtime.agent.kind, refreshed_runtime.agent.kind} do
+      {current_kind, refreshed_kind} when current_kind != refreshed_kind ->
+        "agent.kind changed from #{inspect(current_kind)} to #{inspect(refreshed_kind)}"
+
+      {agent_kind, _same_kind} ->
+        "#{agent_kind} runtime profile changed"
+    end
+  end
 
   defp start_session(executor, workspace, %Issue{} = issue, worker_host, opts) do
     runtime_settings = Keyword.fetch!(opts, :runtime_settings)
