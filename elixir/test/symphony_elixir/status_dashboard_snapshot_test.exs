@@ -50,6 +50,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-101",
+             agent_kind: "codex",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 120_450, seconds_running: 0},
              runtime_seconds: 785,
              turn_count: 11,
@@ -58,6 +59,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            }),
            running_entry(%{
              identifier: "MT-102",
+             agent_kind: "claude",
              session_id: "thread-abcdef1234567890",
              executor_pid: "5252",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 89_200, seconds_running: 0},
@@ -92,6 +94,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-638",
+             agent_kind: "codex",
              state: "retrying",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 14_200, seconds_running: 0},
              runtime_seconds: 1_225,
@@ -193,6 +196,37 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
     assert rendered =~ "worker host capacity"
   end
 
+  test "backoff queue row preserves commas inside retry errors" do
+    snapshot_data =
+      {:ok,
+       %{
+         running: [],
+         retrying: [
+           retry_entry(%{
+             identifier: "MONO-120",
+             attempt: 2,
+             due_in_ms: 1_500,
+             error: "first, second"
+           })
+         ],
+         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+         rate_limits: nil
+       }}
+
+    rendered = render_snapshot(snapshot_data, 0.0)
+
+    backoff_lines =
+      rendered
+      |> String.split("\n")
+      |> Enum.filter(&String.contains?(&1, "MONO-120"))
+
+    assert length(backoff_lines) == 1
+
+    [backoff_line] = backoff_lines
+
+    assert backoff_line =~ "error=first, second"
+  end
+
   test "snapshot fixture: unlimited credits variant" do
     snapshot_data =
       {:ok,
@@ -200,6 +234,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-777",
+             agent_kind: "codex",
              state: "running",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 3_200, seconds_running: 0},
              runtime_seconds: 75,
@@ -232,6 +267,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
         state: "running",
         slot_index: 0,
         ensemble_size: 1,
+        agent_kind: "codex",
         session_id: "thread-1234567890",
         executor_pid: "4242",
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},

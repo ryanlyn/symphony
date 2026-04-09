@@ -40,16 +40,18 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp ensure_workspace(workspace, nil) do
-    cond do
-      File.dir?(workspace) ->
-        {:ok, workspace, false}
+    case PathSafety.ensure_directory(workspace) do
+      {:ok, canonical_workspace, created?} ->
+        {:ok, canonical_workspace, created?}
 
-      File.exists?(workspace) ->
-        File.rm_rf!(workspace)
-        create_workspace(workspace)
+      {:error, {:path_create_failed, ^workspace, {:unsafe_symlink, _candidate_path}}} ->
+        case validate_workspace_path(workspace, nil) do
+          {:error, reason} -> {:error, reason}
+          :ok -> {:error, {:workspace_prepare_failed, workspace, :unsafe_symlink}}
+        end
 
-      true ->
-        create_workspace(workspace)
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -84,12 +86,6 @@ defmodule SymphonyElixir.Workspace do
       {:error, reason} ->
         {:error, reason}
     end
-  end
-
-  defp create_workspace(workspace) do
-    File.rm_rf!(workspace)
-    File.mkdir_p!(workspace)
-    {:ok, workspace, true}
   end
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}

@@ -15,6 +15,7 @@ defmodule SymphonyElixir.StatusDashboard do
   @throughput_graph_window_ms 10 * 60 * 1000
   @running_id_width 8
   @running_slot_width 5
+  @running_agent_width 8
   @running_stage_width 14
   @running_pid_width 8
   @running_age_width 12
@@ -22,7 +23,7 @@ defmodule SymphonyElixir.StatusDashboard do
   @running_session_width 14
   @running_event_default_width 38
   @running_event_min_width 12
-  @running_row_chrome_width 11
+  @running_row_chrome_width 12
   @default_terminal_columns 115
   @snapshot_timeout_ms 15_000
 
@@ -624,10 +625,11 @@ defmodule SymphonyElixir.StatusDashboard do
     slot_index = Map.get(running_entry, :slot_index, 0)
     slot = format_cell(to_string(slot_index), @running_slot_width)
     state = running_entry.state || "unknown"
-    agent_kind = Map.get(running_entry, :agent_kind)
+    agent_kind = running_entry |> Map.get(:agent_kind) |> agent_kind_label() |> format_cell(@running_agent_width)
 
     state_display =
-      agent_state_label(agent_kind, state)
+      state
+      |> to_string()
       |> format_cell(@running_stage_width)
 
     session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
@@ -669,6 +671,8 @@ defmodule SymphonyElixir.StatusDashboard do
       " ",
       colorize(slot, @ansi_gray),
       " ",
+      colorize(agent_kind, @ansi_cyan),
+      " ",
       colorize(state_display, status_color),
       " ",
       colorize(pid, @ansi_yellow),
@@ -691,9 +695,9 @@ defmodule SymphonyElixir.StatusDashboard do
       do: format_running_summary(running_entry, running_event_width(terminal_columns))
   end
 
-  defp agent_state_label(nil, state), do: to_string(state)
-  defp agent_state_label("", state), do: to_string(state)
-  defp agent_state_label(agent_kind, state), do: "#{agent_kind}/#{state}"
+  defp agent_kind_label(nil), do: "n/a"
+  defp agent_kind_label(""), do: "n/a"
+  defp agent_kind_label(agent_kind), do: to_string(agent_kind)
 
   if Mix.env() == :test do
     @doc false
@@ -711,8 +715,7 @@ defmodule SymphonyElixir.StatusDashboard do
     else
       retrying
       |> Enum.sort_by(& &1.due_in_ms)
-      |> Enum.map_join(", ", &format_retry_summary/1)
-      |> String.split(", ")
+      |> Enum.map(&format_retry_summary/1)
     end
   end
 
@@ -855,6 +858,7 @@ defmodule SymphonyElixir.StatusDashboard do
       [
         format_cell("ID", @running_id_width),
         format_cell("SLOT", @running_slot_width),
+        format_cell("AGENT", @running_agent_width),
         format_cell("STAGE", @running_stage_width),
         format_cell("PID", @running_pid_width),
         format_cell("AGE / TURN", @running_age_width),
@@ -871,12 +875,13 @@ defmodule SymphonyElixir.StatusDashboard do
     separator_width =
       @running_id_width +
         @running_slot_width +
+        @running_agent_width +
         @running_stage_width +
         @running_pid_width +
         @running_age_width +
         @running_tokens_width +
         @running_session_width +
-        running_event_width + 7
+        running_event_width + 8
 
     "│   " <> colorize(String.duplicate("─", separator_width), @ansi_gray)
   end
@@ -893,6 +898,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp fixed_running_width do
     @running_id_width +
       @running_slot_width +
+      @running_agent_width +
       @running_stage_width +
       @running_pid_width +
       @running_age_width +
@@ -939,7 +945,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp truncate_plain(value, width) do
-    if byte_size(value) <= width do
+    if String.length(value) <= width do
       value
     else
       String.slice(value, 0, width - 3) <> "..."

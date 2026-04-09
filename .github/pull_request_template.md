@@ -20,3 +20,9 @@
 
 - [ ] `make -C elixir all`
 - [ ] <!-- Additional targeted checks (list below) -->
+
+#### Proof of Work
+
+- <!-- What concrete evidence proves this change works? -->
+- <!-- Include commands, logs, screenshots, videos, GIFs, TUI renders, or links to artifacts -->
+- <!-- explain things precisely with epistemic honesty -->

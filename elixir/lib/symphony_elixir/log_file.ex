@@ -31,20 +31,27 @@ defmodule SymphonyElixir.LogFile do
 
   defp setup_disk_handler(log_file, max_bytes, max_files) do
     expanded_path = Path.expand(log_file)
-    :ok = File.mkdir_p(Path.dirname(expanded_path))
-    :ok = remove_existing_handler()
+    log_dir = Path.dirname(expanded_path)
 
-    case :logger.add_handler(
-           @handler_id,
-           :logger_disk_log_h,
-           disk_log_handler_config(expanded_path, max_bytes, max_files)
-         ) do
-      :ok ->
-        remove_default_console_handler()
-        :ok
+    with :ok <- File.mkdir_p(log_dir),
+         :ok <- remove_existing_handler() do
+      case :logger.add_handler(
+             @handler_id,
+             :logger_disk_log_h,
+             disk_log_handler_config(expanded_path, max_bytes, max_files)
+           ) do
+        :ok ->
+          remove_default_console_handler()
+          :ok
 
+        {:error, reason} ->
+          Logger.warning("Failed to configure rotating log file handler: #{inspect(reason)}")
+          :ok
+      end
+    else
       {:error, reason} ->
-        Logger.warning("Failed to configure rotating log file handler: #{inspect(reason)}")
+        Logger.warning("Failed to create rotating log file directory #{inspect(log_dir)}: #{inspect(reason)}")
+
         :ok
     end
   end
