@@ -80,8 +80,9 @@ tracker:
   active_states:                     # issue states that trigger agent work
     - Todo                           #   default: ["Todo", "In Progress"]
     - In Progress
-    - Merging                        # custom states are supported; add them in
-    - Rework                         #   Linear under Team Settings -> Workflow
+    - Agent Review                   # custom states are supported; add them in
+    - Merging                        #   Linear under Team Settings -> Workflow
+    - Rework
 
   terminal_states:                   # issue states that stop agents and clean up workspaces
     - Closed                         #   default: ["Closed", "Cancelled", "Canceled",
@@ -186,8 +187,8 @@ Prerequisites:
 2. Set it as the `LINEAR_API_KEY` environment variable (or `tracker.api_key: $LINEAR_API_KEY`)
 3. Find your project slug by right-clicking the project in Linear and copying its URL - the slug
    is in the path
-4. The example workflow files in this repo use non-standard Linear issue states (`Rework`, `Human
-   Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
+4. The example workflow files in this repo use non-standard Linear issue states (`Agent Review`,
+   `Rework`, `Human Review`, `Merging`). Add these under Team Settings -> Workflow in Linear, or customize
    `active_states` / `terminal_states` to match your existing workflow.
 
 ### Workflow prompt
