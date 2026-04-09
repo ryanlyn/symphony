@@ -7,6 +7,12 @@ defmodule SymphonyElixir.AgentRunner do
   alias SymphonyElixir.{AgentResumeState, Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
   alias SymphonyElixir.Config.Schema
 
+  @dialyzer :no_match
+  @worker_setup_timeout_grace_ms 1_000
+  @workspace_create_stage "workspace.create_for_issue"
+  @before_run_hook_stage "workspace.run_before_run_hook"
+  @after_run_hook_stage "workspace.run_after_run_hook"
+
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -36,28 +42,73 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp run_on_worker_host(issue, update_recipient, opts, worker_host, executor, agent_kind) do
+    runtime_settings =
+      Keyword.get_lazy(opts, :runtime_settings, fn ->
+        Config.settings_for_issue_state!(Map.get(issue, :state))
+      end)
+
+    workspace_module = workspace_module(opts)
     slot_index = Keyword.get(opts, :slot_index, 0)
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
+    workspace_create_timeout_ms = workspace_create_timeout_ms(opts, runtime_settings, agent_kind)
+    hook_timeout_ms = hook_timeout_ms(opts, runtime_settings)
 
     Logger.info("Starting worker attempt for #{issue_context(issue)} agent_kind=#{agent_kind} worker_host=#{worker_host_for_log(worker_host)} slot=#{slot_index}/#{ensemble_size}")
 
-    case Workspace.create_for_issue(issue, worker_host,
-           slot_index: slot_index,
-           ensemble_size: ensemble_size
-         ) do
+    case run_setup_stage(@workspace_create_stage, workspace_create_timeout_ms, fn ->
+           workspace_module.create_for_issue(issue, worker_host,
+             slot_index: slot_index,
+             ensemble_size: ensemble_size
+           )
+         end) do
       {:ok, workspace} ->
         send_worker_runtime_info(update_recipient, issue, worker_host, workspace, agent_kind, slot_index, ensemble_size)
 
         try do
-          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
+          with :ok <-
+                 run_setup_stage(@before_run_hook_stage, hook_timeout_ms, fn ->
+                   workspace_module.run_before_run_hook(workspace, issue, worker_host)
+                 end) do
             run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host)
           end
         after
-          Workspace.run_after_run_hook(workspace, issue, worker_host)
+          run_after_run_hook(workspace_module, workspace, issue, worker_host, hook_timeout_ms)
         end
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp run_after_run_hook(workspace_module, workspace, issue, worker_host, timeout_ms) do
+    case run_setup_stage(@after_run_hook_stage, timeout_ms, fn ->
+           workspace_module.run_after_run_hook(workspace, issue, worker_host)
+         end) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Ignoring after_run hook failure for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}: #{inspect(reason)}")
+
+        :ok
+    end
+  end
+
+  defp run_setup_stage(stage_name, timeout_ms, fun)
+       when is_binary(stage_name) and is_integer(timeout_ms) and timeout_ms > 0 and is_function(fun, 0) do
+    task = Task.Supervisor.async_nolink(SymphonyElixir.TaskSupervisor, fun)
+
+    case Task.yield(task, timeout_ms) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error, {:agent_runner_setup_crashed, stage_name, reason}}
+
+      nil ->
+        Task.shutdown(task, 0)
+        Task.shutdown(task, :brutal_kill)
+        {:error, {:agent_runner_timeout, stage_name, timeout_ms}}
     end
   end
 
@@ -335,6 +386,33 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp executor_module(opts, agent_kind) do
     Keyword.get(opts, :executor, SymphonyElixir.AgentExecutor.module_for_kind(agent_kind))
+  end
+
+  defp workspace_module(opts) do
+    Keyword.get(opts, :workspace_module, Workspace)
+  end
+
+  defp workspace_create_timeout_ms(opts, %Schema{} = runtime_settings, agent_kind) do
+    case Keyword.get(opts, :workspace_create_timeout_ms) || Keyword.get(opts, :worker_setup_timeout_ms) do
+      timeout_ms when is_integer(timeout_ms) and timeout_ms > 0 ->
+        timeout_ms
+
+      _ ->
+        case agent_kind do
+          "claude" -> runtime_settings.claude.stall_timeout_ms
+          _ -> runtime_settings.codex.stall_timeout_ms
+        end
+    end
+  end
+
+  defp hook_timeout_ms(opts, %Schema{} = runtime_settings) do
+    case Keyword.get(opts, :hook_timeout_ms) || Keyword.get(opts, :worker_setup_timeout_ms) do
+      timeout_ms when is_integer(timeout_ms) and timeout_ms > 0 ->
+        timeout_ms
+
+      _ ->
+        runtime_settings.hooks.timeout_ms + @worker_setup_timeout_grace_ms
+    end
   end
 
   defp selected_worker_host(nil, []), do: nil
