@@ -210,6 +210,67 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Dispatch blocks</h2>
+              <p class="section-copy">Capacity reasons that prevented eligible issues from dispatching on the latest poll.</p>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <article class="metric-card">
+              <p class="metric-label">Global cap</p>
+              <p class="metric-value numeric"><%= @payload.blocked_by_reason.global %></p>
+              <p class="metric-detail">Blocked because the total runtime was already at the global concurrency cap.</p>
+            </article>
+
+            <article class="metric-card">
+              <p class="metric-label">Local cap</p>
+              <p class="metric-value numeric"><%= @payload.blocked_by_reason.local %></p>
+              <p class="metric-detail">Blocked because the issue's current status pool was already full.</p>
+            </article>
+
+            <article class="metric-card">
+              <p class="metric-label">Worker host</p>
+              <p class="metric-value numeric"><%= @payload.blocked_by_reason.worker %></p>
+              <p class="metric-detail">Blocked because every worker host was already at capacity.</p>
+            </article>
+          </div>
+
+          <%= if @payload.blocked == [] do %>
+            <p class="empty-state">No eligible issues were blocked by dispatch capacity on the latest poll.</p>
+          <% else %>
+            <div class="table-wrap">
+              <table class="data-table" style="min-width: 680px;">
+                <thead>
+                  <tr>
+                    <th>Issue</th>
+                    <th>State</th>
+                    <th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={entry <- @payload.blocked}>
+                    <td>
+                      <div class="issue-stack">
+                        <span class="issue-id"><%= entry.issue_identifier %></span>
+                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                      </div>
+                    </td>
+                    <td>
+                      <span class={state_badge_class(entry.state)}>
+                        <%= entry.state || "n/a" %>
+                      </span>
+                    </td>
+                    <td><%= entry.reason %></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Retry queue</h2>
               <p class="section-copy">Issues waiting for the next retry window.</p>
             </div>

@@ -344,7 +344,8 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
-             "counts" => %{"running" => 1, "retrying" => 1},
+             "counts" => %{"running" => 1, "retrying" => 1, "blocked" => 0},
+             "blocked_by_reason" => %{"global" => 0, "local" => 0, "worker" => 0},
              "running" => [
                %{
                  "agent_kind" => "claude",
@@ -380,6 +381,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "workspace_path" => nil
                }
              ],
+             "blocked" => [],
              "usage_totals" => %{
                "input_tokens" => 4,
                "output_tokens" => 8,
@@ -609,6 +611,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Copy ID"
     assert html =~ "Agent update"
     assert html =~ "CLAUDE"
+    assert html =~ "Dispatch blocks"
+    assert html =~ "No eligible issues were blocked by dispatch capacity on the latest poll."
     refute html =~ "data-runtime-clock="
     refute html =~ "setInterval(refreshRuntimeClocks"
     refute html =~ "Refresh now"
@@ -745,7 +749,9 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
     assert response.status == 200
-    assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
+    assert response.body["counts"] == %{"running" => 1, "retrying" => 1, "blocked" => 0}
+    assert response.body["blocked_by_reason"] == %{"global" => 0, "local" => 0, "worker" => 0}
+    assert response.body["blocked"] == []
 
     dashboard_css = Req.get!("http://127.0.0.1:#{port}#{StaticAssets.asset_path(:dashboard_css)}")
     assert dashboard_css.status == 200

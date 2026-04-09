@@ -324,6 +324,7 @@ defmodule SymphonyElixir.StatusDashboard do
            %{
              running: running,
              retrying: retrying,
+             blocked: Map.get(snapshot, :blocked, []),
              usage_totals: usage_totals,
              rate_limits: Map.get(snapshot, :rate_limits),
              polling: Map.get(snapshot, :polling)
@@ -343,6 +344,7 @@ defmodule SymphonyElixir.StatusDashboard do
     case snapshot_data do
       {:ok, %{running: running, retrying: retrying, usage_totals: usage_totals} = snapshot} ->
         rate_limits = Map.get(snapshot, :rate_limits)
+        blocked = Map.get(snapshot, :blocked, [])
         project_link_lines = format_project_link_lines()
         project_refresh_line = format_project_refresh_line(Map.get(snapshot, :polling))
         input_tokens = Map.get(usage_totals, :input_tokens, 0)
@@ -355,6 +357,7 @@ defmodule SymphonyElixir.StatusDashboard do
         running_rows = format_running_rows(running, running_event_width)
         running_to_backoff_spacer = if(running == [], do: [], else: ["│"])
         backoff_rows = format_retry_rows(retrying)
+        blocked_rows = format_blocked_rows(blocked)
 
         ([
            colorize("╭─ SYMPHONY STATUS", @ansi_bold),
@@ -383,6 +386,8 @@ defmodule SymphonyElixir.StatusDashboard do
            running_to_backoff_spacer ++
            [colorize("├─ Backoff queue", @ansi_bold), "│"] ++
            backoff_rows ++
+           ["│", colorize("├─ Dispatch blocks", @ansi_bold), "│"] ++
+           blocked_rows ++
            [closing_border()])
         |> List.flatten()
         |> Enum.join("\n")
@@ -574,6 +579,7 @@ defmodule SymphonyElixir.StatusDashboard do
          %{
            running: running,
            retrying: retrying,
+           blocked: Map.get(snapshot, :blocked, []),
            usage_totals: usage_totals,
            rate_limits: Map.get(snapshot, :rate_limits),
            polling: Map.get(snapshot, :polling)
@@ -756,6 +762,60 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp format_retry_error(_), do: ""
+
+  defp format_blocked_rows(blocked) do
+    if blocked == [] do
+      ["│  " <> colorize("No capacity-blocked issues", @ansi_gray)]
+    else
+      [blocked_counts_line(blocked) | Enum.map(Enum.sort_by(blocked, &{block_reason_sort_key(&1.reason), &1.identifier || &1.issue_id || ""}), &format_blocked_summary/1)]
+    end
+  end
+
+  defp blocked_counts_line(blocked) do
+    %{global: global, local: local, worker: worker} = blocked_reason_counts(blocked)
+
+    "│  " <>
+      colorize("global=#{global}", @ansi_red) <>
+      colorize(" | ", @ansi_gray) <>
+      colorize("local=#{local}", @ansi_yellow) <>
+      colorize(" | ", @ansi_gray) <>
+      colorize("worker=#{worker}", @ansi_cyan)
+  end
+
+  defp blocked_reason_counts(blocked) do
+    Enum.reduce(blocked, %{global: 0, local: 0, worker: 0}, fn entry, counts ->
+      case entry.reason do
+        :global_concurrency_cap -> Map.update!(counts, :global, &(&1 + 1))
+        :local_concurrency_cap -> Map.update!(counts, :local, &(&1 + 1))
+        :worker_host_capacity -> Map.update!(counts, :worker, &(&1 + 1))
+        _ -> counts
+      end
+    end)
+  end
+
+  defp format_blocked_summary(blocked_entry) do
+    issue_id = blocked_entry.issue_id || "unknown"
+    identifier = blocked_entry.identifier || issue_id
+    state = blocked_entry.state || "unknown"
+
+    "│  " <>
+      colorize("•", @ansi_orange) <>
+      " " <>
+      colorize(identifier, @ansi_red) <>
+      colorize(" state=#{state}", @ansi_yellow) <>
+      colorize(" reason=", @ansi_dim) <>
+      colorize(block_reason_label(blocked_entry.reason), @ansi_cyan)
+  end
+
+  defp block_reason_label(:global_concurrency_cap), do: "global cap"
+  defp block_reason_label(:local_concurrency_cap), do: "local cap"
+  defp block_reason_label(:worker_host_capacity), do: "worker host capacity"
+  defp block_reason_label(other), do: to_string(other)
+
+  defp block_reason_sort_key(:global_concurrency_cap), do: 0
+  defp block_reason_sort_key(:local_concurrency_cap), do: 1
+  defp block_reason_sort_key(:worker_host_capacity), do: 2
+  defp block_reason_sort_key(_reason), do: 3
 
   defp format_runtime_seconds(seconds) when is_integer(seconds) do
     mins = div(seconds, 60)

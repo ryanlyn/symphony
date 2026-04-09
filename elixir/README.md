@@ -111,9 +111,14 @@ agent:
   max_concurrent_agents: 10          # total concurrent agents across all hosts; default: 10
   max_turns: 20                      # max re-runs per issue while still active; default: 20
   max_retry_backoff_ms: 300000       # backoff cap for retries; default: 300000
-  max_concurrent_agents_by_state:    # optional; per-state concurrency limits
-    in progress: 5                   #   state names are case-insensitive
-    merging: 2
+
+status_overrides:                    # optional; per-state runtime overrides
+  in progress:
+    agent:
+      max_concurrent_agents: 5       # per-state local concurrency limit
+  merging:
+    agent:
+      max_concurrent_agents: 2
 
 codex:                               # Codex-specific settings (used when agent.kind is "codex")
   command: codex app-server          # shell command to start Codex; default: "codex app-server"
