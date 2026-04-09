@@ -459,15 +459,17 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:ok, %{"method" => method} = payload}
       when is_binary(method) ->
         handle_turn_method(
-          port,
-          on_message,
+          %{
+            port: port,
+            on_message: on_message,
+            timeout_ms: timeout_ms,
+            tool_executor: tool_executor,
+            auto_approve_requests: auto_approve_requests,
+            read_timeout_ms: read_timeout_ms
+          },
           payload,
           payload_string,
-          method,
-          timeout_ms,
-          tool_executor,
-          auto_approve_requests,
-          read_timeout_ms
+          method
         )
 
       {:ok, payload} ->
@@ -532,15 +534,17 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp handle_turn_method(
-         port,
-         on_message,
+         %{
+           port: port,
+           on_message: on_message,
+           timeout_ms: timeout_ms,
+           tool_executor: tool_executor,
+           auto_approve_requests: auto_approve_requests,
+           read_timeout_ms: read_timeout_ms
+         },
          payload,
          payload_string,
-         method,
-         timeout_ms,
-         tool_executor,
-         auto_approve_requests,
-         read_timeout_ms
+         method
        ) do
     metadata = metadata_from_message(port, payload)
 
@@ -1150,12 +1154,25 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp send_port_command(port, data) when is_port(port) and is_binary(data) do
     if port_open?(port) do
-      try do
-        Port.command(port, data)
-      catch
-        :error, _reason -> false
-        :exit, _reason -> false
-      end
+      previous_trap_exit = Process.flag(:trap_exit, true)
+
+      result =
+        try do
+          Port.command(port, data)
+        catch
+          :error, _reason -> false
+          :exit, _reason -> false
+        end
+
+      result =
+        receive do
+          {:EXIT, ^port, _reason} -> false
+        after
+          0 -> result
+        end
+
+      Process.flag(:trap_exit, previous_trap_exit)
+      result
     else
       false
     end
@@ -1164,7 +1181,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp send_port_command(_port, _data), do: false
 
   defp port_open?(port) when is_port(port), do: Port.info(port) != nil
-  defp port_open?(_port), do: false
 
   defp poll_port_exit_status(port) when is_port(port) do
     receive do
@@ -1173,8 +1189,6 @@ defmodule SymphonyElixir.Codex.AppServer do
       0 -> 0
     end
   end
-
-  defp poll_port_exit_status(_port), do: 0
 
   defp needs_input?(method, payload)
        when is_binary(method) and is_map(payload) do

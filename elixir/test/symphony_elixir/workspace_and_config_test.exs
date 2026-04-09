@@ -1359,6 +1359,79 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert message =~ "status_overrides.todo.agent contains unsupported keys: bogus"
   end
 
+  test "status override schema helpers cover invalid shapes and map normalization" do
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{status_overrides: []})
+
+    assert message =~ "status_overrides must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "   " => %{agent: %{kind: "claude"}}
+               }
+             })
+
+    assert message =~ "status_overrides state names must not be blank"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: []
+               }
+             })
+
+    assert message =~ "status_overrides.todo must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: "claude"}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent must be a map"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               status_overrides: %{
+                 todo: %{agent: %{max_turns: 0}}
+               }
+             })
+
+    assert message =~ "status_overrides.todo.agent.max_turns"
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               status_overrides: %{
+                 "Todo" => %{
+                   codex: %{
+                     approval_policy: %{reject: %{sandbox_approval: true}},
+                     turn_sandbox_policy: %{type: "futureSandbox", nested: %{flag: true}}
+                   }
+                 }
+               }
+             })
+
+    assert get_in(settings.status_overrides, ["todo", :codex, :approval_policy]) == %{
+             "reject" => %{"sandbox_approval" => true}
+           }
+
+    assert get_in(settings.status_overrides, ["todo", :codex, :turn_sandbox_policy]) == %{
+             "type" => "futureSandbox",
+             "nested" => %{"flag" => true}
+           }
+
+    assert Schema.resolve_status_override(settings, :not_a_string) == settings
+
+    changeset =
+      {%{}, %{limits: :map}}
+      |> Changeset.cast(%{limits: %{todo: 1, review: 2}}, [:limits])
+      |> Schema.validate_state_limits(:limits)
+
+    assert changeset.errors == []
+  end
+
   test "workspace create surfaces remote home ssh timeouts" do
     test_root =
       Path.join(

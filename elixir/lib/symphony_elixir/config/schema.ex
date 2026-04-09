@@ -552,37 +552,48 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_status_overrides(status_overrides) when is_map(status_overrides) do
     Enum.reduce_while(status_overrides, {:ok, %{}}, fn {state_name, override}, {:ok, acc} ->
-      normalized_state = normalize_issue_state(to_string(state_name))
-      path = "status_overrides.#{normalized_state}"
+      case normalize_status_override_entry(state_name, override) do
+        {:ok, normalized_state, normalized_override} ->
+          {:cont, {:ok, Map.put(acc, normalized_state, normalized_override)}}
 
-      cond do
-        normalized_state == "" ->
-          {:halt, {:error, {:invalid_workflow_config, "status_overrides state names must not be blank"}}}
-
-        not is_map(override) ->
-          {:halt, {:error, {:invalid_workflow_config, "#{path} must be a map"}}}
-
-        true ->
-          with :ok <- ensure_allowed_keys(override, ~w(agent codex claude), path),
-               {:ok, agent_override} <- normalize_override_section(Map.get(override, "agent"), AgentOverride, "#{path}.agent"),
-               {:ok, codex_override} <- normalize_override_section(Map.get(override, "codex"), CodexOverride, "#{path}.codex"),
-               {:ok, claude_override} <- normalize_override_section(Map.get(override, "claude"), ClaudeOverride, "#{path}.claude") do
-            normalized_override =
-              %{}
-              |> maybe_put_override(:agent, agent_override)
-              |> maybe_put_override(:codex, codex_override)
-              |> maybe_put_override(:claude, claude_override)
-
-            {:cont, {:ok, Map.put(acc, normalized_state, normalized_override)}}
-          else
-            {:error, reason} -> {:halt, {:error, {:invalid_workflow_config, reason}}}
-          end
+        {:error, reason} ->
+          {:halt, {:error, {:invalid_workflow_config, reason}}}
       end
     end)
   end
 
   defp normalize_status_overrides(_status_overrides) do
     {:error, {:invalid_workflow_config, "status_overrides must be a map"}}
+  end
+
+  defp normalize_status_override_entry(state_name, override) do
+    normalized_state = normalize_issue_state(to_string(state_name))
+    path = "status_overrides.#{normalized_state}"
+
+    cond do
+      normalized_state == "" ->
+        {:error, "status_overrides state names must not be blank"}
+
+      not is_map(override) ->
+        {:error, "#{path} must be a map"}
+
+      true ->
+        with :ok <- ensure_allowed_keys(override, ~w(agent codex claude), path),
+             {:ok, agent_override} <-
+               normalize_override_section(Map.get(override, "agent"), AgentOverride, "#{path}.agent"),
+             {:ok, codex_override} <-
+               normalize_override_section(Map.get(override, "codex"), CodexOverride, "#{path}.codex"),
+             {:ok, claude_override} <-
+               normalize_override_section(Map.get(override, "claude"), ClaudeOverride, "#{path}.claude") do
+          normalized_override =
+            %{}
+            |> maybe_put_override(:agent, agent_override)
+            |> maybe_put_override(:codex, codex_override)
+            |> maybe_put_override(:claude, claude_override)
+
+          {:ok, normalized_state, normalized_override}
+        end
+    end
   end
 
   defp normalize_override_section(nil, _module, _path), do: {:ok, nil}
