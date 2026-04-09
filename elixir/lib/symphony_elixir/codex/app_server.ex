@@ -146,6 +146,8 @@ defmodule SymphonyElixir.Codex.AppServer do
     Support.stop_port(port)
   end
 
+  def stop_session(_session), do: :ok
+
   defp start_port(workspace, nil) do
     executable = System.find_executable("bash")
 

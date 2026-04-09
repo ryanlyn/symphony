@@ -1,6 +1,18 @@
 defmodule SymphonyElixir.AppServerTest do
   use SymphonyElixir.TestSupport
 
+  test "stop_session ignores partial sessions without a live port" do
+    assert :ok = AppServer.stop_session(%{port: nil})
+    assert :ok = AppServer.stop_session(%{})
+  end
+
+  test "stop_session closes open ports" do
+    port = open_idle_port!()
+
+    assert :ok = AppServer.stop_session(%{port: port})
+    assert_port_closed(port)
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(
@@ -1584,4 +1596,25 @@ defmodule SymphonyElixir.AppServerTest do
       File.rm_rf(test_root)
     end
   end
+
+  defp open_idle_port! do
+    executable = System.find_executable("cat") || flunk("cat executable not found")
+
+    Port.open({:spawn_executable, String.to_charlist(executable)}, [:binary, :exit_status])
+  end
+
+  defp assert_port_closed(port, attempts \\ 20)
+
+  defp assert_port_closed(port, attempts) when attempts > 0 do
+    case Port.info(port) do
+      nil ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        assert_port_closed(port, attempts - 1)
+    end
+  end
+
+  defp assert_port_closed(_port, 0), do: flunk("port remained open")
 end
