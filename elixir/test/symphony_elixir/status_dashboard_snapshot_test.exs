@@ -50,6 +50,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-101",
+             agent_kind: "codex",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 120_450, seconds_running: 0},
              runtime_seconds: 785,
              turn_count: 11,
@@ -58,6 +59,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            }),
            running_entry(%{
              identifier: "MT-102",
+             agent_kind: "claude",
              session_id: "thread-abcdef1234567890",
              executor_pid: "5252",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 89_200, seconds_running: 0},
@@ -92,6 +94,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-638",
+             agent_kind: "codex",
              state: "retrying",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 14_200, seconds_running: 0},
              runtime_seconds: 1_225,
@@ -173,6 +176,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [
            running_entry(%{
              identifier: "MT-777",
+             agent_kind: "codex",
              state: "running",
              usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 3_200, seconds_running: 0},
              runtime_seconds: 75,
@@ -205,6 +209,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
         state: "running",
         slot_index: 0,
         ensemble_size: 1,
+        agent_kind: "codex",
         session_id: "thread-1234567890",
         executor_pid: "4242",
         usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
