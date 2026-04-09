@@ -22,6 +22,9 @@ defmodule SymphonyElixir.Orchestrator do
     total_tokens: 0,
     seconds_running: 0
   }
+  @empty_cost_summary %{
+    estimated_cost_usd: nil
+  }
 
   defmodule RunningEntry do
     @moduledoc false
@@ -50,6 +53,8 @@ defmodule SymphonyElixir.Orchestrator do
             ensemble_size: pos_integer(),
             worker_host: String.t() | nil,
             workspace_path: String.t() | nil,
+            run_id: String.t() | nil,
+            resume_id: String.t() | nil,
             session_id: String.t() | nil,
             executor_pid: String.t() | nil,
             stall_timeout_ms: non_neg_integer() | nil,
@@ -74,6 +79,8 @@ defmodule SymphonyElixir.Orchestrator do
               ensemble_size: 1,
               worker_host: nil,
               workspace_path: nil,
+              run_id: nil,
+              resume_id: nil,
               session_id: nil,
               executor_pid: nil,
               stall_timeout_ms: nil,
@@ -144,6 +151,8 @@ defmodule SymphonyElixir.Orchestrator do
       blocked_dispatches: [],
       completed: MapSet.new(),
       claimed: MapSet.new(),
+      next_run_id: 1,
+      run_history: [],
       # Keyed by issue_id (not slot_key). This is intentional: retries re-dispatch
       # all unfilled slots via do_dispatch_issue, so per-slot retry tracking is
       # unnecessary. If two slots fail in sequence, the later retry subsumes the earlier.
@@ -185,7 +194,9 @@ defmodule SymphonyElixir.Orchestrator do
     state =
       %State{
         usage_totals: @empty_usage_totals,
-        codex_rate_limits: nil
+        codex_rate_limits: nil,
+        next_run_id: 1,
+        run_history: []
       }
       |> apply_runtime_settings(default_runtime_settings())
       |> load_startup_runtime_settings()
@@ -311,6 +322,7 @@ defmodule SymphonyElixir.Orchestrator do
               Logger.info("Agent task completed for issue_id=#{issue_id} slot=#{slot_index} session_id=#{session_id}; scheduling active-state continuation check")
 
               state
+              |> finalize_run_history(running_entry, :success)
               |> complete_issue(issue_id)
               |> schedule_issue_retry(issue_id, 1, %{
                 identifier: running_entry.identifier,
@@ -326,9 +338,13 @@ defmodule SymphonyElixir.Orchestrator do
               next_attempt = next_retry_attempt_from_running(running_entry)
               maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
 
-              schedule_issue_retry(state, issue_id, next_attempt, %{
+              failure_reason = "agent exited: #{inspect(reason)}"
+
+              state
+              |> finalize_run_history(running_entry, :failed, failure_reason)
+              |> schedule_issue_retry(issue_id, next_attempt, %{
                 identifier: running_entry.identifier,
-                error: "agent exited: #{inspect(reason)}",
+                error: failure_reason,
                 slot_index: slot_index,
                 worker_host: Map.get(running_entry, :worker_host),
                 workspace_path: Map.get(running_entry, :workspace_path)
@@ -359,6 +375,7 @@ defmodule SymphonyElixir.Orchestrator do
             |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
             |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
 
+          state = update_run_history_from_running_entry(state, updated_entry)
           notify_dashboard()
           {:noreply, %{state | running: Map.put(running, slot_key, updated_entry)}}
         else
@@ -385,6 +402,7 @@ defmodule SymphonyElixir.Orchestrator do
           state
           |> apply_usage_token_delta(token_delta)
           |> apply_codex_rate_limits(update)
+          |> update_run_history_from_running_entry(updated_running_entry)
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, slot_key, updated_running_entry)}}
@@ -573,12 +591,12 @@ defmodule SymphonyElixir.Orchestrator do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
 
-        terminate_all_issue_slots(state, issue.id, true)
+        terminate_all_issue_slots(state, issue.id, true, :canceled, "issue moved to terminal state")
 
       !issue_routable_to_worker?(issue) ->
         Logger.info("Issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; stopping active agent")
 
-        terminate_all_issue_slots(state, issue.id, false)
+        terminate_all_issue_slots(state, issue.id, false, :canceled, "issue no longer routed to this worker")
 
       active_issue_state?(issue.state, active_states) ->
         refresh_running_issue_state(state, issue)
@@ -586,7 +604,7 @@ defmodule SymphonyElixir.Orchestrator do
       true ->
         Logger.info("Issue moved to non-active state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
 
-        terminate_all_issue_slots(state, issue.id, false)
+        terminate_all_issue_slots(state, issue.id, false, :canceled, "issue moved to non-active state")
     end
   end
 
@@ -607,7 +625,7 @@ defmodule SymphonyElixir.Orchestrator do
         state_acc
       else
         log_missing_running_issue(state_acc, issue_id)
-        terminate_all_issue_slots(state_acc, issue_id, false)
+        terminate_all_issue_slots(state_acc, issue_id, false, :canceled, "issue no longer visible during refresh")
       end
     end)
   end
@@ -634,22 +652,34 @@ defmodule SymphonyElixir.Orchestrator do
     if map_size(slots) == 0 do
       state
     else
-      updated_running =
-        Enum.reduce(slots, state.running, fn {slot_key, running_entry}, acc ->
-          maybe_update_running_issue(acc, slot_key, running_entry, issue)
+      {updated_running, updated_entries} =
+        Enum.reduce(slots, {state.running, []}, fn {slot_key, running_entry}, {acc_running, acc_entries} ->
+          updated_entry = maybe_update_running_issue(running_entry, issue)
+          {Map.put(acc_running, slot_key, updated_entry), [updated_entry | acc_entries]}
         end)
 
-      %{state | running: updated_running}
+      state =
+        Enum.reduce(updated_entries, %{state | running: updated_running}, fn entry, acc ->
+          update_run_history_from_running_entry(acc, entry)
+        end)
+
+      state
     end
   end
 
-  defp maybe_update_running_issue(acc, slot_key, %{issue: _} = running_entry, issue) do
-    Map.put(acc, slot_key, update_running_entry(running_entry, %{issue: issue}))
+  defp maybe_update_running_issue(%{issue: _} = running_entry, issue) do
+    update_running_entry(running_entry, %{issue: issue})
   end
 
-  defp maybe_update_running_issue(acc, _slot_key, _running_entry, _issue), do: acc
+  defp maybe_update_running_issue(running_entry, _issue), do: running_entry
 
-  defp terminate_all_issue_slots(%State{} = state, issue_id, cleanup_workspace) do
+  defp terminate_all_issue_slots(
+         %State{} = state,
+         issue_id,
+         cleanup_workspace,
+         outcome,
+         failure_reason
+       ) do
     slots =
       state.running
       |> Enum.filter(fn {{id, _slot}, _} -> id == issue_id end)
@@ -660,20 +690,27 @@ defmodule SymphonyElixir.Orchestrator do
     else
       state =
         Enum.reduce(slots, state, fn slot_index, acc ->
-          terminate_running_slot(acc, {issue_id, slot_index}, cleanup_workspace)
+          terminate_running_slot(acc, {issue_id, slot_index}, cleanup_workspace, outcome, failure_reason)
         end)
 
       %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}
     end
   end
 
-  defp terminate_running_slot(%State{} = state, {issue_id, _slot_index} = slot_key, cleanup_workspace) do
+  defp terminate_running_slot(
+         %State{} = state,
+         {issue_id, _slot_index} = slot_key,
+         cleanup_workspace,
+         outcome,
+         failure_reason
+       ) do
     case Map.get(state.running, slot_key) do
       nil ->
         release_issue_claim(state, slot_key)
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
+        state = finalize_run_history(state, running_entry, outcome, failure_reason)
         worker_host = Map.get(running_entry, :worker_host)
 
         if cleanup_workspace do
@@ -746,13 +783,14 @@ defmodule SymphonyElixir.Orchestrator do
 
       next_attempt = next_retry_attempt_from_running(running_entry)
       maybe_delete_resume_state(Map.get(running_entry, :workspace_path), Map.get(running_entry, :worker_host), issue_id)
+      failure_reason = "stalled for #{elapsed_ms}ms without agent activity"
 
       state
-      |> terminate_running_slot(slot_key, false)
+      |> terminate_running_slot(slot_key, false, :stalled, failure_reason)
       |> schedule_issue_retry(issue_id, next_attempt, %{
         identifier: identifier,
         slot_index: slot_index,
-        error: "stalled for #{elapsed_ms}ms without agent activity"
+        error: failure_reason
       })
     else
       state
@@ -1006,6 +1044,35 @@ defmodule SymphonyElixir.Orchestrator do
   defp spawn_issue_slot(%State{} = state, issue, slot_index, ensemble_size, attempt, worker_host) do
     recipient = self()
     runtime_settings = runtime_settings_for_issue_state(issue.state)
+    started_at = DateTime.utc_now()
+
+    {state, run_record} =
+      append_run_history(state, %{
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        issue_title: issue.title,
+        state: issue.state,
+        slot_index: slot_index,
+        ensemble_size: ensemble_size,
+        agent_kind: runtime_settings.agent.kind,
+        worker_host: worker_host,
+        workspace_path: nil,
+        run_id: nil,
+        resume_id: nil,
+        session_id: nil,
+        executor_pid: nil,
+        usage_totals: @empty_usage_totals,
+        turn_count: 0,
+        retry_attempt: normalize_retry_attempt(attempt),
+        last_agent_timestamp: nil,
+        last_agent_event: nil,
+        last_agent_message: nil,
+        started_at: started_at,
+        ended_at: nil,
+        outcome: :running,
+        failure_reason: nil,
+        cost: @empty_cost_summary
+      })
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
            AgentRunner.run(issue, recipient,
@@ -1029,6 +1096,7 @@ defmodule SymphonyElixir.Orchestrator do
             RunningEntry.new(%{
               pid: pid,
               ref: ref,
+              run_id: run_record.id,
               agent_kind: runtime_settings.agent.kind,
               identifier: issue.identifier,
               issue: issue,
@@ -1037,7 +1105,7 @@ defmodule SymphonyElixir.Orchestrator do
               worker_host: worker_host,
               stall_timeout_ms: agent_stall_timeout_ms(runtime_settings, runtime_settings.agent.kind),
               retry_attempt: normalize_retry_attempt(attempt),
-              started_at: DateTime.utc_now()
+              started_at: started_at
             })
           )
 
@@ -1051,11 +1119,14 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)} slot=#{slot_index}: #{inspect(reason)}")
         next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
+        failure_reason = "failed to spawn agent: #{inspect(reason)}"
 
-        schedule_issue_retry(state, issue.id, next_attempt, %{
+        state
+        |> finalize_run_history(run_record, :failed, failure_reason)
+        |> schedule_issue_retry(issue.id, next_attempt, %{
           identifier: issue.identifier,
           slot_index: slot_index,
-          error: "failed to spawn agent: #{inspect(reason)}",
+          error: failure_reason,
           worker_host: worker_host
         })
     end
@@ -1573,11 +1644,16 @@ defmodule SymphonyElixir.Orchestrator do
         }
       end)
 
+    run_history =
+      state.run_history
+      |> Enum.map(&snapshot_run_record(&1, now))
+
     {:reply,
      %{
        running: running,
        retrying: retrying,
        blocked: blocked,
+       run_history: run_history,
        usage_totals: state.usage_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
@@ -1615,6 +1691,8 @@ defmodule SymphonyElixir.Orchestrator do
       state: metadata.issue.state,
       worker_host: Map.get(metadata, :worker_host),
       workspace_path: Map.get(metadata, :workspace_path),
+      run_id: Map.get(metadata, :run_id),
+      resume_id: Map.get(metadata, :resume_id),
       session_id: metadata.session_id,
       executor_pid: Map.get(metadata, :executor_pid),
       usage_totals: usage_totals,
@@ -1649,6 +1727,7 @@ defmodule SymphonyElixir.Orchestrator do
         agent_kind: Map.get(update, :agent_kind, Map.get(running_entry, :agent_kind, "codex")),
         last_agent_timestamp: timestamp,
         last_agent_message: summary,
+        resume_id: resume_id_for_update(Map.get(running_entry, :resume_id), update),
         session_id: session_id_for_update(running_entry.session_id, update),
         last_agent_event: event,
         executor_pid: executor_pid_for_update(executor_pid, update),
@@ -1675,6 +1754,11 @@ defmodule SymphonyElixir.Orchestrator do
   defp executor_pid_for_update(_existing, %{executor_pid: pid}) when is_list(pid), do: to_string(pid)
 
   defp executor_pid_for_update(existing, _update), do: existing
+
+  defp resume_id_for_update(_existing, %{resume_id: resume_id}) when is_binary(resume_id),
+    do: resume_id
+
+  defp resume_id_for_update(existing, _update), do: existing
 
   defp session_id_for_update(_existing, %{session_id: session_id}) when is_binary(session_id),
     do: session_id
@@ -1743,6 +1827,104 @@ defmodule SymphonyElixir.Orchestrator do
     {entry, running} = Map.pop(state.running, slot_key)
     {entry, %{state | running: running}}
   end
+
+  defp append_run_history(%State{} = state, attrs) when is_map(attrs) do
+    run_id = "run-#{state.next_run_id}"
+    run_record = Map.put(attrs, :id, run_id)
+    {%{state | next_run_id: state.next_run_id + 1, run_history: [run_record | state.run_history]}, run_record}
+  end
+
+  defp update_run_history_from_running_entry(%State{} = state, running_entry) when is_map(running_entry) do
+    case Map.get(running_entry, :run_id) do
+      run_id when is_binary(run_id) ->
+        update_run_history(state, run_id, fn record ->
+          record
+          |> Map.put(
+            :agent_kind,
+            Map.get(running_entry, :agent_kind, Map.get(record, :agent_kind, "codex"))
+          )
+          |> Map.put(:state, run_state_for_history(running_entry, record))
+          |> Map.put(:worker_host, Map.get(running_entry, :worker_host))
+          |> Map.put(:workspace_path, Map.get(running_entry, :workspace_path))
+          |> Map.put(:resume_id, Map.get(running_entry, :resume_id))
+          |> Map.put(:session_id, Map.get(running_entry, :session_id))
+          |> Map.put(:executor_pid, Map.get(running_entry, :executor_pid))
+          |> Map.put(:usage_totals, Map.get(running_entry, :usage_totals, @empty_usage_totals))
+          |> Map.put(:turn_count, Map.get(running_entry, :turn_count, 0))
+          |> Map.put(:retry_attempt, Map.get(running_entry, :retry_attempt, 0))
+          |> Map.put(:last_agent_timestamp, Map.get(running_entry, :last_agent_timestamp))
+          |> Map.put(:last_agent_event, Map.get(running_entry, :last_agent_event))
+          |> Map.put(:last_agent_message, Map.get(running_entry, :last_agent_message))
+        end)
+
+      _ ->
+        state
+    end
+  end
+
+  defp run_state_for_history(running_entry, record) do
+    case Map.get(running_entry, :issue) do
+      %{state: state} -> state
+      _ -> Map.get(record, :state)
+    end
+  end
+
+  defp update_run_history(%State{} = state, run_id, updater)
+       when is_binary(run_id) and is_function(updater, 1) do
+    %{
+      state
+      | run_history:
+          Enum.map(state.run_history, fn
+            %{id: ^run_id} = run_record -> updater.(run_record)
+            run_record -> run_record
+          end)
+    }
+  end
+
+  defp finalize_run_history(%State{} = state, running_entry_or_record, outcome, failure_reason \\ nil) do
+    run_id =
+      running_entry_or_record
+      |> case do
+        %{run_id: run_id} when is_binary(run_id) -> run_id
+        %{id: run_id} when is_binary(run_id) -> run_id
+        _ -> nil
+      end
+
+    if is_binary(run_id) do
+      ended_at = DateTime.utc_now()
+
+      update_run_history(state, run_id, fn run_record ->
+        started_at = Map.get(run_record, :started_at)
+        duration_ms = duration_ms(started_at, ended_at)
+
+        run_record
+        |> Map.put(:ended_at, ended_at)
+        |> Map.put(:duration_ms, duration_ms)
+        |> Map.put(:outcome, outcome)
+        |> Map.put(:failure_reason, failure_reason)
+      end)
+    else
+      state
+    end
+  end
+
+  defp snapshot_run_record(run_record, now) when is_map(run_record) do
+    ended_at = Map.get(run_record, :ended_at)
+
+    duration_ms =
+      Map.get(run_record, :duration_ms) ||
+        duration_ms(Map.get(run_record, :started_at), ended_at || now)
+
+    run_record
+    |> Map.put(:duration_ms, duration_ms)
+    |> Map.put_new(:cost, @empty_cost_summary)
+  end
+
+  defp duration_ms(%DateTime{} = started_at, %DateTime{} = ended_at) do
+    max(0, DateTime.diff(ended_at, started_at, :millisecond))
+  end
+
+  defp duration_ms(_started_at, _ended_at), do: nil
 
   defp record_session_completion_totals(state, running_entry) when is_map(running_entry) do
     runtime_seconds = running_seconds(running_entry.started_at, DateTime.utc_now())

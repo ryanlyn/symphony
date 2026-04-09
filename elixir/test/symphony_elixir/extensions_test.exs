@@ -460,6 +460,118 @@ defmodule SymphonyElixir.ExtensionsTest do
              "error" => %{"code" => "issue_not_found", "message" => "Issue not found"}
            }
 
+    runs_payload = json_response(get(build_conn(), "/api/v1/runs"), 200)
+
+    assert runs_payload == %{
+             "generated_at" => runs_payload["generated_at"],
+             "view" => "runs",
+             "summary" => %{
+               "total" => 2,
+               "running" => 1,
+               "success" => 0,
+               "failed" => 1,
+               "stalled" => 0,
+               "canceled" => 0
+             },
+             "runs" => [
+               %{
+                 "id" => "run-2",
+                 "issue_id" => "issue-retry",
+                 "issue_identifier" => "MT-RETRY",
+                 "issue_title" => "Retry visibility",
+                 "state" => "In Progress",
+                 "slot_index" => 0,
+                 "ensemble_size" => 1,
+                 "agent_kind" => "codex",
+                 "outcome" => "failed",
+                 "retry_attempt" => 2,
+                 "worker_host" => nil,
+                 "workspace_path" => nil,
+                 "resume_id" => "thread-retry",
+                 "session_id" => "thread-retry-turn-2",
+                 "executor_pid" => "4242",
+                 "usage_totals" => %{
+                   "input_tokens" => 10,
+                   "output_tokens" => 5,
+                   "total_tokens" => 15,
+                   "seconds_running" => 0
+                 },
+                 "turn_count" => 2,
+                 "failure_reason" => "agent exited: :boom",
+                 "last_event" => "turn_failed",
+                 "last_message" => "retry failed",
+                 "last_event_at" => runs_payload["runs"] |> List.first() |> Map.fetch!("last_event_at"),
+                 "started_at" => runs_payload["runs"] |> List.first() |> Map.fetch!("started_at"),
+                 "ended_at" => runs_payload["runs"] |> List.first() |> Map.fetch!("ended_at"),
+                 "duration_ms" => 1_234,
+                 "cost" => %{"estimated_cost_usd" => nil},
+                 "tokens" => %{"input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15},
+                 "log_hints" => %{
+                   "symphony_log_file" => runs_payload["runs"] |> List.first() |> get_in(["log_hints", "symphony_log_file"]),
+                   "workspace_path" => nil,
+                   "session_id" => "thread-retry-turn-2",
+                   "issue_identifier" => "MT-RETRY"
+                 }
+               },
+               %{
+                 "id" => "run-1",
+                 "issue_id" => "issue-http",
+                 "issue_identifier" => "MT-HTTP",
+                 "issue_title" => "HTTP visibility",
+                 "state" => "In Progress",
+                 "slot_index" => 0,
+                 "ensemble_size" => 1,
+                 "agent_kind" => "claude",
+                 "outcome" => "running",
+                 "retry_attempt" => 0,
+                 "worker_host" => nil,
+                 "workspace_path" => nil,
+                 "resume_id" => "thread-http",
+                 "session_id" => "thread-http",
+                 "executor_pid" => nil,
+                 "usage_totals" => %{
+                   "input_tokens" => 4,
+                   "output_tokens" => 8,
+                   "total_tokens" => 12,
+                   "seconds_running" => 0
+                 },
+                 "turn_count" => 7,
+                 "failure_reason" => nil,
+                 "last_event" => "notification",
+                 "last_message" => "rendered",
+                 "last_event_at" => nil,
+                 "started_at" => runs_payload["runs"] |> Enum.at(1) |> Map.fetch!("started_at"),
+                 "ended_at" => nil,
+                 "duration_ms" => runs_payload["runs"] |> Enum.at(1) |> Map.fetch!("duration_ms"),
+                 "cost" => %{"estimated_cost_usd" => nil},
+                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12},
+                 "log_hints" => %{
+                   "symphony_log_file" => runs_payload["runs"] |> Enum.at(1) |> get_in(["log_hints", "symphony_log_file"]),
+                   "workspace_path" => nil,
+                   "session_id" => "thread-http",
+                   "issue_identifier" => "MT-HTTP"
+                 }
+               }
+             ]
+           }
+
+    failed_runs_payload = json_response(get(build_conn(), "/api/v1/runs?failed=true"), 200)
+    assert failed_runs_payload["view"] == "runs"
+    assert Enum.map(failed_runs_payload["runs"], & &1["id"]) == ["run-2"]
+
+    cost_payload = json_response(get(build_conn(), "/api/v1/runs?cost=true"), 200)
+    assert cost_payload["view"] == "cost"
+    assert Enum.any?(cost_payload["summary"]["by_agent"], &(&1["agent_kind"] == "codex"))
+
+    run_payload = json_response(get(build_conn(), "/api/v1/runs?id=run-2"), 200)
+    assert run_payload["view"] == "run"
+    assert run_payload["run"]["id"] == "run-2"
+    assert Enum.map(run_payload["related_runs"], & &1["id"]) == []
+
+    retries_payload = json_response(get(build_conn(), "/api/v1/runs?retries=true"), 200)
+    assert retries_payload["view"] == "retries"
+    assert retries_payload["issues"] == []
+
     conn = post(build_conn(), "/api/v1/refresh", %{})
 
     assert %{"queued" => true, "coalesced" => false, "operations" => ["poll", "reconcile"]} =
@@ -471,6 +583,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: unavailable_orchestrator, snapshot_timeout_ms: 5)
 
     assert json_response(post(build_conn(), "/api/v1/state", %{}), 405) ==
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+
+    assert json_response(post(build_conn(), "/api/v1/runs", %{}), 405) ==
              %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
 
     assert json_response(get(build_conn(), "/api/v1/refresh"), 405) ==
@@ -912,6 +1027,61 @@ defmodule SymphonyElixir.ExtensionsTest do
           attempt: 2,
           due_in_ms: 2_000,
           error: "boom"
+        }
+      ],
+      run_history: [
+        %{
+          id: "run-2",
+          issue_id: "issue-retry",
+          issue_identifier: "MT-RETRY",
+          issue_title: "Retry visibility",
+          state: "In Progress",
+          slot_index: 0,
+          ensemble_size: 1,
+          agent_kind: "codex",
+          worker_host: nil,
+          workspace_path: nil,
+          resume_id: "thread-retry",
+          session_id: "thread-retry-turn-2",
+          executor_pid: "4242",
+          usage_totals: %{input_tokens: 10, output_tokens: 5, total_tokens: 15, seconds_running: 0},
+          turn_count: 2,
+          retry_attempt: 2,
+          last_agent_timestamp: DateTime.utc_now(),
+          last_agent_event: :turn_failed,
+          last_agent_message: "retry failed",
+          started_at: DateTime.utc_now() |> DateTime.add(-3, :second),
+          ended_at: DateTime.utc_now() |> DateTime.add(-2, :second),
+          duration_ms: 1_234,
+          outcome: :failed,
+          failure_reason: "agent exited: :boom",
+          cost: %{estimated_cost_usd: nil}
+        },
+        %{
+          id: "run-1",
+          issue_id: "issue-http",
+          issue_identifier: "MT-HTTP",
+          issue_title: "HTTP visibility",
+          state: "In Progress",
+          slot_index: 0,
+          ensemble_size: 1,
+          agent_kind: "claude",
+          worker_host: nil,
+          workspace_path: nil,
+          resume_id: "thread-http",
+          session_id: "thread-http",
+          executor_pid: nil,
+          usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 0},
+          turn_count: 7,
+          retry_attempt: 0,
+          last_agent_timestamp: nil,
+          last_agent_event: :notification,
+          last_agent_message: "rendered",
+          started_at: DateTime.utc_now(),
+          ended_at: nil,
+          outcome: :running,
+          failure_reason: nil,
+          cost: %{estimated_cost_usd: nil}
         }
       ],
       usage_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
