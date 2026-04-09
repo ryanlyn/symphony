@@ -182,9 +182,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
-    now_ms = System.monotonic_time(:millisecond)
-
+  def init(opts) do
     state =
       %State{
         usage_totals: @empty_usage_totals,
@@ -195,15 +193,28 @@ defmodule SymphonyElixir.Orchestrator do
 
     state = %{
       state
-      | next_poll_due_at_ms: now_ms,
+      | next_poll_due_at_ms: nil,
         poll_check_in_progress: false,
         tick_timer_ref: nil,
         tick_token: nil
     }
 
-    state = schedule_tick(state, 0)
+    state = schedule_startup_tick(state, opts)
 
     {:ok, state}
+  end
+
+  defp schedule_startup_tick(%State{} = state, opts) when is_list(opts) do
+    case Keyword.get(opts, :startup_poll_delay_ms, 0) do
+      :manual ->
+        state
+
+      delay_ms when is_integer(delay_ms) and delay_ms >= 0 ->
+        schedule_tick(state, delay_ms)
+
+      _ ->
+        schedule_tick(state, 0)
+    end
   end
 
   defp load_startup_runtime_settings(%State{} = state) do

@@ -1028,6 +1028,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     Port.command(port, data)
   catch
     :error, _reason -> false
+    :exit, _reason -> false
   end
 
   defp send_port_command(_port, _data), do: false
