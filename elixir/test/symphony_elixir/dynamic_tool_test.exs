@@ -48,6 +48,19 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
            ]
   end
 
+  test "missing tool names return a clearer failure payload" do
+    response = DynamicTool.execute(nil, %{})
+
+    assert response["success"] == false
+
+    assert Jason.decode!(response["output"]) == %{
+             "error" => %{
+               "message" => "Dynamic tool name is required.",
+               "supportedTools" => ["linear_graphql"]
+             }
+           }
+  end
+
   test "linear_graphql returns successful GraphQL responses as tool text" do
     test_pid = self()
 

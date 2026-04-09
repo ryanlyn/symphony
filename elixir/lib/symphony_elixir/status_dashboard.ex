@@ -613,7 +613,6 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  # credo:disable-for-next-line
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
     slot_index = Map.get(running_entry, :slot_index, 0)
