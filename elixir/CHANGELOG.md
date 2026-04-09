@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-09
+
+- `4478463`, `c5d271d`, `fa64362`, `39003ea`: Reworked runtime and dispatch behavior by resolving executor/runtime settings through `status_overrides`, composing global and per-status concurrency caps with clearer blocked-work reporting, caching parsed workflow templates, and bounding workspace setup plus hook execution with runner-side timeouts.
+- `5e170e6`, `9826f10`, `cf43dd1`, `f2b0543`, `0322a19`, `6ece611`, `5cb3142`: Hardened startup and execution edge cases with symlink-safe local workspace creation, malformed Codex issue and nil-port session guards, graceful log-directory and dead-port handling, clearer dynamic tool nil errors, and tighter Dialyzer suppression scope.
+- `f765e8a`, `16fad85`, `22a3103`, `db6aa9b`: Improved dashboard resilience and readability by separating agent and stage columns, preserving retry errors that contain commas, fixing UTF-8 row truncation, and keeping LiveView polling alive when PubSub subscribe fails.
+- `5f8a2cd`, `3522550`: Improved Claude executor diagnostics by draining buffered post-exit output before returning `:port_exit` and logging unknown Claude stream event types while preserving the notification fallback.
+- `e2605ed`, `a074bc1`, `503ca0d`, `0e8f87b`, `7e3307d`, `63d71ca`: Updated workflow and review guidance by adding proof-of-work expectations, moving full-access tickets through `Agent Review` before `Merging`, restoring the fast service tier in the full-access workflow, clarifying Linear text attachment handling, tightening agent-review workpad guidance, and refreshing local Claude permissions for Linear comment tooling.
+- `ab94dca`: Standardized the Elixir changelog entries to a consistent hash-first format for the April 7-8 history.
+
 ## 2026-04-08
 
 - `b056923`, `e355aa7`, `7e4306d`, `b020359`: Tightened startup, workspace, and workflow handling across local and remote roots, including safer cleanup, test workspace isolation, presenter fallback sanitization, and more robust prompt parsing.
