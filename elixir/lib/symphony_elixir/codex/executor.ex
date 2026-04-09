@@ -12,11 +12,14 @@ defmodule SymphonyElixir.Codex.Executor do
       |> Keyword.get(:resume_metadata, %{})
       |> Map.get(:resume_id)
 
+    runtime_settings = Keyword.get(opts, :runtime_settings)
+
     with {:ok, app_session} <-
            AppServer.start_session(
              workspace,
              worker_host: Keyword.get(opts, :worker_host),
-             resume_thread_id: resume_id
+             resume_thread_id: resume_id,
+             runtime_settings: runtime_settings
            ) do
       {:ok,
        %{

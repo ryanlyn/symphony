@@ -11,7 +11,11 @@ defmodule SymphonyElixir.AgentRunner do
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, update_recipient \\ nil, opts \\ []) do
-    settings = Config.settings!()
+    settings =
+      Keyword.get_lazy(opts, :runtime_settings, fn ->
+        Config.settings_for_issue_state!(Map.get(issue, :state))
+      end)
+
     agent_kind = settings.agent.kind
     # The orchestrator owns host retries so one worker lifetime never hops machines.
     worker_host = selected_worker_host(Keyword.get(opts, :worker_host), settings.worker.ssh_hosts)
@@ -88,7 +92,12 @@ defmodule SymphonyElixir.AgentRunner do
   defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace, _agent_kind, _slot_index, _ensemble_size), do: :ok
 
   defp run_agent_turns(executor, workspace, issue, update_recipient, opts, worker_host) do
-    max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
+    runtime_settings =
+      Keyword.get_lazy(opts, :runtime_settings, fn ->
+        Config.settings_for_issue_state!(issue.state)
+      end)
+
+    max_turns = Keyword.get(opts, :max_turns, runtime_settings.agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
     slot_index = Keyword.get(opts, :slot_index, 0)
     ensemble_size = Keyword.get(opts, :ensemble_size, 1)
@@ -100,6 +109,7 @@ defmodule SymphonyElixir.AgentRunner do
       opts:
         Keyword.merge(
           opts,
+          runtime_settings: runtime_settings,
           slot_index: slot_index,
           ensemble_size: ensemble_size,
           issue_id: issue.id
@@ -115,6 +125,7 @@ defmodule SymphonyElixir.AgentRunner do
              workspace,
              issue,
              worker_host,
+             runtime_settings: runtime_settings,
              slot_index: slot_index,
              ensemble_size: ensemble_size
            ) do
@@ -211,12 +222,20 @@ defmodule SymphonyElixir.AgentRunner do
   defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
 
   defp start_session(executor, workspace, %Issue{} = issue, worker_host, opts) do
-    resume_metadata = resume_metadata(workspace, issue, worker_host, Config.agent_kind())
+    runtime_settings = Keyword.fetch!(opts, :runtime_settings)
+    agent_kind = runtime_settings.agent.kind
+    resume_metadata = resume_metadata(workspace, issue, worker_host, agent_kind)
     slot_opts = Keyword.take(opts, [:slot_index, :ensemble_size])
 
     case executor.start_session(
            workspace,
-           [issue: issue, worker_host: worker_host, resume_metadata: resume_metadata, issue_id: issue.id] ++
+           [
+             issue: issue,
+             worker_host: worker_host,
+             resume_metadata: resume_metadata,
+             issue_id: issue.id,
+             runtime_settings: runtime_settings
+           ] ++
              slot_opts
          ) do
       {:ok, session} ->
@@ -258,8 +277,10 @@ defmodule SymphonyElixir.AgentRunner do
     resume_id = Map.get(resume_metadata, :resume_id)
 
     if is_binary(workspace) and is_binary(resume_id) and resume_id != "" do
+      agent_kind = Map.get(resume_metadata, :agent_kind)
+
       attrs = %{
-        agent_kind: Map.get(resume_metadata, :agent_kind) || Config.agent_kind(),
+        agent_kind: agent_kind || Map.get(resume_metadata, "agent_kind"),
         resume_id: resume_id,
         session_id: Map.get(resume_metadata, :session_id),
         issue_id: issue.id,
