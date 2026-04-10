@@ -160,7 +160,13 @@ defmodule SymphonyElixir.Claude.Executor do
   end
 
   defp launch_argv(session, issue, claude) do
-    ["--print", "--verbose", "--output-format=stream-json", "--input-format=stream-json"]
+    [
+      "--print",
+      "--exclude-dynamic-system-prompt-sections",
+      "--verbose",
+      "--output-format=stream-json",
+      "--input-format=stream-json"
+    ]
     |> maybe_add_arg("--permission-mode", claude.permission_mode)
     |> maybe_add_arg("--allowedTools", Enum.join(Mcp.allowed_tools(), ","))
     |> maybe_add_arg("--model", claude.model)

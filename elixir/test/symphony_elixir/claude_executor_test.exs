@@ -361,6 +361,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "--print"
+      assert trace =~ "--exclude-dynamic-system-prompt-sections"
       assert trace =~ "-n MT-CLAUDE: Claude executor"
       assert trace =~ "--resume session-prev"
       assert trace =~ "--allowedTools Bash,Edit,Write,mcp__symphony_linear__linear_graphql"
@@ -404,6 +405,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
             cat <<'EOF'
         Usage: claude [options]
           -p, --print
+          --exclude-dynamic-system-prompt-sections
           --verbose
           --output-format <format>
           --input-format <format>
@@ -881,6 +883,7 @@ defmodule SymphonyElixir.ClaudeExecutorTest do
         cat <<'EOF'
     Usage: claude [options]
       -p, --print
+      --exclude-dynamic-system-prompt-sections
       --verbose
       --output-format <format>
       --input-format <format>

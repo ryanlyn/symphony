@@ -3143,6 +3143,7 @@ defmodule SymphonyElixir.CoreTest do
         cat <<'EOF'
     Usage: claude [options]
       -p, --print
+      --exclude-dynamic-system-prompt-sections
       --verbose
       --output-format <format>
       --input-format <format>
