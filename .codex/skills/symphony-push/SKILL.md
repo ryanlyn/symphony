@@ -71,8 +71,7 @@ description:
 
    #### Testing
 
-   - [ ] `make -C elixir all`
-   - [ ] <!-- Additional targeted checks (list below) -->
+   - [ ] <!-- Commands/checks run to validate this change -->
 
    #### Behavioural Proof
 
