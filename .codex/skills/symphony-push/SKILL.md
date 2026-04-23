@@ -44,7 +44,7 @@ description:
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
-6. Write/update PR body explicitly using `.github/pull_request_template.md`:
+6. Write/update PR body explicitly using the template below:
    - Fill every section with concrete content for this change.
    - Replace all placeholder comments (`<!-- ... -->`).
    - Keep bullets/checkboxes where template expects them.
@@ -52,6 +52,37 @@ description:
      scope (all intended work on the branch), not just the newest commits,
      including newly added work, removed work, or changed approach.
    - Do not reuse stale description text from earlier iterations.
+
+   ```md
+   #### Context
+
+   <!-- Why is this change needed? Length <= 240 chars -->
+
+   #### TL;DR
+
+   *<!-- A short description of what we are changing. Use simple language. Assume reader is not familiar with this code. Length <= 120 chars -->*
+
+   #### Summary
+
+   - <!-- Details of the changes in bullet points -->
+   - <!-- Keep them high level -->
+   - <!-- Each item <= 120 chars -->
+
+   #### Alternatives
+
+   - <!-- What alternatives have been considered? Why not? -->
+
+   #### Test Plan
+
+   - [ ] `make -C elixir all`
+   - [ ] <!-- Additional targeted checks (list below) -->
+
+   #### Proof of Work
+
+   - <!-- What concrete evidence proves this change works? -->
+   - <!-- Include commands, logs, screenshots, videos, GIFs, TUI renders, or links to artifacts -->
+   - <!-- explain things precisely with epistemic honesty -->
+   ```
 7. Validate PR body with `mix pr_body.check` and fix all reported issues.
 8. Reply with the PR URL from `gh pr view`.
 
@@ -93,9 +124,9 @@ else
   gh pr edit --title "$pr_title"
 fi
 
-# Write/edit PR body to match .github/pull_request_template.md before validation.
+# Write/edit PR body to match the inlined template above before validation.
 # Example workflow:
-# 1) open the template and draft body content for this PR
+# 1) draft body content for this PR using the template in step 6
 # 2) gh pr edit --body-file /tmp/pr_body.md
 # 3) for branch updates, re-check that title/body still match current diff
 
