@@ -62,22 +62,19 @@ description:
 
    *<!-- A short description of what we are changing. Use simple language. Assume reader is not familiar with this code. Length <= 120 chars -->*
 
-   #### Summary
+   #### Summary and Alternatives
 
    - <!-- Details of the changes in bullet points -->
    - <!-- Keep them high level -->
    - <!-- Each item <= 120 chars -->
-
-   #### Alternatives
-
    - <!-- What alternatives have been considered? Why not? -->
 
-   #### Test Plan
+   #### Testing
 
    - [ ] `make -C elixir all`
    - [ ] <!-- Additional targeted checks (list below) -->
 
-   #### Proof of Work
+   #### Behavioural Proof
 
    - <!-- What concrete evidence proves this change works? -->
    - <!-- Include commands, logs, screenshots, videos, GIFs, TUI renders, or links to artifacts -->
