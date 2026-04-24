@@ -26,7 +26,11 @@ description:
 ## Steps
 
 1. Identify current branch and confirm remote state.
-2. Run local validation (`make -C elixir all`) before pushing.
+2. Run the project's pre-push validation before pushing. Discover the
+   command from `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+   `CONTRIBUTORS.md`, `.agents/README.md`, or a repo-local skill. If
+   no project-specific validation is documented, skip this step and
+   note it in the PR.
 3. Push branch to `origin` with upstream tracking if needed, using whatever
    remote URL is already configured.
 4. If push is not clean/rejected:
@@ -79,8 +83,7 @@ description:
    - <!-- Include commands, logs, screenshots, videos, GIFs, TUI renders, or links to artifacts -->
    - <!-- explain things precisely with epistemic honesty -->
    ```
-7. Validate PR body with `mix pr_body.check` and fix all reported issues.
-8. Reply with the PR URL from `gh pr view`.
+7. Reply with the PR URL from `gh pr view`.
 
 ## Commands
 
@@ -88,8 +91,9 @@ description:
 # Identify branch
 branch=$(git branch --show-current)
 
-# Minimal validation gate
-make -C elixir all
+# Run the repo's pre-push validation command (discover it from
+# AGENTS.md / CLAUDE.md / CONTRIBUTING.md / CONTRIBUTORS.md /
+# .agents/README.md / repo-local skills).
 
 # Initial push: respect the current origin remote.
 git push -u origin HEAD
@@ -120,16 +124,11 @@ else
   gh pr edit --title "$pr_title"
 fi
 
-# Write/edit PR body to match the inlined template above before validation.
+# Write/edit PR body to match the inlined template above.
 # Example workflow:
 # 1) draft body content for this PR using the template in step 6
 # 2) gh pr edit --body-file /tmp/pr_body.md
 # 3) for branch updates, re-check that title/body still match current diff
-
-tmp_pr_body=$(mktemp)
-gh pr view --json body -q .body > "$tmp_pr_body"
-(cd elixir && mix pr_body.check --file "$tmp_pr_body")
-rm -f "$tmp_pr_body"
 
 # Show PR URL for the reply
 gh pr view --json url -q .url

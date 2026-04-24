@@ -15,6 +15,8 @@ CODEX_BOTS = {
     "codex-gc-app[bot]",
     "app/codex-gc-app",
 }
+AGENT_REVIEW_HEADER_RE = re.compile(r"^## [A-Za-z][\w-]* Review\b")
+AGENT_REPLY_PREFIX = "[symphony]"
 MAX_GH_RETRIES = 5
 BASE_GH_BACKOFF_SECONDS = 2
 
@@ -280,11 +282,11 @@ def is_bot_user(user: dict[str, Any]) -> bool:
 
 
 def is_codex_reply_body(body: str) -> bool:
-    return body.startswith("[codex]")
+    return body.startswith(AGENT_REPLY_PREFIX)
 
 
 def is_codex_review_body(body: str) -> bool:
-    return body.startswith("## Codex Review")
+    return bool(AGENT_REVIEW_HEADER_RE.match(body))
 
 
 def latest_codex_issue_reply_time(
@@ -417,7 +419,7 @@ def is_blocking_review(
     state = review.get("state")
     if user_login in CODEX_BOTS:
         return state == "CHANGES_REQUESTED"
-    if body.startswith("[codex]") or state in ("APPROVED", "DISMISSED"):
+    if body.startswith(AGENT_REPLY_PREFIX) or state in ("APPROVED", "DISMISSED"):
         return False
     blocking = False
     if body or state == "CHANGES_REQUESTED":
