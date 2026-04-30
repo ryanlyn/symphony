@@ -29,6 +29,7 @@ configuration automatically - no restart needed.
 | Session resumption | Persists resume metadata in `.git/symphony/resume.json` so Codex and Claude sessions can continue safely across runs with executor-aware validation. |
 | Workflow and runtime hardening | Defaults Codex workflows to sandboxed `workspace-write`, honors Linear `Retry-After` backoff on `429`, tightens remote workspace path validation, and improves long-running orchestrator reliability. |
 | Claude parity and MCP handling | Routes Claude and Codex through the same Symphony-owned Linear tool backend, removes the Python MCP sidecar, and improves remote cleanup behavior. |
+| Dispatch routing | Adds tracker-scoped static routing with Linear labels such as `Symphony:shard-a`, so multiple Symphony instances can split work by configured route labels. |
 
 ## Running
 

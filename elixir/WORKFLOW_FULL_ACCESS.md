@@ -14,6 +14,10 @@ tracker:
     - Canceled
     - Duplicate
     - Done
+  dispatch:
+    accept_unrouted: true
+    only_routes: null
+    route_label_prefix: "Symphony:"
 polling:
   interval_ms: 5000
 workspace:

@@ -986,6 +986,96 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert skipped_issue.blocked_by == [%{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}]
   end
 
+  test "dispatch eligibility honors tracker route settings" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_dispatch_accept_unrouted: true,
+      tracker_dispatch_only_routes: []
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{},
+      dispatch_settings: %{
+        accept_unrouted: true,
+        only_routes: [],
+        route_label_prefix: "Symphony:"
+      }
+    }
+
+    unrouted_issue = %Issue{id: "issue-unrouted", identifier: "MT-3001", title: "Unrouted", state: "Todo"}
+
+    ordinary_labeled_issue = %Issue{
+      id: "issue-ordinary",
+      identifier: "MT-3002",
+      title: "Ordinary label",
+      state: "Todo",
+      labels: ["backend"]
+    }
+
+    routed_issue = %Issue{
+      id: "issue-routed",
+      identifier: "MT-3003",
+      title: "Routed",
+      state: "Todo",
+      labels: ["Symphony:a"]
+    }
+
+    assert Orchestrator.should_dispatch_issue_for_test(unrouted_issue, state)
+    assert Orchestrator.should_dispatch_issue_for_test(ordinary_labeled_issue, state)
+    refute Orchestrator.should_dispatch_issue_for_test(routed_issue, state)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_dispatch_accept_unrouted: false,
+      tracker_dispatch_only_routes: ["a"]
+    )
+
+    shard_state = %{
+      state
+      | dispatch_settings: %{
+          accept_unrouted: false,
+          only_routes: ["a"],
+          route_label_prefix: "Symphony:"
+        }
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(unrouted_issue, shard_state)
+    refute Orchestrator.should_dispatch_issue_for_test(ordinary_labeled_issue, shard_state)
+    assert Orchestrator.should_dispatch_issue_for_test(routed_issue, shard_state)
+  end
+
+  test "dispatch revalidation skips stale issue when refreshed route no longer matches" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_dispatch_accept_unrouted: false,
+      tracker_dispatch_only_routes: ["a"]
+    )
+
+    stale_issue = %Issue{
+      id: "routed-1",
+      identifier: "MT-3004",
+      title: "Stale route",
+      state: "Todo",
+      labels: ["Symphony:a"]
+    }
+
+    refreshed_issue = %Issue{
+      id: "routed-1",
+      identifier: "MT-3004",
+      title: "Stale route",
+      state: "Todo",
+      labels: ["Symphony:b"]
+    }
+
+    fetcher = fn ["routed-1"] -> {:ok, [refreshed_issue]} end
+
+    assert {:skip, %Issue{} = skipped_issue} =
+             Orchestrator.revalidate_issue_for_dispatch_for_test(stale_issue, fetcher)
+
+    assert skipped_issue.labels == ["Symphony:b"]
+  end
+
   test "workspace remove returns error information for missing directory" do
     random_path =
       Path.join(
@@ -1218,6 +1308,22 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_active_states: ",")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate()
     assert message =~ "tracker.active_states"
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_dispatch_accept_unrouted: "yes")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "tracker.dispatch.accept_unrouted"
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_dispatch_only_routes: "a")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "tracker.dispatch.only_routes"
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_dispatch_only_routes: [""])
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "tracker.dispatch.only_routes"
+
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_dispatch_route_label_prefix: 123)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate()
+    assert message =~ "tracker.dispatch.route_label_prefix"
 
     write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate()

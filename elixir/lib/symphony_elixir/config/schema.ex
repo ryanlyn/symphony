@@ -37,6 +37,49 @@ defmodule SymphonyElixir.Config.Schema do
     def dump(_value), do: :error
   end
 
+  defmodule Dispatch do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+    alias SymphonyElixir.Tracker.Dispatch, as: TrackerDispatch
+
+    @primary_key false
+
+    embedded_schema do
+      field(:accept_unrouted, :boolean, default: true)
+      field(:only_routes, {:array, :string})
+      field(:route_label_prefix, :string, default: "Symphony:")
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:accept_unrouted, :only_routes, :route_label_prefix], empty_values: [])
+      |> validate_required([:accept_unrouted, :route_label_prefix])
+      |> validate_only_routes()
+      |> update_change(:only_routes, &normalize_only_routes/1)
+      |> update_change(:route_label_prefix, &String.trim/1)
+    end
+
+    defp validate_only_routes(changeset) do
+      validate_change(changeset, :only_routes, fn :only_routes, routes ->
+        if Enum.any?(routes, &(TrackerDispatch.normalize_route_name(&1) == "")) do
+          [only_routes: "must not contain blank route names"]
+        else
+          []
+        end
+      end)
+    end
+
+    defp normalize_only_routes(nil), do: nil
+
+    defp normalize_only_routes(routes) when is_list(routes) do
+      routes
+      |> Enum.map(&TrackerDispatch.normalize_route_name/1)
+      |> Enum.uniq()
+    end
+  end
+
   defmodule Tracker do
     @moduledoc false
     use Ecto.Schema
@@ -52,6 +95,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:assignee, :string)
       field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
+      embeds_one(:dispatch, Dispatch, on_replace: :update, defaults_to_struct: true)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -62,6 +106,7 @@ defmodule SymphonyElixir.Config.Schema do
         [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
         empty_values: []
       )
+      |> cast_embed(:dispatch, with: &Dispatch.changeset/2)
     end
   end
 
