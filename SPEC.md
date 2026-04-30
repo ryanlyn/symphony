@@ -355,6 +355,16 @@ Fields:
   - Default: `Todo`, `In Progress`
 - `terminal_states` (list of strings)
   - Default: `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done`
+- `dispatch` (object)
+  - Local issue-routing controls based on tracker labels.
+  - `accept_unrouted` (boolean): default `true`; accepts issues with no label matching
+    `route_label_prefix`.
+  - `only_routes` (null or list of strings): default `null`; `null` accepts all routed issues,
+    `[]` accepts no routed issues, and a non-empty list accepts only matching routes.
+  - `route_label_prefix` (string): default `Symphony:`; labels with this prefix become route
+    labels after trimming and case-insensitive normalization.
+  - A blank route label such as `Symphony:` is routed but invalid: it does not match any route and
+    does not fall through as unrouted.
 
 #### 5.3.2 `polling` (object)
 
@@ -557,6 +567,9 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `tracker.project_slug`: string, required when `tracker.kind=linear`
 - `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
+- `tracker.dispatch.accept_unrouted`: boolean, default `true`
+- `tracker.dispatch.only_routes`: null or list of strings, default `null`
+- `tracker.dispatch.route_label_prefix`: string, default `"Symphony:"`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path, default `<system-temp>/symphony_workspaces`
 - `worker.ssh_hosts` (extension): list of SSH host strings, optional; when omitted, work runs
@@ -709,6 +722,11 @@ An issue is dispatch-eligible only if all are true:
 - Its state is in `active_states` and not in `terminal_states`.
 - It is not already in `running`.
 - It is not already in `claimed`.
+- It matches `tracker.dispatch` route eligibility:
+  - issues with no matching route label require `accept_unrouted: true`
+  - `only_routes: null` accepts all valid routed issues
+  - `only_routes: []` accepts no routed issues
+  - non-empty `only_routes` accepts only intersecting route names
 - Global concurrency slots are available.
 - Per-state concurrency slots are available.
 - Blocker rule for `Todo` state passes:
@@ -1954,6 +1972,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Config defaults apply when optional values are missing
 - `tracker.kind` validation enforces currently supported kind (`linear`)
 - `tracker.api_key` works (including `$VAR` indirection)
+- `tracker.dispatch` defaults preserve accepting all issues
+- `tracker.dispatch.only_routes` preserves null versus empty-list semantics
+- `tracker.dispatch.route_label_prefix` defaults to `Symphony:` and accepts custom prefixes
 - `$VAR` resolution works for tracker API key and path values
 - `~` path expansion works
 - `codex.command` is preserved as a shell command string
@@ -1994,6 +2015,11 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Dispatch sort order is priority then oldest creation time
 - `Todo` issue with non-terminal blockers is not eligible
 - `Todo` issue with terminal blockers is eligible
+- Default tracker dispatch routes accept unrouted, ordinary-labeled, and routed issues
+- Unrouted-only tracker dispatch accepts issues without route labels and rejects routed issues
+- Route allowlists accept only issues with matching route labels
+- Dispatch revalidation skips stale issues whose refreshed labels no longer match local routes
+- Reconciliation stops active local work when refreshed route labels no longer match local routes
 - Active-state issue refresh updates running entry state
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace

@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.{AgentResumeState, AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Tracker.Dispatch, as: TrackerDispatch
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
@@ -146,6 +147,7 @@ defmodule SymphonyElixir.Orchestrator do
       :tick_token,
       active_states: MapSet.new(),
       terminal_states: MapSet.new(),
+      dispatch_settings: nil,
       worker_ssh_hosts: [],
       running: %{},
       blocked_dispatches: [],
@@ -248,7 +250,8 @@ defmodule SymphonyElixir.Orchestrator do
         worker_ssh_hosts: settings.worker.ssh_hosts,
         worker_max_concurrent_agents_per_host: settings.worker.max_concurrent_agents_per_host,
         active_states: normalize_issue_states(settings.tracker.active_states),
-        terminal_states: normalize_issue_states(settings.tracker.terminal_states)
+        terminal_states: normalize_issue_states(settings.tracker.terminal_states),
+        dispatch_settings: settings.tracker.dispatch
     }
   end
 
@@ -558,7 +561,13 @@ defmodule SymphonyElixir.Orchestrator do
             {:ok, Issue.t()} | {:skip, Issue.t() | :missing} | {:error, term()}
     def revalidate_issue_for_dispatch_for_test(%Issue{} = issue, issue_fetcher)
         when is_function(issue_fetcher, 1) do
-      revalidate_issue_for_dispatch(issue, issue_fetcher, active_state_set(), terminal_state_set())
+      revalidate_issue_for_dispatch(
+        issue,
+        issue_fetcher,
+        active_state_set(),
+        terminal_state_set(),
+        dispatch_settings()
+      )
     end
 
     @doc false
@@ -597,6 +606,11 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.info("Issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; stopping active agent")
 
         terminate_all_issue_slots(state, issue.id, false, :canceled, "issue no longer routed to this worker")
+
+      !issue_matches_dispatch_routes?(issue, state) ->
+        Logger.info("Issue no longer matches dispatch routes for this worker: #{issue_context(issue)} labels=#{inspect(issue.labels)}; stopping active agent")
+
+        terminate_all_issue_slots(state, issue.id, false, :canceled, "issue no longer matches dispatch routes")
 
       active_issue_state?(issue.state, active_states) ->
         refresh_running_issue_state(state, issue)
@@ -876,10 +890,11 @@ defmodule SymphonyElixir.Orchestrator do
   defp issue_created_at_sort_key(%Issue{}), do: 9_223_372_036_854_775_807
   defp issue_created_at_sort_key(_issue), do: 9_223_372_036_854_775_807
 
-  defp issue_dispatch_eligible?(%Issue{} = issue, %State{claimed: claimed}, active_states, terminal_states) do
+  defp issue_dispatch_eligible?(%Issue{} = issue, %State{claimed: claimed} = state, active_states, terminal_states) do
     ensemble_size = resolve_ensemble_size(issue)
 
     candidate_issue?(issue, active_states, terminal_states) and
+      issue_matches_dispatch_routes?(issue, state) and
       !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states) and
       claimed_slot_count_for_issue(claimed, issue.id) < ensemble_size
   end
@@ -969,6 +984,29 @@ defmodule SymphonyElixir.Orchestrator do
     Enum.member?(active_states, Schema.normalize_issue_state(state_name))
   end
 
+  defp issue_matches_dispatch_routes?(%Issue{} = issue, %State{} = state) do
+    TrackerDispatch.eligible?(issue, state_dispatch_settings(state))
+  end
+
+  defp issue_matches_dispatch_routes?(%Issue{} = issue, dispatch_settings) do
+    TrackerDispatch.eligible?(issue, dispatch_settings)
+  end
+
+  defp state_dispatch_settings(%State{
+         dispatch_settings:
+           %{
+             accept_unrouted: accept_unrouted,
+             only_routes: only_routes,
+             route_label_prefix: route_label_prefix
+           } = dispatch_settings
+       })
+       when is_boolean(accept_unrouted) and (is_nil(only_routes) or is_list(only_routes)) and
+              is_binary(route_label_prefix) do
+    dispatch_settings
+  end
+
+  defp state_dispatch_settings(_state), do: dispatch_settings()
+
   defp state_terminal_state_set(%State{terminal_states: %MapSet{} = terminal_states}) do
     if MapSet.size(terminal_states) > 0, do: terminal_states, else: terminal_state_set()
   end
@@ -991,12 +1029,17 @@ defmodule SymphonyElixir.Orchestrator do
     |> normalize_issue_states()
   end
 
+  defp dispatch_settings do
+    current_or_default_runtime_settings().tracker.dispatch
+  end
+
   defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
     case revalidate_issue_for_dispatch(
            issue,
            &Tracker.fetch_issue_states_by_ids/1,
            state_active_state_set(state),
-           state_terminal_state_set(state)
+           state_terminal_state_set(state),
+           state_dispatch_settings(state)
          ) do
       {:ok, %Issue{} = refreshed_issue} ->
         do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host)
@@ -1132,11 +1175,17 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp revalidate_issue_for_dispatch(%Issue{id: issue_id}, issue_fetcher, active_states, terminal_states)
+  defp revalidate_issue_for_dispatch(
+         %Issue{id: issue_id},
+         issue_fetcher,
+         active_states,
+         terminal_states,
+         dispatch_settings
+       )
        when is_binary(issue_id) and is_function(issue_fetcher, 1) do
     case issue_fetcher.([issue_id]) do
       {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if retry_candidate_issue?(refreshed_issue, active_states, terminal_states) do
+        if retry_candidate_issue?(refreshed_issue, active_states, terminal_states, dispatch_settings) do
           {:ok, refreshed_issue}
         else
           {:skip, refreshed_issue}
@@ -1150,8 +1199,14 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp revalidate_issue_for_dispatch(issue, _issue_fetcher, _active_states, _terminal_states),
-    do: {:ok, issue}
+  defp revalidate_issue_for_dispatch(
+         issue,
+         _issue_fetcher,
+         _active_states,
+         _terminal_states,
+         _dispatch_settings
+       ),
+       do: {:ok, issue}
 
   defp complete_issue(%State{} = state, issue_id) do
     %{
@@ -1247,7 +1302,12 @@ defmodule SymphonyElixir.Orchestrator do
         cleanup_issue_workspace(issue.identifier, metadata[:worker_host])
         {:noreply, release_all_issue_claims(state, issue_id)}
 
-      retry_candidate_issue?(issue, state_active_state_set(state), terminal_states) ->
+      retry_candidate_issue?(
+        issue,
+        state_active_state_set(state),
+        terminal_states,
+        state_dispatch_settings(state)
+      ) ->
         handle_active_retry(state, issue, attempt, metadata)
 
       true ->
@@ -1295,7 +1355,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp handle_active_retry(state, issue, attempt, metadata) do
     retry_candidate? =
-      retry_candidate_issue?(issue, state_active_state_set(state), state_terminal_state_set(state))
+      retry_candidate_issue?(
+        issue,
+        state_active_state_set(state),
+        state_terminal_state_set(state),
+        state_dispatch_settings(state)
+      )
 
     block_reason =
       if retry_candidate? do
@@ -1959,8 +2024,9 @@ defmodule SymphonyElixir.Orchestrator do
   defp agent_stall_timeout_ms(settings, "claude"), do: settings.claude.stall_timeout_ms
   defp agent_stall_timeout_ms(settings, _kind), do: settings.codex.stall_timeout_ms
 
-  defp retry_candidate_issue?(%Issue{} = issue, active_states, terminal_states) do
+  defp retry_candidate_issue?(%Issue{} = issue, active_states, terminal_states, dispatch_settings) do
     candidate_issue?(issue, active_states, terminal_states) and
+      issue_matches_dispatch_routes?(issue, dispatch_settings) and
       !unstarted_issue_blocked_by_non_terminal?(issue, terminal_states)
   end
 

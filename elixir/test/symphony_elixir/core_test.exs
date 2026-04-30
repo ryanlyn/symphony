@@ -158,6 +158,12 @@ defmodule SymphonyElixir.CoreTest do
     assert is_list(Map.get(tracker, "active_states"))
     assert is_list(Map.get(tracker, "terminal_states"))
 
+    assert Map.get(tracker, "dispatch") == %{
+             "accept_unrouted" => true,
+             "only_routes" => nil,
+             "route_label_prefix" => "Symphony:"
+           }
+
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
     assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/ryanlyn/symphony ."
@@ -168,6 +174,23 @@ defmodule SymphonyElixir.CoreTest do
     assert String.trim(prompt) != ""
     assert is_binary(Config.workflow_prompt())
     assert Config.workflow_prompt() == prompt
+  end
+
+  test "committed workflow files include default tracker dispatch routes" do
+    for workflow_name <- [
+          "WORKFLOW.md",
+          "WORKFLOW_FULL_ACCESS.md",
+          "WORKFLOW_ENSEMBLE.md",
+          "WORKFLOW_ALPHA_EVOLVE.md"
+        ] do
+      assert {:ok, %{config: config}} = Workflow.load(Path.expand(workflow_name, File.cwd!()))
+
+      assert get_in(config, ["tracker", "dispatch"]) == %{
+               "accept_unrouted" => true,
+               "only_routes" => nil,
+               "route_label_prefix" => "Symphony:"
+             }
+    end
   end
 
   test "linear api token resolves from LINEAR_API_KEY env var" do
