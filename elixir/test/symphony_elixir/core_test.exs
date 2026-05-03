@@ -1022,6 +1022,89 @@ defmodule SymphonyElixir.CoreTest do
            } = :sys.get_state(pid).retry_attempts[issue_id]
   end
 
+  test "retry dispatch reopens an active issue slot with only a stale claim" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-stale-claim-retry-#{System.unique_integer([:positive])}"
+      )
+
+    previous_memory_issues = Application.get_env(:symphony_elixir, :memory_tracker_issues)
+    issue_id = "issue-stale-claim-retry"
+    retry_token = make_ref()
+
+    try do
+      File.mkdir_p!(test_root)
+      fake_codex = Path.join(test_root, "fake-codex")
+
+      File.write!(fake_codex, """
+      #!/bin/sh
+      sleep 30
+      """)
+
+      File.chmod!(fake_codex, 0o755)
+
+      issue = %Issue{
+        id: issue_id,
+        identifier: "CAN-77",
+        title: "Retry stale claim",
+        description: "The retry should reclaim the orphaned slot.",
+        state: "Todo",
+        labels: []
+      }
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        tracker_kind: "memory",
+        workspace_root: Path.join(test_root, "workspaces"),
+        max_concurrent_agents: 10,
+        ensemble_size: 1,
+        codex_command: "#{fake_codex} app-server",
+        codex_read_timeout_ms: 10_000
+      )
+
+      Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+
+      state = %Orchestrator.State{
+        poll_interval_ms: 30_000,
+        max_concurrent_agents: 10,
+        max_retry_backoff_ms: 300_000,
+        active_states: MapSet.new(["todo", "in progress"]),
+        terminal_states: MapSet.new(["closed", "cancelled", "canceled", "duplicate", "done"]),
+        dispatch_settings: Config.settings!().tracker.dispatch,
+        claimed: MapSet.new([{issue_id, 0}]),
+        retry_attempts: %{
+          issue_id => %{
+            attempt: 1,
+            timer_ref: nil,
+            retry_token: retry_token,
+            due_at_ms: System.monotonic_time(:millisecond),
+            identifier: issue.identifier,
+            error: "agent exited: {:agent_runner_timeout, \"workspace.create_for_issue\", 300000}"
+          }
+        },
+        usage_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0}
+      }
+
+      assert {:noreply, updated_state} = Orchestrator.handle_info({:retry_issue, issue_id, retry_token}, state)
+
+      on_exit(fn ->
+        updated_state.running
+        |> Map.values()
+        |> Enum.each(fn
+          %{pid: pid} when is_pid(pid) -> Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid)
+          _entry -> :ok
+        end)
+      end)
+
+      assert %{identifier: "CAN-77", retry_attempt: 1} = updated_state.running[{issue_id, 0}]
+      assert MapSet.member?(updated_state.claimed, {issue_id, 0})
+      refute Map.has_key?(updated_state.retry_attempts, issue_id)
+    after
+      restore_app_env(:memory_tracker_issues, previous_memory_issues)
+      File.rm_rf(test_root)
+    end
+  end
+
   test "manual refresh coalesces repeated requests and ignores superseded ticks" do
     now_ms = System.monotonic_time(:millisecond)
     stale_tick_token = make_ref()

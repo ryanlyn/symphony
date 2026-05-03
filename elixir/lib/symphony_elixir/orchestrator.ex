@@ -1354,6 +1354,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata) do
+    state = release_orphaned_issue_claims(state, issue.id)
+
     retry_candidate? =
       retry_candidate_issue?(
         issue,
@@ -1392,6 +1394,21 @@ defmodule SymphonyElixir.Orchestrator do
   defp release_issue_claim(%State{} = state, {_issue_id, _slot_index} = slot_key) do
     %{state | claimed: MapSet.delete(state.claimed, slot_key)}
   end
+
+  defp release_orphaned_issue_claims(%State{} = state, issue_id) when is_binary(issue_id) do
+    claimed =
+      Enum.reduce(state.claimed, state.claimed, fn
+        {id, _slot} = key, acc when id == issue_id ->
+          if Map.has_key?(state.running, key), do: acc, else: MapSet.delete(acc, key)
+
+        _claim, acc ->
+          acc
+      end)
+
+    %{state | claimed: claimed}
+  end
+
+  defp release_orphaned_issue_claims(%State{} = state, _issue_id), do: state
 
   defp release_all_issue_claims(%State{} = state, issue_id) when is_binary(issue_id) do
     claimed =
