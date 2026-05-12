@@ -1,4 +1,4 @@
-import { rmSync, symlinkSync } from "node:fs";
+import { readdirSync, rmSync, symlinkSync } from "node:fs";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -100,10 +100,12 @@ async function createLogger(
     sync: true,
   });
   await pointStableLogPathAtCurrentFile(logFile, rollStream.file);
+  pruneRollFilesSync(logFile, rollStream.file, maxFiles);
   const reopen = rollStream.reopen.bind(rollStream);
   rollStream.reopen = (file: string) => {
     reopen(file);
     pointStableLogPathAtCurrentFileSync(logFile, file);
+    pruneRollFilesSync(logFile, file, maxFiles);
   };
   return pino(
     {
@@ -144,14 +146,50 @@ function pointStableLogPathAtCurrentFileSync(logFile: string, currentFile: strin
 
 async function nextRollFilePath(logFile: string): Promise<string> {
   const directory = path.dirname(logFile);
-  const baseName = path.basename(logFile);
-  const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^${escapedBaseName}\\.(\\d+)$`);
+  const pattern = rollFilePattern(logFile);
   const numbers = (await fs.readdir(directory))
     .map((entry) => pattern.exec(entry)?.[1])
     .filter((entry): entry is string => entry !== undefined)
     .map((entry) => Number(entry));
   return `${logFile}.${Math.max(0, ...numbers) + 1}`;
+}
+
+function pruneRollFilesSync(
+  logFile: string,
+  currentFile: string,
+  maxFiles: number | undefined,
+): void {
+  if (maxFiles === undefined || maxFiles <= 0) return;
+  const directory = path.dirname(logFile);
+  const pattern = rollFilePattern(logFile);
+  const currentPath = path.resolve(currentFile);
+  const keepCount = maxFiles + 1;
+  const rollFiles = readdirSync(directory)
+    .map((entry) => {
+      const number = pattern.exec(entry)?.[1];
+      if (number === undefined) return null;
+      return {
+        filePath: path.join(directory, entry),
+        number: Number(number),
+      };
+    })
+    .filter((entry): entry is { filePath: string; number: number } => entry !== null)
+    .sort((left, right) => right.number - left.number);
+  const keep = new Set(
+    rollFiles.slice(0, keepCount).map((entry) => path.resolve(entry.filePath)),
+  );
+  keep.add(currentPath);
+  for (const entry of rollFiles) {
+    if (!keep.has(path.resolve(entry.filePath))) {
+      rmSync(entry.filePath, { force: true });
+    }
+  }
+}
+
+function rollFilePattern(logFile: string): RegExp {
+  const baseName = path.basename(logFile);
+  const escapedBaseName = baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escapedBaseName}\\.(\\d+)$`);
 }
 
 async function lstatOrNull(filePath: string): Promise<import("node:fs").Stats | null> {
