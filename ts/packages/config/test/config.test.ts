@@ -34,6 +34,45 @@ test("config resolves env-backed Linear token and assignee", () => {
   assert.equal(settings.agents.claude?.executor, "acp");
 });
 
+test("config resolves op:// references via 1Password CLI", async () => {
+  const root = await tempDir("symphony-op-mock");
+  const opScript = path.join(root, "op");
+  await fs.writeFile(
+    opScript,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.0.0"; else echo "resolved-secret"; fi\n',
+  );
+  await fs.chmod(opScript, 0o755);
+
+  const settings = parseConfig(
+    { tracker: { api_key: "op://vault/item/field" } },
+    { PATH: `${root}:${process.env.PATH}` },
+  );
+  assert.equal(settings.tracker.apiKey, "resolved-secret");
+});
+
+test("config resolves op:// references from env var fallback", async () => {
+  const root = await tempDir("symphony-op-mock");
+  const opScript = path.join(root, "op");
+  await fs.writeFile(
+    opScript,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.0.0"; else echo "env-secret"; fi\n',
+  );
+  await fs.chmod(opScript, 0o755);
+
+  const settings = parseConfig(
+    {},
+    { LINEAR_API_KEY: "op://vault/item/key", PATH: `${root}:${process.env.PATH}` },
+  );
+  assert.equal(settings.tracker.apiKey, "env-secret");
+});
+
+test("config throws when op:// reference used but op CLI not installed", () => {
+  assert.throws(
+    () => parseConfig({ tracker: { api_key: "op://vault/item/field" } }, { PATH: "/nonexistent" }),
+    /1Password CLI \(op\) is required.*cannot be managed by mise/,
+  );
+});
+
 test("config falls back to canonical env vars when explicit env refs resolve empty", () => {
   const settings = parseConfig(
     {

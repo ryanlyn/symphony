@@ -27,7 +27,6 @@ run = "pnpm typecheck"
 run = "pnpm test"
 depends = ["build"]
 
-
 [tasks.tidy]
 depends = ["format", "lint-fix"]
 
