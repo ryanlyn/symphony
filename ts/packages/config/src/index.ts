@@ -1,3 +1,4 @@
+import { execaSync } from "execa";
 import { z } from "zod";
 import type {
   AgentKind,
@@ -1042,9 +1043,32 @@ function resolveConfiguredSecret(
   env: NodeJS.ProcessEnv,
   fallbackEnvName: string,
 ): string | undefined {
-  if (value === undefined || value === null) return nonEmptyString(env[fallbackEnvName]);
+  if (value === undefined || value === null) {
+    const fallback = nonEmptyString(env[fallbackEnvName]);
+    return resolveOnePasswordRef(fallback, env);
+  }
   const resolved = resolveEnv(stringValue(value, ""), env);
-  return nonEmptyString(resolved) ?? nonEmptyString(env[fallbackEnvName]);
+  const secret = nonEmptyString(resolved) ?? nonEmptyString(env[fallbackEnvName]);
+  return resolveOnePasswordRef(secret, env);
+}
+
+function resolveOnePasswordRef(value: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
+  if (value === undefined || !value.startsWith("op://")) return value;
+  const mergedEnv = { ...process.env, ...env };
+  try {
+    execaSync("op", ["--version"], { env: mergedEnv });
+  } catch {
+    throw new Error(
+      "1Password CLI (op) is required to resolve op:// references but was not found. " +
+        "Install it from https://developer.1password.com/docs/cli/get-started — it cannot be managed by mise.",
+    );
+  }
+  try {
+    const result = execaSync("op", ["read", value], { env: mergedEnv });
+    return result.stdout.trim();
+  } catch {
+    throw new Error(`Failed to resolve 1Password reference: ${value}`);
+  }
 }
 
 function nonEmptyString(value: string | undefined): string | undefined {
