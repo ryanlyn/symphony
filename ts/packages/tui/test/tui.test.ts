@@ -30,6 +30,7 @@ test("Ink dashboard renders Elixir-style operational sections", () => {
 });
 
 function stripAnsi(value: string): string {
+  // eslint-disable-next-line no-control-regex
   return value.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
 }
 
