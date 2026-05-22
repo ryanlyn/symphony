@@ -1,7 +1,6 @@
 [tools]
 node = "24"
 pnpm = "9"
-prek = "latest"
 
 [hooks]
 enter = "pnpm install --frozen-lockfile || true"

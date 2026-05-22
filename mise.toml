@@ -8,6 +8,7 @@ enter = "mise run check-env"
 experimental = true
 
 [tools]
+prek = "latest"
 "npm:@openai/codex" = "latest"
 # Note for Claude
 # stick to NPM install for now. Trying to install via aqua plugin
