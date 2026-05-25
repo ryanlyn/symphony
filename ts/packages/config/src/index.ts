@@ -428,6 +428,7 @@ export function normalizeStateName(value: string): string {
 
 export function normalizeRouteName(value: unknown): string {
   if (value === undefined || value === null) return "";
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return String(value).trim().toLowerCase();
 }
 
@@ -940,6 +941,7 @@ function normalizeAliases(
 
 function stringValue(value: unknown, fallback: string): string {
   if (value === undefined || value === null) return fallback;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return String(value);
 }
 
@@ -985,6 +987,7 @@ function optionalMap(
 
 function optionalString(value: unknown): string | null {
   if (value === undefined || value === null) return null;
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   const text = String(value);
   return text === "" ? null : text;
 }
