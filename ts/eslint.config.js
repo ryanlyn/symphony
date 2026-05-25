@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
+import importX from "eslint-plugin-import-x";
 
 export default tseslint.config(
   {
@@ -17,6 +18,9 @@ export default tseslint.config(
   },
   {
     files: ["packages/**/*.{ts,tsx}", "apps/**/*.{ts,tsx}", "test/**/*.ts"],
+    plugins: {
+      "import-x": importX,
+    },
     rules: {
       "no-undef": "off",
       "@typescript-eslint/no-unused-vars": [
@@ -27,6 +31,8 @@ export default tseslint.config(
           varsIgnorePattern: "^_",
         },
       ],
+      "@typescript-eslint/consistent-type-imports": "error",
+      "import-x/order": ["warn", { "newlines-between": "always" }],
     },
   },
   {

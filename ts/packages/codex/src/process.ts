@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+
 import { execa } from "execa";
 
 export class CodexProcess {
