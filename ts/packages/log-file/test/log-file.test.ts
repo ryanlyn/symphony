@@ -64,17 +64,23 @@ test("log file configuration delegates size rotation to pino-roll", async () => 
     maxFiles,
     now: () => new Date("2026-05-06T00:00:00.000Z"),
   });
+  const logDir = path.dirname(logFile);
   for (let index = 0; index < 3; index += 1) {
     await appendLogEvent(logFile, {
       event: "large",
       index,
       message: "x".repeat(160),
     });
-    // need to wait for pino to write the logs to the file
+    // Wait for pino to write. After a size-triggered rotation the symlink may
+    // already point to a new file (drain fires via process.nextTick), so check
+    // all log files in the directory rather than only the symlink target.
     await vi.waitFor(
       async () => {
-        const content = await fs.readFile(logFile, "utf8");
-        assert.ok(content.includes(`"index":${index}`));
+        const entries = await fs.readdir(logDir);
+        const contents = await Promise.all(
+          entries.map((entry) => fs.readFile(path.join(logDir, entry), "utf8").catch(() => "")),
+        );
+        assert.ok(contents.some((c) => c.includes(`"index":${index}`)));
       },
       { timeout: 2_000, interval: 5 },
     );
