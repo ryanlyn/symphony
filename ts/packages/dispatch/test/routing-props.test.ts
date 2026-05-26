@@ -1,0 +1,341 @@
+import { test } from "vitest";
+import fc from "fast-check";
+import {
+  routeNames,
+  routedToThisWorker,
+  shouldDispatchIssue,
+  issueHasOpenBlockers,
+  dispatchBlockReason,
+  defaultSettings,
+  normalizeRouteName,
+} from "@symphony/cli";
+import type { Issue, Settings } from "@symphony/domain";
+
+import { assert } from "../../../test/assert.js";
+
+function makeSettings(
+  overrides: {
+    acceptUnrouted?: boolean;
+    onlyRoutes?: string[] | null;
+    routeLabelPrefix?: string;
+    activeStates?: string[];
+    terminalStates?: string[];
+  } = {},
+): Settings {
+  const s = defaultSettings();
+  s.tracker.dispatch.acceptUnrouted = overrides.acceptUnrouted ?? true;
+  s.tracker.dispatch.onlyRoutes = overrides.onlyRoutes ?? null;
+  s.tracker.dispatch.routeLabelPrefix = overrides.routeLabelPrefix ?? "Symphony:";
+  if (overrides.activeStates) s.tracker.activeStates = overrides.activeStates;
+  if (overrides.terminalStates) s.tracker.terminalStates = overrides.terminalStates;
+  return s;
+}
+
+function issueWith(overrides: Partial<Issue>): Issue {
+  return {
+    id: "id-1",
+    identifier: "TEST-1",
+    title: "Test issue",
+    state: "Todo",
+    stateType: "unstarted",
+    description: null,
+    branchName: null,
+    url: null,
+    priority: 1,
+    createdAt: null,
+    updatedAt: null,
+    labels: [],
+    blockers: [],
+    assigneeId: null,
+    assignedToWorker: true,
+    ...overrides,
+  };
+}
+
+// --- routeNames ---
+
+test("routeNames — returned routes are derived from issue labels", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ minLength: 1, maxLength: 30 }), { maxLength: 5 }),
+      (labels) => {
+        const issue = issueWith({ labels });
+        const settings = makeSettings();
+        const routes = routeNames(issue, settings);
+        for (const route of routes) {
+          assert.ok(typeof route === "string");
+          assert.ok(route.length > 0);
+        }
+      },
+    ),
+  );
+});
+
+test("routeNames — blank suffix after prefix yields no routes", () => {
+  fc.assert(
+    fc.property(fc.constantFrom("Symphony:", "Route:", "Team:"), (prefix) => {
+      const issue = issueWith({ labels: [prefix, `${prefix}  `, `${prefix}\t`] });
+      const settings = makeSettings({ routeLabelPrefix: prefix });
+      const routes = routeNames(issue, settings);
+      assert.equal(routes.length, 0);
+    }),
+  );
+});
+
+test("routeNames — case insensitive prefix matching", () => {
+  fc.assert(
+    fc.property(
+      fc
+        .array(fc.constantFrom(..."abcdefghijklmnopqrstuvwxyz"), { minLength: 1, maxLength: 8 })
+        .map((a) => a.join("")),
+      (routeName) => {
+        const prefix = "Symphony:";
+        const variations = [
+          `symphony:${routeName}`,
+          `SYMPHONY:${routeName}`,
+          `Symphony:${routeName}`,
+        ];
+        for (const label of variations) {
+          const issue = issueWith({ labels: [label] });
+          const settings = makeSettings({ routeLabelPrefix: prefix });
+          const routes = routeNames(issue, settings);
+          assert.ok(routes.length > 0);
+          assert.equal(routes[0], routeName.trim().toLowerCase());
+        }
+      },
+    ),
+  );
+});
+
+// --- normalizeRouteName ---
+
+test("normalizeRouteName — idempotent", () => {
+  fc.assert(
+    fc.property(fc.string({ maxLength: 30 }), (input) => {
+      const once = normalizeRouteName(input);
+      const twice = normalizeRouteName(once);
+      assert.equal(twice, once);
+    }),
+  );
+});
+
+test("normalizeRouteName — case folding", () => {
+  fc.assert(
+    fc.property(fc.string({ minLength: 1, maxLength: 20 }), (input) => {
+      assert.equal(
+        normalizeRouteName(input.toUpperCase()),
+        normalizeRouteName(input.toLowerCase()),
+      );
+    }),
+  );
+});
+
+test("normalizeRouteName — trim invariant", () => {
+  fc.assert(
+    fc.property(fc.string({ minLength: 1, maxLength: 20 }), (input) => {
+      assert.equal(normalizeRouteName(`  ${input}  `), normalizeRouteName(input));
+    }),
+  );
+});
+
+// --- routedToThisWorker ---
+
+test("routedToThisWorker — onlyRoutes null accepts all valid routed issues", () => {
+  fc.assert(
+    fc.property(
+      fc
+        .array(fc.constantFrom(..."abcdefghijklmnop"), { minLength: 1, maxLength: 8 })
+        .map((a) => a.join("")),
+      (routeName) => {
+        const issue = issueWith({ labels: [`symphony:${routeName}`] });
+        const settings = makeSettings({ onlyRoutes: null });
+        assert.ok(routedToThisWorker(issue, settings));
+      },
+    ),
+  );
+});
+
+test("routedToThisWorker — onlyRoutes empty rejects all routed issues", () => {
+  fc.assert(
+    fc.property(
+      fc
+        .array(fc.constantFrom(..."abcdefghijklmnop"), { minLength: 1, maxLength: 8 })
+        .map((a) => a.join("")),
+      (routeName) => {
+        const issue = issueWith({ labels: [`symphony:${routeName}`] });
+        const settings = makeSettings({ onlyRoutes: [] });
+        assert.ok(!routedToThisWorker(issue, settings));
+      },
+    ),
+  );
+});
+
+test("routedToThisWorker — unrouted issues rejected when acceptUnrouted is false", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc
+          .string({ minLength: 1, maxLength: 15 })
+          .filter((l) => !l.toLowerCase().startsWith("symphony:")),
+        { maxLength: 3 },
+      ),
+      (labels) => {
+        const issue = issueWith({ labels });
+        const settings = makeSettings({ acceptUnrouted: false });
+        assert.ok(!routedToThisWorker(issue, settings));
+      },
+    ),
+  );
+});
+
+test("routedToThisWorker — assignedToWorker false always rejects", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ minLength: 1, maxLength: 15 }), { maxLength: 3 }),
+      fc.boolean(),
+      (labels, acceptUnrouted) => {
+        const issue = issueWith({ labels, assignedToWorker: false });
+        const settings = makeSettings({ acceptUnrouted });
+        assert.ok(!routedToThisWorker(issue, settings));
+      },
+    ),
+  );
+});
+
+// --- issueHasOpenBlockers ---
+
+test("issueHasOpenBlockers — non-unstarted issues never blocked", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("started", "completed", null),
+      fc.constantFrom("In Progress", "Done", "Review"),
+      fc.array(
+        fc.record({
+          id: fc.constant("b1"),
+          identifier: fc.constant("B-1"),
+          state: fc.constantFrom("Todo", "In Progress"),
+          stateType: fc.constant(null as string | null),
+        }),
+        { minLength: 1, maxLength: 3 },
+      ),
+      (stateType, state, blockers) => {
+        const issue = issueWith({ state, stateType, blockers });
+        const settings = makeSettings();
+        assert.ok(!issueHasOpenBlockers(issue, settings));
+      },
+    ),
+  );
+});
+
+test("issueHasOpenBlockers — all-terminal blockers do not block", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc.record({
+          id: fc.constant("b1"),
+          identifier: fc.constant("B-1"),
+          state: fc.constantFrom("Done", "Closed", "Cancelled"),
+          stateType: fc.constant(null as string | null),
+        }),
+        { minLength: 1, maxLength: 3 },
+      ),
+      (blockers) => {
+        const issue = issueWith({ state: "Todo", stateType: "unstarted", blockers });
+        const settings = makeSettings();
+        assert.ok(!issueHasOpenBlockers(issue, settings));
+      },
+    ),
+  );
+});
+
+test("issueHasOpenBlockers — any non-terminal blocker blocks unstarted issue", () => {
+  fc.assert(
+    fc.property(fc.constantFrom("Todo", "In Progress", "Review"), (blockerState) => {
+      const issue = issueWith({
+        state: "Todo",
+        stateType: "unstarted",
+        blockers: [{ id: "b1", identifier: "B-1", state: blockerState, stateType: null }],
+      });
+      const settings = makeSettings();
+      assert.ok(issueHasOpenBlockers(issue, settings));
+    }),
+  );
+});
+
+// --- shouldDispatchIssue / dispatchBlockReason consistency ---
+
+test("shouldDispatchIssue — missing required fields never eligible", () => {
+  fc.assert(
+    fc.property(fc.constantFrom("id", "identifier", "title", "state"), (field) => {
+      const issue = issueWith({ [field]: "" });
+      const settings = makeSettings();
+      const state = { runningCount: 0, claimedSlots: new Set<string>() };
+      assert.ok(!shouldDispatchIssue(issue, settings, state));
+    }),
+  );
+});
+
+test("shouldDispatchIssue — terminal state never eligible", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("Done", "Closed", "Cancelled", "Canceled", "Duplicate"),
+      (terminalState) => {
+        const issue = issueWith({ state: terminalState, stateType: "completed" });
+        const settings = makeSettings();
+        const state = { runningCount: 0, claimedSlots: new Set<string>() };
+        assert.ok(!shouldDispatchIssue(issue, settings, state));
+      },
+    ),
+  );
+});
+
+test("shouldDispatchIssue — concurrency cap blocks dispatch", () => {
+  fc.assert(
+    fc.property(fc.integer({ min: 1, max: 20 }), (cap) => {
+      const issue = issueWith({ state: "Todo", stateType: "unstarted", blockers: [] });
+      const settings = makeSettings();
+      settings.agent.maxConcurrentAgents = cap;
+      const state = { runningCount: cap, claimedSlots: new Set<string>() };
+      assert.ok(!shouldDispatchIssue(issue, settings, state));
+      assert.equal(dispatchBlockReason(issue, settings, state), "global_concurrency_cap");
+    }),
+  );
+});
+
+test("dispatchBlockReason — null iff shouldDispatch would be true (given unclaimed slot)", () => {
+  const arbTestIssue = (): fc.Arbitrary<Issue> =>
+    fc.record({
+      id: fc.string({ minLength: 1, maxLength: 15 }),
+      identifier: fc.string({ minLength: 1, maxLength: 10 }),
+      title: fc.string({ minLength: 1, maxLength: 20 }),
+      state: fc.string({ minLength: 1, maxLength: 15 }),
+      stateType: fc.option(fc.constantFrom("unstarted", "started", "completed", "cancelled"), {
+        nil: null,
+      }),
+      description: fc.constant(null as string | null),
+      branchName: fc.constant(null as string | null),
+      url: fc.constant(null as string | null),
+      priority: fc.option(fc.constantFrom(1, 2, 3, 4), { nil: null }),
+      createdAt: fc.constant(null as string | null),
+      updatedAt: fc.constant(null as string | null),
+      labels: fc.array(
+        fc.string({ minLength: 1, maxLength: 15 }).map((s) => s.trim().toLowerCase()),
+        { maxLength: 3 },
+      ),
+      blockers: fc.constant([] as Issue["blockers"]),
+      assigneeId: fc.constant(null as string | null),
+      assignedToWorker: fc.constant(true as boolean | null),
+    });
+
+  fc.assert(
+    fc.property(arbTestIssue(), (issue) => {
+      const settings = makeSettings({ activeStates: ["Todo", "In Progress", issue.state] });
+      const state = { runningCount: 0, claimedSlots: new Set<string>() };
+      const blocked = dispatchBlockReason(issue, settings, state);
+      const shouldDispatch = shouldDispatchIssue(issue, settings, state);
+      if (blocked !== null) {
+        assert.ok(!shouldDispatch);
+      }
+    }),
+  );
+});
