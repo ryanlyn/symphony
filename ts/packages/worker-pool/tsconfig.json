@@ -6,21 +6,11 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.ts"
   ],
   "references": [
     {
-      "path": "../config"
-    },
-    {
-      "path": "../dispatch"
-    },
-    {
       "path": "../domain"
-    },
-    {
-      "path": "../issue"
     },
     {
       "path": "../policies"
@@ -29,7 +19,7 @@
       "path": "../ports"
     },
     {
-      "path": "../worker-pool"
+      "path": "../ssh"
     }
   ]
 }

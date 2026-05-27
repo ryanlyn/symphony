@@ -10,7 +10,7 @@ import { ensembleSize } from "@symphony/issue";
 import { settingsForIssueState } from "@symphony/config";
 import { retryBackoffMs } from "@symphony/policies/retry";
 import { mergeMonotonicUsage } from "@symphony/policies/usage";
-import { selectLeastLoadedHost } from "@symphony/policies/workerHost";
+import { WorkerPool } from "@symphony/worker-pool";
 import type {
   AgentUpdate,
   DispatchBlockEntry,
@@ -46,13 +46,16 @@ export function createState(): OrchestratorState {
 
 export class Orchestrator {
   readonly state: OrchestratorState;
+  private readonly pool: WorkerPool;
 
   constructor(
     public settings: Settings,
     private readonly clock: ClockPort = systemClock,
     state: OrchestratorState = createState(),
+    pool?: WorkerPool,
   ) {
     this.state = state;
+    this.pool = pool ?? new WorkerPool({ settings: () => this.settings, clock: this.clock });
   }
 
   eligibleIssues(issues: Issue[]): Issue[] {
@@ -113,19 +116,21 @@ export class Orchestrator {
       retry?.slotIndex,
     );
     if (slotIndex === null) return null;
-    const workerHost = this.selectWorkerHost();
-    if (workerHost === undefined) return null;
+    const key = slotKey(issue.id, slotIndex);
+    const lease = this.pool.reserve(key, retry?.workerHost ?? null);
+    if (lease === null) return null;
 
     const effective = settingsForIssueState(this.settings, issue.state);
     const size = ensembleSize(issue) ?? this.settings.agent.ensembleSize;
-    const key = slotKey(issue.id, slotIndex);
     const entry: RunningEntry = {
       issue,
       identifier: issue.identifier,
       slotIndex,
       ensembleSize: size,
       agentKind: effective.agent.kind,
-      workerHost,
+      workerHost: lease.handle.target.workerHost,
+      leaseId: lease.handle.id,
+      providerKind: lease.handle.providerKind,
       workspacePath: null,
       sessionId: null,
       resumeId: null,
@@ -147,22 +152,8 @@ export class Orchestrator {
     return entry;
   }
 
-  private selectWorkerHost(): string | null | undefined {
-    const counts = new Map<string, number>();
-    for (const entry of this.state.running.values()) {
-      if (entry.workerHost) counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
-    }
-    return selectLeastLoadedHost({
-      hosts: this.settings.worker.sshHosts,
-      runningCounts: counts,
-      cap:
-        this.settings.worker.maxConcurrentAgentsPerHost ?? this.settings.agent.maxConcurrentAgents,
-    });
-  }
-
   private workerCapacityAvailable(): boolean {
-    if (this.settings.worker.sshHosts.length === 0) return true;
-    return this.selectWorkerHost() !== undefined;
+    return this.pool.capacityAvailable();
   }
 
   refreshRunningIssue(issue: Issue): void {
@@ -199,6 +190,7 @@ export class Orchestrator {
     if (!entry) return;
     this.state.running.delete(key);
     this.state.claimed.delete(key);
+    void this.pool.release(entry.leaseId, { recycle: retryKind === "failure" });
     this.state.usageTotals.secondsRunning += Math.max(
       0,
       (this.clock.now().getTime() - entry.startedAt.getTime()) / 1000,
@@ -227,6 +219,7 @@ export class Orchestrator {
       if (entry.issue.id === issueId) {
         this.state.running.delete(key);
         this.state.claimed.delete(key);
+        void this.pool.release(entry.leaseId, { recycle: true });
       }
     }
     this.state.retryAttempts.delete(issueId);

@@ -158,6 +158,12 @@ export interface TrackerSettings {
 }
 
 /**
+ * Worker-pool backend that places a run: in-process (`local`), a static SSH host (`ssh`),
+ * a dynamically provisioned sandbox/cloud target (`sandbox`), or an external broker (`broker`).
+ */
+export type WorkerProviderKind = "local" | "ssh" | "sandbox" | "broker";
+
+/**
  * Where agent runs execute. With no hosts configured, runs happen on the local machine;
  * with hosts configured, work is sharded over SSH onto remote workers.
  */
@@ -524,6 +530,10 @@ export interface RunningEntry {
   agentKind: AgentKind;
   /** SSH host the agent runs on; `null` for local execution. */
   workerHost?: string | null | undefined;
+  /** Worker-pool lease backing this run; released on finish/cleanup. */
+  leaseId?: string | null | undefined;
+  /** Provider that placed this run (local, ssh, sandbox, broker). */
+  providerKind?: WorkerProviderKind | undefined;
   /** Absolute workspace path on the worker; set once the executor emits `workspace_prepared`. */
   workspacePath?: string | null | undefined;
   /** Provider session id reported by the executor (Codex/Claude side). */

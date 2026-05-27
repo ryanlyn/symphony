@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/orchestrator",
+  "name": "@symphony/worker-pool",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -24,12 +24,9 @@
     "vscode-jsonrpc": "^8.2.1",
     "yaml": "^2.8.0",
     "zod": "^4.4.3",
-    "@symphony/dispatch": "workspace:*",
-    "@symphony/issue": "workspace:*",
-    "@symphony/config": "workspace:*",
+    "@symphony/domain": "workspace:*",
     "@symphony/policies": "workspace:*",
     "@symphony/ports": "workspace:*",
-    "@symphony/worker-pool": "workspace:*",
-    "@symphony/domain": "workspace:*"
+    "@symphony/ssh": "workspace:*"
   }
 }
