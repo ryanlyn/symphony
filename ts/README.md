@@ -104,10 +104,12 @@ are ignored here too; use `--logs-root` for the TS runtime log sink.
 
 With the `fs` backend, each issue is one file at `<board_dir>/<state>/<identifier>.md`: the
 containing directory names the state and the file is YAML frontmatter plus a Markdown body (the
-issue description). State directory names match `active_states`/`terminal_states` case- and
-separator-insensitively (`in-progress` ≡ `In Progress`). Move an issue between states by moving its
-file. The runtime only reads the board; you author and transition issues yourself, by hand, via git,
-or with the `board` CLI:
+issue description). Directory names are matched against `active_states` case-insensitively, treating
+`-`, `_`, and spaces as equivalent (an `in-progress` directory satisfies `In Progress`); for
+terminal-state cleanup use directory names whose words match your configured `terminal_states` (a
+`done` directory for a `Done` state). Move an issue between states by moving its file. The runtime
+only reads the board; you author and transition issues yourself, by hand, via git, or with the
+`board` CLI:
 
 ```bash
 symphony-ts board new --title "Add login page" --label backend --prefix ENG

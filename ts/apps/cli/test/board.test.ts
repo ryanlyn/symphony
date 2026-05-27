@@ -10,9 +10,11 @@ import {
   boardList,
   boardMove,
   boardNew,
+  createBoardCommand,
   createTrackerClient,
   FsTrackerClient,
   parseConfig,
+  resolveBoardDir,
 } from "@symphony/cli";
 
 let boardDir: string;
@@ -124,6 +126,86 @@ test("board list renders issues grouped by state", async () => {
   const empty = await boardList(boardDir, "done");
   assert.match(empty, /No issues in done/);
 });
+
+test("board new rejects a duplicate identifier across state directories", async () => {
+  await boardNew(boardDir, {
+    title: "Done work",
+    state: "done",
+    labels: [],
+    priority: null,
+    description: null,
+    id: null,
+    identifier: "ENG-1",
+    prefix: "ENG",
+  });
+
+  await assert.rejects(
+    () =>
+      boardNew(boardDir, {
+        title: "New work",
+        state: "todo",
+        labels: [],
+        priority: null,
+        description: null,
+        id: null,
+        identifier: "ENG-1",
+        prefix: "ENG",
+      }),
+    /board issue already exists/,
+  );
+});
+
+test("board command parses argv through commander and creates a readable issue", async () => {
+  const output = await runBoard([
+    "new",
+    "--title",
+    "Login page",
+    "--label",
+    "backend",
+    "--label",
+    "ui",
+    "--priority",
+    "2",
+    "--prefix",
+    "ENG",
+    "--board-dir",
+    boardDir,
+  ]);
+  assert.match(output, /Created ENG-1/);
+
+  const listing = await runBoard(["list", "--board-dir", boardDir]);
+  assert.match(listing, /todo/);
+  assert.match(listing, /ENG-1 {2}Login page {2}\[backend, ui\]/);
+
+  const client = new FsTrackerClient(boardDir);
+  const [issue] = await client.fetchCandidateIssues();
+  assert.equal(issue!.title, "Login page");
+  assert.deepEqual(issue!.labels, ["backend", "ui"]);
+  assert.equal(issue!.priority, 2);
+});
+
+test("resolveBoardDir prefers the explicit flag, then SYMPHONY_BOARD_DIR", async () => {
+  assert.equal(await resolveBoardDir("/tmp/explicit", {}), path.resolve("/tmp/explicit"));
+  assert.equal(
+    await resolveBoardDir(null, { SYMPHONY_BOARD_DIR: "/tmp/from-env" }),
+    path.resolve("/tmp/from-env"),
+  );
+});
+
+async function runBoard(args: string[]): Promise<string> {
+  const chunks: string[] = [];
+  const original = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await createBoardCommand("board").parseAsync(args, { from: "user" });
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.join("");
+}
 
 async function pathExists(target: string): Promise<boolean> {
   try {

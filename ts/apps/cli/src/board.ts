@@ -37,6 +37,9 @@ export async function boardNew(
 
   const files = await readBoardFiles(boardDir);
   const identifier = input.identifier ?? nextIdentifier(input.prefix, files);
+  if (files.some((file) => matchesIdentifier(file, identifier))) {
+    throw new Error(`board issue already exists: ${identifier}`);
+  }
   const filePath = path.join(dir, `${identifier}.md`);
   if (await pathExists(filePath)) throw new Error(`board issue already exists: ${identifier}`);
 

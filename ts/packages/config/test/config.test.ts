@@ -104,6 +104,31 @@ test("config defaults and validation match Elixir parity", () => {
   assert.throws(() => validateDispatchConfig(settings), /tracker.kind is required/);
 });
 
+test("fs tracker resolves board_dir from config, SYMPHONY_BOARD_DIR, then default", () => {
+  const configured = parseConfig({ tracker: { kind: "fs", board_dir: "~/board" } }, {
+    HOME: os.homedir(),
+  });
+  assert.equal(configured.tracker.boardDir, path.join(os.homedir(), "board"));
+
+  const fromEnv = parseConfig(
+    { tracker: { kind: "fs", board_dir: "~/board" } },
+    { HOME: os.homedir(), SYMPHONY_BOARD_DIR: "/tmp/env-board" },
+  );
+  assert.equal(fromEnv.tracker.boardDir, "/tmp/env-board");
+
+  const defaulted = parseConfig({ tracker: { kind: "fs" } }, {}, { cwd: "/work" });
+  assert.equal(defaulted.tracker.boardDir, "/work/.symphony/board");
+});
+
+test("fs tracker validation requires board_dir but never Linear credentials", () => {
+  const ok = parseConfig({ tracker: { kind: "fs", board_dir: "/tmp/board" } }, {});
+  validateDispatchConfig(ok);
+
+  const missing = parseConfig({ tracker: { kind: "fs" } }, {}, { cwd: "/work" });
+  missing.tracker.boardDir = undefined;
+  assert.throws(() => validateDispatchConfig(missing), /tracker.board_dir is required/);
+});
+
 test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde paths", () => {
   const configured = parseConfig({ workspace: { root: "~/configured" } }, { HOME: os.homedir() });
   assert.equal(configured.workspace.root, path.join(os.homedir(), "configured"));
