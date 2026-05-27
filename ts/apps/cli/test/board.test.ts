@@ -15,7 +15,10 @@ import {
   FsTrackerClient,
   parseConfig,
   resolveBoardDir,
+  runtimeAdapters,
+  SymphonyRuntime,
 } from "@symphony/cli";
+import type { SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
 
 let boardDir: string;
 
@@ -191,6 +194,61 @@ test("resolveBoardDir prefers the explicit flag, then SYMPHONY_BOARD_DIR", async
     path.resolve("/tmp/from-env"),
   );
 });
+
+test("runtime polls the fs board end-to-end and excludes terminal-state issues", async () => {
+  await writeBoardIssue("todo", "ENG-1", "First todo");
+  await writeBoardIssue("todo", "ENG-2", "Second todo");
+  await writeBoardIssue("done", "ENG-3", "Completed");
+
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "fs",
+        board_dir: boardDir,
+        active_states: ["Todo"],
+        terminal_states: ["Done"],
+      },
+      polling: { interval_ms: 5 },
+      workspace: { root: path.join(boardDir, "workspaces") },
+    },
+    {},
+  );
+  const client = createTrackerClient(settings, {});
+
+  let runnerCalls = 0;
+  const workflow: WorkflowDefinition = {
+    path: path.join(boardDir, "WORKFLOW.md"),
+    config: {},
+    promptTemplate: "Issue {{ issue.identifier }}",
+    settings,
+  };
+  const runtime = new SymphonyRuntime({
+    ...runtimeAdapters,
+    workflow,
+    client,
+    runner: async () => {
+      runnerCalls += 1;
+      throw new Error("dry-run should not call runner");
+    },
+  } as SymphonyRuntimeOptions);
+
+  await runtime.pollOnce({ dryRun: true, waitForRuns: true });
+
+  const snapshot = runtime.snapshot();
+  assert.equal(runnerCalls, 0);
+  assert.equal(snapshot.poll.candidates, 2);
+  assert.equal(snapshot.poll.eligible, 2);
+});
+
+async function writeBoardIssue(state: string, identifier: string, title: string): Promise<void> {
+  const dir = path.join(boardDir, state);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(
+    path.join(dir, `${identifier}.md`),
+    `---\nid: ${identifier.toLowerCase()}\nidentifier: ${identifier}\ntitle: ${title}\n---\n`,
+    "utf8",
+  );
+}
 
 async function runBoard(args: string[]): Promise<string> {
   const chunks: string[] = [];
