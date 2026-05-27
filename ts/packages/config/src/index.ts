@@ -67,7 +67,9 @@ const trackerRawSchema = z
   .strict();
 
 const pollingRawSchema = z.object({ intervalMs: z.unknown().optional() }).strict();
-const workspaceRawSchema = z.object({ root: z.unknown().optional() }).strict();
+const workspaceRawSchema = z
+  .object({ root: z.unknown().optional(), shared: z.unknown().optional() })
+  .strict();
 const workerRawSchema = z
   .object({
     sshHosts: z.unknown().optional(),
@@ -279,6 +281,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
     workspace: {
       root: workspaceRoot,
       rootExpression: workspaceRoot,
+      shared: false,
     },
     worker: { sshHosts: [], sshTimeoutMs: 60_000 },
     hooks: { timeoutMs: 60_000 },
@@ -322,14 +325,21 @@ export function parseConfig(
   );
 
   const workspaceRaw = parsed.workspace ?? {};
+  if (workspaceRaw.root !== undefined && workspaceRaw.shared !== undefined) {
+    throw new Error("workspace.root and workspace.shared are mutually exclusive");
+  }
+  const sharedWorkspace = workspaceRaw.shared !== undefined;
   const workspaceRootFallback = settings.workspace.rootExpression ?? settings.workspace.root;
   const workspaceRootExpression = resolveWorkspaceRootExpression(
-    nonEmptyString(env.SYMPHONY_WORKSPACE_ROOT) ?? workspaceRaw.root,
+    sharedWorkspace
+      ? workspaceRaw.shared
+      : (nonEmptyString(env.SYMPHONY_WORKSPACE_ROOT) ?? workspaceRaw.root),
     workspaceRootFallback,
     env,
   );
   settings.workspace.rootExpression = workspaceRootExpression;
   settings.workspace.root = expandLocalPath(workspaceRootExpression, env);
+  settings.workspace.shared = sharedWorkspace;
 
   const workerRaw = parsed.worker ?? {};
   settings.worker.sshHosts = stringArray(workerRaw.sshHosts, settings.worker.sshHosts);
@@ -348,6 +358,7 @@ export function parseConfig(
   }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
+  if (settings.workspace.shared) assertNoWorkspaceHooks(settings.hooks);
   settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
   settings.codex = parseCodex(settings.codex, parsed.codex ?? {});
   settings.claude = parseClaude(settings.claude, parsed.claude ?? {});
@@ -490,6 +501,22 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
     onlyRoutes,
     routeLabelPrefix: stringValue(raw.routeLabelPrefix, defaults.routeLabelPrefix).trim(),
   };
+}
+
+const workspaceHookConfigKeys: Record<string, string> = {
+  afterCreate: "after_create",
+  beforeRun: "before_run",
+  afterRun: "after_run",
+  beforeRemove: "before_remove",
+};
+
+function assertNoWorkspaceHooks(hooks: HooksSettings): void {
+  const configured = Object.keys(workspaceHookConfigKeys).filter(
+    (name) => hooks[name as keyof HooksSettings],
+  );
+  if (configured.length === 0) return;
+  const keys = configured.map((name) => workspaceHookConfigKeys[name]).join(", ");
+  throw new Error(`workspace.shared does not support hooks; remove ${keys}`);
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {
