@@ -138,7 +138,7 @@ test("createWorkspaceForIssue — runs afterCreate hook on new workspace", async
   assert.ok(stat.isFile());
 });
 
-// --- shared workspace (perRun: false) ---
+// --- shared workspace (shared: true) ---
 
 test("createWorkspaceForIssue — shared mode returns the root for every issue", async () => {
   const root = await tempDir("ws-shared");
