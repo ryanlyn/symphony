@@ -39,18 +39,13 @@ export async function createWorkspaceForIssue(
   const ensembleSize = options.ensembleSize ?? 1;
 
   const rootPath = path.resolve(settings.workspace.root);
-  const shared = sharedWorkspaceRoot(settings);
-  const rootExisted = shared ? await exists(rootPath) : true;
   await fs.mkdir(rootPath, { recursive: true });
   await rejectFinalSymlink(rootPath);
   const canonicalRoot = await fs.realpath(rootPath);
 
-  if (shared) {
-    const canonicalRootTarget = await validateWorkspaceCwd(settings, canonicalRoot);
-    if (!rootExisted && settings.hooks.afterCreate) {
-      await runHook(settings.hooks.afterCreate, canonicalRootTarget, settings.hooks);
-    }
-    return canonicalRootTarget;
+  // Shared workspaces run no lifecycle hooks (config rejects them), so creation is just the root.
+  if (sharedWorkspaceRoot(settings)) {
+    return validateWorkspaceCwd(settings, canonicalRoot);
   }
 
   const target = workspacePath(canonicalRoot, identifier, slotIndex, ensembleSize);

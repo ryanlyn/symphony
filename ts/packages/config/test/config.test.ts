@@ -136,6 +136,44 @@ test("workspace.root and workspace.shared are mutually exclusive", () => {
   );
 });
 
+test("workspace.shared rejects every lifecycle hook", () => {
+  for (const hook of ["after_create", "before_run", "after_run", "before_remove"]) {
+    assert.throws(
+      () => parseConfig({ workspace: { shared: "/srv/agents" }, hooks: { [hook]: "echo hi" } }),
+      new RegExp(`workspace.shared does not support hooks; remove ${hook}`),
+    );
+  }
+});
+
+test("workspace.shared error lists all configured hooks", () => {
+  assert.throws(
+    () =>
+      parseConfig({
+        workspace: { shared: "/srv/agents" },
+        hooks: { before_run: "a", after_run: "b" },
+      }),
+    /remove before_run, after_run/,
+  );
+});
+
+test("workspace.shared allows a hooks block with only a timeout", () => {
+  const settings = parseConfig({
+    workspace: { shared: "/srv/agents" },
+    hooks: { timeout_ms: 1_000 },
+  });
+  assert.equal(settings.workspace.shared, true);
+  assert.equal(settings.hooks.timeoutMs, 1_000);
+});
+
+test("per-run workspaces still accept hooks", () => {
+  const settings = parseConfig({
+    workspace: { root: "/srv/agents" },
+    hooks: { after_create: "echo hi" },
+  });
+  assert.equal(settings.workspace.shared, false);
+  assert.equal(settings.hooks.afterCreate, "echo hi");
+});
+
 test("workspace root resolves only whole-string env references", () => {
   const resolved = parseConfig(
     { workspace: { root: "$WORKSPACE_ROOT" } },

@@ -166,6 +166,34 @@ test("removeIssueWorkspaces — shared mode never deletes the root", async () =>
   assert.ok(stat.isDirectory());
 });
 
+test("createWorkspaceForIssue — shared mode never runs the afterCreate hook", async () => {
+  const root = await tempDir("ws-shared");
+  // Hooks can never reach this path through parseConfig (it rejects them); construct directly to
+  // prove the shared code path itself runs no hooks, independent of config validation.
+  const settings = makeSettings(root, { afterCreate: "touch .hook-ran" }, { shared: true });
+  const ws = await createWorkspaceForIssue(settings, sampleIssue);
+  await assert.rejects(
+    () => fs.stat(path.join(ws, ".hook-ran")),
+    (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT",
+  );
+});
+
+test("removeIssueWorkspaces — shared mode never runs the beforeRemove hook", async () => {
+  const root = await tempDir("ws-shared");
+  const marker = path.join(root, "before-remove-ran");
+  const settings = makeSettings(
+    root,
+    { beforeRemove: `touch ${JSON.stringify(marker)}` },
+    { shared: true },
+  );
+  await createWorkspaceForIssue(settings, sampleIssue);
+  await removeIssueWorkspaces(settings, sampleIssue.identifier);
+  await assert.rejects(
+    () => fs.stat(marker),
+    (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT",
+  );
+});
+
 // --- removeWorkspace ---
 
 test("removeWorkspace — removes existing workspace directory", async () => {

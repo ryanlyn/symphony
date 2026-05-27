@@ -358,6 +358,7 @@ export function parseConfig(
   }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
+  if (settings.workspace.shared) assertNoWorkspaceHooks(settings.hooks);
   settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
   settings.codex = parseCodex(settings.codex, parsed.codex ?? {});
   settings.claude = parseClaude(settings.claude, parsed.claude ?? {});
@@ -500,6 +501,22 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
     onlyRoutes,
     routeLabelPrefix: stringValue(raw.routeLabelPrefix, defaults.routeLabelPrefix).trim(),
   };
+}
+
+const workspaceHookConfigKeys: Record<string, string> = {
+  afterCreate: "after_create",
+  beforeRun: "before_run",
+  afterRun: "after_run",
+  beforeRemove: "before_remove",
+};
+
+function assertNoWorkspaceHooks(hooks: HooksSettings): void {
+  const configured = Object.keys(workspaceHookConfigKeys).filter(
+    (name) => hooks[name as keyof HooksSettings],
+  );
+  if (configured.length === 0) return;
+  const keys = configured.map((name) => workspaceHookConfigKeys[name]).join(", ");
+  throw new Error(`workspace.shared does not support hooks; remove ${keys}`);
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {
