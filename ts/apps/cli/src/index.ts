@@ -94,11 +94,13 @@ export type { OrchestratorState } from "@symphony/orchestrator";
 export { RunController } from "@symphony/agent-runner";
 export type { RunAgentAttemptInput, RunResult } from "@symphony/agent-runner";
 export {
+  FileHostAssignmentStore,
   SymphonyRuntime,
   RUNTIME_EVENT_TYPES,
   RUNTIME_RECONCILIATION_REASONS,
   RUNTIME_RUN_OUTCOMES,
 } from "@symphony/runtime";
+export type { FileHostAssignmentStoreOptions } from "@symphony/runtime";
 export type {
   PollOptions,
   RuntimeRunner,

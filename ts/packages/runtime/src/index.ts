@@ -15,6 +15,7 @@ import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
+import type { HostAssignmentStorePort } from "@symphony/ports";
 import type {
   AgentKind,
   AgentUpdateType,
@@ -25,6 +26,8 @@ import type {
   UsageTotals,
   WorkflowDefinition,
 } from "@symphony/domain";
+
+export { FileHostAssignmentStore, type FileHostAssignmentStoreOptions } from "./hostAssignments.js";
 
 export type RuntimeRunner = (input: Parameters<typeof runAgentAttempt>[0]) => Promise<RunResult>;
 
@@ -175,6 +178,7 @@ export interface SymphonyRuntimeOptions {
     | ((workspace: string, workerHost?: string | null, timeoutMs?: number) => Promise<void>)
     | undefined;
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
+  hostAssignments?: HostAssignmentStorePort | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -215,7 +219,9 @@ export class SymphonyRuntime {
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
-    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings);
+    this.orchestrator =
+      input.orchestrator ??
+      new Orchestrator(input.workflow.settings, undefined, undefined, input.hostAssignments);
     this.runner = input.runner ?? runAgentAttempt;
     this.now = input.now ?? (() => new Date());
     this.appStatus = "idle";
@@ -554,8 +560,11 @@ export class SymphonyRuntime {
           issue.identifier || tracked.get(issue.id)?.identifier,
           tracked.get(issue.id)?.workerHost,
         );
+        this.orchestrator.releaseHostAssignment(issue.id);
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
       } else {
+        // Non-terminal inactive/unrouted: keep the host pin so the issue resumes on the
+        // same host (where its workspace still lives) if it re-enters an active state.
         await this.invalidateResumeStateForPath(tracked.get(issue.id), reason);
         this.addEvent("run_reconciled", `${issue.identifier} ${reason}`);
       }
@@ -564,6 +573,7 @@ export class SymphonyRuntime {
       if (refreshedIds.has(issueId)) continue;
       this.abortIssueRuns(issueId);
       this.orchestrator.cleanupIssue(issueId);
+      this.orchestrator.releaseHostAssignment(issueId);
       this.clearRetryTimer(issueId);
       await this.invalidateResumeStateForPath(meta, "missing");
       this.addEvent("run_reconciled", `${meta.identifier} missing`);
