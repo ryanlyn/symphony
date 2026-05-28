@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { parsePositiveInteger, parseRequiredValue } from "@symphony/cli-kit";
 import {
   boardFileToIssue,
+  moveBoardIssue,
   readBoardFiles,
   serializeBoardFile,
   slugifyState,
@@ -61,21 +62,8 @@ export async function boardMove(
   identifier: string,
   state: string,
 ): Promise<{ from: string; to: string }> {
-  const files = await readBoardFiles(boardDir);
-  const file = files.find((candidate) => matchesIdentifier(candidate, identifier));
-  if (!file) throw new Error(`board issue not found: ${identifier}`);
-
-  const targetSlug = slugifyState(state);
-  if (file.stateSlug === targetSlug) return { from: file.stateSlug, to: targetSlug };
-
-  const dir = path.join(boardDir, targetSlug);
-  await fs.mkdir(dir, { recursive: true });
-  const dest = path.join(dir, path.basename(file.filePath));
-  if (await pathExists(dest)) {
-    throw new Error(`board issue already exists in ${targetSlug}: ${identifier}`);
-  }
-  await fs.rename(file.filePath, dest);
-  return { from: file.stateSlug, to: targetSlug };
+  const { from, to } = await moveBoardIssue(boardDir, identifier, state);
+  return { from, to };
 }
 
 /** Renders board issues grouped by state, optionally filtered to one state. */

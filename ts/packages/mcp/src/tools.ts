@@ -1,3 +1,9 @@
+import {
+  appendBoardComment,
+  moveBoardIssue,
+  readBoardIssue,
+  updateBoardIssue,
+} from "@symphony/fs-tracker";
 import type { Settings } from "@symphony/domain";
 
 export interface ToolSpec {
@@ -12,21 +18,16 @@ export interface ToolResult {
   error?: string;
 }
 
-export function toolSpecs(): ToolSpec[] {
-  return [
-    {
-      name: "linear_graphql",
-      description: "Run a Linear GraphQL operation using Symphony tracker credentials.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string" },
-          variables: { type: "object" },
-        },
-        required: ["query"],
-      },
-    },
-  ];
+/**
+ * Returns the tools agents are allowed to call, scoped by the active tracker backend. Linear gets
+ * `linear_graphql`; the filesystem board gets `board_get`/`board_move`/`board_comment`/
+ * `board_update`. Memory and unconfigured trackers expose no tools.
+ */
+export function toolSpecs(settings?: Settings): ToolSpec[] {
+  const kind = settings?.tracker.kind;
+  if (kind === "fs") return FS_TOOL_SPECS;
+  if (kind === undefined || kind === "linear") return LINEAR_TOOL_SPECS;
+  return [];
 }
 
 export async function executeTool(
@@ -34,6 +35,37 @@ export async function executeTool(
   input: unknown,
   settings: Settings,
   fetchImpl: typeof fetch = fetch,
+): Promise<ToolResult> {
+  const kind = settings.tracker.kind;
+  if (kind === "fs") return executeFsTool(name, input, settings);
+  if (kind === "linear" || kind === undefined) return executeLinearTool(name, input, settings, fetchImpl);
+  return toolFailure("Unsupported tool.", { supportedTools: [] });
+}
+
+// ---------------------------------------------------------------------------
+// Linear backend (unchanged behavior)
+// ---------------------------------------------------------------------------
+
+const LINEAR_TOOL_SPECS: ToolSpec[] = [
+  {
+    name: "linear_graphql",
+    description: "Run a Linear GraphQL operation using Symphony tracker credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+        variables: { type: "object" },
+      },
+      required: ["query"],
+    },
+  },
+];
+
+async function executeLinearTool(
+  name: string,
+  input: unknown,
+  settings: Settings,
+  fetchImpl: typeof fetch,
 ): Promise<ToolResult> {
   if (name !== "linear_graphql") {
     return toolFailure("Unsupported tool.", { supportedTools: ["linear_graphql"] });
@@ -85,6 +117,150 @@ export async function executeTool(
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Filesystem-board backend
+// ---------------------------------------------------------------------------
+
+const FS_TOOL_SPECS: ToolSpec[] = [
+  {
+    name: "board_get",
+    description: "Read a board issue by identifier and return its normalized fields.",
+    inputSchema: {
+      type: "object",
+      properties: { identifier: { type: "string" } },
+      required: ["identifier"],
+    },
+  },
+  {
+    name: "board_move",
+    description: "Move a board issue to a different state directory (e.g. Todo, In Progress, Done).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identifier: { type: "string" },
+        state: { type: "string" },
+      },
+      required: ["identifier", "state"],
+    },
+  },
+  {
+    name: "board_comment",
+    description: "Append a progress comment to a board issue's body.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identifier: { type: "string" },
+        comment: { type: "string" },
+        author: { type: "string" },
+      },
+      required: ["identifier", "comment"],
+    },
+  },
+  {
+    name: "board_update",
+    description: "Patch a board issue's title, labels, priority, or description.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        identifier: { type: "string" },
+        title: { type: "string" },
+        labels: { type: "array", items: { type: "string" } },
+        priority: { type: ["number", "null"] },
+        description: { type: "string" },
+      },
+      required: ["identifier"],
+    },
+  },
+];
+
+async function executeFsTool(
+  name: string,
+  input: unknown,
+  settings: Settings,
+): Promise<ToolResult> {
+  const boardDir = settings.tracker.boardDir;
+  if (!boardDir) {
+    return toolFailure(
+      "Symphony is missing fs board_dir. Set `tracker.board_dir` in `WORKFLOW.md` or export `SYMPHONY_BOARD_DIR`.",
+    );
+  }
+  if (!isRecord(input)) return toolFailure(`\`${name}\` requires a JSON object input.`);
+
+  try {
+    if (name === "board_get") {
+      const identifier = requireString(input, "identifier");
+      const issue = await readBoardIssue(boardDir, identifier, settings.tracker.assignee);
+      if (!issue) return toolFailure(`board issue not found: ${identifier}`);
+      return { success: true, result: { issue } };
+    }
+    if (name === "board_move") {
+      const identifier = requireString(input, "identifier");
+      const state = requireString(input, "state");
+      const moved = await moveBoardIssue(boardDir, identifier, state);
+      return { success: true, result: moved };
+    }
+    if (name === "board_comment") {
+      const identifier = requireString(input, "identifier");
+      const comment = requireString(input, "comment");
+      const author = optionalString(input.author);
+      const opts = author === undefined ? {} : { author };
+      const result = await appendBoardComment(boardDir, identifier, comment, opts);
+      return { success: true, result: { identifier, ...result } };
+    }
+    if (name === "board_update") {
+      const identifier = requireString(input, "identifier");
+      const patch = normalizeBoardUpdatePatch(input);
+      const result = await updateBoardIssue(boardDir, identifier, patch);
+      return { success: true, result: { identifier, ...result } };
+    }
+    return toolFailure("Unsupported tool.", {
+      supportedTools: FS_TOOL_SPECS.map((spec) => spec.name),
+    });
+  } catch (error) {
+    return toolFailure((error as Error).message);
+  }
+}
+
+function requireString(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`\`${key}\` is required and must be a non-empty string.`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function normalizeBoardUpdatePatch(input: Record<string, unknown>): {
+  title?: string;
+  labels?: string[];
+  priority?: number | null;
+  description?: string;
+} {
+  const patch: {
+    title?: string;
+    labels?: string[];
+    priority?: number | null;
+    description?: string;
+  } = {};
+  if (typeof input.title === "string") patch.title = input.title;
+  if (Array.isArray(input.labels)) {
+    patch.labels = input.labels.filter((label): label is string => typeof label === "string");
+  }
+  if (input.priority === null) patch.priority = null;
+  else if (typeof input.priority === "number" && Number.isInteger(input.priority)) {
+    patch.priority = input.priority;
+  }
+  if (typeof input.description === "string") patch.description = input.description;
+  return patch;
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
 
 function toolFailure(message: string, details: Record<string, unknown> = {}): ToolResult {
   return {

@@ -144,6 +144,138 @@ export function serializeBoardFile(data: Record<string, unknown>, body = ""): st
   return `---\n${front}\n---\n${trimmedBody === "" ? "" : `\n${trimmedBody}\n`}`;
 }
 
+/** Locates a board file by identifier (matches the filename or the frontmatter `identifier`). */
+export async function findBoardFile(
+  boardDir: string,
+  identifier: string,
+): Promise<BoardFile | null> {
+  const target = identifier.trim().toLowerCase();
+  const files = await readBoardFiles(boardDir);
+  return (
+    files.find((file) => {
+      const frontmatter =
+        typeof file.data.identifier === "string" ? file.data.identifier.toLowerCase() : null;
+      return file.identifier.toLowerCase() === target || frontmatter === target;
+    }) ?? null
+  );
+}
+
+/** Reads a single board issue as a normalized {@link Issue}. */
+export async function readBoardIssue(
+  boardDir: string,
+  identifier: string,
+  assignee?: string,
+): Promise<Issue | null> {
+  const file = await findBoardFile(boardDir, identifier);
+  return file ? boardFileToIssue(file, assignee) : null;
+}
+
+/**
+ * Moves an issue between state directories, bumping `updatedAt` so the change shows up on the next
+ * tracker poll. A no-op (no write) if the issue is already in the target state.
+ */
+export async function moveBoardIssue(
+  boardDir: string,
+  identifier: string,
+  targetState: string,
+  options: { now?: () => string } = {},
+): Promise<{ from: string; to: string; identifier: string; filePath: string }> {
+  const file = await findBoardFile(boardDir, identifier);
+  if (!file) throw new Error(`board issue not found: ${identifier}`);
+
+  const targetSlug = slugifyState(targetState);
+  if (file.stateSlug === targetSlug) {
+    return {
+      from: file.stateSlug,
+      to: targetSlug,
+      identifier: file.identifier,
+      filePath: file.filePath,
+    };
+  }
+
+  const targetDir = path.join(boardDir, targetSlug);
+  await fs.mkdir(targetDir, { recursive: true });
+  const dest = path.join(targetDir, path.basename(file.filePath));
+  if (await pathExists(dest)) {
+    throw new Error(`board issue already exists in ${targetSlug}: ${file.identifier}`);
+  }
+
+  const nextData = { ...file.data, updatedAt: nowIso(options.now) };
+  await fs.writeFile(dest, serializeBoardFile(nextData, file.body), "utf8");
+  await fs.unlink(file.filePath);
+  return { from: file.stateSlug, to: targetSlug, identifier: file.identifier, filePath: dest };
+}
+
+/**
+ * Appends a comment block to the issue body. Bumps `updatedAt`. Used by agents to leave progress
+ * notes the way `linear_graphql` posts Linear comments.
+ */
+export async function appendBoardComment(
+  boardDir: string,
+  identifier: string,
+  comment: string,
+  options: { author?: string; now?: () => string } = {},
+): Promise<{ filePath: string; updatedAt: string }> {
+  const file = await findBoardFile(boardDir, identifier);
+  if (!file) throw new Error(`board issue not found: ${identifier}`);
+  const trimmed = comment.trim();
+  if (trimmed === "") throw new Error("comment body must not be empty");
+
+  const updatedAt = nowIso(options.now);
+  const header = options.author
+    ? `## Comment — ${updatedAt} (${options.author})`
+    : `## Comment — ${updatedAt}`;
+  const existingBody = file.body.trim();
+  const nextBody = `${existingBody === "" ? "" : `${existingBody}\n\n`}${header}\n\n${trimmed}`;
+  const nextData = { ...file.data, updatedAt };
+  await fs.writeFile(file.filePath, serializeBoardFile(nextData, nextBody), "utf8");
+  return { filePath: file.filePath, updatedAt };
+}
+
+/**
+ * Patches whitelisted frontmatter fields and bumps `updatedAt`. Pass `description` to replace the
+ * body. Unknown fields are ignored.
+ */
+export async function updateBoardIssue(
+  boardDir: string,
+  identifier: string,
+  patch: {
+    title?: string | undefined;
+    labels?: string[] | undefined;
+    priority?: number | null | undefined;
+    description?: string | undefined;
+  },
+  options: { now?: () => string } = {},
+): Promise<{ filePath: string; updatedAt: string }> {
+  const file = await findBoardFile(boardDir, identifier);
+  if (!file) throw new Error(`board issue not found: ${identifier}`);
+
+  const updatedAt = nowIso(options.now);
+  const nextData: Record<string, unknown> = { ...file.data, updatedAt };
+  if (patch.title !== undefined) nextData.title = patch.title;
+  if (patch.labels !== undefined) nextData.labels = patch.labels;
+  if (patch.priority !== undefined) {
+    if (patch.priority === null) delete nextData.priority;
+    else nextData.priority = patch.priority;
+  }
+  const nextBody = patch.description !== undefined ? patch.description : file.body;
+  await fs.writeFile(file.filePath, serializeBoardFile(nextData, nextBody), "utf8");
+  return { filePath: file.filePath, updatedAt };
+}
+
+function nowIso(now?: () => string): string {
+  return now ? now() : new Date().toISOString();
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Converts a state name (e.g. `"In Progress"`) into its directory slug (e.g. `"in-progress"`). */
 export function slugifyState(state: string): string {
   return state

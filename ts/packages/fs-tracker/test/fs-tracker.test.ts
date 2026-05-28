@@ -7,10 +7,14 @@ import { afterEach, beforeEach, test } from "vitest";
 import { assert } from "../../../test/assert.js";
 
 import {
+  appendBoardComment,
   FsTrackerClient,
+  moveBoardIssue,
   parseBoardFile,
+  readBoardIssue,
   serializeBoardFile,
   slugifyState,
+  updateBoardIssue,
 } from "@symphony/fs-tracker";
 
 let boardDir: string;
@@ -136,4 +140,106 @@ test("serializeBoardFile round-trips through parseBoardFile", () => {
 test("slugifyState converts display names to directory slugs", () => {
   assert.equal(slugifyState("In Progress"), "in-progress");
   assert.equal(slugifyState("Todo"), "todo");
+});
+
+test("moveBoardIssue relocates the file, bumps updatedAt, and the adapter sees the change", async () => {
+  await writeIssue("todo", "ENG-1", "---\nid: a\nidentifier: ENG-1\ntitle: Work\n---\nDescribe.\n");
+
+  const moved = await moveBoardIssue(boardDir, "ENG-1", "In Progress", {
+    now: () => "2026-05-28T10:00:00.000Z",
+  });
+  assert.equal(moved.from, "todo");
+  assert.equal(moved.to, "in-progress");
+
+  const client = new FsTrackerClient(boardDir);
+  const [issue] = await client.fetchIssuesByStates(["In Progress"]);
+  assert.equal(issue!.identifier, "ENG-1");
+  assert.equal(issue!.state, "In Progress");
+  assert.equal(issue!.description, "Describe.");
+  assert.equal(issue!.updatedAt, "2026-05-28T10:00:00.000Z");
+  assert.deepEqual(await client.fetchIssuesByStates(["Todo"]), []);
+});
+
+test("moveBoardIssue is a no-op when the issue is already in the target state", async () => {
+  await writeIssue("todo", "ENG-1", "---\nid: a\nidentifier: ENG-1\ntitle: Work\n---\n");
+
+  const result = await moveBoardIssue(boardDir, "ENG-1", "Todo");
+  assert.equal(result.from, "todo");
+  assert.equal(result.to, "todo");
+
+  const after = await readBoardIssue(boardDir, "ENG-1");
+  assert.equal(after?.updatedAt, null);
+});
+
+test("appendBoardComment appends a dated section and bumps updatedAt", async () => {
+  await writeIssue(
+    "in-progress",
+    "ENG-1",
+    "---\nid: a\nidentifier: ENG-1\ntitle: Work\n---\nOriginal body.\n",
+  );
+
+  const stamp = "2026-05-28T11:00:00.000Z";
+  await appendBoardComment(boardDir, "ENG-1", "First update", {
+    author: "codex",
+    now: () => stamp,
+  });
+  await appendBoardComment(boardDir, "ENG-1", "Second update", { now: () => stamp });
+
+  const issue = await readBoardIssue(boardDir, "ENG-1");
+  assert.equal(issue?.updatedAt, stamp);
+  assert.match(String(issue?.description), /Original body\./);
+  assert.match(String(issue?.description), /## Comment — 2026-05-28T11:00:00\.000Z \(codex\)/);
+  assert.match(String(issue?.description), /First update/);
+  assert.match(String(issue?.description), /Second update/);
+});
+
+test("appendBoardComment rejects empty comments", async () => {
+  await writeIssue("todo", "ENG-1", "---\nid: a\nidentifier: ENG-1\ntitle: Work\n---\n");
+  await assert.rejects(() => appendBoardComment(boardDir, "ENG-1", "   "), /must not be empty/);
+});
+
+test("updateBoardIssue patches whitelisted frontmatter and replaces the body when provided", async () => {
+  await writeIssue(
+    "todo",
+    "ENG-1",
+    "---\nid: a\nidentifier: ENG-1\ntitle: Old title\nlabels: [old]\npriority: 5\n---\nOld body.\n",
+  );
+
+  const stamp = "2026-05-28T12:00:00.000Z";
+  await updateBoardIssue(
+    boardDir,
+    "ENG-1",
+    {
+      title: "New title",
+      labels: ["new"],
+      priority: 1,
+      description: "New body.",
+    },
+    { now: () => stamp },
+  );
+
+  const issue = await readBoardIssue(boardDir, "ENG-1");
+  assert.equal(issue?.title, "New title");
+  assert.deepEqual(issue?.labels, ["new"]);
+  assert.equal(issue?.priority, 1);
+  assert.equal(issue?.description, "New body.");
+  assert.equal(issue?.updatedAt, stamp);
+});
+
+test("updateBoardIssue with priority: null clears the field; unknown fields are ignored", async () => {
+  await writeIssue(
+    "todo",
+    "ENG-1",
+    "---\nid: a\nidentifier: ENG-1\ntitle: Work\npriority: 3\n---\n",
+  );
+
+  await updateBoardIssue(boardDir, "ENG-1", { priority: null });
+  const issue = await readBoardIssue(boardDir, "ENG-1");
+  assert.equal(issue?.priority, null);
+});
+
+test("writer helpers throw a clear error when the issue is missing", async () => {
+  await assert.rejects(() => moveBoardIssue(boardDir, "nope", "Done"), /board issue not found/);
+  await assert.rejects(() => appendBoardComment(boardDir, "nope", "x"), /board issue not found/);
+  await assert.rejects(() => updateBoardIssue(boardDir, "nope", { title: "x" }), /board issue not found/);
 });

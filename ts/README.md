@@ -117,6 +117,11 @@ symphony-ts board move ENG-1 "In Progress"
 symphony-ts board list
 ```
 
+Agents running under the `fs` backend get a matching MCP tool set — `board_get`, `board_move`,
+`board_comment`, and `board_update` — in place of `linear_graphql`. Each writer bumps the issue's
+`updatedAt` field, so a state transition or comment posted by an agent shows up on the runtime's
+next poll (the adapter re-reads the board on every call; there is no cache to invalidate).
+
 ```yaml
 tracker:
   kind: fs
