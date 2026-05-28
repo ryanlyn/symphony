@@ -901,6 +901,58 @@ test("runtime schedules retry refresh timers independently of the poll cadence",
   runtime.stop();
 });
 
+test("requestRefresh during final emit reports coalesced:false but no new poll starts", async () => {
+  const workflow = workflowFixture();
+  let fetchCount = 0;
+
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      client: {
+        fetchCandidateIssues: async () => {
+          fetchCount += 1;
+          return [];
+        },
+        fetchIssuesByIds: async () => [],
+      },
+    }),
+  );
+
+  // Subscribe a listener that calls requestRefresh when it sees the poll become idle.
+  // The emit() at the end of pollOnceUnlocked fires synchronously while pollInProgress
+  // is still set (it's cleared in pollOnce's finally AFTER pollOnceUnlocked resolves).
+  // At this point pollStatus is "idle" but pollInProgress is non-null.
+  let refreshDuringEmit: ReturnType<typeof runtime.requestRefresh> | null = null;
+  let capturedDuringIdle = false;
+  const unsubscribe = runtime.subscribe((snapshot) => {
+    if (snapshot.poll.status === "idle" && !capturedDuringIdle && fetchCount >= 1) {
+      capturedDuringIdle = true;
+      refreshDuringEmit = runtime.requestRefresh();
+    }
+  });
+
+  await runtime.pollOnce({ dryRun: true });
+  unsubscribe();
+
+  assert.ok(refreshDuringEmit);
+  // BUG: requestRefresh checks pollStatus ("idle") not pollInProgress, so it reports
+  // coalesced:false — claiming it started a fresh poll. But pollOnce()'s internal guard
+  // sees pollInProgress is still set and just returns the existing promise.
+  // A correct implementation would report coalesced:true when the poll is internally
+  // deduplicated, since no new work was actually started.
+  assert.equal(
+    refreshDuringEmit!.coalesced,
+    true,
+    "requestRefresh should report coalesced:true when pollInProgress is still set",
+  );
+
+  // Only 1 fetch occurred — the "new poll" that requestRefresh claimed to start never
+  // actually fetched anything, proving the coalesced:false return value is a lie.
+  assert.equal(fetchCount, 1);
+
+  runtime.stop();
+});
+
 function workflowFixture(root = "/tmp/symphony-ts-runtime-test"): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
