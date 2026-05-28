@@ -1,5 +1,20 @@
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
-import type { AgentKind, AgentUpdateType, DispatchBlockEntry, UsageTotals } from "@symphony/domain";
+import type {
+  AgentKind,
+  AgentUpdateType,
+  DispatchBlockEntry,
+  UsageTotals,
+  WorkerProviderKind,
+} from "@symphony/domain";
+
+export interface RuntimeWorkerPoolSnapshot {
+  total: number;
+  ready: number;
+  assigned: number;
+  draining: number;
+  byKind: Partial<Record<WorkerProviderKind, { ready: number; assigned: number }>>;
+  ttlMs: number | null;
+}
 
 export type RuntimeAppStatus = "starting" | "idle" | "polling" | "running" | "stopping" | "error";
 export type RuntimePollStatus = "idle" | "checking" | "error";
@@ -28,6 +43,13 @@ export const RUNTIME_EVENT_TYPES = [
   "retry_timer_due",
   "retry_timer_error",
   "refresh_error",
+  "worker_provisioned",
+  "worker_acquired",
+  "worker_released",
+  "worker_recycled",
+  "worker_expired",
+  "worker_unhealthy",
+  "worker_maintain_failed",
 ] as const;
 export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
 
@@ -119,4 +141,5 @@ export interface RuntimeSnapshot {
   rateLimits: unknown;
   logFile: string | null;
   recentEvents: RuntimeEvent[];
+  workerPool?: RuntimeWorkerPoolSnapshot | undefined;
 }

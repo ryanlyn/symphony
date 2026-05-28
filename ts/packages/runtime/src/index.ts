@@ -14,6 +14,7 @@ import { settingsForIssueState, validateDispatchConfig } from "@symphony/config"
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
+import { WorkerPool, type WorkerPoolEvent, type WorkerProvider } from "@symphony/worker-pool";
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
 import type {
   AgentKind,
@@ -63,6 +64,13 @@ export const RUNTIME_EVENT_TYPES = [
   "retry_timer_due",
   "retry_timer_error",
   "refresh_error",
+  "worker_provisioned",
+  "worker_acquired",
+  "worker_released",
+  "worker_recycled",
+  "worker_expired",
+  "worker_unhealthy",
+  "worker_maintain_failed",
 ] as const;
 export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
 export type RuntimeRunLastEvent = AgentUpdateType | "agent_stalled";
@@ -163,6 +171,14 @@ export interface SymphonyRuntimeOptions {
   clientFactory?: ((settings: WorkflowDefinition["settings"]) => RuntimeTrackerClient) | undefined;
   reloadWorkflow?: (() => Promise<WorkflowDefinition>) | undefined;
   orchestrator?: Orchestrator | undefined;
+  workerPool?: WorkerPool | undefined;
+  /**
+   * Map of dynamic providers (sandbox, broker) to register on the default pool.
+   * The host (CLI) wires concrete clients (e.g. an E2B `SandboxClient`) here.
+   */
+  workerProviders?:
+    | Partial<Record<"sandbox" | "broker", WorkerProvider>>
+    | undefined;
   runner?: RuntimeRunner | undefined;
   removeIssueWorkspaces?:
     | ((
@@ -212,10 +228,20 @@ export class SymphonyRuntime {
   private nextRunNumber = 1;
   private pollInProgress: Promise<void> | null = null;
 
+  private readonly workerPool: WorkerPool;
+
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
-    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings);
+    this.workerPool =
+      input.workerPool ??
+      new WorkerPool({
+        settings: () => this.input.workflow.settings,
+        ...(input.workerProviders ? { providers: input.workerProviders } : {}),
+        onEvent: (event) => this.handleWorkerPoolEvent(event),
+      });
+    this.orchestrator =
+      input.orchestrator ?? new Orchestrator(input.workflow.settings, undefined, undefined, this.workerPool);
     this.runner = input.runner ?? runAgentAttempt;
     this.now = input.now ?? (() => new Date());
     this.appStatus = "idle";
@@ -254,6 +280,7 @@ export class SymphonyRuntime {
       usageTotals: orchestration.usageTotals,
       rateLimits: orchestration.rateLimits,
       logFile: this.workflow.settings.logging.logFile,
+      workerPool: this.workerPool.snapshot(),
     });
   }
 
@@ -272,6 +299,7 @@ export class SymphonyRuntime {
     for (const controller of this.activeAbortControllers.values()) controller.abort();
     this.activeAbortControllers.clear();
     this.retryScheduler.stop();
+    void this.workerPool.stop();
     this.emit();
   }
 
@@ -300,6 +328,7 @@ export class SymphonyRuntime {
       await this.cleanupTerminalWorkspacesOnce();
       await this.reconcileStalledRuns();
       await this.reconcileTrackedIssues();
+      await this.maintainWorkerPool();
       const issues = await this.client.fetchCandidateIssues();
       const eligibleIssues = this.orchestrator.eligibleIssues(issues);
       this.candidates = issues.length;
@@ -635,6 +664,19 @@ export class SymphonyRuntime {
       .running.find((entry) => entry.issue.id === issueId && entry.slotIndex === slotIndex);
   }
 
+  private async maintainWorkerPool(): Promise<void> {
+    try {
+      await this.workerPool.maintain();
+    } catch (error) {
+      this.addEvent("worker_maintain_failed", errorMessage(error));
+    }
+  }
+
+  private handleWorkerPoolEvent(event: WorkerPoolEvent): void {
+    const message = workerEventMessage(event);
+    this.addEvent(event.type, message);
+  }
+
   private async cleanupTerminalWorkspacesOnce(): Promise<void> {
     if (this.startupCleanupDone) return;
     this.startupCleanupDone = true;
@@ -873,4 +915,21 @@ function errorMessage(error: unknown): string {
 
 function durationMs(startedAt: string, endedAt: string): number {
   return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
+}
+
+function workerEventMessage(event: WorkerPoolEvent): string {
+  const head = `lease=${event.leaseId} provider=${event.providerKind}`;
+  switch (event.type) {
+    case "worker_provisioned":
+      return `${head} host=${event.workerHost ?? "local"}`;
+    case "worker_acquired":
+      return `${head} holder=${event.holderKey}`;
+    case "worker_released":
+      return `${head} warm=${event.warm}`;
+    case "worker_recycled":
+      return `${head} reason=${event.reason}`;
+    case "worker_expired":
+    case "worker_unhealthy":
+      return head;
+  }
 }

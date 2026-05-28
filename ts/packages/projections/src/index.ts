@@ -7,6 +7,7 @@ import type {
   RuntimeRunHistoryEntry,
   RuntimeRunningEntry,
   RuntimeSnapshot,
+  RuntimeWorkerPoolSnapshot,
 } from "@symphony/runtime-events";
 import type { UsageTotals } from "@symphony/domain";
 
@@ -27,6 +28,7 @@ export interface RuntimeProjectionInput {
   usageTotals: UsageTotals;
   rateLimits: unknown;
   logFile: string | null;
+  workerPool?: RuntimeWorkerPoolSnapshot | undefined;
 }
 
 export class ProjectionActor {
@@ -57,6 +59,14 @@ export class ProjectionActor {
       rateLimits: input.rateLimits,
       logFile: input.logFile,
       recentEvents: this.recentEvents.map((event) => ({ ...event })),
+      ...(input.workerPool
+        ? {
+            workerPool: {
+              ...input.workerPool,
+              byKind: { ...input.workerPool.byKind },
+            },
+          }
+        : {}),
     };
   }
 }

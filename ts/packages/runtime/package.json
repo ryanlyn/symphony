@@ -32,6 +32,7 @@
     "@symphony/agent-runner": "workspace:*",
     "@symphony/projections": "workspace:*",
     "@symphony/retry-scheduler": "workspace:*",
+    "@symphony/worker-pool": "workspace:*",
     "@symphony/domain": "workspace:*"
   }
 }

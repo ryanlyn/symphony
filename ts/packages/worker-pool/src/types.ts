@@ -42,6 +42,8 @@ export interface Lease {
   lastAssignedAt: Date | null;
   /** slotKey(issueId, slotIndex) of the run holding this lease, or null when idle. */
   holderKey: string | null;
+  /** Set by TTL reap when an assigned lease has outlived its TTL; destroyed on release. */
+  expireAfterRelease: boolean;
 }
 
 /** Current in-use worker counts, used by providers for synchronous placement. */

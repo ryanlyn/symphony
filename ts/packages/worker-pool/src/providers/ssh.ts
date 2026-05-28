@@ -28,6 +28,7 @@ const defaultRemoteShell: RemoteShellPort = {
 export class SshHostProvider implements WorkerProvider {
   readonly kind = "ssh" as const;
   readonly reusable = true;
+  readonly dynamic = false;
 
   constructor(
     private readonly config: () => SshProviderConfig,
@@ -48,6 +49,12 @@ export class SshHostProvider implements WorkerProvider {
       target: { workerHost: host },
       createdAt: this.clock.now(),
     };
+  }
+
+  async provision(input: PlacementInput): Promise<WorkerHandle> {
+    const handle = this.select(input);
+    if (!handle) throw new Error("ssh_no_capacity");
+    return Promise.resolve(handle);
   }
 
   async healthCheck(handle: WorkerHandle): Promise<boolean> {

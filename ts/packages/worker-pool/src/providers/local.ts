@@ -7,6 +7,7 @@ import type { PlacementInput, WorkerHandle } from "../types.js";
 export class LocalProvider implements WorkerProvider {
   readonly kind = "local" as const;
   readonly reusable = true;
+  readonly dynamic = false;
 
   constructor(private readonly clock: ClockPort = systemClock) {}
 
@@ -21,6 +22,10 @@ export class LocalProvider implements WorkerProvider {
       target: { workerHost: null },
       createdAt: this.clock.now(),
     };
+  }
+
+  async provision(input: PlacementInput): Promise<WorkerHandle> {
+    return Promise.resolve(this.select(input));
   }
 
   async healthCheck(): Promise<boolean> {

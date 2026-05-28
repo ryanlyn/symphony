@@ -1564,6 +1564,9 @@ importers:
       "@symphony/retry-scheduler":
         specifier: workspace:*
         version: link:../retry-scheduler
+      "@symphony/worker-pool":
+        specifier: workspace:*
+        version: link:../worker-pool
       acpx:
         specifier: ^0.7.0
         version: 0.7.0

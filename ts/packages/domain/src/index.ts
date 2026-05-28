@@ -164,6 +164,47 @@ export interface TrackerSettings {
 export type WorkerProviderKind = "local" | "ssh" | "sandbox" | "broker";
 
 /**
+ * Sandbox provider settings (e.g. E2B). The actual SDK client is wired by the host
+ * (CLI/runtime) via a `SandboxClient` port; we only persist the routing knobs here.
+ */
+export interface SandboxProviderSettings {
+  /** Concrete sandbox backend. Only `e2b` is documented today but more may land. */
+  kind: "e2b";
+  /** Backend template/image id. */
+  template?: string | undefined;
+  /** Sandbox-side TTL handed to the backend; also used as the lease TTL. */
+  timeoutMs?: number | undefined;
+}
+
+/**
+ * Broker provider settings. The control-plane URL and (optional) bearer token.
+ * Token sourced from env in practice; the field is kept optional for tests.
+ */
+export interface BrokerProviderSettings {
+  endpoint: string;
+  apiKey?: string | undefined;
+}
+
+/**
+ * Worker-pool tuning. When absent the pool runs Local+Static-SSH derived from
+ * the existing `worker.sshHosts`/`worker.maxConcurrentAgentsPerHost` knobs.
+ */
+export interface WorkerPoolSettings {
+  /** Which provider new runs use; overrides the legacy ssh-vs-local routing. */
+  provider: WorkerProviderKind;
+  /** Hard cap across all leases. Defaults to {@link AgentSettings.maxConcurrentAgents}. */
+  maxPoolSize?: number | undefined;
+  /** Idle leases kept warm for reuse. Defaults to 0. */
+  warmPoolSize?: number | undefined;
+  /** Lease time-to-live in ms; absent disables TTL reaping. */
+  ttlMs?: number | undefined;
+  /** How often `ready` leases get re-probed. Defaults to 30s. */
+  healthRecheckMs?: number | undefined;
+  sandbox?: SandboxProviderSettings | undefined;
+  broker?: BrokerProviderSettings | undefined;
+}
+
+/**
  * Where agent runs execute. With no hosts configured, runs happen on the local machine;
  * with hosts configured, work is sharded over SSH onto remote workers.
  */
@@ -181,6 +222,8 @@ export interface WorkerSettings {
    * instead of running locally. Undefined means the global {@link AgentSettings.maxConcurrentAgents} applies per host.
    */
   maxConcurrentAgentsPerHost?: number | undefined;
+  /** Optional worker-pool tuning; when absent a Local+SSH pool is derived from `sshHosts`. */
+  pool?: WorkerPoolSettings | undefined;
 }
 
 /**

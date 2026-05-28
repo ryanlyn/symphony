@@ -6,13 +6,16 @@ import type {
   AgentSettings,
   AcpAgentConfig,
   AppServerAgentConfig,
+  BrokerProviderSettings,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
   PartialRuntimeSettings,
+  SandboxProviderSettings,
   Settings,
   TrackerKind,
   TrackerSettings,
+  WorkerPoolSettings,
 } from "@symphony/domain";
 import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
 
@@ -68,11 +71,23 @@ const trackerRawSchema = z
 
 const pollingRawSchema = z.object({ intervalMs: z.unknown().optional() }).strict();
 const workspaceRawSchema = z.object({ root: z.unknown().optional() }).strict();
+const workerPoolRawSchema = z
+  .object({
+    provider: z.unknown().optional(),
+    maxPoolSize: z.unknown().optional(),
+    warmPoolSize: z.unknown().optional(),
+    ttlMs: z.unknown().optional(),
+    healthRecheckMs: z.unknown().optional(),
+    sandbox: z.unknown().optional(),
+    broker: z.unknown().optional(),
+  })
+  .strict();
 const workerRawSchema = z
   .object({
     sshHosts: z.unknown().optional(),
     sshTimeoutMs: z.unknown().optional(),
     maxConcurrentAgentsPerHost: z.unknown().optional(),
+    pool: workerPoolRawSchema.optional(),
   })
   .strict();
 const hooksRawSchema = z
@@ -187,6 +202,15 @@ const workerAliases = {
   ssh_hosts: "sshHosts",
   ssh_timeout_ms: "sshTimeoutMs",
   max_concurrent_agents_per_host: "maxConcurrentAgentsPerHost",
+};
+const workerPoolAliases = {
+  max_pool_size: "maxPoolSize",
+  warm_pool_size: "warmPoolSize",
+  ttl_ms: "ttlMs",
+  health_recheck_ms: "healthRecheckMs",
+};
+const sandboxProviderAliases = {
+  timeout_ms: "timeoutMs",
 };
 const hooksAliases = {
   after_create: "afterCreate",
@@ -346,6 +370,9 @@ export function parseConfig(
       "worker.max_concurrent_agents_per_host",
     );
   }
+  if (workerRaw.pool !== undefined) {
+    settings.worker.pool = parseWorkerPool(workerRaw.pool);
+  }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
@@ -490,6 +517,44 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
     onlyRoutes,
     routeLabelPrefix: stringValue(raw.routeLabelPrefix, defaults.routeLabelPrefix).trim(),
   };
+}
+
+function parseWorkerPool(value: unknown): WorkerPoolSettings {
+  if (!isPlainRecord(value)) throw new Error("worker.pool must be a mapping");
+  const provider = value.provider;
+  if (provider !== "local" && provider !== "ssh" && provider !== "sandbox" && provider !== "broker") {
+    throw new Error("worker.pool.provider must be one of: local, ssh, sandbox, broker");
+  }
+  const pool: WorkerPoolSettings = { provider };
+  if (value.maxPoolSize !== undefined)
+    pool.maxPoolSize = positiveInt(value.maxPoolSize, 1, "worker.pool.max_pool_size");
+  if (value.warmPoolSize !== undefined)
+    pool.warmPoolSize = positiveInt(value.warmPoolSize, 0, "worker.pool.warm_pool_size");
+  if (value.ttlMs !== undefined)
+    pool.ttlMs = positiveInt(value.ttlMs, 1, "worker.pool.ttl_ms");
+  if (value.healthRecheckMs !== undefined)
+    pool.healthRecheckMs = positiveInt(value.healthRecheckMs, 1, "worker.pool.health_recheck_ms");
+  if (value.sandbox !== undefined) {
+    if (!isPlainRecord(value.sandbox)) throw new Error("worker.pool.sandbox must be a mapping");
+    if (value.sandbox.kind !== "e2b")
+      throw new Error("worker.pool.sandbox.kind must be 'e2b'");
+    const sandbox: SandboxProviderSettings = { kind: "e2b" };
+    if (value.sandbox.template !== undefined)
+      sandbox.template = stringValue(value.sandbox.template, "");
+    if (value.sandbox.timeoutMs !== undefined)
+      sandbox.timeoutMs = positiveInt(value.sandbox.timeoutMs, 1, "worker.pool.sandbox.timeout_ms");
+    pool.sandbox = sandbox;
+  }
+  if (value.broker !== undefined) {
+    if (!isPlainRecord(value.broker)) throw new Error("worker.pool.broker must be a mapping");
+    const endpoint = stringValue(value.broker.endpoint, "");
+    if (!endpoint) throw new Error("worker.pool.broker.endpoint is required");
+    const broker: BrokerProviderSettings = { endpoint };
+    if (value.broker.apiKey !== undefined)
+      broker.apiKey = stringValue(value.broker.apiKey, "");
+    pool.broker = broker;
+  }
+  return pool;
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {
@@ -788,7 +853,23 @@ function cloneSettings(settings: Settings): Settings {
     tracker: { ...settings.tracker, dispatch: { ...settings.tracker.dispatch } },
     polling: { ...settings.polling },
     workspace: { ...settings.workspace },
-    worker: { ...settings.worker, sshHosts: [...settings.worker.sshHosts] },
+    worker: {
+      ...settings.worker,
+      sshHosts: [...settings.worker.sshHosts],
+      ...(settings.worker.pool
+        ? {
+            pool: {
+              ...settings.worker.pool,
+              ...(settings.worker.pool.sandbox
+                ? { sandbox: { ...settings.worker.pool.sandbox } }
+                : {}),
+              ...(settings.worker.pool.broker
+                ? { broker: { ...settings.worker.pool.broker } }
+                : {}),
+            },
+          }
+        : {}),
+    },
     hooks: { ...settings.hooks },
     agent: { ...settings.agent },
     agents: cloneAgentRecords(settings.agents),
@@ -883,6 +964,12 @@ function normalizeWorkflowConfig(value: unknown): unknown {
   normalizeNested(normalized, "polling", pollingAliases);
   normalizeNested(normalized, "workspace", workspaceAliases);
   normalizeNested(normalized, "worker", workerAliases);
+  if (isPlainRecord(normalized.worker)) {
+    normalizeNested(normalized.worker, "pool", workerPoolAliases);
+    if (isPlainRecord(normalized.worker.pool)) {
+      normalizeNested(normalized.worker.pool, "sandbox", sandboxProviderAliases);
+    }
+  }
   normalizeNested(normalized, "hooks", hooksAliases);
   normalizeNested(normalized, "agent", agentAliases);
   normalizeNested(normalized, "codex", codexAliases);
