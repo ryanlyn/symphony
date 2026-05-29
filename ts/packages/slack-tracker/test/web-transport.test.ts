@@ -141,3 +141,66 @@ test("addReaction posts to reactions.add", async () => {
   await new SlackWebTransport(settings(), fetchImpl).addReaction("C1", "1.1", "eyes");
   assert.match(calls[0]!, /\/reactions\.add/);
 });
+
+test("get retries once on HTTP 429 honoring Retry-After then succeeds", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("rate limited", {
+        status: 429,
+        headers: { "retry-after": "0" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: "1.1", text: "<@U1> hi", reactions: [] }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  const messages = await transport.listMentions(["C1"]);
+
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.1"],
+  );
+});
+
+test("get gives up after the retry cap on a persistent 429 with a clear error", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    return new Response("rate limited", {
+      status: 429,
+      headers: { "retry-after": "0" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await assert.rejects(() => transport.listMentions(["C1"]), /conversations\.history.*429/);
+  assert.equal(calls, 5);
+});
+
+test("post retries on HTTP 5xx with backoff then succeeds", async () => {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("server error", { status: 503 });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await transport.addReaction("C1", "1.1", "eyes");
+
+  assert.equal(calls, 2);
+});

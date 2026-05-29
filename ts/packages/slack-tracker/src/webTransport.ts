@@ -10,6 +10,11 @@ interface RawSlackMessage {
 }
 
 const MAX_HISTORY_PAGES = 50;
+const MAX_RETRIES = 4;
+
+type Sleep = (delayMs: number) => Promise<void>;
+
+const defaultSleep: Sleep = async (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs));
 
 export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
@@ -19,6 +24,7 @@ export class SlackWebTransport implements SlackTransport {
   constructor(
     settings: Settings,
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly sleep: Sleep = defaultSleep,
   ) {
     this.endpoint = (settings.tracker.endpoint || "https://slack.com/api").replace(/\/+$/, "");
     this.token = settings.tracker.apiKey ?? "";
@@ -75,11 +81,13 @@ export class SlackWebTransport implements SlackTransport {
     params: Record<string, string>,
   ): Promise<Record<string, unknown>> {
     const url = `${this.endpoint}/${method}?${new URLSearchParams(params).toString()}`;
-    const response = await this.fetchImpl(url, {
-      method: "GET",
-      headers: { authorization: `Bearer ${this.token}` },
-      signal: AbortSignal.timeout(30_000),
-    });
+    const response = await this.fetchWithRetry(method, async () =>
+      this.fetchImpl(url, {
+        method: "GET",
+        headers: { authorization: `Bearer ${this.token}` },
+        signal: AbortSignal.timeout(30_000),
+      }),
+    );
     return this.parse(method, response);
   }
 
@@ -87,16 +95,31 @@ export class SlackWebTransport implements SlackTransport {
     method: string,
     params: Record<string, string>,
   ): Promise<Record<string, unknown>> {
-    const response = await this.fetchImpl(`${this.endpoint}/${method}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        "content-type": "application/json; charset=utf-8",
-      },
-      body: JSON.stringify(params),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const response = await this.fetchWithRetry(method, async () =>
+      this.fetchImpl(`${this.endpoint}/${method}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify(params),
+        signal: AbortSignal.timeout(30_000),
+      }),
+    );
     return this.parse(method, response);
+  }
+
+  private async fetchWithRetry(method: string, send: () => Promise<Response>): Promise<Response> {
+    for (let retryCount = 0; ; retryCount += 1) {
+      const response = await send();
+      if (!isRetryable(response.status) || retryCount >= MAX_RETRIES) {
+        if (isRetryable(response.status)) {
+          throw new Error(`slack ${method} failed: status ${response.status}`);
+        }
+        return response;
+      }
+      await this.sleep(retryDelayMs(response.headers, retryCount));
+    }
   }
 
   private async parse(method: string, response: Response): Promise<Record<string, unknown>> {
@@ -107,6 +130,21 @@ export class SlackWebTransport implements SlackTransport {
     }
     return body;
   }
+}
+
+function isRetryable(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function retryDelayMs(headers: Headers, retryCount: number): number {
+  const retryAfter = headers.get("retry-after");
+  if (retryAfter !== null) {
+    const seconds = Number(retryAfter.trim());
+    if (Number.isInteger(seconds) && seconds >= 0) return seconds * 1000;
+    const dateMs = Date.parse(retryAfter.trim());
+    if (!Number.isNaN(dateMs)) return Math.max(0, dateMs - Date.now());
+  }
+  return Math.min(1_000 * 2 ** retryCount, 30_000);
 }
 
 function nextCursor(body: Record<string, unknown>): string | undefined {
