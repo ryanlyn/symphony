@@ -1,6 +1,207 @@
+# Symphony Invariant Test Results
+
+**Date:** 2026-05-29  
+**Total Scenarios Tested:** 210  
+**Passed:** 200  
+**Failed:** 10
+
+---
+
+## Failures Found
+
+### Failure 1: S-022
+**Invariant Violated:** Out-of-range priority SHALL sort last (valid priorities are 1-4 integers)  
+**Code Location:** `ts/packages/dispatch/src/index.ts` — `prioritySort` (line ~142)  
+**Explanation:** `prioritySort` checks `priority >= 1 && priority <= 4` but does NOT verify `Number.isInteger()`. A float like 2.5 passes the range check and is treated as a valid priority sorting between 2 and 3, instead of being mapped to `MAX_SAFE_INTEGER` (sort last). The invariant specifies "valid priorities (1-4)" which implies integers.  
+**Reproduction:**
+```ts
+import { sortForDispatch } from "@symphony/dispatch";
+const a = { ...issue, priority: 2.5, identifier: "A" };
+const b = { ...issue, priority: 2, identifier: "B" };
+sortForDispatch([a, b]); // Returns [b, a] — treats 2.5 as valid priority
+```
+**Suggested Fix:** Add `Number.isInteger(priority)` to the guard:
+```ts
+function prioritySort(priority: number | null | undefined): number {
+  return priority && Number.isInteger(priority) && priority >= 1 && priority <= 4
+    ? priority : Number.MAX_SAFE_INTEGER;
+}
+```
+
+---
+
+### Failure 2: S-105
+**Invariant Violated:** Minimum delay floor SHALL prevent zero-delay retry storms  
+**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 9)  
+**Explanation:** `retryBackoffMs(1, 0, "failure")` computes `Math.min(0, 10000) = 0`. With a cap of 0, the retry delay is zero, creating potential retry storms. There is no minimum floor enforced on the result.  
+**Reproduction:**
+```ts
+import { retryBackoffMs } from "@symphony/policies/retry";
+retryBackoffMs(1, 0, "failure"); // Returns 0
+```
+**Suggested Fix:** Enforce a minimum floor (e.g., 1000ms):
+```ts
+const MIN_RETRY_DELAY_MS = 1_000;
+return Math.max(MIN_RETRY_DELAY_MS, Math.min(maxRetryBackoffMs, 10_000 * 2 ** Math.max(0, attempt - 1)));
+```
+
+---
+
+### Failure 3: S-106
+**Invariant Violated:** Retry delay SHALL be non-negative  
+**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 9)  
+**Explanation:** `retryBackoffMs(1, -1, "failure")` computes `Math.min(-1, 10000) = -1`. A negative `maxRetryBackoffMs` propagates directly as a negative result. No validation or clamping prevents this.  
+**Reproduction:**
+```ts
+retryBackoffMs(1, -1, "failure"); // Returns -1 — NEGATIVE
+```
+**Suggested Fix:** Clamp result to non-negative:
+```ts
+return Math.max(0, Math.min(maxRetryBackoffMs, 10_000 * 2 ** Math.max(0, attempt - 1)));
+```
+
+---
+
+### Failure 4: S-120
+**Invariant Violated:** Token counts SHALL never become negative / NaN  
+**Code Location:** `ts/packages/policies/src/usage.ts` — `mergeMonotonicUsage` (lines 17-21)  
+**Explanation:** When `update.inputTokens` is `NaN`, the nullish coalescing (`??`) does NOT catch it (NaN is not null/undefined). This feeds NaN into `Math.max(10, 0, NaN)` which returns NaN in JavaScript. The result propagates through entry totals, reported totals, and global totals, corrupting all downstream state.  
+**Reproduction:**
+```ts
+import { mergeMonotonicUsage } from "@symphony/policies/usage";
+mergeMonotonicUsage({
+  entryTotals: { inputTokens: 10, outputTokens: 5, totalTokens: 15, secondsRunning: 0 },
+  reportedTotals: { inputTokens: 10, outputTokens: 5, totalTokens: 15, secondsRunning: 0 },
+  globalTotals: { inputTokens: 100, outputTokens: 50, totalTokens: 150, secondsRunning: 0 },
+  update: { inputTokens: NaN },
+});
+// entryTotals.inputTokens = NaN, globalTotals.inputTokens = NaN
+```
+**Suggested Fix:** Validate update values with `Number.isFinite()`:
+```ts
+const safeInput = Number.isFinite(input.update.inputTokens)
+  ? input.update.inputTokens : input.entryTotals.inputTokens;
+```
+
+---
+
+### Failure 5: S-121
+**Invariant Violated:** Token counts SHALL never become negative / NaN  
+**Code Location:** `ts/packages/policies/src/usage.ts` — `mergeMonotonicUsage` (lines 27-31)  
+**Explanation:** Same root cause as S-120 but for the `totalTokens` field. `Math.max(10, 0, NaN)` returns NaN. Each token field is independently vulnerable. A single NaN field corrupts only that field's chain but leaves others intact.  
+**Reproduction:**
+```ts
+mergeMonotonicUsage({ ..., update: { totalTokens: NaN, inputTokens: 20 } });
+// entryTotals.totalTokens = NaN, but inputTokens correctly updates to 20
+```
+**Suggested Fix:** Same NaN guard applied to all three token fields.
+
+---
+
+### Failure 6: S-185
+**Invariant Violated:** Retry delay SHALL never exceed the configured maximum cap  
+**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 8)  
+**Explanation:** The continuation path returns `1_000` unconditionally via early return, bypassing `Math.min(maxRetryBackoffMs, ...)`. When `maxRetryBackoffMs < 1000` (e.g., 500), the returned delay exceeds the configured cap.  
+**Reproduction:**
+```ts
+retryBackoffMs(1, 500, "continuation"); // Returns 1000, which exceeds cap of 500
+```
+**Suggested Fix:** Apply cap to continuation:
+```ts
+if (retryKind === "continuation") return Math.min(maxRetryBackoffMs, 1_000);
+```
+
+---
+
+### Failure 7: S-186
+**Invariant Violated:** Token counts SHALL never become negative / NaN  
+**Code Location:** `ts/packages/policies/src/usage.ts` — `mergeMonotonicUsage` (lines 17-35)  
+**Explanation:** When ALL token fields in the update are NaN, all three chains (entry, reported, global) become NaN simultaneously. This is the compound version of S-120/S-121 affecting all fields at once.  
+**Reproduction:**
+```ts
+mergeMonotonicUsage({
+  ...,
+  update: { inputTokens: NaN, outputTokens: NaN, totalTokens: NaN },
+});
+// All token fields across all totals become NaN
+```
+**Suggested Fix:** Apply `Number.isFinite()` guard to each field before Math.max.
+
+---
+
+### Failure 8: S-209
+**Invariant Violated:** Workspace path SHALL be a strict descendant of the workspace root  
+**Code Location:** `ts/packages/workspace/src/index.ts` — `workspacePath` (line ~22)  
+**Explanation:** `workspacePath("/tmp/w", "", 0, 1)` calls `safeIdentifier("")` which returns `""`, then `path.join("/tmp/w", "")` returns `"/tmp/w"` — which equals root. While `createWorkspaceForIssue` catches this downstream via `validateWorkspaceCwd`, the pure `workspacePath` function itself produces an invalid path. Any code path that calls `workspacePath` directly (without going through create) would get a root-equal path.  
+**Reproduction:**
+```ts
+import { workspacePath, safeIdentifier } from "@symphony/workspace";
+safeIdentifier("");           // ""
+workspacePath("/tmp/w", "");  // "/tmp/w" === root!
+```
+**Suggested Fix:** Guard in `safeIdentifier` or `workspacePath`:
+```ts
+export function workspacePath(root, identifier, slotIndex = 0, ensembleSize = 1) {
+  const safe = safeIdentifier(identifier);
+  if (!safe) throw new Error("empty identifier produces invalid workspace path");
+  ...
+}
+```
+
+---
+
+### Failure 9: S-210
+**Invariant Violated:** Retry delay SHALL never exceed the configured maximum cap  
+**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 8)  
+**Explanation:** Same root cause as S-185. Continuation returns 1000 without cap enforcement. With `maxRetryBackoffMs=100`, result is 1000 > 100.  
+**Reproduction:** Same as S-185 with cap=100.  
+**Suggested Fix:** Same as S-185.
+
+---
+
+### Failure 10: S-184
+**Invariant Violated:** WHEN a non-unstarted issue has non-terminal blockers, THE SYSTEM SHALL still consider it eligible (blockers only gate unstarted issues)  
+**Code Location:** `ts/packages/dispatch/src/index.ts` — `issueHasOpenBlockers` (line ~43)  
+**Explanation:** The function determines "unstarted" via `issue.stateType === "unstarted" || issue.state.trim().toLowerCase() === "todo"`. An issue with `stateType="started"` (explicitly categorized by the tracker as started) but `state="Todo"` (state name happens to be "Todo") is treated as unstarted due to the `||`. This means a started issue is incorrectly gated by blockers because its state name matches the hardcoded string "todo".  
+**Reproduction:**
+```ts
+import { issueHasOpenBlockers } from "@symphony/dispatch";
+const issue = {
+  ...validIssue,
+  state: "Todo",
+  stateType: "started",
+  blockers: [{ state: "In Progress" }],
+};
+issueHasOpenBlockers(issue, settings); // true — WRONG, stateType says it's started
+```
+**Suggested Fix:** Prefer `stateType` when available:
+```ts
+const unstarted = issue.stateType
+  ? issue.stateType === "unstarted"
+  : issue.state.trim().toLowerCase() === "todo";
+```
+
+---
+
+## Summary of Distinct Bugs
+
+| # | Module | Bug | Severity |
+|---|--------|-----|----------|
+| 1 | `dispatch/prioritySort` | Float priorities (e.g. 2.5) treated as valid | Low |
+| 2 | `policies/retry` | No minimum delay floor; cap=0 produces zero delay | Medium |
+| 3 | `policies/retry` | Negative cap propagates as negative delay | Medium |
+| 4 | `policies/usage` | NaN in update corrupts all token totals | High |
+| 5 | `policies/retry` | Continuation bypass ignores cap entirely | Low |
+| 6 | `workspace` | Empty identifier produces root-equal path | Medium |
+| 7 | `dispatch/issueHasOpenBlockers` | State name "Todo" overrides stateType="started" | Medium |
+
+(Failures 4-6-7 are variants of bug #4; failures 5-9-10 are variants of bug #5)
+
+---
+
 # Symphony Invariant Test Scenarios
 
-210+ scenarios testing core logic against INVARIANTS.md.
+210 scenarios testing core logic against INVARIANTS.md.
 
 ---
 
@@ -180,7 +381,7 @@
 **Setup:** A(priority=2.5), B(priority=2)  
 **Action:** sortForDispatch([A, B])  
 **Expected:** Depends on prioritySort implementation - does it check integer?  
-**Status:** PENDING
+**Status:** **FAILED** — prioritySort does not check Number.isInteger(); 2.5 passes the >= 1 && <= 4 check
 
 ### S-023: Priority undefined vs null same behavior
 **Category:** Dispatch Ordering  
@@ -864,7 +1065,7 @@
 **Setup:** attempt=1, cap=0  
 **Action:** retryBackoffMs(1, 0, "failure")  
 **Expected:** Math.min(0, 10000) = 0. Non-negative? Yes. But invariant says "minimum delay floor prevents zero-delay storms"  
-**Status:** PENDING
+**Status:** **FAILED** — No minimum floor; zero delay allows retry storms
 
 ### S-106: Negative cap produces negative result
 **Category:** Retry and Backoff  
@@ -872,7 +1073,7 @@
 **Setup:** attempt=1, cap=-1  
 **Action:** retryBackoffMs(1, -1, "failure")  
 **Expected:** Math.min(-1, 10000) = -1. NEGATIVE! Invariant violation?  
-**Status:** PENDING
+**Status:** **FAILED** — Negative cap propagates to negative return value
 
 ### S-107: Monotonicity across attempts 1 through 10
 **Category:** Retry and Backoff  
@@ -988,7 +1189,7 @@
 **Setup:** entryTotals={input:10}, update={inputTokens:NaN}  
 **Action:** mergeMonotonicUsage(...)  
 **Expected:** Math.max(10, 0, NaN) = 10? Or NaN? (Math.max behavior with NaN)  
-**Status:** PENDING
+**Status:** **FAILED** — Math.max(10, 0, NaN) returns NaN in JavaScript; corrupts all downstream totals
 
 ### S-121: NaN in update.totalTokens only
 **Category:** Usage Accounting  
@@ -996,7 +1197,7 @@
 **Setup:** entryTotals={total:10}, update={totalTokens:NaN, inputTokens:20}  
 **Action:** mergeMonotonicUsage(...)  
 **Expected:** total: Math.max(10, 0, NaN) = NaN! Bug?  
-**Status:** PENDING
+**Status:** **FAILED** — NaN propagates per-field; totalTokens becomes NaN while inputTokens correctly updates
 
 ### S-122: Very large token value (Number.MAX_SAFE_INTEGER)
 **Category:** Usage Accounting  
@@ -1524,7 +1725,7 @@
 **Setup:** Issue(state="Todo", stateType="started"), non-terminal blocker  
 **Action:** issueHasOpenBlockers(issue, settings)  
 **Expected:** true! (stateType!=="unstarted" but state==="todo" triggers the check)  
-**Status:** PENDING
+**Status:** **FAILED** — Started issue incorrectly gated by blockers due to state name "Todo" matching hardcoded check
 
 ### S-185: retryBackoffMs "continuation" ignores cap entirely
 **Category:** Retry and Backoff  
@@ -1532,7 +1733,7 @@
 **Setup:** cap=500 (less than 1000)  
 **Action:** retryBackoffMs(1, 500, "continuation")  
 **Expected:** 1000 (doesn't go through Math.min(cap,...) path)  
-**Status:** PENDING
+**Status:** **FAILED** — Continuation bypasses cap; returns 1000 even when cap is 500
 
 ### S-186: mergeMonotonicUsage with all NaN update
 **Category:** Usage Accounting  
@@ -1540,7 +1741,7 @@
 **Setup:** update={inputTokens:NaN, outputTokens:NaN, totalTokens:NaN}  
 **Action:** mergeMonotonicUsage(...)  
 **Expected:** Math.max(prev, 0, NaN) = NaN when prev > 0? Actually Math.max(10, 0, NaN) = NaN!  
-**Status:** PENDING
+**Status:** **FAILED** — All token fields become NaN, corrupting entry, reported, and global totals
 
 ### S-187: ensembleSize with label "ensemble:01" (leading zero)
 **Category:** Ensemble Resolution  
@@ -1724,7 +1925,7 @@
 **Setup:** safeIdentifier("")  
 **Action:** workspacePath("/tmp/w", "", 0, 1)  
 **Expected:** "/tmp/w/" or "/tmp/w" (path.join handles empty)  
-**Status:** PENDING
+**Status:** **FAILED** — path.join("/tmp/w", "") returns "/tmp/w" which equals root, violating strict-descendant invariant
 
 ### S-210: Continuation retry cap ignored
 **Category:** Retry and Backoff  
@@ -1732,4 +1933,4 @@
 **Setup:** cap=100 (less than 1000)  
 **Action:** retryBackoffMs(1, 100, "continuation")  
 **Expected:** 1000 (cap not applied to continuation)  
-**Status:** PENDING
+**Status:** **FAILED** — Same as S-185; continuation early-return bypasses Math.min(cap,...)
