@@ -6,6 +6,11 @@ import { BoardStore } from "./boardStore.js";
 
 const DEFAULT_DIR = ".symphony/board";
 
+/** Minimal logging surface so a degraded board file is surfaced (default: console.warn). */
+export interface LocalTrackerLogger {
+  warn(message: string): void;
+}
+
 export class LocalTrackerClient implements RuntimeTrackerClient {
   private readonly store: BoardStore;
 
@@ -13,10 +18,16 @@ export class LocalTrackerClient implements RuntimeTrackerClient {
     private readonly settings: Settings,
     cwd: string = process.cwd(),
     env: NodeJS.ProcessEnv = process.env,
+    logger: LocalTrackerLogger = { warn: (message) => console.warn(message) },
   ) {
     const configured = expandPath(settings.tracker.path ?? DEFAULT_DIR, env);
     const dir = path.isAbsolute(configured) ? configured : path.join(cwd, configured);
-    this.store = new BoardStore(dir);
+    this.store = new BoardStore(dir, {
+      // A malformed file in the board dir must not abort candidate discovery (and the poll);
+      // skip it but log a warning so the operator can see and fix the offending file.
+      onSkip: ({ id, error }) =>
+        logger.warn(`local tracker: skipping malformed board file ${id} in ${dir}: ${error}`),
+    });
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {

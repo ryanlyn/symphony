@@ -27,13 +27,47 @@ const COMMENTS_MARKER = "<!-- symphony:comments -->";
  */
 const ID_PATTERN = /^BOARD-\d+$/;
 
+/** A board file that {@link BoardStore.list} could not parse, surfaced rather than hidden. */
+export interface SkippedBoardFile {
+  /** The id derived from the filename (e.g. "BOARD-2"), even if its contents are invalid. */
+  id: string;
+  /** Human-readable reason the file was skipped (missing status, unparseable YAML, etc.). */
+  error: string;
+}
+
+export interface BoardStoreOptions {
+  /**
+   * Invoked once per board file that fails to parse during a bulk {@link BoardStore.list}
+   * (and the {@link BoardStore.byStatus} / candidate flows built on it). A single bad file is
+   * skipped so it cannot starve the rest of the board, but it is reported here so the problem
+   * is observable instead of silently swallowed. Explicit {@link BoardStore.getByIds} lookups
+   * stay strict and throw rather than routing through this callback.
+   */
+  onSkip?: (skip: SkippedBoardFile) => void;
+}
+
 export class BoardStore {
-  constructor(private readonly dir: string) {}
+  private readonly onSkip: ((skip: SkippedBoardFile) => void) | undefined;
+
+  constructor(
+    private readonly dir: string,
+    options: BoardStoreOptions = {},
+  ) {
+    this.onSkip = options.onSkip;
+  }
 
   async list(): Promise<Issue[]> {
     const ids = await this.issueIds();
     const out: Issue[] = [];
-    for (const id of ids) out.push(await this.read(id));
+    for (const id of ids) {
+      try {
+        out.push(await this.read(id));
+      } catch (err) {
+        // One malformed/unreadable file must not abort the whole listing (and, via the
+        // runtime, the poll). Skip it but surface the reason through onSkip so it is visible.
+        this.onSkip?.({ id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     return out;
   }
 

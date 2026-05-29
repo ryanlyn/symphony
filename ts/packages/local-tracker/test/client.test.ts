@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -35,6 +35,34 @@ test("LocalTrackerClient reads candidates by active states from the board dir", 
     (await client.fetchIssuesByIds(["BOARD-2"])).map((i) => i.title),
     ["Done"],
   );
+});
+
+test("LocalTrackerClient fetchCandidateIssues skips a malformed board file and warns", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "board-skip-"));
+  await mkdir(dir, { recursive: true });
+  const store = new BoardStore(dir);
+  await store.create({ title: "Active", status: "Todo" });
+  // A malformed file (frontmatter with no status) sitting alongside the valid issue.
+  await writeFile(path.join(dir, "BOARD-99.md"), "---\nlabels: []\n---\n# Broken\n", "utf8");
+
+  const settings = parseConfig(
+    { tracker: { kind: "local", path: dir, active_states: ["Todo"], terminal_states: ["Done"] } },
+    {},
+  );
+  const warnings: string[] = [];
+  const client = new LocalTrackerClient(settings, process.cwd(), process.env, {
+    warn: (msg) => warnings.push(msg),
+  });
+
+  const candidates = await client.fetchCandidateIssues();
+  // The valid issue is still returned; the malformed file did not abort the fetch.
+  assert.deepEqual(
+    candidates.map((i) => i.identifier),
+    ["BOARD-1"],
+  );
+  // The skip is observable: a warning naming the bad file was emitted.
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /BOARD-99/);
 });
 
 test("LocalTrackerClient expands a leading ~ to HOME", async () => {

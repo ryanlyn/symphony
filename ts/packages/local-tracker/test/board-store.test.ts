@@ -98,6 +98,62 @@ test("missing status throws a clear error", async () => {
   await assert.rejects(() => store.getByIds(["BOARD-9"]), /BOARD-9.*status/);
 });
 
+test("list skips malformed files, reports them via onSkip, and returns the valid ones", async () => {
+  const dir = await tempBoard();
+  // A valid issue, a frontmatter-without-status issue, and an unparseable-YAML issue.
+  await writeFile(
+    path.join(dir, "BOARD-1.md"),
+    "---\nstatus: Todo\n---\n# Valid\n\nBody\n",
+    "utf8",
+  );
+  await writeFile(path.join(dir, "BOARD-2.md"), "---\nlabels: []\n---\n# No status\n", "utf8");
+  await writeFile(
+    path.join(dir, "BOARD-3.md"),
+    "---\nstatus: [unterminated\n---\n# Bad YAML\n",
+    "utf8",
+  );
+
+  const skipped: { id: string; error: string }[] = [];
+  const store = new BoardStore(dir, { onSkip: (s) => skipped.push(s) });
+
+  const issues = await store.list();
+  // Only the valid file is returned; the two malformed files are skipped, not thrown.
+  assert.deepEqual(
+    issues.map((i) => i.identifier),
+    ["BOARD-1"],
+  );
+
+  // Both malformed files are surfaced (observable), not silently hidden.
+  assert.deepEqual(skipped.map((s) => s.id).sort(), ["BOARD-2", "BOARD-3"]);
+  const missingStatus = skipped.find((s) => s.id === "BOARD-2")!;
+  assert.match(missingStatus.error, /status/);
+
+  // byStatus rides on the same resilient listing.
+  const active = await store.byStatus(["Todo"]);
+  assert.deepEqual(
+    active.map((i) => i.identifier),
+    ["BOARD-1"],
+  );
+});
+
+test("getByIds stays strict: an explicitly-requested malformed id still throws", async () => {
+  const dir = await tempBoard();
+  await writeFile(path.join(dir, "BOARD-1.md"), "---\nstatus: Todo\n---\n# Valid\n", "utf8");
+  await writeFile(path.join(dir, "BOARD-2.md"), "---\nlabels: []\n---\n# No status\n", "utf8");
+
+  const skipped: { id: string; error: string }[] = [];
+  const store = new BoardStore(dir, { onSkip: (s) => skipped.push(s) });
+
+  // Explicitly asking for the bad id surfaces the error rather than skipping it.
+  await assert.rejects(() => store.getByIds(["BOARD-2"]), /BOARD-2.*status/);
+  // A strict fetch never routes through onSkip.
+  assert.equal(skipped.length, 0);
+
+  // A valid explicit fetch still works.
+  const ok = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(ok.identifier, "BOARD-1");
+});
+
 test("description containing a literal '## Comments' heading survives round-trips", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);
