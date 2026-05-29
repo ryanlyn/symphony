@@ -154,6 +154,12 @@ export interface TrackerSettings {
   path?: string | undefined;
   /** Slack channel IDs to watch for mentions. Used when `kind === "slack"`. */
   channels?: string[] | undefined;
+  /**
+   * Slack user id of the bot/worker identity (e.g. `"U0123ABCD"`). When set, only messages that
+   * mention this user become candidate issues. When unset, any `<@U...>` mention is treated as a
+   * candidate (back-compat). Used when `kind === "slack"`.
+   */
+  botUserId?: string | undefined;
   /** Slack emoji-name → workflow-state overrides (merged over defaults). */
   emojiStates?: Record<string, string> | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */

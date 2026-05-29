@@ -36,6 +36,32 @@ test("config resolves env-backed Linear token and assignee", () => {
   assert.equal(settings.agents.claude?.executor, "acp");
 });
 
+test("config parses slack bot_user_id and resolves SLACK_BOT_USER_ID fallback", () => {
+  const explicit = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U_EXPLICIT" } },
+    { SLACK_BOT_TOKEN: "xoxb-test" },
+  );
+  assert.equal(explicit.tracker.botUserId, "U_EXPLICIT");
+
+  const fromEnv = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"] } },
+    { SLACK_BOT_TOKEN: "xoxb-test", SLACK_BOT_USER_ID: "U_ENV" },
+  );
+  assert.equal(fromEnv.tracker.botUserId, "U_ENV");
+
+  const fromEnvRef = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "$SLACK_BOT_USER_ID" } },
+    { SLACK_BOT_TOKEN: "xoxb-test", SLACK_BOT_USER_ID: "U_REF" },
+  );
+  assert.equal(fromEnvRef.tracker.botUserId, "U_REF");
+
+  const unset = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"] } },
+    { SLACK_BOT_TOKEN: "xoxb-test" },
+  );
+  assert.equal(unset.tracker.botUserId, undefined);
+});
+
 test("config resolves op:// references via 1Password CLI", async () => {
   const root = await tempDir("symphony-op-mock");
   const opScript = path.join(root, "op");

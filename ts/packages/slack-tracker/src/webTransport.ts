@@ -1,5 +1,6 @@
 import type { Settings } from "@symphony/domain";
 
+import { isBotMention } from "./mapping.js";
 import type { SlackMessage, SlackTransport } from "./transport.js";
 
 interface RawSlackMessage {
@@ -11,6 +12,7 @@ interface RawSlackMessage {
 export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
   private readonly token: string;
+  private readonly botUserId: string | undefined;
 
   constructor(
     settings: Settings,
@@ -18,6 +20,7 @@ export class SlackWebTransport implements SlackTransport {
   ) {
     this.endpoint = (settings.tracker.endpoint || "https://slack.com/api").replace(/\/+$/, "");
     this.token = settings.tracker.apiKey ?? "";
+    this.botUserId = settings.tracker.botUserId;
   }
 
   async listMentions(channels: string[]): Promise<SlackMessage[]> {
@@ -27,7 +30,7 @@ export class SlackWebTransport implements SlackTransport {
       const messages = Array.isArray(body.messages) ? (body.messages as RawSlackMessage[]) : [];
       for (const m of messages) {
         if (typeof m.ts !== "string") continue;
-        if (!/<@[A-Z0-9_]+(\|[^>]*)?>/.test(m.text ?? "")) continue;
+        if (!isBotMention(m.text ?? "", this.botUserId)) continue;
         out.push(toMessage(channel, m));
       }
     }

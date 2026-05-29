@@ -1,7 +1,7 @@
 import { defaultStateType, normalizeIssue } from "@symphony/issue";
 import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
 
-import { stateFromReactions, statusEmojiMap } from "./mapping.js";
+import { stateFromReactions, statusEmojiMap, stripLeadingMention } from "./mapping.js";
 import type { SlackMessage, SlackTransport } from "./transport.js";
 
 export function splitIssueId(id: string): [string, string] | null {
@@ -46,7 +46,8 @@ export class SlackTrackerClient implements RuntimeTrackerClient {
   private toIssue(message: SlackMessage): Issue {
     const state = stateFromReactions(message.reactions, statusEmojiMap(this.settings));
     const firstLine = (message.text.split("\n")[0] ?? "").trim();
-    const title = firstLine.replace(/^<@[A-Z0-9_]+(\|[^>]*)?>\s*/, "").trim() || message.ts;
+    const title =
+      stripLeadingMention(firstLine, this.settings.tracker.botUserId).trim() || message.ts;
     const stateType = defaultStateType(state);
     return normalizeIssue({
       id: `${message.channel}:${message.ts}`,

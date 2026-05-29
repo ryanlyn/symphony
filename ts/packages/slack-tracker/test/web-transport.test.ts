@@ -39,6 +39,34 @@ test("listMentions calls conversations.history with auth and parses messages", a
   assert.equal(calls[0]!.auth, "Bearer xoxb-abc");
 });
 
+test("listMentions filters to the configured bot user when botUserId is set", async () => {
+  const fetchImpl = (async () => {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { ts: "1.1", text: "<@U_OTHER> human chatter", reactions: [] },
+          { ts: "1.2", text: "<@U_BOT> do it", reactions: [] },
+          { ts: "1.3", text: "<@U_BOT|worker> and this", reactions: [] },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const settingsWithBot = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U_BOT" } },
+    { SLACK_BOT_TOKEN: "xoxb-abc" },
+  );
+  const transport = new SlackWebTransport(settingsWithBot, fetchImpl);
+  const messages = await transport.listMentions(["C1"]);
+
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.2", "1.3"],
+  );
+});
+
 test("addReaction posts to reactions.add", async () => {
   const calls: string[] = [];
   const fetchImpl = (async (url: string | URL) => {

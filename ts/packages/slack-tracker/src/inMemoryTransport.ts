@@ -1,3 +1,4 @@
+import { isBotMention } from "./mapping.js";
 import type { SlackMessage, SlackTransport } from "./transport.js";
 
 interface SeedMessage {
@@ -9,8 +10,10 @@ interface SeedMessage {
 export class InMemorySlackTransport implements SlackTransport {
   readonly replies: Array<{ channel: string; threadTs: string; body: string }> = [];
   private readonly messages: Map<string, SlackMessage[]> = new Map();
+  private readonly botUserId: string | undefined;
 
-  constructor(seed: Record<string, SeedMessage[]> = {}) {
+  constructor(seed: Record<string, SeedMessage[]> = {}, opts: { botUserId?: string } = {}) {
+    this.botUserId = opts.botUserId;
     for (const [channel, msgs] of Object.entries(seed)) {
       this.messages.set(
         channel,
@@ -23,7 +26,7 @@ export class InMemorySlackTransport implements SlackTransport {
     const out: SlackMessage[] = [];
     for (const channel of channels) {
       for (const m of this.messages.get(channel) ?? []) {
-        if (/<@[A-Z0-9_]+(\|[^>]*)?>/.test(m.text)) out.push({ ...m, reactions: [...m.reactions] });
+        if (isBotMention(m.text, this.botUserId)) out.push({ ...m, reactions: [...m.reactions] });
       }
     }
     return Promise.resolve(out);

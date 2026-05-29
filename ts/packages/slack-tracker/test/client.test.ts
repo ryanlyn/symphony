@@ -12,6 +12,20 @@ function settings() {
   );
 }
 
+function botSettings() {
+  return parseConfig(
+    {
+      tracker: {
+        kind: "slack",
+        channels: ["C1"],
+        bot_user_id: "U_BOT",
+        active_states: ["Todo", "In Progress"],
+      },
+    },
+    { SLACK_BOT_TOKEN: "xoxb-test" },
+  );
+}
+
 test("mentions become issues; reactions drive state", async () => {
   const transport = new InMemorySlackTransport({
     C1: [
@@ -47,5 +61,29 @@ test("piped mention form <@U123|alice> is detected and stripped from the title",
   assert.deepEqual(
     candidates.map((i) => i.title),
     ["do it"],
+  );
+});
+
+test("with botUserId only mentions of the bot become candidates", async () => {
+  const transport = new InMemorySlackTransport(
+    {
+      C1: [
+        { ts: "1700000000.000100", text: "<@U_OTHER> human chatter", reactions: [] },
+        { ts: "1700000000.000200", text: "<@U_BOT> handle this", reactions: [] },
+        { ts: "1700000000.000300", text: "<@U_BOT|worker> and this", reactions: [] },
+      ],
+    },
+    { botUserId: "U_BOT" },
+  );
+  const client = new SlackTrackerClient(botSettings(), transport);
+
+  const candidates = await client.fetchCandidateIssues();
+  assert.deepEqual(
+    candidates.map((i) => i.title),
+    ["handle this", "and this"],
+  );
+  assert.deepEqual(
+    candidates.map((i) => i.id),
+    ["C1:1700000000.000200", "C1:1700000000.000300"],
   );
 });

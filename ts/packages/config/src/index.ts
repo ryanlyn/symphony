@@ -55,6 +55,7 @@ const trackerRawSchema = z
     assignee: z.unknown().optional(),
     path: z.unknown().optional(),
     channels: z.unknown().optional(),
+    botUserId: z.unknown().optional(),
     emojiStates: z.unknown().optional(),
     activeStates: z.unknown().optional(),
     terminalStates: z.unknown().optional(),
@@ -176,6 +177,7 @@ type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;
 const trackerAliases = {
   api_key: "apiKey",
   project_slug: "projectSlug",
+  bot_user_id: "botUserId",
   emoji_states: "emojiStates",
   active_states: "activeStates",
   terminal_states: "terminalStates",
@@ -465,6 +467,7 @@ function parseTracker(
   const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, secretEnvVar);
   const projectSlug = resolveEnv(stringValue(trackerRaw.projectSlug, ""), env) || undefined;
   const assignee = resolveConfiguredSecret(trackerRaw.assignee, env, "LINEAR_ASSIGNEE");
+  const botUserId = resolveConfiguredSecret(trackerRaw.botUserId, env, "SLACK_BOT_USER_ID");
   const endpointDefault = kind === "slack" ? "https://slack.com/api" : defaults.endpoint;
   const emojiStates = parseEmojiStates(trackerRaw.emojiStates);
 
@@ -477,6 +480,7 @@ function parseTracker(
     projectSlug,
     assignee,
     channels: stringArray(trackerRaw.channels, []),
+    ...(botUserId !== undefined ? { botUserId } : {}),
     ...(emojiStates !== undefined ? { emojiStates } : {}),
     activeStates: stringArray(trackerRaw.activeStates, defaults.activeStates),
     terminalStates: stringArray(trackerRaw.terminalStates, defaults.terminalStates),
