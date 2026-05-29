@@ -26,6 +26,16 @@ export class SlotRegistry {
     return this.slots.get(key) ?? null;
   }
 
+  /** Directly set a slot state (used for backward-compat seeding in tests). */
+  setState(key: string, state: SlotState): void {
+    this.slots.set(key, state);
+  }
+
+  /** Remove a slot entirely from the registry. */
+  delete(key: string): boolean {
+    return this.slots.delete(key);
+  }
+
   transition(key: string, event: SlotEvent): SlotState | null {
     const current = this.slots.get(key);
     if (current === undefined) return null;
@@ -33,6 +43,11 @@ export class SlotRegistry {
     if (next === null) return null;
     this.slots.set(key, next);
     return next;
+  }
+
+  /** Iterate over all slot entries. */
+  entries(): IterableIterator<[string, SlotState]> {
+    return this.slots.entries();
   }
 
   derivedState(): DerivedState {
