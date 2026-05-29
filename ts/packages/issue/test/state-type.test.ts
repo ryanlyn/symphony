@@ -4,7 +4,6 @@ import { assert } from "../../../test/assert.js";
 
 import { defaultStateType } from "@symphony/issue";
 
-
 test("defaultStateType maps common workflow state names to categories", () => {
   assert.equal(defaultStateType("Todo"), "unstarted");
   assert.equal(defaultStateType("In Progress"), "started");
