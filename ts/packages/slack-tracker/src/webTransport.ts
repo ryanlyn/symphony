@@ -27,7 +27,7 @@ export class SlackWebTransport implements SlackTransport {
       const messages = Array.isArray(body.messages) ? (body.messages as RawSlackMessage[]) : [];
       for (const m of messages) {
         if (typeof m.ts !== "string") continue;
-        if (!/<@[A-Z0-9_]+>/.test(m.text ?? "")) continue;
+        if (!/<@[A-Z0-9_]+(\|[^>]*)?>/.test(m.text ?? "")) continue;
         out.push(toMessage(channel, m));
       }
     }

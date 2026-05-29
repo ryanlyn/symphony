@@ -46,7 +46,7 @@ export class SlackTrackerClient implements RuntimeTrackerClient {
   private toIssue(message: SlackMessage): Issue {
     const state = stateFromReactions(message.reactions, statusEmojiMap(this.settings));
     const firstLine = (message.text.split("\n")[0] ?? "").trim();
-    const title = firstLine.replace(/^<@[A-Z0-9_]+>\s*/, "").trim() || message.ts;
+    const title = firstLine.replace(/^<@[A-Z0-9_]+(\|[^>]*)?>\s*/, "").trim() || message.ts;
     const stateType = defaultStateType(state);
     return normalizeIssue({
       id: `${message.channel}:${message.ts}`,

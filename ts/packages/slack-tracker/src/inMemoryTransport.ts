@@ -23,7 +23,7 @@ export class InMemorySlackTransport implements SlackTransport {
     const out: SlackMessage[] = [];
     for (const channel of channels) {
       for (const m of this.messages.get(channel) ?? []) {
-        if (/<@[A-Z0-9_]+>/.test(m.text)) out.push({ ...m, reactions: [...m.reactions] });
+        if (/<@[A-Z0-9_]+(\|[^>]*)?>/.test(m.text)) out.push({ ...m, reactions: [...m.reactions] });
       }
     }
     return Promise.resolve(out);

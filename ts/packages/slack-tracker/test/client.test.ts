@@ -36,3 +36,16 @@ test("mentions become issues; reactions drive state", async () => {
     ["Done"],
   );
 });
+
+test("piped mention form <@U123|alice> is detected and stripped from the title", async () => {
+  const transport = new InMemorySlackTransport({
+    C1: [{ ts: "1700000000.000300", text: "<@U123|alice> do it", reactions: [] }],
+  });
+  const client = new SlackTrackerClient(settings(), transport);
+
+  const candidates = await client.fetchCandidateIssues();
+  assert.deepEqual(
+    candidates.map((i) => i.title),
+    ["do it"],
+  );
+});
