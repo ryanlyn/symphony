@@ -18,6 +18,13 @@ test("default emoji map yields Todo with no status reactions and maps the rest",
   assert.equal(stateFromReactions(["x"], map), "Cancelled");
 });
 
+test("stateFromReactions picks the most-advanced status regardless of reaction order", () => {
+  const map = DEFAULT_EMOJI_STATES;
+  assert.equal(stateFromReactions(["eyes", "white_check_mark"], map), "Done");
+  assert.equal(stateFromReactions(["white_check_mark", "eyes"], map), "Done");
+  assert.equal(stateFromReactions(["x", "eyes"], map), "Cancelled");
+});
+
 test("emojiForState reverse-looks-up the configured emoji", () => {
   const map = DEFAULT_EMOJI_STATES;
   assert.equal(emojiForState("In Progress", map), "eyes");

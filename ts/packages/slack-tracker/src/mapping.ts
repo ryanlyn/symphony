@@ -1,4 +1,5 @@
 import type { Settings } from "@symphony/domain";
+import { defaultStateType } from "@symphony/issue";
 
 export const DEFAULT_EMOJI_STATES: Record<string, string> = {
   eyes: "In Progress",
@@ -10,13 +11,40 @@ export function statusEmojiMap(settings: Settings): Record<string, string> {
   return { ...DEFAULT_EMOJI_STATES, ...(settings.tracker.emojiStates ?? {}) };
 }
 
-/** Derive state from the reactions present; the first matching status emoji wins, else "Todo". */
+/** Rank a status by category so a more-advanced state wins over a less-advanced one. */
+function stateRank(state: string): number {
+  switch (defaultStateType(state)) {
+    case "canceled":
+    case "completed":
+      return 3;
+    case "started":
+      return 2;
+    case "backlog":
+    case "unstarted":
+    case "triage":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Derive state from the reactions present; the most-advanced mapped status wins (ties
+ * broken by reaction order), else "Todo".
+ */
 export function stateFromReactions(reactions: string[], map: Record<string, string>): string {
+  let best: string | null = null;
+  let bestRank = -1;
   for (const reaction of reactions) {
     const state = map[reaction];
-    if (state) return state;
+    if (!state) continue;
+    const rank = stateRank(state);
+    if (rank > bestRank) {
+      best = state;
+      bestRank = rank;
+    }
   }
-  return "Todo";
+  return best ?? "Todo";
 }
 
 /** Reverse lookup: the emoji name whose mapped state equals `state` (case-insensitive). */
