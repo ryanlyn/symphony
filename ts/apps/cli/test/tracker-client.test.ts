@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { LocalTrackerClient } from "@symphony/local-tracker";
+import { SlackTrackerClient } from "@symphony/slack-tracker";
 import { test } from "vitest";
 import { parse as parseYaml } from "yaml";
 
@@ -69,4 +70,15 @@ test("tracker factory selects local adapter from the workflow-local fixture", as
   const settings = parseConfig(frontmatter(raw), {});
   assert.equal(settings.tracker.kind, "local");
   assert.ok(createTrackerClient(settings) instanceof LocalTrackerClient);
+});
+
+test("tracker factory selects slack adapter from the workflow-slack fixture", async () => {
+  const raw = await readFile(
+    path.join(import.meta.dirname, "../../../test/fixtures/workflow-slack.md"),
+    "utf8",
+  );
+  const settings = parseConfig(frontmatter(raw), { SLACK_BOT_TOKEN: "xoxb-test" });
+  assert.equal(settings.tracker.kind, "slack");
+  assert.deepEqual(settings.tracker.channels, ["C0123456789"]);
+  assert.ok(createTrackerClient(settings) instanceof SlackTrackerClient);
 });

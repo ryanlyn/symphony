@@ -21,6 +21,7 @@ import {
 import { LinearClient } from "@symphony/linear-tracker";
 import { LocalTrackerClient } from "@symphony/local-tracker";
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
+import { SlackTrackerClient, SlackWebTransport } from "@symphony/slack-tracker";
 
 export function runtimeDefaultSettings(): Settings {
   return defaultSettings(runtimeDefaultSettingsOptions());
@@ -37,6 +38,8 @@ export function createTrackerClient(
   if (settings.tracker.kind === "memory") return new MemoryTrackerClient(memoryIssuesFromEnv(env));
   if (settings.tracker.kind === "linear") return new LinearClient(settings);
   if (settings.tracker.kind === "local") return new LocalTrackerClient(settings);
+  if (settings.tracker.kind === "slack")
+    return new SlackTrackerClient(settings, new SlackWebTransport(settings));
   throw new Error("tracker.kind is required");
 }
 

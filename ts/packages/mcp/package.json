@@ -26,6 +26,7 @@
     "zod": "^4.4.3",
     "@symphony/worker-host-pool": "workspace:*",
     "@symphony/domain": "workspace:*",
-    "@symphony/local-tracker": "workspace:*"
+    "@symphony/local-tracker": "workspace:*",
+    "@symphony/slack-tracker": "workspace:*"
   }
 }
