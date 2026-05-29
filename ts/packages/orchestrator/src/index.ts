@@ -21,7 +21,7 @@ import type {
   UsageTotals,
 } from "@symphony/domain";
 import { systemClock, type ClockPort } from "@symphony/ports";
-import { SlotRegistry } from "@symphony/fsm";
+import { SlotRegistry, RunningHandleImpl, type IRunningHandle } from "@symphony/fsm";
 
 // --- Derived state view (backward-compatible interface) ---
 
@@ -45,6 +45,10 @@ export function createState(): OrchestratorState {
     rateLimits: null,
     blockedDispatches: [],
   };
+}
+
+export interface ClaimResult extends RunningEntry {
+  handle: IRunningHandle;
 }
 
 export class Orchestrator {
@@ -171,7 +175,7 @@ export class Orchestrator {
     });
   }
 
-  claim(issue: Issue): RunningEntry | null {
+  claim(issue: Issue): ClaimResult | null {
     const retry = this._retries.get(issue.id);
     // If it's not yet time to retry and the issue isn't running, release the claim
     if (retry && retry.dueAt.getTime() <= this.clock.now().getTime())
@@ -222,6 +226,9 @@ export class Orchestrator {
       retryAttempt: retry?.attempt ?? null,
     };
 
+    // Create a proper RunningHandle for this generation
+    const handle = new RunningHandleImpl(key, key, slotIndex, issue.id, this.slotRegistry);
+
     // Store entry and transition FSM
     this._entries.set(key, entry);
     this._retries.delete(issue.id);
@@ -236,10 +243,10 @@ export class Orchestrator {
       kind: "claim",
       runId: key,
       entry: entry as unknown as Record<string, unknown>,
-      handle: { runId: key, controller: new AbortController() },
+      handle: { runId: key, controller: handle.controller },
     });
 
-    return entry;
+    return Object.assign(entry, { handle });
   }
 
   private selectWorkerHost(): string | null | undefined {
