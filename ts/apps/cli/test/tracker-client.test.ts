@@ -20,6 +20,11 @@ function frontmatter(raw: string): Record<string, unknown> {
   return parseYaml(raw.slice(raw.indexOf("\n") + 1, end)) as Record<string, unknown>;
 }
 
+function body(raw: string): string {
+  const end = raw.indexOf("\n---", 3);
+  return raw.slice(raw.indexOf("\n", end + 1) + 1).trim();
+}
+
 test("memory tracker adapter returns configured issues and filters by id like Elixir", async () => {
   const client = new MemoryTrackerClient([
     { id: "one", identifier: "MT-1", title: "One", state: "Todo", labels: ["Symphony:Backend"] },
@@ -81,4 +86,42 @@ test("tracker factory selects slack adapter from the workflow-slack fixture", as
   assert.equal(settings.tracker.kind, "slack");
   assert.deepEqual(settings.tracker.channels, ["C0123456789"]);
   assert.ok(createTrackerClient(settings) instanceof SlackTrackerClient);
+});
+
+test("shipped WORKFLOW.local.md selects a local tracker client with a real playbook body", async () => {
+  const raw = await readFile(path.join(import.meta.dirname, "../../../WORKFLOW.local.md"), "utf8");
+  const settings = parseConfig(frontmatter(raw), {});
+  assert.equal(settings.tracker.kind, "local");
+  assert.equal(settings.tracker.path, ".symphony/board");
+  assert.ok(createTrackerClient(settings) instanceof LocalTrackerClient);
+
+  const prose = body(raw);
+  assert.ok(prose.split("\n").length > 20, "local playbook body should be a real playbook");
+  assert.match(prose, /local_update_status/);
+  assert.match(prose, /local_comment/);
+  assert.match(prose, /local_create_issue/);
+  assert.notMatch(prose, /stop and ask the user to configure Linear/i);
+});
+
+test("shipped WORKFLOW.slack.md selects a slack tracker client with a real playbook body", async () => {
+  const raw = await readFile(path.join(import.meta.dirname, "../../../WORKFLOW.slack.md"), "utf8");
+  const settings = parseConfig(frontmatter(raw), {
+    SLACK_BOT_TOKEN: "xoxb-test",
+    SLACK_BOT_USER_ID: "U999",
+  });
+  assert.equal(settings.tracker.kind, "slack");
+  assert.deepEqual(settings.tracker.channels, ["C0123456789"]);
+  assert.equal(settings.tracker.botUserId, "U999");
+  assert.deepEqual(settings.tracker.emojiStates, {
+    eyes: "In Progress",
+    white_check_mark: "Done",
+    x: "Cancelled",
+  });
+  assert.ok(createTrackerClient(settings) instanceof SlackTrackerClient);
+
+  const prose = body(raw);
+  assert.ok(prose.split("\n").length > 20, "slack playbook body should be a real playbook");
+  assert.match(prose, /slack_update_status/);
+  assert.match(prose, /slack_comment/);
+  assert.notMatch(prose, /stop and ask the user to configure Linear/i);
 });
