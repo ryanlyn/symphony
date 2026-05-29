@@ -6,7 +6,9 @@ export interface SlackMessage {
 }
 
 export interface SlackTransport {
-  listMentions(channels: string[], opts?: { sinceTs?: string }): Promise<SlackMessage[]>;
+  // Note: there is no incremental `sinceTs` watermark. Polling re-derives mentions from the
+  // active window each loop; pagination is bounded by MAX_HISTORY_PAGES, not a time cursor.
+  listMentions(channels: string[]): Promise<SlackMessage[]>;
   getMessage(channel: string, ts: string): Promise<SlackMessage | null>;
   addReaction(channel: string, ts: string, name: string): Promise<void>;
   removeReaction(channel: string, ts: string, name: string): Promise<void>;

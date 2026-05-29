@@ -17,6 +17,11 @@ type Sleep = (delayMs: number) => Promise<void>;
 const defaultSleep: Sleep = async (delayMs) =>
   new Promise((resolve) => setTimeout(resolve, delayMs));
 
+/** Minimal logging surface so a skipped (unreadable) channel is surfaced (default: console.warn). */
+export interface SlackTrackerLogger {
+  warn(message: string): void;
+}
+
 export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
   private readonly token: string;
@@ -26,6 +31,7 @@ export class SlackWebTransport implements SlackTransport {
     settings: Settings,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly sleep: Sleep = defaultSleep,
+    private readonly logger: SlackTrackerLogger = { warn: (message) => console.warn(message) },
   ) {
     this.endpoint = (settings.tracker.endpoint || "https://slack.com/api").replace(/\/+$/, "");
     this.token = settings.tracker.apiKey ?? "";
@@ -34,21 +40,44 @@ export class SlackWebTransport implements SlackTransport {
 
   async listMentions(channels: string[]): Promise<SlackMessage[]> {
     const out: SlackMessage[] = [];
+    const failures: string[] = [];
+    let anySucceeded = false;
     for (const channel of channels) {
-      let cursor: string | undefined;
-      for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
-        const params: Record<string, string> = { channel, limit: "200" };
-        if (cursor) params.cursor = cursor;
-        const body = await this.get("conversations.history", params);
-        const messages = Array.isArray(body.messages) ? (body.messages as RawSlackMessage[]) : [];
-        for (const m of messages) {
-          if (typeof m.ts !== "string") continue;
-          if (!isBotMention(m.text ?? "", this.botUserId)) continue;
-          out.push(toMessage(channel, m));
+      // Isolate per-channel failures: a single unreadable channel (e.g. not_in_channel,
+      // missing_scope, or a persistent 429) must not blind candidate discovery across the
+      // other channels. Skip-and-log the bad channel; pages collected before the failure are
+      // already in `out` and survive. A channel that completes at least one page counts as a
+      // success, so only a total wipeout (no channel readable at all) re-throws and surfaces
+      // as a runtime poll_error.
+      try {
+        let cursor: string | undefined;
+        for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
+          const params: Record<string, string> = { channel, limit: "200" };
+          if (cursor) params.cursor = cursor;
+          const body = await this.get("conversations.history", params);
+          anySucceeded = true;
+          const messages = Array.isArray(body.messages) ? (body.messages as RawSlackMessage[]) : [];
+          for (const m of messages) {
+            if (typeof m.ts !== "string") continue;
+            if (!isBotMention(m.text ?? "", this.botUserId)) continue;
+            out.push(toMessage(channel, m));
+          }
+          cursor = nextCursor(body);
+          if (!cursor) break;
         }
-        cursor = nextCursor(body);
-        if (!cursor) break;
+      } catch (error) {
+        const message = (error as Error).message;
+        failures.push(`${channel}: ${message}`);
+        this.logger.warn(`slack tracker: skipping channel ${channel}: ${message}`);
       }
+    }
+    // If no channel produced any successful page, surface the failure (preserving the
+    // single-channel reject contract the runtime relies on for poll_error) rather than
+    // silently reporting zero mentions.
+    if (!anySucceeded && failures.length > 0) {
+      throw new Error(
+        `slack conversations.history failed for all channels: ${failures.join("; ")}`,
+      );
     }
     return out;
   }

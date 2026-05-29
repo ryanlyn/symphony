@@ -129,6 +129,74 @@ test("listMentions stops paging when next_cursor is empty", async () => {
   );
 });
 
+test("listMentions isolates a failing channel: skips it, logs, and returns the rest", async () => {
+  const fetchImpl = (async (url: string | URL) => {
+    const channel = new URL(String(url)).searchParams.get("channel");
+    if (channel === "C_BAD") {
+      return new Response(JSON.stringify({ ok: false, error: "not_in_channel" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: "2.2", text: "<@U1> from good channel", reactions: [] }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const warnings: string[] = [];
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve(), {
+    warn: (m) => warnings.push(m),
+  });
+  const messages = await transport.listMentions(["C_BAD", "C_GOOD"]);
+
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["2.2"],
+  );
+  assert.equal(messages[0]!.channel, "C_GOOD");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /C_BAD/);
+  assert.match(warnings[0]!, /not_in_channel/);
+});
+
+test("listMentions surfaces a partial first page from a channel that fails mid-pagination", async () => {
+  const fetchImpl = (async (url: string | URL) => {
+    const parsed = new URL(String(url));
+    const cursor = parsed.searchParams.get("cursor");
+    if (!cursor) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          messages: [{ ts: "1.1", text: "<@U1> first page survives", reactions: [] }],
+          response_metadata: { next_cursor: "CURSOR_2" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(JSON.stringify({ ok: false, error: "fatal_error" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const warnings: string[] = [];
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve(), {
+    warn: (m) => warnings.push(m),
+  });
+  const messages = await transport.listMentions(["C1"]);
+
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.1"],
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /C1/);
+});
+
 test("addReaction posts to reactions.add", async () => {
   const calls: string[] = [];
   const fetchImpl = (async (url: string | URL) => {
