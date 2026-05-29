@@ -1,6 +1,7 @@
 import type { Settings, TrackerKind } from "@symphony/domain";
 
 import { executeLinearTool, linearToolSpecs } from "./tools/linear.js";
+import { executeLocalTool, localToolSpecs } from "./tools/local.js";
 
 export interface ToolSpec {
   name: string;
@@ -32,6 +33,8 @@ export function toolSpecs(settings: Settings): ToolSpec[] {
   switch (kind) {
     case "linear":
       return linearToolSpecs();
+    case "local":
+      return localToolSpecs();
     case "memory":
       return [];
     default:
@@ -50,6 +53,8 @@ export async function executeTool(
   switch (kind) {
     case "linear":
       return executeLinearTool(name, input, settings, fetchImpl);
+    case "local":
+      return executeLocalTool(name, input, settings);
     case "memory":
       return {
         success: false,

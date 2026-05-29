@@ -1,4 +1,9 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+import { LocalTrackerClient } from "@symphony/local-tracker";
 import { test } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { assert } from "../../../test/assert.js";
 
@@ -8,6 +13,11 @@ import {
   MemoryTrackerClient,
   parseConfig,
 } from "@symphony/cli";
+
+function frontmatter(raw: string): Record<string, unknown> {
+  const end = raw.indexOf("\n---", 3);
+  return parseYaml(raw.slice(raw.indexOf("\n") + 1, end)) as Record<string, unknown>;
+}
 
 test("memory tracker adapter returns configured issues and filters by id like Elixir", async () => {
   const client = new MemoryTrackerClient([
@@ -49,4 +59,14 @@ test("tracker factory selects memory adapter from workflow settings and JSON env
     () => memoryIssuesFromEnv({ SYMPHONY_MEMORY_TRACKER_ISSUES_JSON: "{}" }),
     /must be a JSON array/,
   );
+});
+
+test("tracker factory selects local adapter from the workflow-local fixture", async () => {
+  const raw = await readFile(
+    path.join(import.meta.dirname, "../../../test/fixtures/workflow-local.md"),
+    "utf8",
+  );
+  const settings = parseConfig(frontmatter(raw), {});
+  assert.equal(settings.tracker.kind, "local");
+  assert.ok(createTrackerClient(settings) instanceof LocalTrackerClient);
 });

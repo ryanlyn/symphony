@@ -19,6 +19,7 @@ import {
   writeResumeState,
 } from "@symphony/resume-state";
 import { LinearClient } from "@symphony/linear-tracker";
+import { LocalTrackerClient } from "@symphony/local-tracker";
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
 
 export function runtimeDefaultSettings(): Settings {
@@ -35,6 +36,7 @@ export function createTrackerClient(
 ): RuntimeTrackerClient {
   if (settings.tracker.kind === "memory") return new MemoryTrackerClient(memoryIssuesFromEnv(env));
   if (settings.tracker.kind === "linear") return new LinearClient(settings);
+  if (settings.tracker.kind === "local") return new LocalTrackerClient(settings);
   throw new Error("tracker.kind is required");
 }
 
