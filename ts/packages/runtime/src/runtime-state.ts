@@ -95,10 +95,10 @@ export function isStopped(state: RuntimePhase): boolean {
  * Transition function for the runtime state machine.
  * Given the current phase and an event, returns the next phase.
  *
- * Note: For counter-only updates within the same phase (RUN_STARTED/RUN_FINISHED
- * in polling/running/stopping/error), the state object is mutated in place and
- * returned to avoid allocation overhead on the hot path. Phase-changing transitions
- * always return a new object.
+ * Note: For counter-only updates that stay within the same phase (RUN_STARTED in
+ * polling/running), the state object is mutated in place and returned to avoid
+ * allocation overhead on the hot path. Phase-changing transitions (including
+ * RUN_FINISHED in `running` when activeRuns reaches zero) always return a new object.
  */
 export function transitionRuntime(state: RuntimePhase, event: RuntimeTransition): RuntimePhase {
   // STOP_REQUESTED transitions from any non-terminal state
@@ -139,7 +139,7 @@ export function transitionRuntime(state: RuntimePhase, event: RuntimeTransition)
       if (event.type === "RUN_FINISHED")
         return state.activeRuns <= 1
           ? { phase: "idle", startupCleanupDone: true }
-          : { phase: "running", activeRuns: state.activeRuns - 1 };
+          : { phase: "running", activeRuns: Math.max(0, state.activeRuns - 1) };
       if (event.type === "RUN_STARTED") {
         state.activeRuns += 1;
         return state;

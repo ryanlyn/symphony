@@ -17,8 +17,8 @@ export type SlotState =
 export type SlotEvent =
   | { type: "CLAIM"; entry: RunningEntry }
   | { type: "UPDATE"; update: AgentUpdate }
-  | { type: "FINISH_NORMAL"; retryEntry: RetryEntry }
-  | { type: "FINISH_ABNORMAL" }
+  | { type: "FINISH_WITH_RETRY"; retryEntry: RetryEntry }
+  | { type: "FINISH_NO_RETRY" }
   | { type: "CLEANUP" };
 
 /**
@@ -56,8 +56,8 @@ export function transitionSlot(state: SlotState, event: SlotEvent, now?: Date): 
         applyUpdateToEntry(state.entry, event.update, now ?? new Date());
         return state;
       }
-      if (event.type === "FINISH_NORMAL") return { phase: "retrying", retry: event.retryEntry };
-      if (event.type === "FINISH_ABNORMAL") return { phase: "idle" };
+      if (event.type === "FINISH_WITH_RETRY") return { phase: "retrying", retry: event.retryEntry };
+      if (event.type === "FINISH_NO_RETRY") return { phase: "idle" };
       if (event.type === "CLEANUP") return { phase: "completed" };
       return state;
 

@@ -81,10 +81,10 @@ test("idle + irrelevant events are no-ops", () => {
     state,
   );
   assert.equal(
-    transitionSlot(state, { type: "FINISH_NORMAL", retryEntry: makeRetryEntry() }),
+    transitionSlot(state, { type: "FINISH_WITH_RETRY", retryEntry: makeRetryEntry() }),
     state,
   );
-  assert.equal(transitionSlot(state, { type: "FINISH_ABNORMAL" }), state);
+  assert.equal(transitionSlot(state, { type: "FINISH_NO_RETRY" }), state);
 });
 
 // --- running phase transitions ---
@@ -132,21 +132,21 @@ test("running + UPDATE with non-turn event does not increment turnCount", () => 
   assert.equal(entry.turnCount, 2);
 });
 
-test("running + FINISH_NORMAL -> retrying", () => {
+test("running + FINISH_WITH_RETRY -> retrying", () => {
   const entry = makeRunningEntry();
   const state: SlotState = { phase: "running", entry };
   const retryEntry = makeRetryEntry();
-  const next = transitionSlot(state, { type: "FINISH_NORMAL", retryEntry });
+  const next = transitionSlot(state, { type: "FINISH_WITH_RETRY", retryEntry });
   assert.equal(next.phase, "retrying");
   if (next.phase === "retrying") {
     assert.equal(next.retry, retryEntry);
   }
 });
 
-test("running + FINISH_ABNORMAL -> idle", () => {
+test("running + FINISH_NO_RETRY -> idle", () => {
   const entry = makeRunningEntry();
   const state: SlotState = { phase: "running", entry };
-  const next = transitionSlot(state, { type: "FINISH_ABNORMAL" });
+  const next = transitionSlot(state, { type: "FINISH_NO_RETRY" });
   assert.deepEqual(next, { phase: "idle" });
 });
 
@@ -190,10 +190,10 @@ test("retrying + irrelevant events are no-ops", () => {
     state,
   );
   assert.equal(
-    transitionSlot(state, { type: "FINISH_NORMAL", retryEntry: makeRetryEntry() }),
+    transitionSlot(state, { type: "FINISH_WITH_RETRY", retryEntry: makeRetryEntry() }),
     state,
   );
-  assert.equal(transitionSlot(state, { type: "FINISH_ABNORMAL" }), state);
+  assert.equal(transitionSlot(state, { type: "FINISH_NO_RETRY" }), state);
 });
 
 // --- completed phase (terminal) ---
@@ -206,9 +206,9 @@ test("completed absorbs all events", () => {
     state,
   );
   assert.equal(
-    transitionSlot(state, { type: "FINISH_NORMAL", retryEntry: makeRetryEntry() }),
+    transitionSlot(state, { type: "FINISH_WITH_RETRY", retryEntry: makeRetryEntry() }),
     state,
   );
-  assert.equal(transitionSlot(state, { type: "FINISH_ABNORMAL" }), state);
+  assert.equal(transitionSlot(state, { type: "FINISH_NO_RETRY" }), state);
   assert.equal(transitionSlot(state, { type: "CLEANUP" }), state);
 });

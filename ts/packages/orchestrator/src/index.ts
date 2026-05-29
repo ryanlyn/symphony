@@ -48,6 +48,13 @@ export function createState(): OrchestratorState {
 
 export class Orchestrator {
   readonly state: OrchestratorState;
+
+  /**
+   * Slot FSM state -- the authoritative source of truth for slot lifecycle phase.
+   * The legacy `state.running`/`state.claimed`/`state.retryAttempts` collections are
+   * maintained in parallel during the migration period. Once all consumers read from
+   * the FSM directly, the legacy collections can be removed.
+   */
   private readonly slots = new Map<string, SlotState>();
 
   constructor(
@@ -193,16 +200,18 @@ export class Orchestrator {
 
   applyUpdate(issueId: string, slotIndex: number, update: AgentUpdate): void {
     const key = slotKey(issueId, slotIndex);
-    const entry = this.state.running.get(key);
-    if (!entry) return;
 
-    // Transition slot state -- this handles field mutations on the entry
+    // Read from slot FSM as the guard -- only process updates for running slots
     const slotState = this.getSlotState(key);
+    if (slotState.phase !== "running") return;
+
+    // Transition slot state -- UPDATE mutates the entry in place and returns
+    // the same state reference, so slotState.entry remains valid after this call.
     this.setSlotState(key, transitionSlot(slotState, { type: "UPDATE", update }, this.clock.now()));
 
     // Handle orchestrator-level side effects not managed by slot state
     if (update.rateLimits !== undefined) this.state.rateLimits = update.rateLimits;
-    if (update.usage) this.applyUsageDelta(entry, update.usage);
+    if (update.usage) this.applyUsageDelta(slotState.entry, update.usage);
   }
 
   finish(
@@ -239,7 +248,7 @@ export class Orchestrator {
 
       // Transition slot state machine: running -> retrying
       const slotState = this.getSlotState(key);
-      this.setSlotState(key, transitionSlot(slotState, { type: "FINISH_NORMAL", retryEntry }));
+      this.setSlotState(key, transitionSlot(slotState, { type: "FINISH_WITH_RETRY", retryEntry }));
 
       // Maintain legacy data structures
       this.state.completed.add(issueId);
@@ -247,7 +256,7 @@ export class Orchestrator {
     } else {
       // Transition slot state machine: running -> idle
       const slotState = this.getSlotState(key);
-      this.setSlotState(key, transitionSlot(slotState, { type: "FINISH_ABNORMAL" }));
+      this.setSlotState(key, transitionSlot(slotState, { type: "FINISH_NO_RETRY" }));
     }
 
     // Clear from legacy running/claimed
@@ -331,7 +340,10 @@ export class Orchestrator {
   private releaseStaleClaimsForRetry(issueId: string): void {
     for (const key of [...this.state.claimed]) {
       if (!key.startsWith(`${issueId}:`)) continue;
-      if (!this.state.running.has(key)) this.state.claimed.delete(key);
+      // Use the slot FSM as the source of truth: if the slot is not in "running"
+      // phase, the claim is stale and should be released.
+      const slot = this.getSlotState(key);
+      if (slot.phase !== "running") this.state.claimed.delete(key);
     }
   }
 }

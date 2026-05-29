@@ -98,6 +98,24 @@ test("applyUpdate — unknown slotKey is silently ignored", () => {
   assert.equal(orchestrator.snapshot().running.length, 0);
 });
 
+test("applyUpdate — no-op when slot is not in running phase (FSM guard)", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+  orchestrator.claim(issue);
+  orchestrator.finish(issue.id, 0, true); // slot transitions to retrying
+
+  // Attempt update on a slot that is now in retrying phase -- should be ignored
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    sessionId: "stale-session",
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+
+  // Usage totals should remain unchanged (no stale update applied)
+  assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 0);
+  assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 0);
+});
+
 test("applyUpdate — turnCount increments on each turn_completed", () => {
   const orchestrator = new Orchestrator(parseConfig());
   const issue = makeIssue();
