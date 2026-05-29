@@ -14,7 +14,8 @@ const MAX_RETRIES = 4;
 
 type Sleep = (delayMs: number) => Promise<void>;
 
-const defaultSleep: Sleep = async (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs));
+const defaultSleep: Sleep = async (delayMs) =>
+  new Promise((resolve) => setTimeout(resolve, delayMs));
 
 export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
@@ -111,7 +112,14 @@ export class SlackWebTransport implements SlackTransport {
 
   private async fetchWithRetry(method: string, send: () => Promise<Response>): Promise<Response> {
     for (let retryCount = 0; ; retryCount += 1) {
-      const response = await send();
+      let response: Response;
+      try {
+        response = await send();
+      } catch (error) {
+        throw new Error(`slack ${method} request failed: ${(error as Error).message}`, {
+          cause: error,
+        });
+      }
       if (!isRetryable(response.status) || retryCount >= MAX_RETRIES) {
         if (isRetryable(response.status)) {
           throw new Error(`slack ${method} failed: status ${response.status}`);
@@ -123,7 +131,12 @@ export class SlackWebTransport implements SlackTransport {
   }
 
   private async parse(method: string, response: Response): Promise<Record<string, unknown>> {
-    const body = (await response.json()) as Record<string, unknown>;
+    let body: Record<string, unknown>;
+    try {
+      body = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw new Error(`slack ${method} returned a non-JSON response (HTTP ${response.status})`);
+    }
     if (body.ok !== true) {
       const reason = typeof body.error === "string" ? body.error : String(response.status);
       throw new Error(`slack ${method} failed: ${reason}`);

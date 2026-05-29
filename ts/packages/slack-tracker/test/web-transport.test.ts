@@ -204,3 +204,58 @@ test("post retries on HTTP 5xx with backoff then succeeds", async () => {
 
   assert.equal(calls, 2);
 });
+
+test("listMentions rejects with a method+status message on a non-JSON error body", async () => {
+  const fetchImpl = (async () => {
+    return new Response("<html><body>Bad Gateway</body></html>", {
+      status: 502,
+      headers: { "content-type": "text/html" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await assert.rejects(() => transport.listMentions(["C1"]), /conversations\.history.*502/);
+});
+
+test("get surfaces a clear non-JSON error instead of a SyntaxError", async () => {
+  const fetchImpl = (async () => {
+    return new Response("<html>nope</html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  let caught: unknown;
+  try {
+    await transport.listMentions(["C1"]);
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught instanceof Error, "expected an Error");
+  assert.ok(!((caught as Error) instanceof SyntaxError), "should not leak a SyntaxError");
+  assert.match((caught as Error).message, /conversations\.history/);
+  assert.match((caught as Error).message, /non-JSON/);
+  assert.match((caught as Error).message, /200/);
+});
+
+test("post rejects with a method+status message on a non-JSON 4xx body", async () => {
+  const fetchImpl = (async () => {
+    return new Response("Unauthorized", {
+      status: 401,
+      headers: { "content-type": "text/plain" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await assert.rejects(() => transport.addReaction("C1", "1.1", "eyes"), /reactions\.add.*401/);
+});
+
+test("request-path failures (abort/timeout) are annotated with the slack method", async () => {
+  const fetchImpl = (async () => {
+    throw new DOMException("The operation timed out.", "TimeoutError");
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await assert.rejects(() => transport.listMentions(["C1"]), /conversations\.history.*timed out/);
+});
