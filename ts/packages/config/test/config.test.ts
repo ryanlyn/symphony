@@ -471,3 +471,12 @@ test("workflow parsing treats front matter as optional like Elixir", () => {
     /workflow_parse_error/,
   );
 });
+
+test("parses local tracker config with path", () => {
+  const settings = parseConfig(
+    { tracker: { kind: "local", path: ".symphony/board", active_states: ["Todo"] } },
+    {},
+  );
+  assert.equal(settings.tracker.kind, "local");
+  assert.equal(settings.tracker.path, ".symphony/board");
+});

@@ -53,6 +53,7 @@ const trackerRawSchema = z
     apiKey: z.unknown().optional(),
     projectSlug: z.unknown().optional(),
     assignee: z.unknown().optional(),
+    path: z.unknown().optional(),
     activeStates: z.unknown().optional(),
     terminalStates: z.unknown().optional(),
     dispatch: z
@@ -267,6 +268,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
     tracker: {
       kind: undefined,
       endpoint: "https://api.linear.app/graphql",
+      path: ".symphony/board",
       activeStates: ["Todo", "In Progress"],
       terminalStates: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
       dispatch: {
@@ -401,6 +403,11 @@ export function validateDispatchConfig(settings: Settings): void {
     if (!settings.tracker.apiKey) throw new Error("tracker.api_key is required");
     if (!settings.tracker.projectSlug) throw new Error("tracker.project_slug is required");
   }
+  if (settings.tracker.kind === "local") {
+    if (!settings.tracker.path || settings.tracker.path.trim() === "") {
+      throw new Error("tracker.path is required");
+    }
+  }
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
   for (const override of settings.statusOverrides.values()) {
@@ -451,6 +458,7 @@ function parseTracker(
     ...defaults,
     kind,
     endpoint: stringValue(trackerRaw.endpoint, defaults.endpoint),
+    path: stringValue(trackerRaw.path, defaults.path ?? ".symphony/board"),
     apiKey,
     projectSlug,
     assignee,
