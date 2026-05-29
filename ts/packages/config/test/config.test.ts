@@ -519,6 +519,20 @@ test("parses slack tracker config with channels, emoji overrides, and token env"
   assert.deepEqual(settings.tracker.emojiStates, { rocket: "Shipped" });
 });
 
+test("cloned settings deep-copy slack channels and emoji states", () => {
+  const settings = parseConfig(
+    { tracker: { kind: "slack", channels: ["C1", "C2"], emoji_states: { rocket: "Shipped" } } },
+    { SLACK_BOT_TOKEN: "xoxb-test" },
+  );
+  const clone = settingsForIssueState(settings, "Todo");
+
+  clone.tracker.channels!.push("C3");
+  clone.tracker.emojiStates!.rocket = "Mutated";
+
+  assert.deepEqual(settings.tracker.channels, ["C1", "C2"]);
+  assert.deepEqual(settings.tracker.emojiStates, { rocket: "Shipped" });
+});
+
 test("slack tracker requires a token and at least one channel", () => {
   assert.throws(
     () => validateDispatchConfig(parseConfig({ tracker: { kind: "slack", channels: ["C1"] } }, {})),

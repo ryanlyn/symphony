@@ -410,7 +410,7 @@ export function validateDispatchConfig(settings: Settings): void {
   }
   if (settings.tracker.kind === "local") {
     if (!settings.tracker.path || settings.tracker.path.trim() === "") {
-      throw new Error("tracker.path is required");
+      throw new Error("tracker.path (board directory) is required for the local tracker");
     }
   }
   if (settings.tracker.kind === "slack") {
@@ -827,7 +827,7 @@ function mergeCodex(base: CodexSettings, override: Partial<CodexSettings>): Code
 function cloneSettings(settings: Settings): Settings {
   return {
     ...settings,
-    tracker: { ...settings.tracker, dispatch: { ...settings.tracker.dispatch } },
+    tracker: cloneTracker(settings.tracker),
     polling: { ...settings.polling },
     workspace: { ...settings.workspace },
     worker: { ...settings.worker, sshHosts: [...settings.worker.sshHosts] },
@@ -840,6 +840,21 @@ function cloneSettings(settings: Settings): Settings {
     server: { ...settings.server },
     logging: { ...settings.logging },
     statusOverrides: new Map(settings.statusOverrides),
+  };
+}
+
+/**
+ * Deep-copy mutable tracker collections (dispatch, state lists, slack channels/emoji states) so
+ * per-issue-state clones cannot mutate the shared base config.
+ */
+function cloneTracker(tracker: TrackerSettings): TrackerSettings {
+  return {
+    ...tracker,
+    dispatch: { ...tracker.dispatch },
+    activeStates: [...tracker.activeStates],
+    terminalStates: [...tracker.terminalStates],
+    ...(tracker.channels !== undefined ? { channels: [...tracker.channels] } : {}),
+    ...(tracker.emojiStates !== undefined ? { emojiStates: { ...tracker.emojiStates } } : {}),
   };
 }
 
