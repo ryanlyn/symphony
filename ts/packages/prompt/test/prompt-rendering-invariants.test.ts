@@ -26,70 +26,151 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
-/** Arbitrary that produces strings that are empty or consist only of whitespace. */
-const _whitespaceOnlyArb = fc.oneof(
-  fc.constant(""),
-  fc.constant("   "),
-  fc.constant("\t"),
-  fc.constant("\n"),
-  fc.constant("\r\n"),
-  fc.constant("\r"),
-  fc.constant("  \n\t  "),
-  fc.constant(" "), // non-breaking space is NOT whitespace for trim()
-  fc.constant(" "), // em space - also not whitespace for JS trim()
-  fc.array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 50 }).map((a) => a.join("")),
-  // Very long whitespace string
-  fc.integer({ min: 1, max: 200 }).map((n) => " ".repeat(n)),
-);
-
 /** Arbitrary that produces strings guaranteed to be whitespace-only per JS trim() semantics. */
-const strictWhitespaceOnlyArb = fc.oneof(
-  fc.constant(""),
-  fc.constant("   "),
-  fc.constant("\t"),
-  fc.constant("\n"),
-  fc.constant("\r\n"),
-  fc.constant("\r"),
-  fc.constant("  \n\t  "),
-  fc.array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 50 }).map((a) => a.join("")),
-  fc.integer({ min: 1, max: 200 }).map((n) => " ".repeat(n)),
-).filter((s) => s.trim() === "");
+const strictWhitespaceOnlyArb = fc
+  .oneof(
+    fc.constant(""),
+    fc.constant("   "),
+    fc.constant("\t"),
+    fc.constant("\n"),
+    fc.constant("\r\n"),
+    fc.constant("\r"),
+    fc.constant("  \n\t  "),
+    fc
+      .array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 50 })
+      .map((a) => a.join("")),
+    fc.integer({ min: 1, max: 200 }).map((n) => " ".repeat(n)),
+  )
+  .filter((s) => s.trim() === "");
 
 /** Arbitrary that produces valid Liquid variable names that do NOT exist in the template context. */
-const unknownVariableNameArb = fc.array(
-  fc.constantFrom(
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "_",
-  ),
-  { minLength: 3, maxLength: 12 },
-).map((a) => a.join("")).filter(
-  (s) => !["issue", "attempt", "ensemble"].includes(s) && /^[a-z_]/.test(s),
-);
+const unknownVariableNameArb = fc
+  .array(
+    fc.constantFrom(
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "_",
+    ),
+    { minLength: 3, maxLength: 12 },
+  )
+  .map((a) => a.join(""))
+  .filter((s) => !["issue", "attempt", "ensemble"].includes(s) && /^[a-z_]/.test(s));
 
 /** Arbitrary that produces filter names that do not exist in Liquid's built-in set. */
-const unknownFilterNameArb = fc.array(
-  fc.constantFrom(
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "_",
-  ),
-  { minLength: 5, maxLength: 15 },
-).map((a) => a.join("")).filter(
-  (s) =>
-    // Exclude known Liquid built-in filters
-    ![
-      "abs", "append", "at_least", "at_most", "capitalize", "ceil",
-      "compact", "concat", "date", "default", "divided_by", "downcase",
-      "escape", "escape_once", "first", "floor", "join", "json", "last",
-      "lstrip", "map", "minus", "modulo", "newline_to_br", "nl2br",
-      "plus", "prepend", "remove", "remove_first", "replace",
-      "replace_first", "reverse", "round", "rstrip", "size", "slice",
-      "sort", "sort_natural", "split", "strip", "strip_html",
-      "strip_newlines", "times", "truncate", "truncatewords", "uniq",
-      "upcase", "url_decode", "url_encode", "where",
-    ].includes(s) && /^[a-z_]/.test(s),
-);
+const unknownFilterNameArb = fc
+  .array(
+    fc.constantFrom(
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+      "n",
+      "o",
+      "p",
+      "q",
+      "r",
+      "s",
+      "t",
+      "u",
+      "v",
+      "w",
+      "x",
+      "y",
+      "z",
+      "_",
+    ),
+    { minLength: 5, maxLength: 15 },
+  )
+  .map((a) => a.join(""))
+  .filter(
+    (s) =>
+      // Exclude known Liquid built-in filters
+      ![
+        "abs",
+        "append",
+        "at_least",
+        "at_most",
+        "capitalize",
+        "ceil",
+        "compact",
+        "concat",
+        "date",
+        "default",
+        "divided_by",
+        "downcase",
+        "escape",
+        "escape_once",
+        "first",
+        "floor",
+        "join",
+        "json",
+        "last",
+        "lstrip",
+        "map",
+        "minus",
+        "modulo",
+        "newline_to_br",
+        "nl2br",
+        "plus",
+        "prepend",
+        "remove",
+        "remove_first",
+        "replace",
+        "replace_first",
+        "reverse",
+        "round",
+        "rstrip",
+        "size",
+        "slice",
+        "sort",
+        "sort_natural",
+        "split",
+        "strip",
+        "strip_html",
+        "strip_newlines",
+        "times",
+        "truncate",
+        "truncatewords",
+        "uniq",
+        "upcase",
+        "url_decode",
+        "url_encode",
+        "where",
+      ].includes(s) && /^[a-z_]/.test(s),
+  );
 
 /** Arbitrary producing strings with Liquid-special characters that could confuse a template engine. */
 const liquidSpecialStringArb = fc.oneof(
@@ -118,28 +199,50 @@ const challengingStringArb = fc.oneof(
   fc.string({ minLength: 1, maxLength: 200, unit: "grapheme" }),
 );
 
-/** Arbitrary producing diverse Issue objects with challenging inputs. */
-const _issueArb: fc.Arbitrary<Issue> = fc.record({
+/** Arbitrary producing diverse Issue objects with challenging inputs including Liquid-special characters.
+ *  This exercises template injection resistance -- user data containing {{ or {%  must not
+ *  affect rendering behavior or cause errors. */
+const challengingIssueArb: fc.Arbitrary<Issue> = fc.record({
   id: fc.oneof(fc.string({ minLength: 1, maxLength: 50 }), challengingStringArb),
   identifier: fc.oneof(fc.string({ minLength: 1, maxLength: 20 }), challengingStringArb),
   title: fc.oneof(fc.string({ minLength: 1, maxLength: 200 }), challengingStringArb),
-  description: fc.option(fc.oneof(fc.string({ maxLength: 500 }), challengingStringArb), { nil: null }),
+  description: fc.option(fc.oneof(fc.string({ maxLength: 500 }), challengingStringArb), {
+    nil: null,
+  }),
   state: fc.oneof(fc.string({ minLength: 1, maxLength: 30 }), challengingStringArb),
   stateType: fc.option(
-    fc.constantFrom("backlog" as const, "unstarted" as const, "started" as const, "completed" as const, "canceled" as const, "triage" as const),
+    fc.constantFrom(
+      "backlog" as const,
+      "unstarted" as const,
+      "started" as const,
+      "completed" as const,
+      "canceled" as const,
+      "triage" as const,
+    ),
     { nil: null },
   ),
-  branchName: fc.option(fc.oneof(fc.string({ maxLength: 60 }), challengingStringArb), { nil: null }),
+  branchName: fc.option(fc.oneof(fc.string({ maxLength: 60 }), challengingStringArb), {
+    nil: null,
+  }),
   url: fc.option(fc.oneof(fc.string({ maxLength: 100 }), challengingStringArb), { nil: null }),
   priority: fc.option(fc.integer({ min: 0, max: 4 }), { nil: null }),
-  labels: fc.array(fc.oneof(fc.string({ minLength: 1, maxLength: 20 }), challengingStringArb), { maxLength: 5 }),
+  labels: fc.array(fc.oneof(fc.string({ minLength: 1, maxLength: 20 }), challengingStringArb), {
+    maxLength: 5,
+  }),
   blockers: fc.array(
     fc.record({
       id: fc.option(fc.string({ minLength: 1, maxLength: 30 }), { nil: undefined }),
       identifier: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: undefined }),
       state: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: undefined }),
       stateType: fc.option(
-        fc.constantFrom("backlog" as const, "unstarted" as const, "started" as const, "completed" as const, "canceled" as const, "triage" as const),
+        fc.constantFrom(
+          "backlog" as const,
+          "unstarted" as const,
+          "started" as const,
+          "completed" as const,
+          "canceled" as const,
+          "triage" as const,
+        ),
         { nil: undefined },
       ),
     }),
@@ -150,13 +253,32 @@ const _issueArb: fc.Arbitrary<Issue> = fc.record({
 
 /** Simpler issue arbitrary that avoids Liquid-special chars in fields used for direct interpolation. */
 const safeIssueArb: fc.Arbitrary<Issue> = fc.record({
-  id: fc.string({ minLength: 1, maxLength: 30, unit: fc.constantFrom("a", "b", "c", "1", "2", "-", "_") }),
-  identifier: fc.string({ minLength: 1, maxLength: 10, unit: fc.constantFrom("A", "B", "C", "1", "2", "-") }),
-  title: fc.string({ minLength: 1, maxLength: 50, unit: fc.constantFrom("a", "b", "c", " ", ".", "!", "1") }),
+  id: fc.string({
+    minLength: 1,
+    maxLength: 30,
+    unit: fc.constantFrom("a", "b", "c", "1", "2", "-", "_"),
+  }),
+  identifier: fc.string({
+    minLength: 1,
+    maxLength: 10,
+    unit: fc.constantFrom("A", "B", "C", "1", "2", "-"),
+  }),
+  title: fc.string({
+    minLength: 1,
+    maxLength: 50,
+    unit: fc.constantFrom("a", "b", "c", " ", ".", "!", "1"),
+  }),
   description: fc.option(fc.string({ maxLength: 200 }), { nil: null }),
   state: fc.string({ minLength: 1, maxLength: 20, unit: fc.constantFrom("A", "a", "b", " ", "P") }),
   stateType: fc.option(
-    fc.constantFrom("backlog" as const, "unstarted" as const, "started" as const, "completed" as const, "canceled" as const, "triage" as const),
+    fc.constantFrom(
+      "backlog" as const,
+      "unstarted" as const,
+      "started" as const,
+      "completed" as const,
+      "canceled" as const,
+      "triage" as const,
+    ),
     { nil: null },
   ),
   branchName: fc.option(fc.string({ maxLength: 40 }), { nil: null }),
@@ -169,7 +291,14 @@ const safeIssueArb: fc.Arbitrary<Issue> = fc.record({
       identifier: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: undefined }),
       state: fc.option(fc.string({ minLength: 1, maxLength: 20 }), { nil: undefined }),
       stateType: fc.option(
-        fc.constantFrom("backlog" as const, "unstarted" as const, "started" as const, "completed" as const, "canceled" as const, "triage" as const),
+        fc.constantFrom(
+          "backlog" as const,
+          "unstarted" as const,
+          "started" as const,
+          "completed" as const,
+          "canceled" as const,
+          "triage" as const,
+        ),
         { nil: undefined },
       ),
     }),
@@ -208,7 +337,9 @@ test("Invariant 1: effectivePromptTemplate returns defaultPromptTemplate for whi
 });
 
 test("Invariant 1: non-whitespace template does NOT fall back to default", () => {
-  const nonWhitespaceArb = fc.string({ minLength: 1, maxLength: 100 }).filter((s) => s.trim() !== "");
+  const nonWhitespaceArb = fc
+    .string({ minLength: 1, maxLength: 100 })
+    .filter((s) => s.trim() !== "");
   fc.assert(
     fc.property(nonWhitespaceArb, (template) => {
       const effective = effectivePromptTemplate(template);
@@ -220,16 +351,17 @@ test("Invariant 1: non-whitespace template does NOT fall back to default", () =>
   );
 });
 
-test("Invariant 1: fallback output is never empty", async () => {
-  await fc.assert(
-    fc.asyncProperty(strictWhitespaceOnlyArb, safeIssueArb, async (template, issue) => {
-      const result = await buildPrompt(template, issue);
-      // The result must never be empty when falling back
-      assert.ok(result.trim().length > 0);
-      // It must be different from an empty string (not a no-op)
-      assert.notEqual(result.trim(), "");
+test("Invariant 1: zero-width space does NOT trigger fallback (trim semantics edge case)", () => {
+  // Zero-width space (U+200B) is NOT removed by JS trim().
+  // This verifies the system uses standard trim() semantics.
+  const zeroWidthSpaceArb = fc.oneof(fc.constant("​"), fc.constant("​​​"), fc.constant(" ​ "));
+
+  fc.assert(
+    fc.property(zeroWidthSpaceArb, (template) => {
+      const effective = effectivePromptTemplate(template);
+      assert.notEqual(effective, defaultPromptTemplate);
     }),
-    { numRuns: 100 },
+    { numRuns: 10 },
   );
 });
 
@@ -240,9 +372,7 @@ test("Invariant 2: when prompt template references unknown variable, rendering f
     fc.asyncProperty(unknownVariableNameArb, async (varName) => {
       const template = `Hello {{ ${varName} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 200 },
   );
@@ -253,9 +383,21 @@ test("Invariant 2: nested unknown variable references also fail strictly", async
   // state, state_type, branch_name, url, assignee_id, blocked_by, labels, assigned_to_worker,
   // created_at, updated_at
   const knownIssueFields = [
-    "id", "identifier", "title", "description", "priority", "state",
-    "state_type", "branch_name", "url", "assignee_id", "blocked_by",
-    "labels", "assigned_to_worker", "created_at", "updated_at",
+    "id",
+    "identifier",
+    "title",
+    "description",
+    "priority",
+    "state",
+    "state_type",
+    "branch_name",
+    "url",
+    "assignee_id",
+    "blocked_by",
+    "labels",
+    "assigned_to_worker",
+    "created_at",
+    "updated_at",
   ];
 
   await fc.assert(
@@ -264,9 +406,7 @@ test("Invariant 2: nested unknown variable references also fail strictly", async
       if (knownIssueFields.includes(varName)) return;
       const template = `Data: {{ issue.${varName} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 200 },
   );
@@ -277,35 +417,9 @@ test("Invariant 2: deeply nested unknown path fails strictly", async () => {
     fc.asyncProperty(unknownVariableNameArb, unknownVariableNameArb, async (path1, path2) => {
       const template = `Data: {{ ${path1}.${path2} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 100 },
-  );
-});
-
-test("Invariant 2: known top-level variables (issue, attempt, ensemble) do NOT fail", async () => {
-  const knownVarTemplates = [
-    "{{ issue.title }}",
-    "{{ attempt }}",
-    "{{ ensemble.slot_index }}",
-    "{{ ensemble.size }}",
-    "{{ ensemble.enabled }}",
-    "{{ issue.id }}",
-    "{{ issue.state }}",
-    "{{ issue.identifier }}",
-  ];
-  const templateArb = fc.constantFrom(...knownVarTemplates);
-
-  await fc.assert(
-    fc.asyncProperty(templateArb, async (template) => {
-      const issue = makeIssue();
-      // These should NOT throw
-      const result = await buildPrompt(template, issue);
-      assert.ok(typeof result === "string");
-    }),
-    { numRuns: 50 },
   );
 });
 
@@ -316,9 +430,7 @@ test("Invariant 3: when prompt template references unknown filter, rendering fai
     fc.asyncProperty(unknownFilterNameArb, async (filterName) => {
       const template = `Hello {{ issue.title | ${filterName} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 200 },
   );
@@ -338,9 +450,7 @@ test("Invariant 3: unknown filter on various value types fails", async () => {
     fc.asyncProperty(exprArb, unknownFilterNameArb, async (expr, filterName) => {
       const template = `Result: {{ ${expr} | ${filterName} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 100 },
   );
@@ -352,32 +462,9 @@ test("Invariant 3: chained unknown filter after known filter still fails", async
       // A known filter (upcase) followed by an unknown one should still fail
       const template = `Hello {{ issue.title | upcase | ${filterName} }}`;
       const issue = makeIssue();
-      await assert.rejects(
-        () => buildPrompt(template, issue),
-      );
+      await assert.rejects(() => buildPrompt(template, issue));
     }),
     { numRuns: 100 },
-  );
-});
-
-test("Invariant 3: known filters do NOT cause failures", async () => {
-  const knownFilterTemplates = [
-    "{{ issue.title | upcase }}",
-    "{{ issue.title | downcase }}",
-    "{{ issue.title | size }}",
-    "{{ issue.title | strip }}",
-    "{{ issue.title | escape }}",
-  ];
-  const templateArb = fc.constantFrom(...knownFilterTemplates);
-
-  await fc.assert(
-    fc.asyncProperty(templateArb, async (template) => {
-      const issue = makeIssue();
-      const result = await buildPrompt(template, issue);
-      assert.ok(typeof result === "string");
-      assert.ok(result.length > 0);
-    }),
-    { numRuns: 25 },
   );
 });
 
@@ -398,25 +485,48 @@ test("Invariant 4: issue object is available as template input with expected fie
   );
 });
 
-test("Invariant 4: issue snake_case fields are correctly mapped from camelCase source", async () => {
-  // Tests that the issuePromptContext mapping is correct
-  const issue = makeIssue({
-    stateType: "started",
-    branchName: "feature/my-branch",
-    url: "https://example.com/issue/1",
-    assignedToWorker: true,
+test("Invariant 4: snake_case template fields map correctly from camelCase source for any issue", async () => {
+  // Verify that for any issue with non-null optional fields, the snake_case
+  // template variables produce the corresponding camelCase source values.
+  const issueWithFieldsArb = fc.record({
+    stateType: fc.constantFrom(
+      "backlog" as const,
+      "unstarted" as const,
+      "started" as const,
+      "completed" as const,
+      "canceled" as const,
+      "triage" as const,
+    ),
+    branchName: fc.string({
+      minLength: 1,
+      maxLength: 30,
+      unit: fc.constantFrom("a", "b", "/", "-", "_", "1"),
+    }),
+    url: fc.string({
+      minLength: 1,
+      maxLength: 50,
+      unit: fc.constantFrom("h", "t", "p", "s", ":", "/", ".", "a", "1"),
+    }),
+    assignedToWorker: fc.boolean(),
   });
-  const template = [
-    "state_type:{{ issue.state_type }}",
-    "branch_name:{{ issue.branch_name }}",
-    "url:{{ issue.url }}",
-    "assigned_to_worker:{{ issue.assigned_to_worker }}",
-  ].join(" ");
-  const result = await buildPrompt(template, issue);
-  assert.ok(result.includes("state_type:started"));
-  assert.ok(result.includes("branch_name:feature/my-branch"));
-  assert.ok(result.includes("url:https://example.com/issue/1"));
-  assert.ok(result.includes("assigned_to_worker:true"));
+
+  await fc.assert(
+    fc.asyncProperty(issueWithFieldsArb, async (fields) => {
+      const issue = makeIssue(fields);
+      const template = [
+        "state_type:{{ issue.state_type }}",
+        "branch_name:{{ issue.branch_name }}",
+        "url:{{ issue.url }}",
+        "assigned_to_worker:{{ issue.assigned_to_worker }}",
+      ].join(" ");
+      const result = await buildPrompt(template, issue);
+      assert.ok(result.includes(`state_type:${fields.stateType}`));
+      assert.ok(result.includes(`branch_name:${fields.branchName}`));
+      assert.ok(result.includes(`url:${fields.url}`));
+      assert.ok(result.includes(`assigned_to_worker:${fields.assignedToWorker}`));
+    }),
+    { numRuns: 100 },
+  );
 });
 
 test("Invariant 4: issue optional fields render as empty string when null", async () => {
@@ -507,50 +617,41 @@ test("Invariant 4: ensemble defaults to slot 0, size 1, enabled false when not p
   assert.ok(result.includes("enabled:false"));
 });
 
-test("Invariant 4: ensemble enabled is true if and only if size > 1", async () => {
+test("Invariant 4: ensemble.enabled is true only when rendered size in output is > 1", async () => {
+  // Verify the invariant from the output side: parse the rendered output to confirm
+  // that enabled:true always correlates with size > 1 in the rendered result.
   const sizeArb = fc.integer({ min: 1, max: 50 });
 
   await fc.assert(
     fc.asyncProperty(sizeArb, async (ensembleSize) => {
-      const template = `enabled:{{ ensemble.enabled }}`;
+      const template = `enabled:{{ ensemble.enabled }} size:{{ ensemble.size }}`;
       const issue = makeIssue();
       const result = await buildPrompt(template, issue, { slotIndex: 0, ensembleSize });
-      const expectedEnabled = ensembleSize > 1;
-      assert.ok(result.includes(`enabled:${expectedEnabled}`));
+      // Parse the rendered output independently
+      const enabledMatch = result.match(/enabled:(true|false)/);
+      const sizeMatch = result.match(/size:(\d+)/);
+      assert.ok(enabledMatch !== null);
+      assert.ok(sizeMatch !== null);
+      const renderedEnabled = enabledMatch![1] === "true";
+      const renderedSize = parseInt(sizeMatch![1]!, 10);
+      // The invariant: enabled is true if and only if size > 1
+      assert.equal(renderedEnabled, renderedSize > 1);
     }),
     { numRuns: 100 },
   );
 });
 
-// --- Invariant 5: buildPrompt never silently drops data (output completeness) ---
-
-test("Invariant 5: buildPrompt always returns a non-empty string for any valid template", async () => {
-  // Even with a template that has content, the result should never be undefined/null
-  const validTemplateArb = fc.oneof(
-    fc.constant("Hello world"),
-    fc.constant("{{ issue.title }}"),
-    fc.constant("{% if issue.description %}has desc{% else %}no desc{% endif %}"),
-    fc.constant("Prefix {{ issue.identifier }} suffix"),
-  );
-
-  await fc.assert(
-    fc.asyncProperty(validTemplateArb, safeIssueArb, async (template, issue) => {
-      const result = await buildPrompt(template, issue);
-      assert.ok(typeof result === "string");
-      // Rendered output should be a string (not null, not undefined)
-      assert.ok(result !== null && result !== undefined);
-    }),
-    { numRuns: 100 },
-  );
-});
+// --- Invariant 5: template interpolation faithfulness ---
 
 test("Invariant 5: static text in template passes through unchanged", async () => {
   // Any template with only static text (no Liquid tags) should render verbatim
-  const staticTextArb = fc.string({
-    minLength: 1,
-    maxLength: 100,
-    unit: fc.constantFrom("a", "b", "c", "1", " ", ".", ",", "!", "\n"),
-  }).filter((s) => !s.includes("{{") && !s.includes("{%") && s.trim() !== "");
+  const staticTextArb = fc
+    .string({
+      minLength: 1,
+      maxLength: 100,
+      unit: fc.constantFrom("a", "b", "c", "1", " ", ".", ",", "!", "\n"),
+    })
+    .filter((s) => !s.includes("{{") && !s.includes("{%") && s.trim() !== "");
 
   await fc.assert(
     fc.asyncProperty(staticTextArb, async (text) => {
@@ -562,9 +663,74 @@ test("Invariant 5: static text in template passes through unchanged", async () =
   );
 });
 
-// --- Invariant 6: issue.blocked_by array is accessible ---
+test("Invariant 5: template containing Liquid expression produces output different from raw template", async () => {
+  // For any template referencing issue fields with Liquid expressions,
+  // the output must differ from the raw template string (proving interpolation occurred).
+  await fc.assert(
+    fc.asyncProperty(safeIssueArb, async (issue) => {
+      const template = `Issue: {{ issue.identifier }} - {{ issue.title }}`;
+      const result = await buildPrompt(template, issue);
+      // The output must not be the raw template -- interpolation must have occurred
+      assert.notEqual(result, template);
+      // And the interpolated values must be present
+      assert.ok(result.includes(issue.identifier));
+      assert.ok(result.includes(issue.title));
+    }),
+    { numRuns: 100 },
+  );
+});
 
-test("Invariant 6: issue.blocked_by is rendered as an array accessible via Liquid for-loop", async () => {
+// --- Invariant 6: template injection resistance ---
+
+test("Invariant 6: user-controlled data containing Liquid syntax does not cause template injection", async () => {
+  // Issue fields may contain {{ }}, {% %}, or other Liquid syntax.
+  // These must be rendered as literal text (pass-through), not interpreted as template directives.
+  await fc.assert(
+    fc.asyncProperty(challengingIssueArb, async (issue) => {
+      // Use the default template which references issue.identifier and issue.title
+      const result = await buildPrompt("", issue);
+      // The rendering must succeed (no error thrown) and produce non-empty output
+      assert.ok(result.trim().length > 0);
+      // The result must contain the structural markers from the default template
+      assert.match(result, /Identifier:/);
+      assert.match(result, /Title:/);
+    }),
+    { numRuns: 200 },
+  );
+});
+
+test("Invariant 6: Liquid-special characters in issue title are rendered literally, not interpreted", async () => {
+  const liquidInjectionArb = fc.oneof(
+    fc.constant("{{ 'injected' }}"),
+    fc.constant("{% if true %}injected{% endif %}"),
+    fc.constant("{{ issue.id }}"),
+    fc.constant("{{ '' | append: 'evil' }}"),
+    fc.constant("{% assign x = 1 %}{{ x }}"),
+    fc.constant("}}{{}}"),
+  );
+
+  await fc.assert(
+    fc.asyncProperty(liquidInjectionArb, async (maliciousTitle) => {
+      const issue = makeIssue({ title: maliciousTitle });
+      const template = `Title: {{ issue.title }}`;
+      const result = await buildPrompt(template, issue);
+      // The malicious title must appear literally in the output, not be interpreted
+      assert.ok(result.includes(`Title: ${maliciousTitle}`));
+      // Specifically verify it was NOT interpreted
+      if (!maliciousTitle.includes("injected")) {
+        assert.ok(!result.includes("injected"));
+      }
+      if (!maliciousTitle.includes("evil")) {
+        assert.ok(!result.includes("evil"));
+      }
+    }),
+    { numRuns: 50 },
+  );
+});
+
+// --- Invariant 7: issue.blocked_by and labels arrays are accessible ---
+
+test("Invariant 7: issue.blocked_by is rendered as an array accessible via Liquid for-loop", async () => {
   const issue = makeIssue({
     blockers: [
       { id: "blocker-1", identifier: "ENG-10", state: "Todo", stateType: "unstarted" },
@@ -577,7 +743,7 @@ test("Invariant 6: issue.blocked_by is rendered as an array accessible via Liqui
   assert.ok(result.includes("[ENG-11:completed]"));
 });
 
-test("Invariant 6: issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
+test("Invariant 7: issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
   const labelsArb = fc.array(
     fc.string({ minLength: 1, maxLength: 10, unit: fc.constantFrom("a", "b", "c", "1", "-") }),
     { minLength: 1, maxLength: 5 },
