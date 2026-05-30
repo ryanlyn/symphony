@@ -155,6 +155,7 @@ Each issue is one file named `BOARD-<n>.md` (for example `.symphony/board/BOARD-
 identifier is the file stem (`BOARD-7`). The format is YAML front matter followed by a `# Title`
 heading, the description, and an optional `## Comments` section:
 
+<!-- prettier-ignore -->
 ```markdown
 ---
 status: In Progress
@@ -167,7 +168,6 @@ labels:
 The retry slot is not released when a worker fails.
 
 <!-- symphony:comments -->
-
 ## Comments
 
 - 2026-05-29T12:00:00.000Z agent: Reproduced the leak; fix in progress.
@@ -217,7 +217,11 @@ Set up a Slack app:
    - `reactions:read` - read the status emoji reactions on a message.
    - `reactions:write` - set status by adding/removing the managed reaction.
    - `chat:write` - post threaded replies as comments.
-   - `app_mentions:read` - read the @-mentions that create issues.
+
+   Symphony discovers issues by paging `conversations.history` and matching the bot's @-mention
+   in message text, so it does not need `app_mentions:read`. Only add that scope if you separately
+   wire up the Events API / `app_mention` subscription, which Symphony does not use today.
+
 3. Install the app to the workspace and copy the **Bot User OAuth Token** (starts with `xoxb-`).
    Export it as `SLACK_BOT_TOKEN`; Symphony resolves it into `tracker.api_key`.
 4. Find the app's **bot user id** (the `U...` id, shown on the app's "App Home" / via
