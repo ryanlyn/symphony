@@ -44,6 +44,26 @@ test("updateStatus rewrites only the status and preserves body", async () => {
   assert.equal(updated.description, "Details here");
 });
 
+test("updateStatus rejects a blank status and leaves the file intact", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+  await store.create({ title: "Keep me", body: "Details here", status: "Todo" });
+  const before = await readFile(path.join(dir, "BOARD-1.md"), "utf8");
+
+  // A whitespace-only status would corrupt the file (parse() drops a status-less issue),
+  // so it must be rejected before any write touches disk.
+  await assert.rejects(() => store.updateStatus("BOARD-1", "   "), /status/);
+
+  // The file is byte-for-byte unchanged and the issue still lists with its prior status.
+  assert.equal(await readFile(path.join(dir, "BOARD-1.md"), "utf8"), before);
+  const issue = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(issue.state, "Todo");
+  assert.deepEqual(
+    (await store.list()).map((i) => i.identifier),
+    ["BOARD-1"],
+  );
+});
+
 test("appendComment adds a Comments section without touching description", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);

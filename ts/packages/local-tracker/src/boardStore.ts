@@ -86,8 +86,13 @@ export class BoardStore {
 
   async updateStatus(id: string, status: string): Promise<Issue> {
     assertValidId(id);
+    const trimmed = status.trim();
+    // Reject an empty/whitespace-only status BEFORE writing: a blank status produces a file
+    // that parse() rejects as "missing required 'status'", which would silently drop the issue
+    // from list(). Failing fast here leaves the file (and its prior status) intact.
+    if (trimmed === "") throw new Error(`board issue ${id} status must not be empty`);
     const parsed = await this.parse(id);
-    parsed.status = status;
+    parsed.status = trimmed;
     await this.write(id, parsed);
     return this.read(id);
   }
