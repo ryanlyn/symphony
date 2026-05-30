@@ -169,7 +169,6 @@ The retry slot is not released when a worker fails.
 
 <!-- symphony:comments -->
 ## Comments
-
 - 2026-05-29T12:00:00.000Z agent: Reproduced the leak; fix in progress.
 ```
 

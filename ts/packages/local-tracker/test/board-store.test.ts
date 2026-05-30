@@ -195,13 +195,17 @@ test("description containing a literal '## Comments' heading survives round-trip
 });
 
 test("rejects path-traversal and malformed issue ids without touching the filesystem", async () => {
-  const dir = await tempBoard();
+  // Nest the board under a private parent (not the shared os.tmpdir()) so the "parent dir is
+  // unchanged" assertion below only observes this test's files. Comparing the shared tmpdir
+  // listing would flake whenever a concurrent test creates a temp dir there mid-run.
+  const parent = await mkdtemp(path.join(tmpdir(), "board-traversal-"));
+  const dir = path.join(parent, "board");
+  await mkdir(dir, { recursive: true });
   const store = new BoardStore(dir);
   await store.create({ title: "Valid", body: "Body", status: "Todo" });
 
   const before = (await readdir(dir)).sort();
   // Capture a marker file outside the board dir so we can prove nothing escaped.
-  const parent = path.dirname(dir);
   const sentinel = path.join(parent, "outside-marker.txt");
   await writeFile(sentinel, "untouched", "utf8");
   const sentinelBefore = await readFile(sentinel, "utf8");
