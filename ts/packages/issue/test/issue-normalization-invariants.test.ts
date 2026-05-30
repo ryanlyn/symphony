@@ -1,0 +1,448 @@
+import { test } from "vitest";
+import fc from "fast-check";
+import { normalizeIssue } from "@symphony/cli";
+import { ISSUE_STATE_TYPES } from "@symphony/domain";
+
+import { assert } from "../../../test/assert.js";
+
+// --- Helper arbitraries ---
+
+/** Non-empty, non-whitespace-only string suitable for required fields. */
+const nonBlankString = fc
+  .string({ minLength: 1, maxLength: 30 })
+  .filter((s) => s.trim().length > 0);
+
+/** A valid state name (non-blank string). */
+const validStateName = nonBlankString;
+
+/** Minimal valid issue input for normalizeIssue. */
+function validIssueInput(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "issue-1",
+    identifier: "TEST-1",
+    title: "A title",
+    state: { name: "Todo" },
+    ...overrides,
+  };
+}
+
+// --- Invariant 1: State value resolution priority ---
+// The system SHALL accept nested object form, snake_case, camelCase, and direct string form.
+
+test("Invariant 1: state resolution accepts nested object form { state: { name } }", () => {
+  fc.assert(
+    fc.property(nonBlankString, (stateName) => {
+      const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
+      assert.equal(issue.state, stateName);
+    }),
+  );
+});
+
+test("Invariant 1: state resolution accepts snake_case state_name", () => {
+  fc.assert(
+    fc.property(nonBlankString, (stateName) => {
+      const issue = normalizeIssue(validIssueInput({ state: undefined, state_name: stateName }));
+      assert.equal(issue.state, stateName);
+    }),
+  );
+});
+
+test("Invariant 1: state resolution accepts camelCase stateName", () => {
+  fc.assert(
+    fc.property(nonBlankString, (stateName) => {
+      const issue = normalizeIssue(
+        validIssueInput({ state: undefined, state_name: undefined, stateName }),
+      );
+      assert.equal(issue.state, stateName);
+    }),
+  );
+});
+
+test("Invariant 1: state resolution accepts direct string form", () => {
+  fc.assert(
+    fc.property(nonBlankString, (stateName) => {
+      const issue = normalizeIssue(validIssueInput({ state: stateName }));
+      assert.equal(issue.state, stateName);
+    }),
+  );
+});
+
+test("Invariant 1: nested object form takes priority over snake_case and camelCase", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, nonBlankString, (nested, snake, camel) => {
+      const issue = normalizeIssue(
+        validIssueInput({
+          state: { name: nested },
+          state_name: snake,
+          stateName: camel,
+        }),
+      );
+      assert.equal(issue.state, nested);
+    }),
+  );
+});
+
+test("Invariant 1: snake_case takes priority over camelCase when no nested object", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, (snake, camel) => {
+      const issue = normalizeIssue(
+        validIssueInput({
+          state: undefined,
+          state_name: snake,
+          stateName: camel,
+        }),
+      );
+      assert.equal(issue.state, snake);
+    }),
+  );
+});
+
+// --- Invariant 2: Label normalization ---
+// Labels SHALL be trimmed, lowercased, and empty strings filtered out.
+
+test("Invariant 2: labels are trimmed and lowercased", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0), {
+        maxLength: 10,
+      }),
+      (rawLabels) => {
+        const issue = normalizeIssue(validIssueInput({ labels: rawLabels }));
+        for (const label of issue.labels) {
+          // Each label should be trimmed
+          assert.equal(label, label.trim());
+          // Each label should be lowercased
+          assert.equal(label, label.toLowerCase());
+        }
+      },
+    ),
+  );
+});
+
+test("Invariant 2: empty and whitespace-only labels are filtered out", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom("", " ", "  ", "\t", "\n"), { minLength: 1, maxLength: 5 }),
+      (emptyLabels) => {
+        const issue = normalizeIssue(validIssueInput({ labels: emptyLabels }));
+        assert.equal(issue.labels.length, 0);
+      },
+    ),
+  );
+});
+
+test("Invariant 2: no label in output is empty after normalization", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ maxLength: 20 }), { maxLength: 10 }),
+      (rawLabels) => {
+        const issue = normalizeIssue(validIssueInput({ labels: rawLabels }));
+        for (const label of issue.labels) {
+          assert.ok(label.length > 0);
+          assert.ok(label.trim().length > 0);
+        }
+      },
+    ),
+  );
+});
+
+test("Invariant 2: labels from object form { name } are also normalized", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
+        { maxLength: 10 },
+      ),
+      (names) => {
+        const labelObjects = names.map((name) => ({ name }));
+        const issue = normalizeIssue(validIssueInput({ labels: labelObjects }));
+        for (const label of issue.labels) {
+          assert.equal(label, label.trim().toLowerCase());
+        }
+      },
+    ),
+  );
+});
+
+// --- Invariant 3: Blocker resolution ---
+// The system SHALL prefer an explicit blockers array, falling back to filtering relations where
+// type equals "blocks" (case-insensitive).
+
+test("Invariant 3: explicit blockers array is preferred over relations", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc.record({ id: nonBlankString, identifier: nonBlankString }),
+        { minLength: 1, maxLength: 5 },
+      ),
+      (blockerList) => {
+        const issue = normalizeIssue(
+          validIssueInput({
+            blockers: blockerList,
+            relations: [
+              { type: "blocks", relatedIssue: { id: "should-not-appear", identifier: "X-99" } },
+            ],
+          }),
+        );
+        // The blockers should come from the explicit array, not from relations
+        assert.equal(issue.blockers.length, blockerList.length);
+        for (let i = 0; i < blockerList.length; i++) {
+          assert.equal(issue.blockers[i]!.id, blockerList[i]!.id);
+        }
+      },
+    ),
+  );
+});
+
+test("Invariant 3: relations with type 'blocks' (case-insensitive) become blockers when no explicit blockers array", () => {
+  const blockVariants = ["blocks", "Blocks", "BLOCKS", " Blocks ", " blocks "];
+  fc.assert(
+    fc.property(fc.constantFrom(...blockVariants), nonBlankString, (typeStr, blockerId) => {
+      const issue = normalizeIssue(
+        validIssueInput({
+          relations: [
+            { type: typeStr, relatedIssue: { id: blockerId, identifier: "BLK-1" } },
+            { type: "relates", relatedIssue: { id: "other", identifier: "REL-1" } },
+          ],
+        }),
+      );
+      assert.equal(issue.blockers.length, 1);
+      assert.equal(issue.blockers[0]!.id, blockerId);
+    }),
+  );
+});
+
+test("Invariant 3: non-blocks relations are not included as blockers", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ minLength: 1, maxLength: 20 }).filter(
+        (s) => s.trim().toLowerCase() !== "blocks",
+      ),
+      (relationType) => {
+        const issue = normalizeIssue(
+          validIssueInput({
+            relations: [{ type: relationType, relatedIssue: { id: "x", identifier: "X-1" } }],
+          }),
+        );
+        assert.equal(issue.blockers.length, 0);
+      },
+    ),
+  );
+});
+
+// --- Invariant 4: Assignee filter with no assignee ---
+// When an assignee filter is configured and the issue has no assignee,
+// the issue SHALL be marked as not assigned to this worker.
+
+test("Invariant 4: issue with no assignee is marked assignedToWorker=false when filter is configured", () => {
+  fc.assert(
+    fc.property(
+      nonBlankString, // assignee filter value
+      (assigneeFilter) => {
+        const issue = normalizeIssue(
+          validIssueInput({
+            // No assignee field at all
+          }),
+          assigneeFilter,
+        );
+        assert.equal(issue.assignedToWorker, false);
+      },
+    ),
+  );
+});
+
+test("Invariant 4: issue with null assignee_id is marked assignedToWorker=false when filter is configured", () => {
+  fc.assert(
+    fc.property(nonBlankString, (assigneeFilter) => {
+      const issue = normalizeIssue(
+        validIssueInput({ assignee_id: null }),
+        assigneeFilter,
+      );
+      assert.equal(issue.assignedToWorker, false);
+    }),
+  );
+});
+
+// --- Invariant 5: Assignee comparison is case-insensitive ---
+
+test("Invariant 5: assignee comparison is case-insensitive", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0),
+      (assigneeId) => {
+        // Use assignee in nested object form
+        const issue = normalizeIssue(
+          validIssueInput({ assignee: { id: assigneeId.toUpperCase() } }),
+          assigneeId.toLowerCase(),
+        );
+        assert.equal(issue.assignedToWorker, true);
+      },
+    ),
+  );
+});
+
+test("Invariant 5: assignee comparison is case-insensitive via assignee_id field", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0),
+      (assigneeId) => {
+        const issue = normalizeIssue(
+          validIssueInput({ assignee_id: assigneeId.toLowerCase() }),
+          assigneeId.toUpperCase(),
+        );
+        assert.equal(issue.assignedToWorker, true);
+      },
+    ),
+  );
+});
+
+test("Invariant 5: mismatched assignee is marked assignedToWorker=false", () => {
+  // Use disjoint character sets to guarantee no case-insensitive match
+  fc.assert(
+    fc.property(
+      fc.constantFrom("aaa", "bbb", "ccc"),
+      fc.constantFrom("xxx", "yyy", "zzz"),
+      (issueAssignee, filterAssignee) => {
+        const issue = normalizeIssue(
+          validIssueInput({ assignee: { id: issueAssignee } }),
+          filterAssignee,
+        );
+        assert.equal(issue.assignedToWorker, false);
+      },
+    ),
+  );
+});
+
+// --- Invariant 6: Missing required fields ---
+// When an issue is missing any of id, identifier, title, or state, normalization SHALL reject it.
+
+test("Invariant 6: missing id causes rejection", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, validStateName, (identifier, title, state) => {
+      assert.throws(
+        () => normalizeIssue({ identifier, title, state }),
+        /issue\.id is required/,
+      );
+    }),
+  );
+});
+
+test("Invariant 6: missing identifier causes rejection", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, validStateName, (id, title, state) => {
+      assert.throws(
+        () => normalizeIssue({ id, title, state }),
+        /issue\.identifier is required/,
+      );
+    }),
+  );
+});
+
+test("Invariant 6: missing title causes rejection", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, validStateName, (id, identifier, state) => {
+      assert.throws(
+        () => normalizeIssue({ id, identifier, state }),
+        /issue\.title is required/,
+      );
+    }),
+  );
+});
+
+test("Invariant 6: missing state causes rejection", () => {
+  fc.assert(
+    fc.property(nonBlankString, nonBlankString, nonBlankString, (id, identifier, title) => {
+      assert.throws(
+        () => normalizeIssue({ id, identifier, title }),
+        /issue\.state is required/,
+      );
+    }),
+  );
+});
+
+test("Invariant 6: blank/whitespace-only required fields cause rejection", () => {
+  const whitespace = fc.constantFrom("", " ", "  ", "\t", "\n");
+  fc.assert(
+    fc.property(whitespace, (blank) => {
+      // blank id
+      assert.throws(
+        () => normalizeIssue({ id: blank, identifier: "X-1", title: "T", state: "Todo" }),
+        /issue\.id is required/,
+      );
+      // blank identifier
+      assert.throws(
+        () => normalizeIssue({ id: "1", identifier: blank, title: "T", state: "Todo" }),
+        /issue\.identifier is required/,
+      );
+      // blank title
+      assert.throws(
+        () => normalizeIssue({ id: "1", identifier: "X-1", title: blank, state: "Todo" }),
+        /issue\.title is required/,
+      );
+      // blank state
+      assert.throws(
+        () => normalizeIssue({ id: "1", identifier: "X-1", title: "T", state: blank }),
+        /issue\.state is required/,
+      );
+    }),
+  );
+});
+
+// --- Invariant 7: State type normalization ---
+// Only values in the canonical set SHALL be accepted; others become null.
+
+test("Invariant 7: canonical state types are accepted and returned as-is (lowercased)", () => {
+  fc.assert(
+    fc.property(fc.constantFrom(...ISSUE_STATE_TYPES), (stateType) => {
+      const issue = normalizeIssue(validIssueInput({ state: { name: "Todo", type: stateType } }));
+      assert.equal(issue.stateType, stateType);
+    }),
+  );
+});
+
+test("Invariant 7: canonical state types are accepted case-insensitively", () => {
+  fc.assert(
+    fc.property(fc.constantFrom(...ISSUE_STATE_TYPES), (stateType) => {
+      const uppercased = stateType.toUpperCase();
+      const issue = normalizeIssue(
+        validIssueInput({ state: { name: "Todo", type: uppercased } }),
+      );
+      assert.equal(issue.stateType, stateType);
+    }),
+  );
+});
+
+test("Invariant 7: non-canonical state types become null", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ minLength: 1, maxLength: 30 }).filter(
+        (s) => !ISSUE_STATE_TYPES.includes(s.trim().toLowerCase() as (typeof ISSUE_STATE_TYPES)[number]),
+      ),
+      (invalidType) => {
+        const issue = normalizeIssue(
+          validIssueInput({ state: { name: "Todo", type: invalidType } }),
+        );
+        assert.equal(issue.stateType, null);
+      },
+    ),
+  );
+});
+
+test("Invariant 7: null or missing state type remains null", () => {
+  fc.assert(
+    fc.property(nonBlankString, (stateName) => {
+      // No type field in state object
+      const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
+      assert.equal(issue.stateType, null);
+    }),
+  );
+});
+
+test("Invariant 7: the canonical set is exactly backlog, unstarted, started, completed, canceled, triage", () => {
+  const expectedSet = new Set(["backlog", "unstarted", "started", "completed", "canceled", "triage"]);
+  const actualSet = new Set(ISSUE_STATE_TYPES);
+  assert.equal(actualSet.size, expectedSet.size);
+  for (const val of expectedSet) {
+    assert.ok(actualSet.has(val as (typeof ISSUE_STATE_TYPES)[number]));
+  }
+});
