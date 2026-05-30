@@ -1,17 +1,7 @@
 import { describe, test } from "vitest";
-import { issueHasOpenBlockers, normalizeIssue, parseConfig, sortForDispatch } from "@symphony/cli";
+import { issueHasOpenBlockers, normalizeIssue, parseConfig } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
-
-function makeIssue(overrides: Record<string, unknown> = {}) {
-  return normalizeIssue({
-    id: "i1",
-    identifier: "MT-1",
-    title: "Title",
-    state: "Todo",
-    ...overrides,
-  });
-}
 
 function makeSettings(overrides: Record<string, unknown> = {}) {
   return parseConfig({
