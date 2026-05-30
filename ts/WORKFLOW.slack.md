@@ -55,7 +55,7 @@ claude:
   strict_mcp_config: true
 ---
 
-You are working on a Slack issue `{{ issue.identifier }}`
+You are working on a Slack issue `{{ issue.id }}`
 
 {% if attempt %}
 Continuation context:
@@ -67,7 +67,8 @@ Continuation context:
   {% endif %}
 
 Issue context:
-Identifier: {{ issue.identifier }}
+Issue id (pass this as issueId): {{ issue.id }}
+Label: {{ issue.identifier }}
 Title: {{ issue.title }}
 Current status: {{ issue.state }}
 
@@ -92,7 +93,7 @@ This workflow is backed by **Slack**, not Linear. There is **no Linear and no `l
 
 - A task is created when someone **@-mentions the bot** (`$SLACK_BOT_USER_ID`) in one of the watched `tracker.channels`. That message is the issue.
 - The mentioned message's text **is the issue description/title**; threaded replies on that message are the discussion/context.
-- The issue id is the Slack message reference in `<channel>:<ts>` form (for example `C0123456789:1717000000.000100`). This is the `{{ issue.identifier }}` you operate on and the `issueId` you pass to tools.
+- The issue id is the Slack message reference in `<channel>:<ts>` form (for example `C0123456789:1717000000.000100`). This is the `{{ issue.id }}` you operate on and the `issueId` you pass to `slack_update_status` / `slack_comment`. The display label `{{ issue.identifier }}` (for example `SLK-1717000000-000100`) is for reference only and is **not** a valid `issueId`; never pass it to a tool.
 - **Status is shown as an emoji reaction** on the source message. You never edit frontmatter or a file; you change a reaction.
 
 ## Status as emoji reactions
