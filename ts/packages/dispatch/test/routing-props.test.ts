@@ -84,9 +84,9 @@ test("routeNames — labels without matching prefix yield no routes", () => {
   fc.assert(
     fc.property(
       fc.array(
-        fc.string({ minLength: 1, maxLength: 20 }).filter(
-          (s) => !s.toLowerCase().startsWith("symphony:"),
-        ),
+        fc
+          .string({ minLength: 1, maxLength: 20 })
+          .filter((s) => !s.toLowerCase().startsWith("symphony:")),
         { minLength: 1, maxLength: 5 },
       ),
       (labels) => {
@@ -382,18 +382,15 @@ test("dispatchBlockReason — returns null for issues that fail preconditions (m
   // (missing fields, not active, not routed, has blockers) - these are NOT dispatchable
   // but dispatchBlockReason returns null because it only reports capacity blocks
   fc.assert(
-    fc.property(
-      fc.constantFrom("id", "identifier", "title", "state"),
-      (field) => {
-        const issue = issueWith({ [field]: "" });
-        const settings = makeSettings();
-        const state = { runningCount: 0, claimedSlots: new Set<string>() };
-        // dispatchBlockReason returns null (no capacity block) but shouldDispatch returns false
-        const blocked = dispatchBlockReason(issue, settings, state);
-        const shouldDispatch = shouldDispatchIssue(issue, settings, state);
-        assert.equal(blocked, null);
-        assert.ok(!shouldDispatch);
-      },
-    ),
+    fc.property(fc.constantFrom("id", "identifier", "title", "state"), (field) => {
+      const issue = issueWith({ [field]: "" });
+      const settings = makeSettings();
+      const state = { runningCount: 0, claimedSlots: new Set<string>() };
+      // dispatchBlockReason returns null (no capacity block) but shouldDispatch returns false
+      const blocked = dispatchBlockReason(issue, settings, state);
+      const shouldDispatch = shouldDispatchIssue(issue, settings, state);
+      assert.equal(blocked, null);
+      assert.ok(!shouldDispatch);
+    }),
   );
 });

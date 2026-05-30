@@ -57,16 +57,17 @@ test("RUNTIME_EVENT_TYPES is a strict superset of AGENT_UPDATE_TYPES with no dup
 
   // Every expected runtime-specific type is present
   for (const t of expectedRuntimeSpecific) {
-    assert.ok(
-      runtimeOnly.includes(t),
-    );
+    assert.ok(runtimeOnly.includes(t));
   }
 
   // And there are no unexpected extras in the runtime-only set
   assert.equal(runtimeOnly.length, expectedRuntimeSpecific.length);
 
   // Total length must equal AGENT_UPDATE_TYPES + runtime-specific (since no duplicates)
-  assert.equal(RUNTIME_EVENT_TYPES.length, AGENT_UPDATE_TYPES.length + expectedRuntimeSpecific.length);
+  assert.equal(
+    RUNTIME_EVENT_TYPES.length,
+    AGENT_UPDATE_TYPES.length + expectedRuntimeSpecific.length,
+  );
 });
 
 test("RUNTIME_EVENT_TYPES starts with AGENT_UPDATE_TYPES in order then appends runtime types", () => {
@@ -419,11 +420,23 @@ test("RuntimeSnapshot arrays can hold heterogeneous entries simultaneously", () 
       },
     ],
     retrying: [
-      { issueId: "i2", identifier: "MT-2", attempt: 2, dueAt: "2026-05-26T00:05:00.000Z", error: "timeout" },
+      {
+        issueId: "i2",
+        identifier: "MT-2",
+        attempt: 2,
+        dueAt: "2026-05-26T00:05:00.000Z",
+        error: "timeout",
+      },
     ],
     blocked: [
       { issueId: "i3", identifier: "MT-3", state: "Todo", reason: "global_concurrency_cap" },
-      { issueId: "i4", identifier: "MT-4", state: "Todo", reason: "worker_host_capacity", workerHost: "w1" },
+      {
+        issueId: "i4",
+        identifier: "MT-4",
+        state: "Todo",
+        reason: "worker_host_capacity",
+        workerHost: "w1",
+      },
     ],
     runHistory: [
       {

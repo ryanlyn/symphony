@@ -129,7 +129,9 @@ test("typed fixture values are accepted by their respective runtime arrays", () 
   assert.ok(sessionKinds.includes(validSessionUpdate.kind));
 
   const issueStateTypes = ISSUE_STATE_TYPES as readonly string[];
-  assert.ok(issueFixture.stateType !== undefined && issueStateTypes.includes(issueFixture.stateType));
+  assert.ok(
+    issueFixture.stateType !== undefined && issueStateTypes.includes(issueFixture.stateType),
+  );
 });
 
 test("CODEX_APPROVAL_POLICY_NAMES covers all expected security policies", () => {

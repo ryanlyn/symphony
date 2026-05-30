@@ -168,9 +168,7 @@ describe("SessionUpdate type structure", () => {
     ];
     // Ensure all these are in SESSION_UPDATE_KINDS (runtime consistency)
     for (const k of turnKinds) {
-      assert.ok(
-        (SESSION_UPDATE_KINDS as readonly string[]).includes(k),
-      );
+      assert.ok((SESSION_UPDATE_KINDS as readonly string[]).includes(k));
     }
     // Verify usage_update is NOT one of TurnUpdate's kinds (it belongs to UsageUpdate)
     // This is enforced at compile time, but we verify the protocol constant segregation
@@ -188,9 +186,7 @@ describe("SessionUpdate type structure", () => {
     ];
     // Verify all are valid by checking they have kind fields that exist in SESSION_UPDATE_KINDS
     for (const u of updates) {
-      assert.ok(
-        (SESSION_UPDATE_KINDS as readonly string[]).includes(u.kind),
-      );
+      assert.ok((SESSION_UPDATE_KINDS as readonly string[]).includes(u.kind));
     }
     assert.equal(updates.length, 5);
   });
@@ -302,10 +298,7 @@ describe("UsageTotals", () => {
       secondsRunning: 1,
     };
     assert.equal(inconsistent.totalTokens, 999);
-    assert.notEqual(
-      inconsistent.totalTokens,
-      inconsistent.inputTokens + inconsistent.outputTokens,
-    );
+    assert.notEqual(inconsistent.totalTokens, inconsistent.inputTokens + inconsistent.outputTokens);
   });
 
   test("Partial<UsageTotals> allows any subset of fields", () => {

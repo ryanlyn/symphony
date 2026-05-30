@@ -316,7 +316,7 @@ test('reconciliationStopReason — unrouted via route label mismatch returns "un
   assert.equal(reconciliationStopReason(issue, settings), "unrouted");
 });
 
-test('reconciliationStopReason — blocked only fires for unstarted/todo state issues', () => {
+test("reconciliationStopReason — blocked only fires for unstarted/todo state issues", () => {
   // Issue is "In Progress" (started state) with blockers - issueHasOpenBlockers requires
   // stateType "unstarted" or state "todo", so this should NOT return "blocked".
   const issue = makeIssue({
