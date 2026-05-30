@@ -2,8 +2,11 @@
  * Testing sandbox for Symphony runtime.
  *
  * Provides chaos-monkey tracker clients, configurable fake agent runners,
- * scenario orchestration, and issue factory helpers -- all purely in-memory
+ * scenario orchestration, issue factory helpers, timed mutations, assertions,
+ * parametrization helpers, and a CLI interface -- all purely in-memory
  * with no file I/O.
+ *
+ * CLI usage: npx tsx demo/sandbox.ts <scenario-file.json>
  */
 
 import { parseConfig, normalizeIssue } from "@symphony/cli";
@@ -494,6 +497,10 @@ export interface SandboxScenario {
   waitForRuns?: boolean;
   /** Optional mutations to apply between ticks. Keyed by tick number (0-based). */
   mutations?: Record<number, (client: ChaosLinearClient) => void>;
+  /** Timed mutations: applied by time offset from scenario start. */
+  timedMutations?: TimedMutation[];
+  /** Assertions to check after scenario completes. */
+  assertions?: Assertion[];
 }
 
 /**
@@ -539,6 +546,17 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     }
   });
 
+  // Set up timed mutations
+  const timedMutationTimers: ReturnType<typeof setTimeout>[] = [];
+  if (scenario.timedMutations && scenario.timedMutations.length > 0) {
+    for (const tm of scenario.timedMutations) {
+      const timer = setTimeout(() => {
+        applyMutationDescriptor(client, tm.mutate);
+      }, tm.afterMs);
+      timedMutationTimers.push(timer);
+    }
+  }
+
   const ticks = scenario.pollTicks ?? 1;
   const waitForRuns = scenario.waitForRuns ?? true;
   let ticksExecuted = 0;
@@ -564,6 +582,10 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
       }
     }
   } finally {
+    // Clear timed mutation timers
+    for (const timer of timedMutationTimers) {
+      clearTimeout(timer);
+    }
     runtime.stop();
     unsubscribe();
   }
@@ -581,6 +603,547 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
 }
 
 // ---------------------------------------------------------------------------
+// Timed Mutations
+// ---------------------------------------------------------------------------
+
+/** Mutation descriptor types for JSON-serializable mutation definitions. */
+export type MutationDescriptor =
+  | { type: "add_issue"; issue: Record<string, unknown> }
+  | { type: "remove_issue"; issueId: string }
+  | { type: "change_state"; issueId: string; state: string; stateType?: IssueStateType }
+  | { type: "update_priority"; issueId: string; priority: number }
+  | { type: "add_blocker"; issueId: string; blockerId: string; blockerIdentifier?: string }
+  | { type: "remove_blocker"; issueId: string; blockerId: string }
+  | { type: "change_labels"; issueId: string; labels: string[] }
+  | { type: "set_chaos"; failureRate?: number; latencyMs?: number };
+
+/** A timed mutation: applied after a time offset from scenario start. */
+export interface TimedMutation {
+  /** Milliseconds after scenario start to apply this mutation. */
+  afterMs: number;
+  /** The mutation to apply. */
+  mutate: MutationDescriptor;
+}
+
+/** Apply a mutation descriptor to the chaos client. */
+function applyMutationDescriptor(client: ChaosLinearClient, descriptor: MutationDescriptor): void {
+  switch (descriptor.type) {
+    case "add_issue": {
+      const id = (descriptor.issue.id as string) ?? `dynamic-${Date.now()}`;
+      const identifier = (descriptor.issue.identifier as string) ?? `DYN-${Date.now()}`;
+      const issue = makeIssue(id, identifier, descriptor.issue);
+      client.addIssue(issue);
+      break;
+    }
+    case "remove_issue":
+      client.removeIssue(descriptor.issueId);
+      break;
+    case "change_state":
+      client.changeIssueState(descriptor.issueId, descriptor.state, descriptor.stateType);
+      break;
+    case "update_priority":
+      client.updateIssue(descriptor.issueId, { priority: descriptor.priority });
+      break;
+    case "add_blocker": {
+      const issues = client.getIssues();
+      const target = issues.find((i) => i.id === descriptor.issueId);
+      if (target) {
+        const newBlockers = [
+          ...target.blockers,
+          { id: descriptor.blockerId, identifier: descriptor.blockerIdentifier ?? descriptor.blockerId, state: "Todo" },
+        ];
+        client.updateIssue(descriptor.issueId, { blockers: newBlockers });
+      }
+      break;
+    }
+    case "remove_blocker": {
+      const issues2 = client.getIssues();
+      const target2 = issues2.find((i) => i.id === descriptor.issueId);
+      if (target2) {
+        const filtered = target2.blockers.filter((b) => b.id !== descriptor.blockerId);
+        client.updateIssue(descriptor.issueId, { blockers: filtered });
+      }
+      break;
+    }
+    case "change_labels":
+      client.updateIssue(descriptor.issueId, { labels: descriptor.labels });
+      break;
+    case "set_chaos":
+      client.setChaosConfig({
+        failureRate: descriptor.failureRate,
+        latencyMs: descriptor.latencyMs,
+      });
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Assertion Framework
+// ---------------------------------------------------------------------------
+
+/** Assertion types that can be checked against a SandboxResult. */
+export type Assertion =
+  | { type: "running_count"; expected: number }
+  | { type: "not_running"; issueId: string }
+  | { type: "is_running"; issueId: string }
+  | { type: "event_occurred"; eventType: string; messageContains?: string }
+  | { type: "event_not_occurred"; eventType: string; messageContains?: string }
+  | { type: "retry_count"; issueId: string; minAttempts: number }
+  | { type: "usage_bounds"; maxInputTokens?: number; maxOutputTokens?: number; maxTotalTokens?: number }
+  | { type: "final_state"; issueId: string; expectedState: string }
+  | { type: "dispatch_order"; issueIds: string[] }
+  | { type: "no_errors" }
+  | { type: "blocker_respected"; blockedIssueId: string; blockerIssueId: string }
+  | { type: "concurrency_cap"; maxConcurrent: number };
+
+/** Result of a single assertion check. */
+export interface AssertionResult {
+  assertion: Assertion;
+  passed: boolean;
+  message: string;
+}
+
+/** Check all assertions against a SandboxResult. */
+export function checkAssertions(result: SandboxResult, assertions: Assertion[]): AssertionResult[] {
+  return assertions.map((assertion) => checkSingleAssertion(result, assertion));
+}
+
+function checkSingleAssertion(result: SandboxResult, assertion: Assertion): AssertionResult {
+  switch (assertion.type) {
+    case "running_count": {
+      const actual = result.finalSnapshot.running.length;
+      const passed = actual === assertion.expected;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `running_count: ${actual} === ${assertion.expected}`
+          : `running_count: expected ${assertion.expected}, got ${actual}`,
+      };
+    }
+
+    case "not_running": {
+      const isRunning = result.finalSnapshot.running.some((r) => r.issueId === assertion.issueId);
+      const passed = !isRunning;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `not_running: ${assertion.issueId} is not running`
+          : `not_running: ${assertion.issueId} is still running`,
+      };
+    }
+
+    case "is_running": {
+      const isRunning = result.finalSnapshot.running.some((r) => r.issueId === assertion.issueId);
+      return {
+        assertion,
+        passed: isRunning,
+        message: isRunning
+          ? `is_running: ${assertion.issueId} is running`
+          : `is_running: ${assertion.issueId} is not running`,
+      };
+    }
+
+    case "event_occurred": {
+      const found = result.events.some(
+        (e) =>
+          e.type === assertion.eventType &&
+          (!assertion.messageContains || e.message.includes(assertion.messageContains)),
+      );
+      return {
+        assertion,
+        passed: found,
+        message: found
+          ? `event_occurred: found ${assertion.eventType}`
+          : `event_occurred: ${assertion.eventType} not found${assertion.messageContains ? ` (containing "${assertion.messageContains}")` : ""}`,
+      };
+    }
+
+    case "event_not_occurred": {
+      const found = result.events.some(
+        (e) =>
+          e.type === assertion.eventType &&
+          (!assertion.messageContains || e.message.includes(assertion.messageContains)),
+      );
+      return {
+        assertion,
+        passed: !found,
+        message: !found
+          ? `event_not_occurred: ${assertion.eventType} correctly absent`
+          : `event_not_occurred: ${assertion.eventType} unexpectedly found`,
+      };
+    }
+
+    case "retry_count": {
+      const retryEvents = result.events.filter(
+        (e) => e.type === "run_failed" && e.message.includes(assertion.issueId),
+      );
+      const retryEntries = result.finalSnapshot.retrying.filter(
+        (r) => r.issueId === assertion.issueId,
+      );
+      const maxAttempt = Math.max(
+        retryEvents.length,
+        ...retryEntries.map((r) => r.attempt),
+        0,
+      );
+      const passed = maxAttempt >= assertion.minAttempts;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `retry_count: ${assertion.issueId} retried ${maxAttempt} times (>= ${assertion.minAttempts})`
+          : `retry_count: ${assertion.issueId} retried ${maxAttempt} times (expected >= ${assertion.minAttempts})`,
+      };
+    }
+
+    case "usage_bounds": {
+      const usage = result.finalSnapshot.usageTotals;
+      const checks: string[] = [];
+      let passed = true;
+      if (assertion.maxInputTokens !== undefined && (usage.inputTokens ?? 0) > assertion.maxInputTokens) {
+        passed = false;
+        checks.push(`inputTokens ${usage.inputTokens} > ${assertion.maxInputTokens}`);
+      }
+      if (assertion.maxOutputTokens !== undefined && (usage.outputTokens ?? 0) > assertion.maxOutputTokens) {
+        passed = false;
+        checks.push(`outputTokens ${usage.outputTokens} > ${assertion.maxOutputTokens}`);
+      }
+      if (assertion.maxTotalTokens !== undefined && (usage.totalTokens ?? 0) > assertion.maxTotalTokens) {
+        passed = false;
+        checks.push(`totalTokens ${usage.totalTokens} > ${assertion.maxTotalTokens}`);
+      }
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `usage_bounds: within limits`
+          : `usage_bounds: exceeded - ${checks.join(", ")}`,
+      };
+    }
+
+    case "final_state": {
+      // Check run history for the issue's final state
+      const historyEntries = result.finalSnapshot.runHistory.filter(
+        (h) => h.issueId === assertion.issueId,
+      );
+      const lastEntry = historyEntries[historyEntries.length - 1];
+      const actualState = lastEntry?.state ?? null;
+      const passed = actualState === assertion.expectedState;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `final_state: ${assertion.issueId} in state "${assertion.expectedState}"`
+          : `final_state: ${assertion.issueId} expected "${assertion.expectedState}", got "${actualState}"`,
+      };
+    }
+
+    case "dispatch_order": {
+      // Extract dispatch order from run_started events
+      const startedEvents = result.events.filter((e) => e.type === "run_started");
+      const dispatchedIds: string[] = [];
+      for (const event of startedEvents) {
+        // Message format: "IDENTIFIER slot=N" - extract the identifier
+        const identifier = event.message.split(" ")[0];
+        // Find issue ID by identifier from run history
+        const histEntry = result.finalSnapshot.runHistory.find(
+          (h) => h.issueIdentifier === identifier,
+        );
+        if (histEntry) {
+          dispatchedIds.push(histEntry.issueId);
+        }
+      }
+      // Check that the expected order is a subsequence of actual dispatches
+      let orderIdx = 0;
+      for (const id of dispatchedIds) {
+        if (orderIdx < assertion.issueIds.length && id === assertion.issueIds[orderIdx]) {
+          orderIdx++;
+        }
+      }
+      const passed = orderIdx === assertion.issueIds.length;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `dispatch_order: correct order observed`
+          : `dispatch_order: expected [${assertion.issueIds.join(", ")}], dispatched [${dispatchedIds.join(", ")}]`,
+      };
+    }
+
+    case "no_errors": {
+      const passed = result.errors.length === 0;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `no_errors: no errors occurred`
+          : `no_errors: ${result.errors.length} error(s) - ${result.errors.map((e) => e.message).join("; ")}`,
+      };
+    }
+
+    case "blocker_respected": {
+      // The blocked issue should not have started before the blocker completed
+      const blockerCompleted = result.events.find(
+        (e) =>
+          e.type === "run_completed" &&
+          e.message.includes(assertion.blockerIssueId),
+      );
+      const blockedStarted = result.events.find(
+        (e) =>
+          e.type === "run_started" &&
+          e.message.includes(assertion.blockedIssueId),
+      );
+      if (!blockedStarted) {
+        // Blocked issue never started - that's fine, blocker respected
+        return {
+          assertion,
+          passed: true,
+          message: `blocker_respected: ${assertion.blockedIssueId} never started (blocker respected)`,
+        };
+      }
+      if (!blockerCompleted) {
+        // Blocker never completed but blocked started -> violation
+        return {
+          assertion,
+          passed: false,
+          message: `blocker_respected: ${assertion.blockedIssueId} started but blocker ${assertion.blockerIssueId} never completed`,
+        };
+      }
+      const passed = new Date(blockerCompleted.at) <= new Date(blockedStarted.at);
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `blocker_respected: ${assertion.blockerIssueId} completed before ${assertion.blockedIssueId} started`
+          : `blocker_respected: ${assertion.blockedIssueId} started before ${assertion.blockerIssueId} completed`,
+      };
+    }
+
+    case "concurrency_cap": {
+      // Check that no snapshot had more running issues than the cap
+      let maxConcurrent = 0;
+      for (const snapshot of result.snapshots) {
+        maxConcurrent = Math.max(maxConcurrent, snapshot.running.length);
+      }
+      const passed = maxConcurrent <= assertion.maxConcurrent;
+      return {
+        assertion,
+        passed,
+        message: passed
+          ? `concurrency_cap: max concurrent ${maxConcurrent} <= ${assertion.maxConcurrent}`
+          : `concurrency_cap: max concurrent ${maxConcurrent} > ${assertion.maxConcurrent}`,
+      };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Parametrization Helpers
+// ---------------------------------------------------------------------------
+
+/** Parameter space definition for scenario generation. */
+export interface ParamSpace {
+  /** Range of issue counts to try. */
+  issueCounts?: number[];
+  /** Priority values to vary. */
+  priorities?: number[];
+  /** Chaos failure rates to try. */
+  chaosRates?: number[];
+  /** Tick counts to try. */
+  tickCounts?: number[];
+  /** Tick delay values (ms). */
+  tickDelays?: number[];
+  /** Max concurrency settings to try. */
+  concurrencyLimits?: number[];
+  /** Latency values (ms) for runner or chaos. */
+  latencies?: number[];
+}
+
+/** A single parameter combination from crossProduct. */
+export interface ParamCombination {
+  issueCount?: number;
+  priority?: number;
+  chaosRate?: number;
+  tickCount?: number;
+  tickDelay?: number;
+  concurrencyLimit?: number;
+  latency?: number;
+}
+
+/**
+ * Generate all combinations of parameter values (cross-product).
+ * Each key in ParamSpace produces one dimension; yields all combinations.
+ */
+export function crossProduct(space: ParamSpace): ParamCombination[] {
+  const keys = Object.keys(space) as (keyof ParamSpace)[];
+  const paramToField: Record<keyof ParamSpace, keyof ParamCombination> = {
+    issueCounts: "issueCount",
+    priorities: "priority",
+    chaosRates: "chaosRate",
+    tickCounts: "tickCount",
+    tickDelays: "tickDelay",
+    concurrencyLimits: "concurrencyLimit",
+    latencies: "latency",
+  };
+
+  // Filter to keys that have values
+  const activeKeys = keys.filter((k) => space[k] && space[k]!.length > 0);
+
+  if (activeKeys.length === 0) return [{}];
+
+  const results: ParamCombination[] = [];
+
+  function recurse(idx: number, current: ParamCombination): void {
+    if (idx >= activeKeys.length) {
+      results.push({ ...current });
+      return;
+    }
+    const key = activeKeys[idx]!;
+    const values = space[key]!;
+    const field = paramToField[key];
+    for (const value of values) {
+      (current as Record<string, number>)[field] = value;
+      recurse(idx + 1, current);
+    }
+    delete (current as Record<string, number | undefined>)[field];
+  }
+
+  recurse(0, {});
+  return results;
+}
+
+/**
+ * Pick a random sample of N items from an array.
+ * Uses Fisher-Yates partial shuffle for efficiency.
+ */
+export function randomSample<T>(items: T[], n: number): T[] {
+  const copy = [...items];
+  const count = Math.min(n, copy.length);
+  for (let i = 0; i < count; i++) {
+    const j = i + Math.floor(Math.random() * (copy.length - i));
+    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+  }
+  return copy.slice(0, count);
+}
+
+/**
+ * Generate N scenario variants from a base scenario by varying parameters.
+ * Each ParamCombination produces one scenario variant.
+ */
+export function generateScenarioVariants(
+  base: Omit<SandboxScenario, "issues"> & { issues?: Issue[] },
+  params: ParamCombination[],
+): SandboxScenario[] {
+  return params.map((combo) => {
+    const issueCount = combo.issueCount ?? (base.issues?.length ?? 3);
+    const issues: Issue[] = [];
+    for (let i = 0; i < issueCount; i++) {
+      issues.push(
+        makeIssue(`gen-${i}`, `GEN-${i}`, {
+          priority: combo.priority ?? 2,
+        }),
+      );
+    }
+
+    const settingsOverrides: Record<string, unknown> = { ...(base.settingsOverrides ?? {}) };
+    if (combo.concurrencyLimit !== undefined) {
+      settingsOverrides.agent = {
+        ...((settingsOverrides.agent as Record<string, unknown>) ?? {}),
+        maxConcurrentAgents: combo.concurrencyLimit,
+      };
+    }
+
+    const chaosConfig: ChaosConfig = { ...(base.chaosConfig ?? {}) };
+    if (combo.chaosRate !== undefined) {
+      chaosConfig.failureRate = combo.chaosRate;
+    }
+    if (combo.latency !== undefined) {
+      chaosConfig.latencyMs = combo.latency;
+    }
+
+    const runnerConfig: FakeRunnerConfig = { ...(base.runnerConfig ?? {}) };
+    if (combo.latency !== undefined && runnerConfig.defaultBehavior) {
+      runnerConfig.defaultBehavior = {
+        ...runnerConfig.defaultBehavior,
+        latencyPerTurnMs: combo.latency,
+      };
+    }
+
+    return {
+      ...base,
+      issues,
+      settingsOverrides,
+      chaosConfig,
+      runnerConfig,
+      pollTicks: combo.tickCount ?? base.pollTicks ?? 1,
+      tickDelayMs: combo.tickDelay ?? base.tickDelayMs ?? 0,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// JSON Scenario Parsing (for CLI)
+// ---------------------------------------------------------------------------
+
+/** JSON-serializable scenario definition for the CLI. */
+export interface JsonScenarioDefinition {
+  issues: Array<Record<string, unknown>>;
+  settingsOverrides?: Record<string, unknown>;
+  chaosConfig?: { failureRate?: number; latencyMs?: number; intermittentErrorIds?: string[] };
+  runnerConfig?: {
+    defaultBehavior?: FakeRunnerIssueBehavior;
+    byId?: Record<string, FakeRunnerIssueBehavior>;
+  };
+  pollTicks?: number;
+  tickDelayMs?: number;
+  waitForRuns?: boolean;
+  timedMutations?: Array<{ afterMs: number; mutate: MutationDescriptor }>;
+  assertions?: Assertion[];
+}
+
+/** Parse a JSON scenario definition into a SandboxScenario. */
+export function parseJsonScenario(def: JsonScenarioDefinition): SandboxScenario {
+  const issues = def.issues.map((raw) => {
+    const id = (raw.id as string) ?? `issue-${Math.random().toString(36).slice(2, 8)}`;
+    const identifier = (raw.identifier as string) ?? id.toUpperCase();
+    return makeIssue(id, identifier, raw);
+  });
+
+  const chaosConfig: ChaosConfig = {};
+  if (def.chaosConfig) {
+    chaosConfig.failureRate = def.chaosConfig.failureRate;
+    chaosConfig.latencyMs = def.chaosConfig.latencyMs;
+    if (def.chaosConfig.intermittentErrorIds) {
+      chaosConfig.intermittentErrorIds = new Set(def.chaosConfig.intermittentErrorIds);
+    }
+  }
+
+  const runnerConfig: FakeRunnerConfig = {};
+  if (def.runnerConfig) {
+    runnerConfig.defaultBehavior = def.runnerConfig.defaultBehavior;
+    runnerConfig.byId = def.runnerConfig.byId;
+  }
+
+  const timedMutations: TimedMutation[] = (def.timedMutations ?? []).map((tm) => ({
+    afterMs: tm.afterMs,
+    mutate: tm.mutate,
+  }));
+
+  return {
+    issues,
+    settingsOverrides: def.settingsOverrides,
+    chaosConfig,
+    runnerConfig,
+    pollTicks: def.pollTicks,
+    tickDelayMs: def.tickDelayMs,
+    waitForRuns: def.waitForRuns,
+    timedMutations,
+    assertions: def.assertions,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Internal utilities
 // ---------------------------------------------------------------------------
 
@@ -590,4 +1153,116 @@ function cloneIssue(issue: Issue): Issue {
     labels: [...issue.labels],
     blockers: issue.blockers.map((b) => ({ ...b })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// CLI Entry Point
+// ---------------------------------------------------------------------------
+
+/** Serialize SandboxResult to a JSON-friendly format (errors -> strings). */
+function serializeResult(result: SandboxResult): Record<string, unknown> {
+  return {
+    ticksExecuted: result.ticksExecuted,
+    clientCallCount: result.clientCallCount,
+    events: result.events,
+    errors: result.errors.map((e) => ({ message: e.message })),
+    finalSnapshot: result.finalSnapshot,
+    snapshotCount: result.snapshots.length,
+  };
+}
+
+async function cliMain(): Promise<void> {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0) {
+    process.stderr.write("Usage: npx tsx demo/sandbox.ts <scenario-file.json>\n");
+    process.stderr.write("       npx tsx demo/sandbox.ts --inline '<json>'\n");
+    process.exit(1);
+  }
+
+  let rawJson: string;
+
+  if (args[0] === "--inline") {
+    if (!args[1]) {
+      process.stderr.write("Error: --inline requires a JSON argument\n");
+      process.exit(1);
+    }
+    rawJson = args[1];
+    process.stderr.write(`Running inline scenario...\n`);
+  } else {
+    const filePath = args[0]!;
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+
+    const resolved = path.resolve(filePath);
+    if (!fs.existsSync(resolved)) {
+      process.stderr.write(`Error: file not found: ${resolved}\n`);
+      process.exit(1);
+    }
+
+    try {
+      rawJson = fs.readFileSync(resolved, "utf-8");
+    } catch (err) {
+      process.stderr.write(`Error reading file: ${err}\n`);
+      process.exit(1);
+    }
+    process.stderr.write(`Running scenario from ${resolved}...\n`);
+  }
+
+  let scenarioDef: JsonScenarioDefinition;
+  try {
+    scenarioDef = JSON.parse(rawJson) as JsonScenarioDefinition;
+  } catch (err) {
+    process.stderr.write(`Error parsing JSON: ${err}\n`);
+    process.exit(1);
+  }
+
+  const scenario = parseJsonScenario(scenarioDef);
+
+  process.stderr.write(`  Issues: ${scenario.issues.length}, Ticks: ${scenario.pollTicks ?? 1}\n`);
+
+  const result = await runScenario(scenario);
+
+  // Check assertions if present
+  const assertions = scenario.assertions ?? [];
+  const assertionResults = assertions.length > 0 ? checkAssertions(result, assertions) : [];
+
+  const allPassed = assertionResults.every((r) => r.passed);
+  const output = {
+    success: assertions.length === 0 || allPassed,
+    result: serializeResult(result),
+    assertions: assertionResults.map((r) => ({
+      type: r.assertion.type,
+      passed: r.passed,
+      message: r.message,
+    })),
+  };
+
+  process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+
+  if (!output.success) {
+    const failCount = assertionResults.filter((r) => !r.passed).length;
+    process.stderr.write(`FAILED: ${failCount}/${assertionResults.length} assertion(s) failed\n`);
+    process.exit(1);
+  } else {
+    process.stderr.write(
+      assertions.length > 0
+        ? `PASSED: all ${assertionResults.length} assertion(s) passed\n`
+        : `DONE: scenario completed (no assertions defined)\n`,
+    );
+    process.exit(0);
+  }
+}
+
+// Run CLI when executed directly (not imported as a module)
+const isDirectExecution =
+  typeof process !== "undefined" &&
+  process.argv[1] &&
+  (process.argv[1].endsWith("sandbox.ts") || process.argv[1].endsWith("sandbox.js"));
+
+if (isDirectExecution) {
+  cliMain().catch((err) => {
+    process.stderr.write(`Fatal error: ${err}\n`);
+    process.exit(1);
+  });
 }
