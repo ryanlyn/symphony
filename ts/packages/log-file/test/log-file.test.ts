@@ -106,5 +106,64 @@ test("log file configuration warns without crashing when the sink is unavailable
   const blocker = path.join(root, "blocked");
   await fs.writeFile(blocker, "not a directory");
 
-  await configureLogFile(path.join(blocker, "symphony.log"));
+  const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    await configureLogFile(path.join(blocker, "symphony.log"));
+    assert.ok(stderrSpy.mock.calls.length > 0);
+    const warning = String(stderrSpy.mock.calls[0]?.[0]);
+    assert.match(warning, /log_file_unavailable/);
+    assert.match(warning, /blocked/);
+  } finally {
+    stderrSpy.mockRestore();
+  }
+});
+
+test("appendLogEvent without prior configureLogFile uses default logger path", async () => {
+  const root = await tempDir("symphony-ts-log-file-coldstart");
+  const logFile = path.join(root, "log", "symphony.log");
+
+  await appendLogEvent(logFile, {
+    at: "2026-05-06T12:00:00.000Z",
+    event: "cold_start_event",
+    message: "hello from cold start",
+  });
+
+  await vi.waitFor(
+    async () => {
+      const content = await fs.readFile(logFile, "utf8");
+      assert.match(content, /"event":"cold_start_event"/);
+      assert.match(content, /"message":"hello from cold start"/);
+    },
+    { timeout: 2_000, interval: 5 },
+  );
+
+  // Verify the symlink was created as part of the default logger setup
+  assert.equal((await fs.lstat(logFile)).isSymbolicLink(), true);
+});
+
+test("appendLogEvent emits stderr warning when writing fails after configuration", async () => {
+  const root = await tempDir("symphony-ts-log-file-write-fail");
+  const logFile = path.join(root, "log", "symphony.log");
+  await fs.mkdir(path.dirname(logFile), { recursive: true });
+
+  // Use a path nested under a file (not a directory) to force mkdir to fail
+  // when the default logger tries to create the directory.
+  const blocker = path.join(root, "nope");
+  await fs.writeFile(blocker, "not a directory");
+  const badLogFile = path.join(blocker, "sub", "symphony.log");
+
+  const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  try {
+    // appendLogEvent on an impossible path should warn to stderr, not throw
+    await appendLogEvent(badLogFile, {
+      event: "should_fail",
+      message: "cannot write here",
+    });
+    assert.ok(stderrSpy.mock.calls.length > 0);
+    const warning = String(stderrSpy.mock.calls[0]?.[0]);
+    assert.match(warning, /log_file_unavailable/);
+    assert.match(warning, /nope/);
+  } finally {
+    stderrSpy.mockRestore();
+  }
 });
