@@ -27,6 +27,39 @@ const COMMENTS_MARKER = "<!-- symphony:comments -->";
  */
 const ID_PATTERN = /^BOARD-\d+$/;
 
+/**
+ * Module-level (process-wide) lock chain keyed by an absolute filesystem path. Because
+ * {@link BoardStore} is rebuilt per MCP call (see storeFor), the mutex MUST live at module
+ * scope so every instance pointing at the same board file/dir shares the same chain.
+ *
+ * Each key maps to a promise that resolves when the currently-queued critical sections for
+ * that key have finished. {@link withLock} appends its work to the chain so read-modify-write
+ * cycles on the same file (or id allocation in the same dir) serialize instead of interleaving
+ * and losing an update. This is IN-PROCESS serialization only: it covers concurrent agents and
+ * ensemble slots inside the single Symphony daemon, but assumes no external process is editing
+ * the board files concurrently (that is out of scope - see ts/README.md).
+ */
+const pathLocks = new Map<string, Promise<unknown>>();
+
+async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prior = pathLocks.get(key) ?? Promise.resolve();
+  // Run fn after the prior holder settles. Always continue (.then with both handlers) so one
+  // critical section's failure cannot poison the next caller's turn.
+  const run = prior.then(fn, fn);
+  // The tail is what later callers wait on; its settled value/error is intentionally discarded.
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  pathLocks.set(key, tail);
+  try {
+    return await run;
+  } finally {
+    // Once this is the last queued work for the key, drop it so the Map cannot grow unbounded.
+    if (pathLocks.get(key) === tail) pathLocks.delete(key);
+  }
+}
+
 /** A board file that {@link BoardStore.list} could not parse, surfaced rather than hidden. */
 export interface SkippedBoardFile {
   /** The id derived from the filename (e.g. "BOARD-2"), even if its contents are invalid. */
@@ -91,18 +124,26 @@ export class BoardStore {
     // that parse() rejects as "missing required 'status'", which would silently drop the issue
     // from list(). Failing fast here leaves the file (and its prior status) intact.
     if (trimmed === "") throw new Error(`board issue ${id} status must not be empty`);
-    const parsed = await this.parse(id);
-    parsed.status = trimmed;
-    await this.write(id, parsed);
-    return this.read(id);
+    // Serialize the read-modify-write per target file (module-level lock) so a concurrent
+    // appendComment/updateStatus on the same issue cannot read-then-clobber and lose an update.
+    return withLock(this.filePath(id), async () => {
+      const parsed = await this.parse(id);
+      parsed.status = trimmed;
+      await this.write(id, parsed);
+      return this.read(id);
+    });
   }
 
   async appendComment(id: string, body: string, now: () => Date = () => new Date()): Promise<void> {
     assertValidId(id);
-    const parsed = await this.parse(id);
-    const line = `- ${now().toISOString()} agent: ${body}`;
-    parsed.comments = parsed.comments ? `${parsed.comments}\n${line}` : line;
-    await this.write(id, parsed);
+    // Same per-file lock as updateStatus: the parse -> append -> write cycle must be atomic with
+    // respect to other mutations of this issue, otherwise concurrent comments overwrite each other.
+    await withLock(this.filePath(id), async () => {
+      const parsed = await this.parse(id);
+      const line = `- ${now().toISOString()} agent: ${body}`;
+      parsed.comments = parsed.comments ? `${parsed.comments}\n${line}` : line;
+      await this.write(id, parsed);
+    });
   }
 
   async create(input: { title: string; body?: string; status?: string }): Promise<Issue> {
@@ -115,22 +156,28 @@ export class BoardStore {
     };
     await fs.mkdir(this.dir, { recursive: true });
     const contents = this.render(parsed);
-    // Allocate an id with an exclusive create so two racing creates can never pick the
-    // same BOARD-<n>. On collision (EEXIST) we recompute the next id and retry within a
-    // bounded loop rather than blindly overwriting an existing issue file.
-    const attempts = 64;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const id = await this.nextId();
-      const target = this.filePath(id);
-      try {
-        await fs.writeFile(target, contents, { encoding: "utf8", flag: "wx" });
-        return await this.read(id);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
-        throw err;
+    // Serialize id allocation per board DIRECTORY under the same module-level lock so concurrent
+    // creates in one daemon do not all scan the same nextId in lockstep. The exclusive "wx" write
+    // below is still the authoritative guard (it also defends against any external writer), so the
+    // lock is an optimization that also keeps the bounded retry loop from churning.
+    return withLock(path.resolve(this.dir), async () => {
+      // Allocate an id with an exclusive create so two racing creates can never pick the
+      // same BOARD-<n>. On collision (EEXIST) we recompute the next id and retry within a
+      // bounded loop rather than blindly overwriting an existing issue file.
+      const attempts = 64;
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const id = await this.nextId();
+        const target = this.filePath(id);
+        try {
+          await fs.writeFile(target, contents, { encoding: "utf8", flag: "wx" });
+          return await this.read(id);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+          throw err;
+        }
       }
-    }
-    throw new Error(`failed to allocate a board id after ${attempts} attempts`);
+      throw new Error(`failed to allocate a board id after ${attempts} attempts`);
+    });
   }
 
   private filePath(id: string): string {

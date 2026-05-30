@@ -190,6 +190,11 @@ Agent write tools for `kind: local`:
 - `local_create_issue` - create a new board issue for out-of-scope follow-up work (args: `title`,
   optional `body`, optional `status`).
 
+Concurrent writes (multiple agents or ensemble slots) to the same board file are serialized
+in-process so a status change and comments are never lost. This assumes a single Symphony daemon
+owns the board; editing the `BOARD-<n>.md` files from another process at the same time is out of
+scope.
+
 To seed a board so you can try `kind: local` immediately, use the demo seeder, which writes
 sample `BOARD-<n>.md` files through the same `BoardStore` the running tracker uses:
 

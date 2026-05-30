@@ -288,6 +288,34 @@ test("concurrent create calls allocate unique ids without losing writes", async 
   }
 });
 
+test("concurrent updateStatus and appendComment on one issue lose nothing (shared module lock)", async () => {
+  const dir = await tempBoard();
+  // Seed the issue with one store, then mutate it through TWO separate BoardStore instances
+  // pointing at the same dir. The lock must be module-level/shared, not per-instance, for the
+  // races below to serialize - a per-instance lock would let them interleave and lose updates.
+  await new BoardStore(dir).create({ title: "Race", status: "Todo" });
+  const a = new BoardStore(dir);
+  const b = new BoardStore(dir);
+
+  const comments = Array.from({ length: 8 }, (_unused, i) => `comment ${i}`);
+  // Fire one status change plus many comments at once, split across both instances, against the
+  // same BOARD-1 file. Without serialization these read-modify-write cycles clobber each other.
+  await Promise.all([
+    a.updateStatus("BOARD-1", "In Progress"),
+    ...comments.map((c, i) => (i % 2 === 0 ? a : b).appendComment("BOARD-1", c)),
+  ]);
+
+  const file = await readFile(path.join(dir, "BOARD-1.md"), "utf8");
+  // The status change survived...
+  assert.match(file, /status: In Progress/);
+  // ...and every comment is present - no lost update.
+  for (const c of comments) assert.match(file, new RegExp(`agent: ${c}\\b`));
+
+  // Round-trip through a fresh store to confirm the final file is still well-formed.
+  const issue = (await new BoardStore(dir).getByIds(["BOARD-1"]))[0]!;
+  assert.equal(issue.state, "In Progress");
+});
+
 test("CRLF board files parse with clean status and description", async () => {
   const dir = await tempBoard();
   const raw = ["---", "status: In Progress", "---", "", "# Title", "", "Body line"].join("\r\n");
