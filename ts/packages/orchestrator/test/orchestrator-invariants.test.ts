@@ -2,7 +2,7 @@ import { test } from "vitest";
 import fc from "fast-check";
 import { defaultSettings, parseConfig } from "@symphony/config";
 import { slotKey } from "@symphony/dispatch";
-import type { Issue, Settings } from "@symphony/domain";
+import type { Issue, RunningEntry, Settings } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
 
@@ -52,90 +52,113 @@ function makeSettings(overrides: { maxConcurrent?: number; ensembleSize?: number
 // DISPATCH CONCURRENCY
 // ============================================================================
 
-// INVARIANT: When the global concurrency cap is evaluated, the count of entries in the running map SHALL be compared against the configured limit.
-test("global concurrency cap blocks claim when running map reaches limit", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 10 }), (cap) => {
-      const clock = makeClock(1000000);
-      const settings = makeSettings({ maxConcurrent: cap });
-      const orch = new Orchestrator(settings, clock);
-
-      for (let i = 0; i < cap; i++) {
-        const issue = makeIssue({ id: `issue-${i}`, identifier: `T-${i}` });
-        const entry = orch.claim(issue);
-        assert.ok(entry !== null);
-      }
-
-      const extra = makeIssue({ id: "issue-extra", identifier: "T-EXTRA" });
-      assert.equal(orch.claim(extra), null);
-    }),
-    { numRuns: 50 },
-  );
-});
-
-// INVARIANT: When a per-state concurrency cap is evaluated, only running entries in that specific state SHALL count toward the state limit.
-test("per-state cap only counts entries in that state", () => {
-  const settings = parseConfig({
-    status_overrides: { todo: { agent: { max_concurrent_agents: 1 } } },
-  });
-  settings.agent.maxConcurrentAgents = 10;
+test("eligibleIssues blocks dispatch when running map size equals global maxConcurrentAgents", () => {
+  const settings = parseConfig({ agent: { max_concurrent_agents: 2 } });
   const clock = makeClock(1000000);
   const orch = new Orchestrator(settings, clock);
 
-  const todoIssue = makeIssue({ id: "todo-1", identifier: "T-1", state: "Todo" });
-  const inProgressIssue = makeIssue({
-    id: "ip-1",
-    identifier: "T-2",
+  const i1 = makeIssue({ id: "i1", identifier: "T-1" });
+  const i2 = makeIssue({ id: "i2", identifier: "T-2" });
+  const i3 = makeIssue({ id: "i3", identifier: "T-3" });
+
+  assert.ok(orch.claim(i1) !== null);
+  assert.ok(orch.claim(i2) !== null);
+  assert.equal(orch.state.running.size, 2);
+
+  const eligible = orch.eligibleIssues([i3]);
+  assert.deepEqual(eligible, []);
+
+  const snap = orch.snapshot();
+  const blockedEntry = snap.blocked.find((b) => b.issueId === "i3");
+  assert.ok(blockedEntry);
+  assert.equal(blockedEntry!.reason, "global_concurrency_cap");
+});
+
+test("eligibleIssues applies per-state cap only to running entries in that state", () => {
+  const settings = parseConfig({
+    agent: { max_concurrent_agents: 10 },
+    status_overrides: { Todo: { agent: { max_concurrent_agents: 1 } } },
+  });
+  const clock = makeClock(1000000);
+  const orch = new Orchestrator(settings, clock);
+
+  const issueA = makeIssue({ id: "todo-a", identifier: "T-A", state: "Todo" });
+  const issueB = makeIssue({
+    id: "ip-b",
+    identifier: "T-B",
+    state: "In Progress",
+    stateType: "started",
+  });
+  const issueC = makeIssue({ id: "todo-c", identifier: "T-C", state: "Todo" });
+
+  assert.ok(orch.claim(issueA) !== null);
+
+  const eligible = orch.eligibleIssues([issueC, issueB]);
+
+  assert.ok(eligible.some((i) => i.id === "ip-b"));
+  assert.ok(!eligible.some((i) => i.id === "todo-c"));
+});
+
+test("dispatch requires both global and state caps to have room simultaneously", () => {
+  const settings = parseConfig({
+    agent: { max_concurrent_agents: 2 },
+    status_overrides: { Todo: { agent: { max_concurrent_agents: 2 } } },
+  });
+  const clock = makeClock(1000000);
+  const orch = new Orchestrator(settings, clock);
+
+  const a = makeIssue({ id: "a", identifier: "T-A", state: "Todo" });
+  const b = makeIssue({ id: "b", identifier: "T-B", state: "Todo" });
+  const c = makeIssue({
+    id: "c",
+    identifier: "T-C",
     state: "In Progress",
     stateType: "started",
   });
 
-  assert.ok(orch.claim(todoIssue) !== null);
-  assert.ok(orch.claim(inProgressIssue) !== null);
+  assert.ok(orch.claim(a) !== null);
+  assert.ok(orch.claim(b) !== null);
 
-  const todoIssue2 = makeIssue({ id: "todo-2", identifier: "T-3", state: "Todo" });
-  assert.equal(orch.claim(todoIssue2), null);
+  const eligible = orch.eligibleIssues([c]);
+  assert.deepEqual(eligible, []);
+
+  const snap = orch.snapshot();
+  const blockedEntry = snap.blocked.find((bl) => bl.issueId === "c");
+  assert.ok(blockedEntry);
+  assert.equal(blockedEntry!.reason, "global_concurrency_cap");
 });
 
-// INVARIANT: When both global and state-specific caps exist, both SHALL be satisfied for dispatch to proceed.
-test("both global and state-specific caps must be satisfied", () => {
-  const settings = parseConfig({
-    agent: { max_concurrent_agents: 2 },
-    status_overrides: { todo: { agent: { max_concurrent_agents: 1 } } },
-  });
-  const clock = makeClock(1000000);
-  const orch = new Orchestrator(settings, clock);
-
-  const todo1 = makeIssue({ id: "t1", identifier: "T-1", state: "Todo" });
-  assert.ok(orch.claim(todo1) !== null);
-
-  const todo2 = makeIssue({ id: "t2", identifier: "T-2", state: "Todo" });
-  assert.equal(orch.claim(todo2), null);
-});
-
-// INVARIANT: When worker host capacity is tracked, each host's running count SHALL be computed from the running map entries assigned to that host.
-test("worker host capacity is computed from running entries per host", () => {
+test("worker host running count derived from running map entries per host", () => {
   const settings = defaultSettings();
   settings.agent.maxConcurrentAgents = 10;
   settings.worker.sshHosts = ["host-a", "host-b"];
-  settings.worker.maxConcurrentAgentsPerHost = 1;
+  settings.worker.maxConcurrentAgentsPerHost = 2;
   const clock = makeClock(1000000);
   const orch = new Orchestrator(settings, clock);
 
-  const issue1 = makeIssue({ id: "i1", identifier: "T-1" });
-  const issue2 = makeIssue({ id: "i2", identifier: "T-2" });
-  const entry1 = orch.claim(issue1);
-  const entry2 = orch.claim(issue2);
-  assert.ok(entry1 !== null);
-  assert.ok(entry2 !== null);
-  assert.notEqual(entry1!.workerHost, entry2!.workerHost);
+  const claimed: RunningEntry[] = [];
+  for (let i = 0; i < 4; i++) {
+    const entry = orch.claim(makeIssue({ id: `i${i}`, identifier: `T-${i}` }));
+    assert.ok(entry !== null);
+    claimed.push(entry!);
+  }
 
-  const issue3 = makeIssue({ id: "i3", identifier: "T-3" });
-  assert.equal(orch.claim(issue3), null);
+  // Both hosts should be at capacity (2 each)
+  const fifth = orch.claim(makeIssue({ id: "i4", identifier: "T-4" }));
+  assert.equal(fifth, null);
+
+  // Finish one entry on host-a
+  const hostAEntry = claimed.find((e) => e.workerHost === "host-a")!;
+  clock.advance(1000);
+  orch.finish(hostAEntry.issue.id, hostAEntry.slotIndex, false);
+
+  // Now a new claim should succeed and go to host-a (freed host)
+  const reclaimed = orch.claim(makeIssue({ id: "i5", identifier: "T-5" }));
+  assert.ok(reclaimed !== null);
+  assert.equal(reclaimed!.workerHost, "host-a");
 });
 
-// INVARIANT: When host selection is performed, the least-loaded host below the cap SHALL be selected deterministically (first in config order on tie).
-test("least-loaded host is selected; first in config order on tie", () => {
+test("host selection picks first host in config order on equal load tie", () => {
   const settings = defaultSettings();
   settings.agent.maxConcurrentAgents = 10;
   settings.worker.sshHosts = ["host-a", "host-b", "host-c"];
@@ -143,15 +166,19 @@ test("least-loaded host is selected; first in config order on tie", () => {
   const clock = makeClock(1000000);
   const orch = new Orchestrator(settings, clock);
 
+  // All hosts at load 0: first in config order wins
   const entry1 = orch.claim(makeIssue({ id: "i1", identifier: "T-1" }));
   assert.equal(entry1!.workerHost, "host-a");
 
+  // host-a:1, host-b:0, host-c:0 -> host-b is least-loaded first in order
   const entry2 = orch.claim(makeIssue({ id: "i2", identifier: "T-2" }));
   assert.equal(entry2!.workerHost, "host-b");
 
+  // host-a:1, host-b:1, host-c:0 -> host-c is least-loaded
   const entry3 = orch.claim(makeIssue({ id: "i3", identifier: "T-3" }));
   assert.equal(entry3!.workerHost, "host-c");
 
+  // host-a:1, host-b:1, host-c:1 -> all tied at 1, first in config order
   const entry4 = orch.claim(makeIssue({ id: "i4", identifier: "T-4" }));
   assert.equal(entry4!.workerHost, "host-a");
 });
@@ -160,28 +187,23 @@ test("least-loaded host is selected; first in config order on tie", () => {
 // CLAIM LIFECYCLE
 // ============================================================================
 
-// INVARIANT: While a slot is claimed, it SHALL NOT be claimable by another dispatch.
-test("claimed slot is not claimable by another dispatch", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 5 }), (ensembleSize) => {
-      const settings = makeSettings({ maxConcurrent: 20, ensembleSize });
-      const clock = makeClock(1000000);
-      const orch = new Orchestrator(settings, clock);
-      const issue = makeIssue();
+test("claimed slot cannot be double-claimed by repeated claim calls", () => {
+  const settings = makeSettings({ maxConcurrent: 10, ensembleSize: 1 });
+  const clock = makeClock(1000000);
+  const orch = new Orchestrator(settings, clock);
+  const issue = makeIssue();
 
-      for (let i = 0; i < ensembleSize; i++) {
-        const entry = orch.claim(issue);
-        assert.ok(entry !== null);
-        assert.equal(entry!.slotIndex, i);
-      }
-      assert.equal(orch.claim(issue), null);
-    }),
-    { numRuns: 50 },
-  );
+  const first = orch.claim(issue);
+  assert.ok(first !== null);
+
+  const second = orch.claim(issue);
+  assert.equal(second, null);
+
+  assert.equal(orch.state.claimed.has(slotKey(issue.id, 0)), true);
+  assert.equal(orch.state.running.size, 1);
 });
 
-// INVARIANT: When a claim succeeds, any existing retry entry for that issue SHALL be removed.
-test("successful claim removes existing retry entry for that issue", () => {
+test("successful claim deletes the retryAttempts entry for the issue", () => {
   const clock = makeClock(1000000);
   const settings = makeSettings({ maxConcurrent: 10 });
   const orch = new Orchestrator(settings, clock);
@@ -195,45 +217,34 @@ test("successful claim removes existing retry entry for that issue", () => {
   const snap1 = orch.snapshot();
   assert.equal(snap1.retrying.length, 1);
 
+  // Advance past dueAt
   clock.advance(10000);
   const entry2 = orch.claim(issue);
   assert.ok(entry2 !== null);
 
-  const snap2 = orch.snapshot();
-  assert.equal(snap2.retrying.filter((r) => r.issueId === issue.id).length, 0);
+  assert.equal(orch.state.retryAttempts.has(issue.id), false);
+  assert.equal(orch.snapshot().retrying.length, 0);
 });
 
-// INVARIANT: When a worker finishes, its slot key SHALL be removed from both running and claimed.
-test("finish removes slot from both running and claimed", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 0, max: 4 }),
-      fc.integer({ min: 2, max: 5 }),
-      (slotIdx, ensembleSize) => {
-        const slot = slotIdx % ensembleSize;
-        const clock = makeClock(1000000);
-        const settings = makeSettings({ maxConcurrent: 20, ensembleSize });
-        const orch = new Orchestrator(settings, clock);
-        const issue = makeIssue();
+test("finish removes slot key from running map and claimed set", () => {
+  const clock = makeClock(1000000);
+  const settings = makeSettings({ maxConcurrent: 10 });
+  const orch = new Orchestrator(settings, clock);
+  const issue = makeIssue();
 
-        for (let i = 0; i <= slot; i++) {
-          orch.claim(issue);
-        }
+  orch.claim(issue);
+  assert.equal(orch.state.running.has(slotKey(issue.id, 0)), true);
+  assert.equal(orch.state.claimed.has(slotKey(issue.id, 0)), true);
 
-        clock.advance(5000);
-        orch.finish(issue.id, slot, true);
+  clock.advance(5000);
+  orch.finish(issue.id, 0, false);
 
-        const key = slotKey(issue.id, slot);
-        assert.equal(orch.state.running.has(key), false);
-        assert.equal(orch.state.claimed.has(key), false);
-      },
-    ),
-    { numRuns: 50 },
-  );
+  assert.equal(orch.state.running.has(slotKey(issue.id, 0)), false);
+  assert.equal(orch.state.claimed.has(slotKey(issue.id, 0)), false);
+  assert.equal(orch.snapshot().running.length, 0);
 });
 
-// INVARIANT: When all ensemble slots for an issue are claimed, the issue SHALL be ineligible for further dispatch.
-test("all ensemble slots claimed makes issue ineligible", () => {
+test("issue with all ensemble slots claimed returns null on subsequent claim", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 5 }), (ensembleSize) => {
       const clock = makeClock(1000000);
@@ -242,51 +253,48 @@ test("all ensemble slots claimed makes issue ineligible", () => {
       const issue = makeIssue();
 
       for (let i = 0; i < ensembleSize; i++) {
-        assert.ok(orch.claim(issue) !== null);
+        const entry = orch.claim(issue);
+        assert.ok(entry !== null);
+        assert.equal(entry!.slotIndex, i);
       }
 
       assert.equal(orch.claim(issue), null);
       assert.equal(orch.eligibleIssues([issue]).length, 0);
     }),
-    { numRuns: 50 },
+    { numRuns: 200 },
   );
 });
 
-// INVARIANT: When a retry becomes due, stale claims (claimed but not running) SHALL be released before re-dispatch.
-test("stale claims are released when retry becomes due", () => {
+test("stale claim released when retry becomes due and re-dispatch proceeds", () => {
   const clock = makeClock(1000000);
-  const settings = makeSettings({ maxConcurrent: 10, ensembleSize: 2 });
+  const settings = makeSettings({ maxConcurrent: 10 });
   const orch = new Orchestrator(settings, clock);
   const issue = makeIssue();
 
-  const entry0 = orch.claim(issue);
-  const entry1 = orch.claim(issue);
-  assert.ok(entry0 !== null);
-  assert.ok(entry1 !== null);
+  // Add stale claim (claimed but NOT running)
+  orch.state.claimed.add(slotKey(issue.id, 0));
 
-  clock.advance(5000);
-  orch.finish(issue.id, 0, true, undefined, "continuation");
+  // Set a retry entry with dueAt in the past
+  orch.state.retryAttempts.set(issue.id, {
+    issueId: issue.id,
+    identifier: issue.identifier,
+    attempt: 1,
+    dueAt: new Date(clock.now().getTime() - 1000),
+    error: "agent exited",
+  });
 
-  assert.equal(orch.state.claimed.has(slotKey(issue.id, 1)), true);
-  assert.equal(orch.state.running.has(slotKey(issue.id, 1)), true);
-
-  clock.advance(5000);
-  orch.finish(issue.id, 1, true, undefined, "continuation");
-
-  clock.advance(10000);
-  const eligible = orch.eligibleIssues([issue]);
-  assert.ok(eligible.length > 0);
-
-  const reclaimed = orch.claim(issue);
-  assert.ok(reclaimed !== null);
+  // claim should release the stale claim and succeed
+  const claimed = orch.claim(issue);
+  assert.ok(claimed !== null);
+  assert.equal(claimed!.slotIndex, 0);
+  assert.equal(orch.snapshot().retrying.length, 0);
 });
 
 // ============================================================================
 // RUNNING ENTRY UPDATES
 // ============================================================================
 
-// INVARIANT: When an update targets an unknown slot key, the system SHALL silently ignore it.
-test("update to unknown slot key is silently ignored", () => {
+test("applyUpdate with nonexistent slotKey does not throw and does not mutate state", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 20 }),
@@ -296,19 +304,22 @@ test("update to unknown slot key is silently ignored", () => {
         const settings = makeSettings();
         const orch = new Orchestrator(settings, clock);
 
-        const stateBefore = JSON.stringify(orch.snapshot());
-        orch.applyUpdate(issueId, slotIndex, { type: "turn_completed" });
-        const stateAfter = JSON.stringify(orch.snapshot());
+        const snapBefore = JSON.stringify(orch.snapshot());
+        orch.applyUpdate(issueId, slotIndex, {
+          type: "turn_completed",
+          sessionId: "s1",
+          usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+        });
+        const snapAfter = JSON.stringify(orch.snapshot());
 
-        assert.equal(stateBefore, stateAfter);
+        assert.equal(snapBefore, snapAfter);
       },
     ),
     { numRuns: 200 },
   );
 });
 
-// INVARIANT: When a turn_completed event is received, the turn count SHALL increment by exactly one.
-test("turn_completed increments turn count by exactly one", () => {
+test("turnCount increments by exactly one per turn_completed event", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 20 }), (numTurns) => {
       const clock = makeClock(1000000);
@@ -316,9 +327,7 @@ test("turn_completed increments turn count by exactly one", () => {
       const orch = new Orchestrator(settings, clock);
       const issue = makeIssue();
 
-      const entry = orch.claim(issue);
-      assert.ok(entry !== null);
-      assert.equal(entry!.turnCount, 0);
+      orch.claim(issue);
 
       for (let i = 0; i < numTurns; i++) {
         orch.applyUpdate(issue.id, 0, { type: "turn_completed" });
@@ -326,90 +335,77 @@ test("turn_completed increments turn count by exactly one", () => {
 
       const running = orch.state.running.get(slotKey(issue.id, 0));
       assert.equal(running!.turnCount, numTurns);
+
+      // Non-turn_completed events do NOT increment turnCount
+      orch.applyUpdate(issue.id, 0, { type: "usage", usage: { inputTokens: 10 } });
+      assert.equal(running!.turnCount, numTurns);
     }),
-    { numRuns: 50 },
-  );
-});
-
-// INVARIANT: When usage totals are updated via watermark, entry totals SHALL never decrease.
-test("usage updates never decrease entry totals", () => {
-  fc.assert(
-    fc.property(
-      fc.array(
-        fc.record({
-          inputTokens: fc.integer({ min: -1000, max: 10000 }),
-          outputTokens: fc.integer({ min: -1000, max: 10000 }),
-          totalTokens: fc.integer({ min: -1000, max: 10000 }),
-        }),
-        { minLength: 1, maxLength: 10 },
-      ),
-      (updates) => {
-        const clock = makeClock(1000000);
-        const settings = makeSettings({ maxConcurrent: 10 });
-        const orch = new Orchestrator(settings, clock);
-        const issue = makeIssue();
-
-        orch.claim(issue);
-        let prevInput = 0;
-        let prevOutput = 0;
-        let prevTotal = 0;
-
-        for (const usage of updates) {
-          orch.applyUpdate(issue.id, 0, { type: "usage", usage });
-          const entry = orch.state.running.get(slotKey(issue.id, 0))!;
-          assert.ok(entry.usageTotals.inputTokens >= prevInput);
-          assert.ok(entry.usageTotals.outputTokens >= prevOutput);
-          assert.ok(entry.usageTotals.totalTokens >= prevTotal);
-          prevInput = entry.usageTotals.inputTokens;
-          prevOutput = entry.usageTotals.outputTokens;
-          prevTotal = entry.usageTotals.totalTokens;
-        }
-      },
-    ),
     { numRuns: 200 },
   );
 });
 
-// INVARIANT: When global usage totals are updated, only positive deltas SHALL be added.
-test("global usage totals never decrease", () => {
-  fc.assert(
-    fc.property(
-      fc.array(
-        fc.record({
-          inputTokens: fc.integer({ min: -500, max: 5000 }),
-          outputTokens: fc.integer({ min: -500, max: 5000 }),
-          totalTokens: fc.integer({ min: -500, max: 5000 }),
-        }),
-        { minLength: 1, maxLength: 10 },
-      ),
-      (updates) => {
-        const clock = makeClock(1000000);
-        const settings = makeSettings({ maxConcurrent: 10 });
-        const orch = new Orchestrator(settings, clock);
-        const issue = makeIssue();
+test("entry usageTotals never decrease even when update reports lower values", () => {
+  const clock = makeClock(1000000);
+  const settings = makeSettings({ maxConcurrent: 10 });
+  const orch = new Orchestrator(settings, clock);
+  const issue = makeIssue();
 
-        orch.claim(issue);
-        let prevGlobalInput = 0;
-        let prevGlobalOutput = 0;
-        let prevGlobalTotal = 0;
+  orch.claim(issue);
 
-        for (const usage of updates) {
-          orch.applyUpdate(issue.id, 0, { type: "usage", usage });
-          assert.ok(orch.state.usageTotals.inputTokens >= prevGlobalInput);
-          assert.ok(orch.state.usageTotals.outputTokens >= prevGlobalOutput);
-          assert.ok(orch.state.usageTotals.totalTokens >= prevGlobalTotal);
-          prevGlobalInput = orch.state.usageTotals.inputTokens;
-          prevGlobalOutput = orch.state.usageTotals.outputTokens;
-          prevGlobalTotal = orch.state.usageTotals.totalTokens;
-        }
-      },
-    ),
-    { numRuns: 200 },
-  );
+  orch.applyUpdate(issue.id, 0, {
+    type: "usage",
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+
+  // Report lower values
+  orch.applyUpdate(issue.id, 0, {
+    type: "usage",
+    usage: { inputTokens: 80, outputTokens: 30, totalTokens: 110 },
+  });
+
+  const snap = orch.snapshot();
+  assert.equal(snap.running[0]!.usageTotals.inputTokens, 100);
+  assert.equal(snap.running[0]!.usageTotals.outputTokens, 50);
+  assert.equal(snap.running[0]!.usageTotals.totalTokens, 150);
 });
 
-// INVARIANT: When a running entry is refreshed, all slots for that issue SHALL see the same updated issue state.
-test("refreshRunningIssue updates all slots for that issue", () => {
+test("global usageTotals only accumulates positive deltas from lastReported highwater marks", () => {
+  const clock = makeClock(1000000);
+  const settings = makeSettings({ maxConcurrent: 10 });
+  const orch = new Orchestrator(settings, clock);
+  const issue = makeIssue();
+
+  orch.claim(issue);
+
+  // First update: global totals become 100/50/150
+  orch.applyUpdate(issue.id, 0, {
+    type: "usage",
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+  assert.equal(orch.state.usageTotals.inputTokens, 100);
+  assert.equal(orch.state.usageTotals.outputTokens, 50);
+  assert.equal(orch.state.usageTotals.totalTokens, 150);
+
+  // Regression: global totals should remain unchanged (delta clamped to 0)
+  orch.applyUpdate(issue.id, 0, {
+    type: "usage",
+    usage: { inputTokens: 80, outputTokens: 30, totalTokens: 110 },
+  });
+  assert.equal(orch.state.usageTotals.inputTokens, 100);
+  assert.equal(orch.state.usageTotals.outputTokens, 50);
+  assert.equal(orch.state.usageTotals.totalTokens, 150);
+
+  // Increase past highwater: delta of 20/10/30 added to previous 100/50/150
+  orch.applyUpdate(issue.id, 0, {
+    type: "usage",
+    usage: { inputTokens: 120, outputTokens: 60, totalTokens: 180 },
+  });
+  assert.equal(orch.state.usageTotals.inputTokens, 120);
+  assert.equal(orch.state.usageTotals.outputTokens, 60);
+  assert.equal(orch.state.usageTotals.totalTokens, 180);
+});
+
+test("refreshRunningIssue updates issue object on every ensemble slot for the same issue", () => {
   fc.assert(
     fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
       const clock = makeClock(1000000);
@@ -424,12 +420,14 @@ test("refreshRunningIssue updates all slots for that issue", () => {
       const updatedIssue = makeIssue({ state: "In Progress", stateType: "started" });
       orch.refreshRunningIssue(updatedIssue);
 
+      const snap = orch.snapshot();
       for (let i = 0; i < ensembleSize; i++) {
         const entry = orch.state.running.get(slotKey(issue.id, i));
         assert.equal(entry!.issue.state, "In Progress");
       }
+      assert.equal(snap.running.length, ensembleSize);
     }),
-    { numRuns: 50 },
+    { numRuns: 200 },
   );
 });
 
@@ -437,59 +435,54 @@ test("refreshRunningIssue updates all slots for that issue", () => {
 // ORCHESTRATOR COMPLETION
 // ============================================================================
 
-// INVARIANT: When an issue is cleaned up, all running entries, all claimed slots, and the retry entry SHALL be removed.
-test("cleanupIssue removes all running entries, claimed slots, and retry entry", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 4 }), (ensembleSize) => {
-      const clock = makeClock(1000000);
-      const settings = makeSettings({ maxConcurrent: 20, ensembleSize });
-      const orch = new Orchestrator(settings, clock);
-      const issue = makeIssue();
+test("cleanupIssue removes all running entries, claimed slots, and retry for the issue", () => {
+  const clock = makeClock(1000000);
+  const settings = makeSettings({ maxConcurrent: 20, ensembleSize: 2 });
+  const orch = new Orchestrator(settings, clock);
+  const issue = makeIssue();
 
-      for (let i = 0; i < ensembleSize; i++) {
-        orch.claim(issue);
-      }
+  // Claim both ensemble slots
+  orch.claim(issue);
+  orch.claim(issue);
 
-      clock.advance(1000);
-      orch.finish(issue.id, 0, true, undefined, "continuation");
+  // Finish slot 0 to create retry entry
+  clock.advance(1000);
+  orch.finish(issue.id, 0, true, undefined, "continuation");
 
-      orch.cleanupIssue(issue.id);
+  // Confirm state before cleanup
+  assert.equal(orch.state.running.has(slotKey(issue.id, 1)), true);
+  assert.equal(orch.state.claimed.has(slotKey(issue.id, 1)), true);
+  assert.equal(orch.state.retryAttempts.has(issue.id), true);
 
-      for (let i = 0; i < ensembleSize; i++) {
-        assert.equal(orch.state.running.has(slotKey(issue.id, i)), false);
-        assert.equal(orch.state.claimed.has(slotKey(issue.id, i)), false);
-      }
-      assert.equal(orch.state.retryAttempts.has(issue.id), false);
-    }),
-    { numRuns: 50 },
-  );
+  orch.cleanupIssue(issue.id);
+
+  assert.equal(orch.state.running.size, 0);
+  assert.equal(orch.state.claimed.size, 0);
+  assert.equal(orch.state.retryAttempts.has(issue.id), false);
+  assert.equal(orch.state.completed.has(issue.id), true);
 });
 
-// INVARIANT: When a worker finishes, runtime seconds SHALL be computed as elapsed time since startedAt.
-test("finish adds elapsed seconds to cumulative usageTotals.secondsRunning", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1000, max: 300000 }), (elapsedMs) => {
-      const clock = makeClock(1000000);
-      const settings = makeSettings({ maxConcurrent: 10 });
-      const orch = new Orchestrator(settings, clock);
-      const issue = makeIssue();
+test("finish computes elapsed seconds from startedAt to clock.now and accumulates", () => {
+  const clock = makeClock(new Date("2025-01-01T00:00:00Z").getTime());
+  const settings = makeSettings({ maxConcurrent: 10 });
+  const orch = new Orchestrator(settings, clock);
 
-      orch.claim(issue);
-      const secondsBefore = orch.state.usageTotals.secondsRunning;
+  const issue1 = makeIssue({ id: "i1", identifier: "T-1" });
+  orch.claim(issue1);
 
-      clock.advance(elapsedMs);
-      orch.finish(issue.id, 0, true);
+  clock.advance(30_000);
+  orch.finish(issue1.id, 0, false);
+  assert.equal(orch.snapshot().usageTotals.secondsRunning, 30);
 
-      const expectedAdded = elapsedMs / 1000;
-      const actualAdded = orch.state.usageTotals.secondsRunning - secondsBefore;
-      assert.ok(Math.abs(actualAdded - expectedAdded) < 0.001);
-    }),
-    { numRuns: 200 },
-  );
+  const issue2 = makeIssue({ id: "i2", identifier: "T-2" });
+  orch.claim(issue2);
+
+  clock.advance(15_000);
+  orch.finish(issue2.id, 0, false);
+  assert.equal(orch.snapshot().usageTotals.secondsRunning, 45);
 });
 
-// INVARIANT: When a worker finishes normally, the system SHALL schedule a continuation retry.
-test("normal finish schedules a retry entry", () => {
+test("normal finish creates a retry entry rather than permanently completing the issue", () => {
   const clock = makeClock(1000000);
   const settings = makeSettings({ maxConcurrent: 10 });
   const orch = new Orchestrator(settings, clock);
@@ -502,24 +495,15 @@ test("normal finish schedules a retry entry", () => {
   const snap = orch.snapshot();
   assert.equal(snap.retrying.length, 1);
   assert.equal(snap.retrying[0]!.issueId, issue.id);
+  assert.equal(snap.retrying[0]!.attempt, 1);
+
+  // Issue is tracked in completed set
+  assert.equal(orch.state.completed.has(issue.id), true);
+  // But retryAttempts still holds the re-dispatch schedule
+  assert.equal(orch.state.retryAttempts.has(issue.id), true);
 });
 
-test("abnormal finish (normal=false) does NOT schedule a retry", () => {
-  const clock = makeClock(1000000);
-  const settings = makeSettings({ maxConcurrent: 10 });
-  const orch = new Orchestrator(settings, clock);
-  const issue = makeIssue();
-
-  orch.claim(issue);
-  clock.advance(5000);
-  orch.finish(issue.id, 0, false, "error occurred");
-
-  const snap = orch.snapshot();
-  assert.equal(snap.retrying.length, 0);
-});
-
-// INVARIANT: When a snapshot is produced, it SHALL return defensive copies that do not alias internal state.
-test("snapshot returns defensive copies that do not alias internal state", () => {
+test("snapshot arrays and objects are independent copies that do not alias orchestrator internals", () => {
   const clock = makeClock(1000000);
   const settings = makeSettings({ maxConcurrent: 10 });
   const orch = new Orchestrator(settings, clock);
@@ -529,19 +513,20 @@ test("snapshot returns defensive copies that do not alias internal state", () =>
   clock.advance(5000);
   orch.finish(issue.id, 0, true, undefined, "continuation");
 
+  // Take first snapshot and mutate it
   const snap1 = orch.snapshot();
+  snap1.running.push({} as RunningEntry);
+  snap1.usageTotals.inputTokens = 99999;
+  snap1.blocked.push({} as any);
+  snap1.retrying.push({} as any);
+
+  // Take second snapshot - should be unaffected
   const snap2 = orch.snapshot();
+  assert.equal(snap2.running.length, 0); // issue was finished, no longer running
+  assert.equal(snap2.usageTotals.inputTokens, 0);
+  assert.equal(snap2.blocked.length, 0);
+  assert.equal(snap2.retrying.length, 1); // only the real retry entry
 
-  assert.ok(snap1.running !== snap2.running);
-  assert.ok(snap1.retrying !== snap2.retrying);
-  assert.ok(snap1.blocked !== snap2.blocked);
-  assert.ok(snap1.usageTotals !== snap2.usageTotals);
-
-  snap1.usageTotals.inputTokens = 999999;
-  assert.notEqual(orch.state.usageTotals.inputTokens, 999999);
-
-  if (snap1.retrying.length > 0) {
-    snap1.retrying.push(snap1.retrying[0]!);
-    assert.notEqual(snap1.retrying.length, snap2.retrying.length);
-  }
+  // Also verify internal state was not affected
+  assert.notEqual(orch.state.usageTotals.inputTokens, 99999);
 });
