@@ -77,11 +77,7 @@ const yamlKeyArb = fc
   )
   .map(([first, rest]) => first + rest.join(""));
 
-// --- parseWorkflowContent rejects non-map YAML front matter with typed errors ---
-//
-// The behavioral contract: when YAML front matter parses to anything other than
-// a plain object (map), parseWorkflowContent SHALL throw an error containing
-// either "workflow_front_matter_not_a_map" or "workflow_parse_error".
+// INVARIANT: When YAML front matter is not a map, the system SHALL produce a typed error.
 
 test("parseWorkflowContent SHALL produce a typed error when YAML front matter is not a map", () => {
   fc.assert(

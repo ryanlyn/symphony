@@ -129,9 +129,7 @@ const arbIssueWithInvalidCreatedAt = (): fc.Arbitrary<Issue> =>
     ),
   });
 
-// ---------------------------------------------------------------------------
-// Sort does not mutate the input array
-// ---------------------------------------------------------------------------
+// INVARIANT: When sort is applied, it SHALL NOT mutate the input array.
 test("sort SHALL NOT mutate the input array", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 1, maxLength: 50 }), (issues) => {
@@ -146,9 +144,7 @@ test("sort SHALL NOT mutate the input array", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Output is a permutation of the input (no additions or drops)
-// ---------------------------------------------------------------------------
+// INVARIANT: When sort is applied, the result SHALL be a permutation of the input.
 test("sort output SHALL be a permutation of the input (no additions or drops)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { maxLength: 50 }), (issues) => {
@@ -190,9 +186,7 @@ test("duplicates: sort handles duplicate references correctly", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Sorting an already-sorted list yields identical result (idempotent)
-// ---------------------------------------------------------------------------
+// INVARIANT: When sort is applied to an already-sorted list, the result SHALL be identical.
 test("sort applied to an already-sorted list SHALL be identical (idempotent)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { maxLength: 50 }), (issues) => {
@@ -207,9 +201,7 @@ test("sort applied to an already-sorted list SHALL be identical (idempotent)", (
   );
 });
 
-// ---------------------------------------------------------------------------
-// Lower priority number sorts first when priorities differ
-// ---------------------------------------------------------------------------
+// INVARIANT: When two dispatches differ in priority number, the one with the lower number SHALL sort first.
 test("dispatch with lower priority number SHALL sort before one with higher priority number", () => {
   fc.assert(
     fc.property(arbIssueWithValidPriority(), arbIssueWithValidPriority(), (issueA, issueB) => {
@@ -251,9 +243,7 @@ test("all four priorities: list with one of each priority is sorted 1,2,3,4", ()
   );
 });
 
-// ---------------------------------------------------------------------------
-// Same priority, earlier creation time sorts first
-// ---------------------------------------------------------------------------
+// INVARIANT: When two dispatches share the same priority, the one with the earlier creation time SHALL sort first.
 test("same priority with earlier creation time SHALL sort first", () => {
   fc.assert(
     fc.property(
@@ -297,9 +287,7 @@ test("same priority with earlier creation time SHALL sort first", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Same priority and creation time, lexicographically earlier identifier sorts first
-// ---------------------------------------------------------------------------
+// INVARIANT: When two dispatches share the same priority and creation time, the one with the lexicographically earlier identifier SHALL sort first.
 test("same priority and creation time, lexicographically earlier identifier SHALL sort first", () => {
   fc.assert(
     fc.property(
@@ -373,9 +361,7 @@ test("unicode identifiers: handles unicode comparison correctly", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Null, missing, or out-of-range priority sorts last
-// ---------------------------------------------------------------------------
+// INVARIANT: When a dispatch has null, missing, or out-of-range priority, it SHALL sort last.
 test("dispatch with null, missing, or out-of-range priority SHALL sort last", () => {
   fc.assert(
     fc.property(
@@ -413,9 +399,7 @@ test("multi: all invalid-priority dispatches sort after all valid-priority dispa
   );
 });
 
-// ---------------------------------------------------------------------------
-// Null, missing, or unparseable creation time sorts last within its priority group
-// ---------------------------------------------------------------------------
+// INVARIANT: When a dispatch has null, missing, or unparseable creation time, it SHALL sort last within its priority group.
 test("dispatch with null, missing, or unparseable creation time SHALL sort last within its priority group", () => {
   fc.assert(
     fc.property(
@@ -503,11 +487,7 @@ test("multi: within the same priority, all invalid-createdAt dispatches sort aft
   );
 });
 
-// ---------------------------------------------------------------------------
-// Total ordering - adjacent pairs in sorted output respect
-// the full comparison chain (priority -> createdAt -> identifier)
-// Uses relational assertions rather than oracle functions to avoid circularity.
-// ---------------------------------------------------------------------------
+// INVARIANT: When sort is applied, adjacent pairs in the output SHALL respect the full comparison chain.
 test("sorted output SHALL respect the full ordering chain for all adjacent pairs", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 2, maxLength: 50 }), (issues) => {
@@ -558,11 +538,7 @@ test("sorted output SHALL respect the full ordering chain for all adjacent pairs
   );
 });
 
-// ---------------------------------------------------------------------------
-// Transitivity - if issue A sorts before B and B sorts before C,
-// then A sorts before C in any list containing all three.
-// Constructs guaranteed-ordering triples to ensure the assertion always fires.
-// ---------------------------------------------------------------------------
+// INVARIANT: When issue A sorts before B and B sorts before C, A SHALL sort before C.
 test("sort SHALL be transitive (A < B < C by priority implies A before C)", () => {
   fc.assert(
     fc.property(
@@ -675,9 +651,7 @@ test("transitivity via createdAt: A < B < C by date implies A before C", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Sort is deterministic - same input always gives same output
-// ---------------------------------------------------------------------------
+// INVARIANT: When the same inputs are provided, sort SHALL produce the same output.
 test("sort SHALL be deterministic (same input, same output)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 1, maxLength: 30 }), (issues) => {
@@ -692,10 +666,7 @@ test("sort SHALL be deterministic (same input, same output)", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Priority dominates - a higher priority (lower number) always
-// beats any combination of earlier createdAt or earlier identifier
-// ---------------------------------------------------------------------------
+// INVARIANT: When priorities differ, priority SHALL dominate createdAt and identifier in ordering.
 test("priority SHALL dominate createdAt and identifier in ordering", () => {
   fc.assert(
     fc.property(fc.constantFrom(1, 2, 3) as fc.Arbitrary<1 | 2 | 3>, (lowerPriority) => {
@@ -728,9 +699,7 @@ test("priority SHALL dominate createdAt and identifier in ordering", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// createdAt dominates identifier within the same priority
-// ---------------------------------------------------------------------------
+// INVARIANT: When priorities are equal, createdAt SHALL dominate identifier in ordering.
 test("createdAt SHALL dominate identifier within the same priority group", () => {
   fc.assert(
     fc.property(

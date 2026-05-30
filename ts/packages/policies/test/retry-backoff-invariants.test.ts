@@ -4,9 +4,7 @@ import { retryBackoffMs } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 
-// Delay is always a non-negative finite number for any inputs.
-// This guards against NaN, Infinity, or negative delays that could cause
-// infinite loops or invalid timer arguments in the orchestrator.
+// INVARIANT: When a retry delay is calculated, it SHALL be a non-negative finite number.
 test("retryBackoffMs - delay is always non-negative and finite for the full input domain", () => {
   fc.assert(
     fc.property(
@@ -23,9 +21,7 @@ test("retryBackoffMs - delay is always non-negative and finite for the full inpu
   );
 });
 
-// Failure delays are monotonically non-decreasing with attempt number.
-// This ensures that higher attempt numbers never produce shorter waits, which would
-// defeat the purpose of exponential backoff as a congestion-avoidance mechanism.
+// INVARIANT: When failure retry delay is calculated, it SHALL be monotonically non-decreasing with attempt number.
 test("retryBackoffMs - failure delays are monotonically non-decreasing with attempt number", () => {
   fc.assert(
     fc.property(
@@ -44,9 +40,7 @@ test("retryBackoffMs - failure delays are monotonically non-decreasing with atte
   );
 });
 
-// Failure delay never exceeds the configured maximum cap.
-// This guarantees that operators can bound worst-case wait times via configuration,
-// ensuring SLA compliance regardless of retry count.
+// INVARIANT: When a retry delay is calculated, it SHALL never exceed the configured maximum cap.
 test("retryBackoffMs - failure delay never exceeds the configured maximum cap", () => {
   fc.assert(
     fc.property(
@@ -61,8 +55,7 @@ test("retryBackoffMs - failure delay never exceeds the configured maximum cap", 
   );
 });
 
-// When max allows, failure delays have a positive floor preventing zero-delay storms.
-// A zero delay in failure retries would cause a tight retry loop that overwhelms the upstream.
+// INVARIANT: When maxBackoff permits, failure delays SHALL have a positive floor preventing zero-delay storms.
 test("retryBackoffMs - failure delay has a positive floor when maxBackoff permits", () => {
   fc.assert(
     fc.property(
@@ -77,9 +70,7 @@ test("retryBackoffMs - failure delay has a positive floor when maxBackoff permit
   );
 });
 
-// Continuation retry uses a constant short delay independent of attempt and maxBackoff.
-// Continuations are not errors -- they are normal protocol flow (e.g., max_tokens reached),
-// so they should retry quickly without exponential growth.
+// INVARIANT: When a continuation retry is scheduled, it SHALL use a fixed short delay regardless of attempt number.
 test("retryBackoffMs - continuation retry uses a fixed delay regardless of inputs", () => {
   fc.assert(
     fc.property(

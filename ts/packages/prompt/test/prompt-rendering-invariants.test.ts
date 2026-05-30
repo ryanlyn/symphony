@@ -307,7 +307,7 @@ const safeIssueArb: fc.Arbitrary<Issue> = fc.record({
   assignedToWorker: fc.option(fc.boolean(), { nil: null }),
 }) as fc.Arbitrary<Issue>;
 
-// --- empty/whitespace body falls back to default prompt ---
+// INVARIANT: When the workflow prompt body is empty or whitespace-only, the system SHALL use a minimal default prompt.
 
 test("when workflow prompt body is empty or whitespace-only, system uses minimal default prompt", async () => {
   await fc.assert(
@@ -351,7 +351,7 @@ test("non-whitespace template does NOT fall back to default", () => {
   );
 });
 
-// --- unknown variable causes strict failure ---
+// INVARIANT: When a prompt template references an unknown variable, rendering SHALL fail strictly.
 
 test("when prompt template references unknown variable, rendering fails strictly", async () => {
   await fc.assert(
@@ -409,7 +409,7 @@ test("deeply nested unknown path fails strictly", async () => {
   );
 });
 
-// --- unknown filter causes strict failure ---
+// INVARIANT: When a prompt template references an unknown filter, rendering SHALL fail strictly.
 
 test("when prompt template references unknown filter, rendering fails strictly", async () => {
   await fc.assert(
@@ -454,7 +454,7 @@ test("chained unknown filter after known filter still fails", async () => {
   );
 });
 
-// --- issue, attempt, and ensemble are available as template inputs ---
+// INVARIANT: When a prompt is rendered, the issue, attempt, and ensemble objects SHALL be available as template inputs.
 
 test("issue object is available as template input with expected fields", async () => {
   await fc.assert(
@@ -586,7 +586,7 @@ test("ensemble.enabled is true only when rendered size in output is > 1", async 
   );
 });
 
-// --- template interpolation faithfulness ---
+// INVARIANT: When a template is rendered, interpolation SHALL faithfully reproduce source values.
 
 test("static text in template passes through unchanged", async () => {
   // Any template with only static text (no Liquid tags) should render verbatim
@@ -625,7 +625,7 @@ test("template containing Liquid expression produces output different from raw t
   );
 });
 
-// --- template injection resistance ---
+// INVARIANT: When user-controlled data contains template syntax, it SHALL be rendered literally, not interpreted.
 
 test("user-controlled data containing Liquid syntax does not cause template injection", async () => {
   // Issue fields may contain {{ }}, {% %}, or other Liquid syntax.
@@ -673,7 +673,7 @@ test("Liquid-special characters in issue title are rendered literally, not inter
   );
 });
 
-// --- issue.blocked_by and labels arrays are accessible ---
+// INVARIANT: When a prompt is rendered, issue.labels and issue.blocked_by SHALL be accessible as arrays.
 
 test("issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
   const labelsArb = fc.array(

@@ -77,10 +77,7 @@ const randomCaseEnsembleArb = fc.array(fc.boolean(), { minLength: 8, maxLength: 
     .join("");
 });
 
-// ---------------------------------------------------------------------------
-// When a valid label with a positive integer is present, the
-// system SHALL use that integer as ensemble size.
-// ---------------------------------------------------------------------------
+// INVARIANT: When a valid label with a positive integer is present, the system SHALL use that integer as ensemble size.
 
 test("valid label with positive integer is used as ensemble size", () => {
   fc.assert(
@@ -123,10 +120,7 @@ test("leading zeros in the number are accepted (parsed as decimal)", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// When multiple valid labels are present, the system SHALL use
-// the first encountered.
-// ---------------------------------------------------------------------------
+// INVARIANT: When multiple valid labels are present, the system SHALL use the first encountered.
 
 test("first valid ensemble label wins when multiple are present", () => {
   fc.assert(
@@ -172,11 +166,7 @@ test("order matters: swapping labels changes result", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Ensemble size must be positive. Any label whose numeric value
-// is zero or non-positive causes ensembleSize to return null (label is
-// skipped). This is a domain invariant: ensemble size < 1 is meaningless.
-// ---------------------------------------------------------------------------
+// INVARIANT: When a label specifies zero or a negative integer, the system SHALL ignore it.
 
 test("any label with numeric value <= 0 is ignored", () => {
   fc.assert(
@@ -228,12 +218,7 @@ test("multiple non-positive labels all ignored, first valid wins", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// End-to-end case and whitespace insensitivity through the
-// production pipeline. normalizeIssue trims and lowercases labels, so the
-// system correctly resolves ensemble size regardless of the original label
-// casing or surrounding whitespace in the raw issue data.
-// ---------------------------------------------------------------------------
+// INVARIANT: When matching ensemble labels, matching SHALL be case-insensitive and whitespace-insensitive.
 
 test("end-to-end: mixed-case labels resolve correctly through normalizeIssue", () => {
   fc.assert(
@@ -299,11 +284,7 @@ test("internal whitespace within 'ensemble' keyword does NOT match", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// When no valid ensemble label is present, ensembleSize returns
-// null. The function does not apply defaults -- that is the caller's
-// responsibility.
-// ---------------------------------------------------------------------------
+// INVARIANT: When no valid ensemble label is present, the system SHALL return null.
 
 test("no ensemble labels at all yields null", () => {
   fc.assert(
@@ -410,10 +391,7 @@ test("suffix after number prevents matching", () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-
-// positive integer. Never NaN, Infinity, fractional, or negative.
-// ---------------------------------------------------------------------------
+// INVARIANT: When ensembleSize returns a value, it SHALL be a positive integer (never NaN, Infinity, fractional, or negative).
 
 test("return value is always null or positive integer (comprehensive inputs)", () => {
   fc.assert(

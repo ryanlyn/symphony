@@ -191,7 +191,7 @@ function issueArb(
     }));
 }
 
-// --- Missing required fields -> ineligible ---
+// INVARIANT: When a dispatch is missing required fields, it SHALL be ineligible.
 
 test("missing required fields (id, identifier, title, state) SHALL be ineligible", () => {
   const requiredFields = ["id", "identifier", "title", "state"] as const;
@@ -246,7 +246,7 @@ test("if shouldDispatchIssue rejects due to missing fields, dispatchBlockReason 
   );
 });
 
-// --- Terminal state -> ineligible ---
+// INVARIANT: When a dispatch is in a terminal state, it SHALL be ineligible.
 
 test("terminal state issues SHALL be ineligible", () => {
   const defaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
@@ -302,7 +302,7 @@ test("custom terminal states configured via settings are respected", () => {
   );
 });
 
-// --- Non-active state -> ineligible ---
+// INVARIANT: When a dispatch is in a non-active state, it SHALL be ineligible.
 
 test("non-active state issues SHALL be ineligible", () => {
   fc.assert(
@@ -348,7 +348,7 @@ test("active state comparison is case-insensitive with whitespace handling", () 
   );
 });
 
-// --- Not assigned to this worker -> ineligible ---
+// INVARIANT: When a dispatch is not assigned to this worker, it SHALL be ineligible.
 
 test("issues not assigned to this worker SHALL be ineligible", () => {
   fc.assert(
@@ -366,7 +366,7 @@ test("issues not assigned to this worker SHALL be ineligible", () => {
   );
 });
 
-// --- Unstarted issue with non-terminal blocker -> ineligible ---
+// INVARIANT: When an unstarted issue has a non-terminal blocker, it SHALL be ineligible.
 
 test("unstarted issue with a non-terminal blocker SHALL be ineligible", () => {
   fc.assert(
@@ -443,7 +443,7 @@ test("blocker terminal check is case-insensitive with whitespace trimming", () =
   );
 });
 
-// --- Non-unstarted issue with blockers -> still eligible ---
+// INVARIANT: When a non-unstarted issue has blockers, it SHALL still be eligible.
 
 test("non-unstarted issue with blockers SHALL still be eligible", () => {
   fc.assert(
@@ -494,7 +494,7 @@ test("started issue ignores blockers even with many open blockers", () => {
   );
 });
 
-// --- Unstarted issue with only terminal blockers -> eligible ---
+// INVARIANT: When an unstarted issue has only terminal blockers, it SHALL be eligible.
 
 test("unstarted issue with only terminal blockers SHALL be eligible", () => {
   const defaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
@@ -552,7 +552,7 @@ test("terminal blockers in various case/whitespace forms still allow dispatch", 
   );
 });
 
-// --- Global concurrency cap reached -> SHALL not dispatch ---
+// INVARIANT: When the global concurrency cap is reached, the system SHALL not dispatch new work.
 
 test("global concurrency cap reached SHALL not dispatch new work", () => {
   fc.assert(
@@ -617,7 +617,7 @@ test("exactly at cap blocks, one below cap does not block", () => {
   );
 });
 
-// --- Per-state concurrency cap reached -> SHALL not dispatch ---
+// INVARIANT: When a per-state concurrency cap is reached, the system SHALL not dispatch new work in that state.
 
 test("per-state concurrency cap reached SHALL not dispatch new work in that state", () => {
   fc.assert(
@@ -692,7 +692,7 @@ test("state normalization for statusOverrides key matching", () => {
   );
 });
 
-// --- All ensemble slots claimed -> ineligible ---
+// INVARIANT: When all ensemble slots are claimed, the dispatch SHALL be ineligible.
 
 test("all ensemble slots claimed SHALL make the dispatch ineligible", () => {
   fc.assert(
@@ -810,7 +810,7 @@ test("claiming slots for a different issue does not block this issue", () => {
   );
 });
 
-// --- Worker host capacity ---
+// INVARIANT: When all worker hosts are at capacity, the system SHALL not dispatch new work.
 
 test("workerCapacityAvailable=false SHALL block dispatch", () => {
   fc.assert(
@@ -855,7 +855,7 @@ test("workerCapacityAvailable=true or undefined does NOT block", () => {
   );
 });
 
-// --- Composition - relational properties between functions ---
+// INVARIANT: When shouldDispatchIssue returns true, all sub-checks SHALL pass.
 
 test("shouldDispatchIssue=true implies ALL sub-checks pass (random issues)", () => {
   fc.assert(

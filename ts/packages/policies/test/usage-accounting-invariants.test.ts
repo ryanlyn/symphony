@@ -92,9 +92,7 @@ const arbNearOverflowTotals = () =>
     secondsRunning: fc.nat(),
   });
 
-// ============================================================================
-// N-step sequential chain invariants
-// ============================================================================
+// INVARIANT: When token counters are updated sequentially, they SHALL never decrease (monotonic growth).
 
 test("monotonicity holds over N-step sequential chain for both entry and global", () => {
   fc.assert(
@@ -212,9 +210,7 @@ test("idempotency holds for each step in a chain (re-applying same update is no-
   );
 });
 
-// ============================================================================
-// Behavioral bounding properties
-// ============================================================================
+// INVARIANT: When global aggregates are updated, growth SHALL be bounded by entry growth.
 
 test("global growth per step is bounded above by the new entry value", () => {
   fc.assert(
@@ -321,9 +317,7 @@ test("entry result is at least as large as both entry and positive update values
   );
 });
 
-// ============================================================================
-// Extreme/boundary value tests
-// ============================================================================
+// INVARIANT: When extreme values are applied, token counts SHALL never become negative.
 
 test("all invariants hold with extreme value updates", () => {
   fc.assert(
@@ -390,9 +384,7 @@ test("heavily negative updates do not corrupt state", () => {
   );
 });
 
-// ============================================================================
-// Integer overflow scenario
-// ============================================================================
+// INVARIANT: When values are near integer limits, the system SHALL not produce NaN or negative values.
 
 test("near-overflow globalTotals: function does not produce NaN or negative values", () => {
   fc.assert(
@@ -464,9 +456,7 @@ test("near-overflow: entry and reported remain valid when globalTotals near limi
   );
 });
 
-// ============================================================================
-// No-op scenario
-// ============================================================================
+// INVARIANT: When no update fields are provided, entry and global totals SHALL remain unchanged.
 
 test("empty update (all undefined) preserves entry and global unchanged", () => {
   fc.assert(
@@ -490,9 +480,7 @@ test("empty update (all undefined) preserves entry and global unchanged", () => 
   );
 });
 
-// ============================================================================
-// Update with lower value than entry (negative resilience)
-// ============================================================================
+// INVARIANT: When an update value is lower than the current entry, the entry SHALL not decrease.
 
 test("update with lower value than entry does NOT decrease entry", () => {
   fc.assert(

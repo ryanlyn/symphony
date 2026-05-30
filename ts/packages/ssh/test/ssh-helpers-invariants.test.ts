@@ -133,7 +133,7 @@ const sshTargetWithoutPort = sshDestination;
 
 const sshTargetAny = fc.oneof(sshTargetWithPort, sshTargetWithoutPort);
 
-// --- shellEscape produces output that a POSIX shell evaluates back to the original ---
+// INVARIANT: When shellEscape is applied, the output SHALL be reversible to the original input by a POSIX shell.
 
 test("shellEscape wraps value in single quotes preventing unquoted shell metacharacters", () => {
   fc.assert(
@@ -223,7 +223,7 @@ test("negative: shellEscape output never contains unbalanced quotes", () => {
   );
 });
 
-// --- parseSshTarget correctly separates destination and port ---
+// INVARIANT: When an SSH target is parsed, destination and port SHALL be correctly separated.
 
 test("parseSshTarget roundtrip - destination:port recombines correctly", () => {
   fc.assert(
@@ -309,7 +309,7 @@ test("parseSshTarget bare IPv6 (unbracketed with colons) does not extract port",
   );
 });
 
-// --- sshArgs and parseSshTarget are consistent ---
+// INVARIANT: When sshArgs constructs arguments, they SHALL be consistent with parseSshTarget output.
 
 test("sshArgs uses parseSshTarget destination as the host argument", () => {
   fc.assert(

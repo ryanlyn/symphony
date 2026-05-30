@@ -54,10 +54,7 @@ const distinctStateNamesArb = fc
   .tuple(stateNameArb, stateNameArb)
   .filter(([a, b]) => normalizeStateName(a) !== normalizeStateName(b));
 
-// ============================================================
-// When no override is present, the base settings
-// SHALL remain unchanged.
-// ============================================================
+// INVARIANT: When no override is present, the base settings SHALL remain unchanged.
 
 test("no override present — base settings remain unchanged", () => {
   fc.assert(
@@ -134,10 +131,7 @@ test("settingsForIssueState returns a clone, not the same object reference", () 
   );
 });
 
-// ============================================================
-// When override lookup is performed, it SHALL be
-// case-insensitive.
-// ============================================================
+// INVARIANT: When override lookup is performed, it SHALL be case-insensitive.
 
 test("override lookup is case-insensitive — upper/lower/mixed match", () => {
   fc.assert(
@@ -231,10 +225,7 @@ test("parseConfig normalizes state names in statusOverrides map keys", () => {
   );
 });
 
-// ============================================================
-// When overrides are defined for different states,
-// they SHALL apply independently.
-// ============================================================
+// INVARIANT: When overrides are defined for different states, they SHALL apply independently.
 
 test("overrides for different states apply independently", () => {
   fc.assert(
@@ -355,10 +346,7 @@ test("querying override does not mutate the source settings object", () => {
   );
 });
 
-// ============================================================
-// When a partial override is applied, unmentioned
-// fields SHALL be preserved.
-// ============================================================
+// INVARIANT: When a partial override is applied, unmentioned fields SHALL be preserved.
 
 test("partial agent override preserves unmentioned agent fields", () => {
   fc.assert(
@@ -508,10 +496,7 @@ test("partial override via parseConfig preserves fields not in raw config", () =
   );
 });
 
-// ============================================================
-// When nested map fields are overridden, they
-// SHALL be deep-merged.
-// ============================================================
+// INVARIANT: When nested map fields are overridden, they SHALL be deep-merged.
 
 test("codex approvalPolicy deep-merged — override keys merge, base keys preserved", () => {
   fc.assert(
@@ -711,9 +696,6 @@ test("turnSandboxPolicy override replaces when base is null", () => {
   );
 });
 
-// ============================================================
-// Additional robustness properties
-// ============================================================
 
 test("Robustness: settingsForIssueState is deterministic for same input", () => {
   fc.assert(

@@ -102,8 +102,7 @@ function effectivePrefix(root: string): string {
   return stripped || "/";
 }
 
-// When a workspace path is resolved, the path SHALL be a strict
-// descendant of the workspace root.
+// INVARIANT: When a workspace path is resolved, it SHALL be a strict descendant of the workspace root.
 test("workspace path is a strict descendant of the workspace root", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
@@ -214,8 +213,7 @@ test("negative: ensureInsideRoot throws for paths outside root", () => {
   );
 });
 
-// When directory names are derived from identifiers, the names
-// SHALL contain only alphanumeric characters, dots, hyphens, and underscores.
+// INVARIANT: When directory names are derived from identifiers, they SHALL contain only alphanumeric characters, dots, hyphens, and underscores.
 const ALLOWED_CHARS = /^[A-Za-z0-9._-]*$/;
 
 test("safeIdentifier output contains only alphanumeric, dots, hyphens, underscores", () => {
@@ -250,8 +248,7 @@ test("safeIdentifier produces non-empty output for non-empty string inputs", () 
   );
 });
 
-// When sanitization is applied to a name, applying sanitization
-// again SHALL produce the same result (idempotent).
+// INVARIANT: When sanitization is applied to a name, applying it again SHALL produce the same result.
 test("safeIdentifier is idempotent on arbitrary strings", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 100 }), (input) => {
@@ -276,8 +273,7 @@ test("workspacePath output segment is already fully sanitized", () => {
   );
 });
 
-// When a multi-slot ensemble is resolved, each slot SHALL
-// receive a distinct workspace path.
+// INVARIANT: When a multi-slot ensemble is resolved, each slot SHALL receive a distinct workspace path.
 test("ensemble slots produce distinct workspace paths", () => {
   fc.assert(
     fc.property(
@@ -330,8 +326,7 @@ test("ensemble paths all share the same parent directory", () => {
   );
 });
 
-// When a single-slot run is resolved, the workspace path SHALL
-// have no slot suffix.
+// INVARIANT: When a single-slot run is resolved, the workspace path SHALL have no slot suffix.
 test("single-slot run has no slot suffix in path", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
@@ -387,7 +382,7 @@ test("ensemble path has exactly two more segments than normalized root", () => {
   );
 });
 
-// Additional invariant: workspace path output is a valid absolute path
+// INVARIANT: When a workspace path is produced, it SHALL be a valid absolute path.
 test("additional: workspacePath always produces an absolute path", () => {
   fc.assert(
     fc.property(
@@ -410,7 +405,7 @@ test("additional: workspacePath always produces an absolute path", () => {
   );
 });
 
-// Additional invariant: workspace path contains no ".." segments
+// INVARIANT: When a workspace path is produced, it SHALL contain no ".." segments.
 test("additional: workspacePath output never contains parent directory traversals", () => {
   fc.assert(
     fc.property(
