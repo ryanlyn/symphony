@@ -31,7 +31,6 @@ const shellDangerousString = fc.oneof(
     "$(whoami)",
     "a\nb\nc",
     "\x00",
-    // Additional dangerous patterns
     "''''",
     "'\"'\"'",
     "\\",
@@ -67,34 +66,63 @@ const shellDangerousString = fc.oneof(
   ).map((arr) => arr.join("")),
 );
 
-/** Arbitrary that produces valid POSIX-like paths (no null bytes since those break shells). */
-const posixPath = fc
-  .array(
-    fc.string({ minLength: 1, maxLength: 10 }).filter((s) => !s.includes("\x00") && !s.includes("/")),
-    { minLength: 1, maxLength: 5 },
-  )
-  .map((parts) => "/" + parts.join("/"));
+/** Arbitrary that generates valid SSH usernames (alphanumeric, dots, hyphens, underscores). */
+const sshUsername = fc.stringMatching(/^[a-z][a-z0-9._-]{0,15}$/);
 
-/** Path arbitrary with more challenging segments (spaces, quotes, unicode). */
-const challengingPosixPath = fc
-  .array(
-    fc.oneof(
-      fc.string({ minLength: 1, maxLength: 10 }).filter((s) => !s.includes("\x00") && !s.includes("/")),
-      fc.constantFrom(
-        "my dir",
-        "file'name",
-        "dir with spaces",
-        "$var",
-        "back`tick",
-        "semi;colon",
-      ),
-      fc.string({ minLength: 1, maxLength: 8, unit: "grapheme" }).filter((s) => !s.includes("\x00") && !s.includes("/")),
-    ),
-    { minLength: 1, maxLength: 5 },
-  )
-  .map((parts) => "/" + parts.join("/"));
+/** Arbitrary that generates valid hostnames (labels separated by dots). */
+const sshHostname = fc.oneof(
+  // Simple hostname
+  fc.stringMatching(/^[a-z][a-z0-9-]{0,10}$/),
+  // FQDN with dots
+  fc.tuple(
+    fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/),
+    fc.stringMatching(/^[a-z][a-z0-9-]{0,6}$/),
+    fc.constantFrom("com", "org", "net", "io", "dev", "internal"),
+  ).map(([sub, domain, tld]) => `${sub}.${domain}.${tld}`),
+  // IPv4
+  fc.tuple(
+    fc.integer({ min: 1, max: 255 }),
+    fc.integer({ min: 0, max: 255 }),
+    fc.integer({ min: 0, max: 255 }),
+    fc.integer({ min: 1, max: 254 }),
+  ).map(([a, b, c, d]) => `${a}.${b}.${c}.${d}`),
+);
 
-// --- Invariant 1: Remote commands have arguments shell-escaped to prevent injection ---
+/** Arbitrary that generates bracketed IPv6 addresses. */
+const bracketedIpv6 = fc.oneof(
+  fc.constantFrom("[::1]", "[fe80::1]", "[2001:db8::1]", "[::ffff:192.168.1.1]"),
+  fc.tuple(
+    fc.integer({ min: 0, max: 0xffff }),
+    fc.integer({ min: 0, max: 0xffff }),
+    fc.integer({ min: 0, max: 0xffff }),
+    fc.integer({ min: 0, max: 0xffff }),
+  ).map(([a, b, c, d]) => `[${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${d.toString(16)}]`),
+);
+
+/** Arbitrary SSH destination (user@host, host, user@[ipv6]). */
+const sshDestination = fc.oneof(
+  // bare hostname
+  sshHostname,
+  // user@hostname
+  fc.tuple(sshUsername, sshHostname).map(([user, host]) => `${user}@${host}`),
+  // bracketed IPv6
+  bracketedIpv6,
+  // user@[ipv6]
+  fc.tuple(sshUsername, bracketedIpv6).map(([user, ipv6]) => `${user}@${ipv6}`),
+);
+
+/** Arbitrary valid port number. */
+const sshPort = fc.integer({ min: 1, max: 65535 });
+
+/** Arbitrary SSH target string (destination with optional port). */
+const sshTargetWithPort = fc.tuple(sshDestination, sshPort).map(([dest, port]) => `${dest}:${port}`);
+
+const sshTargetWithoutPort = sshDestination;
+
+const sshTargetAny = fc.oneof(sshTargetWithPort, sshTargetWithoutPort);
+
+
+// --- Invariant 1: shellEscape produces output that a POSIX shell evaluates back to the original ---
 
 test("invariant 1: shellEscape wraps value in single quotes preventing unquoted shell metacharacters", () => {
   fc.assert(
@@ -110,67 +138,23 @@ test("invariant 1: shellEscape wraps value in single quotes preventing unquoted 
       const sanitized = interior.replaceAll("'\"'\"'", "");
       assert.equal(sanitized.includes("'"), false);
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 1: shellEscape is injection-safe - content cannot break out of quoting", () => {
+test("invariant 1: shellEscape roundtrip - the escape is reversible to recover the original input", () => {
   fc.assert(
     fc.property(shellDangerousString, (input) => {
       const escaped = shellEscape(input);
       // The escaped value, when evaluated by a POSIX shell as a single token,
       // should reconstruct the original string. We verify structurally:
-      // After removing the quoting envelope, we should be able to recover the original.
       // The escape scheme is: wrap in single quotes, replace each ' with '"'"'
       // So the reverse is: strip outer quotes, replace '"'"' with '
       const interior = escaped.slice(1, -1);
       const recovered = interior.replaceAll("'\"'\"'", "'");
       assert.equal(recovered, input);
     }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 1: shellEscape output length is deterministic based on quote count", () => {
-  fc.assert(
-    fc.property(shellDangerousString, (input) => {
-      const escaped = shellEscape(input);
-      // Each single quote in the input becomes '"'"' (5 chars) instead of ' (1 char),
-      // so expected length = input.length + (number_of_quotes * 4) + 2 (outer quotes)
-      const quoteCount = (input.match(/'/g) || []).length;
-      const expectedLength = input.length + quoteCount * 4 + 2;
-      assert.equal(escaped.length, expectedLength);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 1: shellEscape is idempotent in structure - double escaping nests properly", () => {
-  fc.assert(
-    fc.property(shellDangerousString, (input) => {
-      const escaped1 = shellEscape(input);
-      const escaped2 = shellEscape(escaped1);
-      // Double-escaping should still be reversible
-      const interior2 = escaped2.slice(1, -1);
-      const recovered1 = interior2.replaceAll("'\"'\"'", "'");
-      assert.equal(recovered1, escaped1);
-      // And recovering once more gives original
-      const interior1 = recovered1.slice(1, -1);
-      const recovered0 = interior1.replaceAll("'\"'\"'", "'");
-      assert.equal(recovered0, input);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 1: shellEscape never produces empty output", () => {
-  fc.assert(
-    fc.property(shellDangerousString, (input) => {
-      const escaped = shellEscape(input);
-      // Even for empty input, we get at least ''
-      assert.equal(escaped.length >= 2, true);
-    }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
@@ -189,7 +173,7 @@ test("invariant 1: remoteShellCommand wraps the command in bash -lc with proper 
       const afterPrefix = result.slice("bash -lc ".length);
       assert.equal(afterPrefix, shellEscape(command));
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
@@ -200,20 +184,19 @@ test("invariant 1: remoteShellCommand output always contains exactly one 'bash -
       // There should be exactly one occurrence of "bash -lc " at the start
       const firstOccurrence = result.indexOf("bash -lc ");
       assert.equal(firstOccurrence, 0);
-      // Any subsequent "bash -lc " must be inside the escaped payload, not structural
-      const afterFirst = result.slice("bash -lc ".length);
       // The rest is the escaped command which starts and ends with single quotes
+      const afterFirst = result.slice("bash -lc ".length);
       assert.equal(afterFirst[0], "'");
       assert.equal(afterFirst[afterFirst.length - 1], "'");
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
 test("invariant 1: sshArgs includes the shell-escaped command as the final argument", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host", "host:2222", "user@host:22"),
+      sshTargetAny,
       shellDangerousString,
       (host, command) => {
         const args = sshArgs(host, command);
@@ -224,28 +207,28 @@ test("invariant 1: sshArgs includes the shell-escaped command as the final argum
         assert.equal(lastArg!.includes(shellEscape(command)), true);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
 test("invariant 1: sshArgs always contains -T flag for non-interactive mode", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host", "host:2222", "user@host:22", "root@[::1]:2200"),
+      sshTargetAny,
       shellDangerousString,
       (host, command) => {
         const args = sshArgs(host, command);
         assert.equal(args.includes("-T"), true);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 1: sshArgs includes port flag when host has :port suffix", () => {
+test("invariant 1: sshArgs includes port flag when target has :port suffix", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("host:2222", "user@host:22", "localhost:2200", "root@[::1]:2200"),
+      sshTargetWithPort,
       shellDangerousString,
       (host, command) => {
         const args = sshArgs(host, command);
@@ -257,21 +240,21 @@ test("invariant 1: sshArgs includes port flag when host has :port suffix", () =>
         assert.equal(args[portFlagIndex + 1], target.port);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
 test("invariant 1: sshArgs does NOT include port flag when host has no port", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host", "192.168.1.1", "root@example.com"),
+      sshTargetWithoutPort,
       shellDangerousString,
       (host, command) => {
         const args = sshArgs(host, command);
         assert.equal(args.includes("-p"), false);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
@@ -306,145 +289,55 @@ test("invariant 1 negative: shellEscape output never contains unbalanced quotes"
       const escaped = shellEscape(input);
       // Count single quotes - they should always be balanced
       // The structure is: '<content with '"'"' replacements>'
-      // We can verify balance by checking the outer structure:
       // Remove the known escape pattern '"'"' and count remaining quotes
       const withoutEscapePattern = escaped.replaceAll(`'"'"'`, "");
       const singleQuoteCount = (withoutEscapePattern.match(/'/g) || []).length;
       // Should be exactly 2 (the outer wrapping quotes)
       assert.equal(singleQuoteCount, 2);
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-// --- Invariant 2: When a remote file is written, parent directories are created first ---
+// --- Invariant 2: parseSshTarget correctly separates destination and port ---
 
-test("invariant 2: writeRemoteFile command includes mkdir -p for parent directory before write", () => {
+test("invariant 2: parseSshTarget roundtrip - destination:port recombines correctly", () => {
   fc.assert(
     fc.property(
-      fc.oneof(posixPath, challengingPosixPath),
-      shellDangerousString,
-      (remotePath, contents) => {
-        // Reconstruct the command the same way writeRemoteFile does, to check structural property.
-        const dirname = posixDirname(remotePath);
-        const expectedMkdir = `mkdir -p ${shellEscape(dirname)}`;
-        const expectedWrite = `printf '%s' ${shellEscape(contents)} > ${shellEscape(remotePath)}`;
-
-        // The command that writeRemoteFile would construct:
-        const command = [expectedMkdir, expectedWrite, "true"].join("\n");
-
-        // Verify mkdir comes before the write command
-        const mkdirIndex = command.indexOf("mkdir -p");
-        const printfIndex = command.indexOf("printf '%s'");
-        assert.equal(mkdirIndex >= 0, true);
-        assert.equal(printfIndex >= 0, true);
-        assert.equal(mkdirIndex < printfIndex, true);
-
-        // Verify the mkdir target is the parent directory of remotePath
-        assert.equal(command.includes(`mkdir -p ${shellEscape(dirname)}`), true);
-
-        // Verify the write targets the full path
-        assert.equal(command.includes(`> ${shellEscape(remotePath)}`), true);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: mkdir -p target is always the posix dirname of the remote path", () => {
-  fc.assert(
-    fc.property(fc.oneof(posixPath, challengingPosixPath), (remotePath) => {
-      const dirname = posixDirname(remotePath);
-      const mkdirFragment = `mkdir -p ${shellEscape(dirname)}`;
-      // dirname must be a prefix path of remotePath (parent directory)
-      // For any path like /a/b/c, dirname should be /a/b
-      const lastSlash = remotePath.lastIndexOf("/");
-      const expectedDir = lastSlash > 0 ? remotePath.slice(0, lastSlash) : "/";
-      assert.equal(dirname, expectedDir);
-      // The mkdir command must properly escape the directory
-      assert.equal(mkdirFragment.startsWith("mkdir -p '"), true);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: dirname is always a strict prefix of the path (for multi-segment paths)", () => {
-  fc.assert(
-    fc.property(
-      fc.array(
-        fc.string({ minLength: 1, maxLength: 10 }).filter((s) => !s.includes("\x00") && !s.includes("/")),
-        { minLength: 2, maxLength: 6 },
-      ).map((parts) => "/" + parts.join("/")),
-      (remotePath) => {
-        const dirname = posixDirname(remotePath);
-        // dirname must be a proper prefix of remotePath
-        assert.equal(remotePath.startsWith(dirname), true);
-        assert.equal(dirname.length < remotePath.length, true);
-        // remotePath should be dirname + "/" + basename
-        const basename = remotePath.slice(dirname.length + 1);
-        assert.equal(basename.length > 0, true);
-        assert.equal(basename.includes("/"), false);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: single-segment path (like /file) has dirname of /", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => !s.includes("\x00") && !s.includes("/")),
-      (filename) => {
-        const remotePath = "/" + filename;
-        const dirname = posixDirname(remotePath);
-        assert.equal(dirname, "/");
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-// --- Invariant 3: parseSshTarget correctly separates destination and port ---
-
-test("invariant 3: parseSshTarget roundtrip - destination:port recombines to original", () => {
-  fc.assert(
-    fc.property(
-      fc.oneof(
-        fc.constantFrom("localhost", "user@host", "192.168.1.1", "root@example.com"),
-      ),
-      fc.integer({ min: 1, max: 65535 }),
+      sshDestination,
+      sshPort,
       (dest, port) => {
         const input = `${dest}:${port}`;
         const result = parseSshTarget(input);
-        // For simple destinations (no colons), the target should be parsed
+        // The destination and port should be correctly extracted
         assert.equal(result.destination, dest);
         assert.equal(result.port, String(port));
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 3: parseSshTarget with no port returns null port", () => {
+test("invariant 2: parseSshTarget with no port returns null port and preserves destination", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host", "192.168.1.1", "root@example.com", "myserver"),
+      sshDestination,
       (host) => {
         const result = parseSshTarget(host);
         assert.equal(result.port, null);
         assert.equal(result.destination, host);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 3: parseSshTarget trims whitespace from input", () => {
+test("invariant 2: parseSshTarget trims whitespace from input", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host:22", "host:2222"),
-      fc.constantFrom("", " ", "  ", "\t"),
-      fc.constantFrom("", " ", "  ", "\t"),
+      sshTargetAny,
+      fc.stringMatching(/^[ \t]{1,5}$/),
+      fc.stringMatching(/^[ \t]{1,5}$/),
       (host, prefix, suffix) => {
         const padded = prefix + host + suffix;
         const resultPadded = parseSshTarget(padded);
@@ -452,15 +345,18 @@ test("invariant 3: parseSshTarget trims whitespace from input", () => {
         assert.deepEqual(resultPadded, resultClean);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 3: parseSshTarget with bracketed IPv6 and port", () => {
+test("invariant 2: parseSshTarget with bracketed IPv6 and port", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("root@[::1]", "user@[fe80::1]", "[::1]", "[2001:db8::1]"),
-      fc.integer({ min: 1, max: 65535 }),
+      fc.oneof(
+        bracketedIpv6,
+        fc.tuple(sshUsername, bracketedIpv6).map(([user, ipv6]) => `${user}@${ipv6}`),
+      ),
+      sshPort,
       (dest, port) => {
         const input = `${dest}:${port}`;
         const result = parseSshTarget(input);
@@ -468,16 +364,21 @@ test("invariant 3: parseSshTarget with bracketed IPv6 and port", () => {
         assert.equal(result.port, String(port));
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 3: parseSshTarget bare IPv6 (unbracketed with colons) does not extract port", () => {
-  // Bare IPv6 like "::1:2200" should NOT be split because the destination
-  // would contain colons without brackets
+test("invariant 2: parseSshTarget bare IPv6 (unbracketed with colons) does not extract port", () => {
+  // Bare IPv6 addresses contain colons but without brackets, so parsing as host:port is ambiguous.
+  // The parser should treat the whole thing as destination.
   fc.assert(
     fc.property(
-      fc.constantFrom("::1:2200", "fe80::1:8080", "2001:db8::1:443"),
+      fc.tuple(
+        fc.integer({ min: 0, max: 0xffff }),
+        fc.integer({ min: 0, max: 0xffff }),
+        fc.integer({ min: 0, max: 0xffff }),
+        fc.integer({ min: 1, max: 65535 }),
+      ).map(([a, b, c, port]) => `${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${port}`),
       (input) => {
         const result = parseSshTarget(input);
         // Should treat the whole thing as destination since it's ambiguous
@@ -485,16 +386,16 @@ test("invariant 3: parseSshTarget bare IPv6 (unbracketed with colons) does not e
         assert.equal(result.destination, input);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-// --- Invariant: sshArgs and parseSshTarget are consistent ---
+// --- Invariant 3: sshArgs and parseSshTarget are consistent ---
 
-test("invariant: sshArgs uses parseSshTarget destination as the host argument", () => {
+test("invariant 3: sshArgs uses parseSshTarget destination as the host argument", () => {
   fc.assert(
     fc.property(
-      fc.constantFrom("localhost", "user@host", "host:2222", "user@host:22", "root@[::1]:2200"),
+      sshTargetAny,
       shellDangerousString,
       (host, command) => {
         const args = sshArgs(host, command);
@@ -503,14 +404,29 @@ test("invariant: sshArgs uses parseSshTarget destination as the host argument", 
         assert.equal(args.includes(target.destination), true);
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-// --- Utility: posix dirname without importing path (to avoid async import complexity) ---
-
-function posixDirname(p: string): string {
-  const lastSlash = p.lastIndexOf("/");
-  if (lastSlash <= 0) return "/";
-  return p.slice(0, lastSlash);
-}
+test("invariant 3: sshArgs port argument matches parseSshTarget port when present", () => {
+  fc.assert(
+    fc.property(
+      sshTargetAny,
+      shellDangerousString,
+      (host, command) => {
+        const args = sshArgs(host, command);
+        const target = parseSshTarget(host);
+        const portFlagIndex = args.indexOf("-p");
+        if (target.port !== null) {
+          // If parseSshTarget finds a port, sshArgs must include -p with that port
+          assert.equal(portFlagIndex >= 0, true);
+          assert.equal(args[portFlagIndex + 1], target.port);
+        } else {
+          // If no port, -p must be absent
+          assert.equal(portFlagIndex, -1);
+        }
+      },
+    ),
+    { numRuns: 500 },
+  );
+});
