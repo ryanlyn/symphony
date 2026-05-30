@@ -1,15 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { afterEach, test, vi } from "vitest";
-import { appendLogEvent, configureLogFile, defaultLogFile, resetLogFileState } from "@symphony/cli";
+import { test, vi } from "vitest";
+import { appendLogEvent, configureLogFile, defaultLogFile } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 import { tempDir } from "../../../test/helpers.js";
-
-afterEach(() => {
-  resetLogFileState();
-});
 
 test("log file configuration uses pino-roll with a stable Elixir-compatible path", async () => {
   const root = await tempDir("symphony-ts-log-file");

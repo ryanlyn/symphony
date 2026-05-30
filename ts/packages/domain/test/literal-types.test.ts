@@ -39,35 +39,20 @@ const validRuntimeEvent: RuntimeEvent = {
 };
 const validSessionUpdate: SessionUpdate = { kind: "turn_completed", message: "completed" };
 
-// Compile-time type checks below rely on `tsc --noEmit` (run as part of `mise run check`)
-// to detect regressions. If the test runner bypasses type checking (e.g. esbuild/swc transform),
-// these @ts-expect-error annotations still serve as documentation of the type constraints.
-// The runtime assertions in the test cases below provide a secondary safety net.
-
-// @ts-expect-error Agent updates must use the canonical event vocabulary.
-const invalidAgentUpdate: AgentUpdate = { type: "event" };
-const invalidRuntimeEvent: RuntimeEvent = {
+// Compile-time type checks: @ts-expect-error proves that invalid literals are
+// rejected by tsc. Wrapping them in a test avoids unused-variable warnings.
+test("literal types reject invalid values at compile time", () => {
+  // @ts-expect-error Agent updates must use the canonical event vocabulary.
+  const _agentUpdate: AgentUpdate = { type: "event" };
   // @ts-expect-error Runtime events must use the canonical runtime event vocabulary.
-  type: "event",
-  message: "event",
-  at: "2026-05-13T00:00:00.000Z",
-};
-// @ts-expect-error Session updates must use the canonical protocol update vocabulary.
-const invalidSessionUpdate: SessionUpdate = { kind: "event" };
-// @ts-expect-error Issue state type is normalized to known tracker buckets.
-const invalidIssue: Issue = { ...issueFixture, stateType: "needs-review" };
-const invalidCodexSettings: CodexSettings = {
-  ...codexSettingsFixture,
+  const _runtimeEvent: RuntimeEvent = { type: "event", message: "event", at: "2026-05-13T00:00:00.000Z" };
+  // @ts-expect-error Session updates must use the canonical protocol update vocabulary.
+  const _sessionUpdate: SessionUpdate = { kind: "event" };
+  // @ts-expect-error Issue state type is normalized to known tracker buckets.
+  const _issue: Issue = { ...issueFixture, stateType: "needs-review" };
   // @ts-expect-error Codex thread sandbox accepts only app-server sandbox mode names.
-  threadSandbox: "workspaceWrite",
-};
-
-// Suppress unused-variable warnings for compile-time-only fixtures.
-void invalidAgentUpdate;
-void invalidRuntimeEvent;
-void invalidSessionUpdate;
-void invalidIssue;
-void invalidCodexSettings;
+  const _codexSettings: CodexSettings = { ...codexSettingsFixture, threadSandbox: "workspaceWrite" };
+});
 
 test("AGENT_UPDATE_TYPES contains no duplicate entries", () => {
   const unique = new Set(AGENT_UPDATE_TYPES);

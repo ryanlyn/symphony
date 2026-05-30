@@ -87,7 +87,6 @@ export {
   configureLogFile,
   appendLogEvent,
   defaultLogFile,
-  resetLogFileState,
 } from "@symphony/log-file";
 export {
   humanizeAgentMessage,
