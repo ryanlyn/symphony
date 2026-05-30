@@ -54,10 +54,10 @@ function validIssueInput(overrides: Record<string, unknown> = {}): Record<string
   };
 }
 
-// --- Invariant 1: State value resolution priority ---
+// --- State value resolution priority ---
 // The system SHALL accept nested object form, snake_case, camelCase, and direct string form.
 
-test("Invariant 1: state resolution accepts nested object form { state: { name } }", () => {
+test("state resolution accepts nested object form { state: { name } }", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
@@ -67,7 +67,7 @@ test("Invariant 1: state resolution accepts nested object form { state: { name }
   );
 });
 
-test("Invariant 1: state resolution accepts snake_case state_name", () => {
+test("state resolution accepts snake_case state_name", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(validIssueInput({ state: undefined, state_name: stateName }));
@@ -77,7 +77,7 @@ test("Invariant 1: state resolution accepts snake_case state_name", () => {
   );
 });
 
-test("Invariant 1: state resolution accepts camelCase stateName", () => {
+test("state resolution accepts camelCase stateName", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(
@@ -89,7 +89,7 @@ test("Invariant 1: state resolution accepts camelCase stateName", () => {
   );
 });
 
-test("Invariant 1: state resolution accepts direct string form", () => {
+test("state resolution accepts direct string form", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(validIssueInput({ state: stateName }));
@@ -99,7 +99,7 @@ test("Invariant 1: state resolution accepts direct string form", () => {
   );
 });
 
-test("Invariant 1: nested object form takes priority over snake_case and camelCase", () => {
+test("nested object form takes priority over snake_case and camelCase", () => {
   fc.assert(
     fc.property(nonBlankString, nonBlankString, nonBlankString, (nested, snake, camel) => {
       fc.pre(nested !== snake && nested !== camel);
@@ -116,7 +116,7 @@ test("Invariant 1: nested object form takes priority over snake_case and camelCa
   );
 });
 
-test("Invariant 1: snake_case takes priority over camelCase when no nested object", () => {
+test("snake_case takes priority over camelCase when no nested object", () => {
   fc.assert(
     fc.property(nonBlankString, nonBlankString, (snake, camel) => {
       fc.pre(snake !== camel);
@@ -133,7 +133,7 @@ test("Invariant 1: snake_case takes priority over camelCase when no nested objec
   );
 });
 
-test("Invariant 1: state is preserved exactly (not trimmed or lowercased)", () => {
+test("state is preserved exactly (not trimmed or lowercased)", () => {
   fc.assert(
     fc.property(paddedString, (stateName) => {
       const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
@@ -143,10 +143,10 @@ test("Invariant 1: state is preserved exactly (not trimmed or lowercased)", () =
   );
 });
 
-// --- Invariant 2: Label normalization ---
+// --- Label normalization ---
 // Labels SHALL be trimmed, lowercased, and empty strings filtered out.
 
-test("Invariant 2: labels are trimmed and lowercased", () => {
+test("labels are trimmed and lowercased", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -165,7 +165,7 @@ test("Invariant 2: labels are trimmed and lowercased", () => {
   );
 });
 
-test("Invariant 2: label normalization preserves relative order of non-blank inputs", () => {
+test("label normalization preserves relative order of non-blank inputs", () => {
   fc.assert(
     fc.property(
       fc.array(fc.string({ maxLength: 30 }), { minLength: 1, maxLength: 10 }),
@@ -182,7 +182,7 @@ test("Invariant 2: label normalization preserves relative order of non-blank inp
   );
 });
 
-test("Invariant 2: labels from object form { name } are also normalized", () => {
+test("labels from object form { name } are also normalized", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -203,7 +203,7 @@ test("Invariant 2: labels from object form { name } are also normalized", () => 
   );
 });
 
-test("Invariant 2: labels with unicode are trimmed and lowercased", () => {
+test("labels with unicode are trimmed and lowercased", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -222,7 +222,7 @@ test("Invariant 2: labels with unicode are trimmed and lowercased", () => {
   );
 });
 
-test("Invariant 2: non-array labels produce empty array", () => {
+test("non-array labels produce empty array", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -241,7 +241,7 @@ test("Invariant 2: non-array labels produce empty array", () => {
   );
 });
 
-test("Invariant 2: normalization is idempotent (applying twice yields same result)", () => {
+test("normalization is idempotent (applying twice yields same result)", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -258,11 +258,11 @@ test("Invariant 2: normalization is idempotent (applying twice yields same resul
   );
 });
 
-// --- Invariant 3: Blocker resolution ---
+// --- Blocker resolution ---
 // The system SHALL prefer an explicit blockers array, falling back to filtering relations where
 // type equals "blocks" (case-insensitive).
 
-test("Invariant 3: explicit blockers array is preferred over relations", () => {
+test("explicit blockers array is preferred over relations", () => {
   fc.assert(
     fc.property(
       fc.array(fc.record({ id: nonBlankString, identifier: nonBlankString }), {
@@ -290,7 +290,7 @@ test("Invariant 3: explicit blockers array is preferred over relations", () => {
   );
 });
 
-test("Invariant 3: relations with type 'blocks' (case-insensitive) become blockers when no explicit blockers array", () => {
+test("relations with type 'blocks' (case-insensitive) become blockers when no explicit blockers array", () => {
   fc.assert(
     fc.property(
       fc
@@ -318,7 +318,7 @@ test("Invariant 3: relations with type 'blocks' (case-insensitive) become blocke
   );
 });
 
-test("Invariant 3: non-blocks relations are not included as blockers", () => {
+test("non-blocks relations are not included as blockers", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().toLowerCase() !== "blocks"),
@@ -335,7 +335,7 @@ test("Invariant 3: non-blocks relations are not included as blockers", () => {
   );
 });
 
-test("Invariant 3: relations with 'issue' field (not relatedIssue) are also recognized", () => {
+test("relations with 'issue' field (not relatedIssue) are also recognized", () => {
   fc.assert(
     fc.property(nonBlankString, nonBlankString, (blockerId, blockerIdent) => {
       const issue = normalizeIssue(
@@ -351,7 +351,7 @@ test("Invariant 3: relations with 'issue' field (not relatedIssue) are also reco
   );
 });
 
-test("Invariant 3: empty blockers array means zero blockers regardless of block relations", () => {
+test("empty blockers array means zero blockers regardless of block relations", () => {
   fc.assert(
     fc.property(
       fc.array(fc.record({ id: nonBlankString, identifier: nonBlankString }), {
@@ -371,7 +371,7 @@ test("Invariant 3: empty blockers array means zero blockers regardless of block 
   );
 });
 
-test("Invariant 3: multiple blocking relations all become blockers", () => {
+test("multiple blocking relations all become blockers", () => {
   fc.assert(
     fc.property(
       fc.array(fc.record({ id: nonBlankString, identifier: nonBlankString }), {
@@ -394,11 +394,11 @@ test("Invariant 3: multiple blocking relations all become blockers", () => {
   );
 });
 
-// --- Invariant 4: Assignee filter with no assignee ---
+// --- Assignee filter with no assignee ---
 // When an assignee filter is configured and the issue has no assignee,
 // the issue SHALL be marked as not assigned to this worker.
 
-test("Invariant 4: issue with no assignee is marked assignedToWorker=false when filter is configured", () => {
+test("issue with no assignee is marked assignedToWorker=false when filter is configured", () => {
   fc.assert(
     fc.property(nonBlankString, (assigneeFilter) => {
       const issue = normalizeIssue(validIssueInput({}), assigneeFilter);
@@ -408,7 +408,7 @@ test("Invariant 4: issue with no assignee is marked assignedToWorker=false when 
   );
 });
 
-test("Invariant 4: issue with null assignee_id is marked assignedToWorker=false when filter is configured", () => {
+test("issue with null assignee_id is marked assignedToWorker=false when filter is configured", () => {
   fc.assert(
     fc.property(nonBlankString, (assigneeFilter) => {
       const issue = normalizeIssue(validIssueInput({ assignee_id: null }), assigneeFilter);
@@ -418,7 +418,7 @@ test("Invariant 4: issue with null assignee_id is marked assignedToWorker=false 
   );
 });
 
-test("Invariant 4: no assignee filter (undefined) means assignedToWorker=true regardless", () => {
+test("no assignee filter (undefined) means assignedToWorker=true regardless", () => {
   fc.assert(
     fc.property(
       fc.oneof(fc.constant(undefined), fc.constant(null), nonBlankString),
@@ -431,7 +431,7 @@ test("Invariant 4: no assignee filter (undefined) means assignedToWorker=true re
   );
 });
 
-test("Invariant 4: empty string assignee filter means assignedToWorker=true regardless", () => {
+test("empty string assignee filter means assignedToWorker=true regardless", () => {
   fc.assert(
     fc.property(
       fc.oneof(fc.constant(undefined), fc.constant(null), nonBlankString),
@@ -444,9 +444,9 @@ test("Invariant 4: empty string assignee filter means assignedToWorker=true rega
   );
 });
 
-// --- Invariant 5: Assignee comparison is case-insensitive ---
+// --- Assignee comparison is case-insensitive ---
 
-test("Invariant 5: assignee comparison is case-insensitive", () => {
+test("assignee comparison is case-insensitive", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0),
@@ -462,7 +462,7 @@ test("Invariant 5: assignee comparison is case-insensitive", () => {
   );
 });
 
-test("Invariant 5: assignee comparison is case-insensitive with mixed case", () => {
+test("assignee comparison is case-insensitive with mixed case", () => {
   fc.assert(
     fc.property(
       fc
@@ -485,7 +485,7 @@ test("Invariant 5: assignee comparison is case-insensitive with mixed case", () 
   );
 });
 
-test("Invariant 5: mismatched assignee is marked assignedToWorker=false", () => {
+test("mismatched assignee is marked assignedToWorker=false", () => {
   fc.assert(
     fc.property(nonBlankString, nonBlankString, (issueAssignee, filterAssignee) => {
       fc.pre(issueAssignee.toLowerCase() !== filterAssignee.toLowerCase());
@@ -499,7 +499,7 @@ test("Invariant 5: mismatched assignee is marked assignedToWorker=false", () => 
   );
 });
 
-test("Invariant 5: assignee nested object id takes priority over assignee_id", () => {
+test("assignee nested object id takes priority over assignee_id", () => {
   fc.assert(
     fc.property(nonBlankString, nonBlankString, (nestedId, flatId) => {
       fc.pre(nestedId.toLowerCase() !== flatId.toLowerCase());
@@ -513,10 +513,10 @@ test("Invariant 5: assignee nested object id takes priority over assignee_id", (
   );
 });
 
-// --- Invariant 6: Missing required fields ---
+// --- Missing required fields ---
 // ANY record lacking a required field SHALL be rejected, regardless of what other keys it contains.
 
-test("Invariant 6: arbitrary records missing required fields are rejected", () => {
+test("arbitrary records missing required fields are rejected", () => {
   const requiredKeys = ["id", "identifier", "title", "state"];
   const arbitraryExtraRecord = fc
     .array(
@@ -548,7 +548,7 @@ test("Invariant 6: arbitrary records missing required fields are rejected", () =
   );
 });
 
-test("Invariant 6: invalid types for required fields cause rejection regardless of other fields", () => {
+test("invalid types for required fields cause rejection regardless of other fields", () => {
   const requiredKeys = ["id", "identifier", "title"];
   const invalidValues = fc.oneof(
     fc.integer(),
@@ -584,7 +584,7 @@ test("Invariant 6: invalid types for required fields cause rejection regardless 
   );
 });
 
-test("Invariant 6: blank/whitespace-only required fields cause rejection", () => {
+test("blank/whitespace-only required fields cause rejection", () => {
   const requiredKeys = ["id", "identifier", "title", "state"];
   const whitespaceString = fc
     .array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 5 })
@@ -605,10 +605,10 @@ test("Invariant 6: blank/whitespace-only required fields cause rejection", () =>
   );
 });
 
-// --- Invariant 7: State type normalization ---
+// --- State type normalization ---
 // Only values in the canonical set SHALL be accepted; others become null.
 
-test("Invariant 7: canonical state types with random casing and padding are accepted", () => {
+test("canonical state types with random casing and padding are accepted", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(...ISSUE_STATE_TYPES),
@@ -629,7 +629,7 @@ test("Invariant 7: canonical state types with random casing and padding are acce
   );
 });
 
-test("Invariant 7: non-canonical state types become null", () => {
+test("non-canonical state types become null", () => {
   fc.assert(
     fc.property(
       fc
@@ -651,7 +651,7 @@ test("Invariant 7: non-canonical state types become null", () => {
   );
 });
 
-test("Invariant 7: near-miss state types (mutations of valid types) become null", () => {
+test("near-miss state types (mutations of valid types) become null", () => {
   const mutatedStateType = fc
     .constantFrom(...ISSUE_STATE_TYPES)
     .chain((base) =>
@@ -688,7 +688,7 @@ test("Invariant 7: near-miss state types (mutations of valid types) become null"
   );
 });
 
-test("Invariant 7: null or missing state type remains null", () => {
+test("null or missing state type remains null", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
@@ -698,7 +698,7 @@ test("Invariant 7: null or missing state type remains null", () => {
   );
 });
 
-test("Invariant 7: state_type field works as fallback when no nested state.type", () => {
+test("state_type field works as fallback when no nested state.type", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(...ISSUE_STATE_TYPES),
@@ -716,7 +716,7 @@ test("Invariant 7: state_type field works as fallback when no nested state.type"
   );
 });
 
-test("Invariant 7: stateType camelCase field works as fallback", () => {
+test("stateType camelCase field works as fallback", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(...ISSUE_STATE_TYPES),
@@ -734,10 +734,10 @@ test("Invariant 7: stateType camelCase field works as fallback", () => {
   );
 });
 
-// --- Invariant 8: Output structure completeness ---
+// --- Output structure completeness ---
 // Every normalized issue SHALL have all required fields populated.
 
-test("Invariant 8: normalized issue always has id, identifier, title, state, labels, blockers", () => {
+test("normalized issue always has id, identifier, title, state, labels, blockers", () => {
   fc.assert(
     fc.property(
       nonBlankString,
@@ -758,7 +758,7 @@ test("Invariant 8: normalized issue always has id, identifier, title, state, lab
   );
 });
 
-test("Invariant 8: raw field preserves the original input object", () => {
+test("raw field preserves the original input object", () => {
   fc.assert(
     fc.property(
       nonBlankString,

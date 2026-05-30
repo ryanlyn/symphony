@@ -4,7 +4,7 @@ import { retryBackoffMs } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 
-// Invariant 1: Delay is always a non-negative finite number for any inputs.
+// Delay is always a non-negative finite number for any inputs.
 // This guards against NaN, Infinity, or negative delays that could cause
 // infinite loops or invalid timer arguments in the orchestrator.
 test("retryBackoffMs - delay is always non-negative and finite for the full input domain", () => {
@@ -23,7 +23,7 @@ test("retryBackoffMs - delay is always non-negative and finite for the full inpu
   );
 });
 
-// Invariant 2: Failure delays are monotonically non-decreasing with attempt number.
+// Failure delays are monotonically non-decreasing with attempt number.
 // This ensures that higher attempt numbers never produce shorter waits, which would
 // defeat the purpose of exponential backoff as a congestion-avoidance mechanism.
 test("retryBackoffMs - failure delays are monotonically non-decreasing with attempt number", () => {
@@ -44,7 +44,7 @@ test("retryBackoffMs - failure delays are monotonically non-decreasing with atte
   );
 });
 
-// Invariant 3: Failure delay never exceeds the configured maximum cap.
+// Failure delay never exceeds the configured maximum cap.
 // This guarantees that operators can bound worst-case wait times via configuration,
 // ensuring SLA compliance regardless of retry count.
 test("retryBackoffMs - failure delay never exceeds the configured maximum cap", () => {
@@ -61,7 +61,7 @@ test("retryBackoffMs - failure delay never exceeds the configured maximum cap", 
   );
 });
 
-// Invariant 5: When max allows, failure delays have a positive floor preventing zero-delay storms.
+// When max allows, failure delays have a positive floor preventing zero-delay storms.
 // A zero delay in failure retries would cause a tight retry loop that overwhelms the upstream.
 test("retryBackoffMs - failure delay has a positive floor when maxBackoff permits", () => {
   fc.assert(
@@ -77,7 +77,7 @@ test("retryBackoffMs - failure delay has a positive floor when maxBackoff permit
   );
 });
 
-// Invariant 6: Continuation retry uses a constant short delay independent of attempt and maxBackoff.
+// Continuation retry uses a constant short delay independent of attempt and maxBackoff.
 // Continuations are not errors -- they are normal protocol flow (e.g., max_tokens reached),
 // so they should retry quickly without exponential growth.
 test("retryBackoffMs - continuation retry uses a fixed delay regardless of inputs", () => {

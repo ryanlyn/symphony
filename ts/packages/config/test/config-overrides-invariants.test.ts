@@ -55,11 +55,11 @@ const distinctStateNamesArb = fc
   .filter(([a, b]) => normalizeStateName(a) !== normalizeStateName(b));
 
 // ============================================================
-// Invariant 1: When no override is present, the base settings
+// When no override is present, the base settings
 // SHALL remain unchanged.
 // ============================================================
 
-test("Invariant 1: no override present — base settings remain unchanged", () => {
+test("no override present — base settings remain unchanged", () => {
   fc.assert(
     fc.property(stateNameArb, (state) => {
       // Create settings with empty statusOverrides (default)
@@ -94,7 +94,7 @@ test("Invariant 1: no override present — base settings remain unchanged", () =
   );
 });
 
-test("Invariant 1: state present but NOT in overrides map — base settings remain unchanged", () => {
+test("state present but NOT in overrides map — base settings remain unchanged", () => {
   fc.assert(
     fc.property(stateNameArb, positiveIntArb, (state, cap) => {
       const settings = defaultSettings();
@@ -118,7 +118,7 @@ test("Invariant 1: state present but NOT in overrides map — base settings rema
   );
 });
 
-test("Invariant 1: settingsForIssueState returns a clone, not the same object reference", () => {
+test("settingsForIssueState returns a clone, not the same object reference", () => {
   fc.assert(
     fc.property(stateNameArb, (state) => {
       const settings = defaultSettings();
@@ -135,11 +135,11 @@ test("Invariant 1: settingsForIssueState returns a clone, not the same object re
 });
 
 // ============================================================
-// Invariant 2: When override lookup is performed, it SHALL be
+// When override lookup is performed, it SHALL be
 // case-insensitive.
 // ============================================================
 
-test("Invariant 2: override lookup is case-insensitive — upper/lower/mixed match", () => {
+test("override lookup is case-insensitive — upper/lower/mixed match", () => {
   fc.assert(
     fc.property(
       stateNameArb.filter((s) => /[a-z]/.test(s)),
@@ -169,7 +169,7 @@ test("Invariant 2: override lookup is case-insensitive — upper/lower/mixed mat
   );
 });
 
-test("Invariant 2: lookup is whitespace-insensitive (leading/trailing trimmed)", () => {
+test("lookup is whitespace-insensitive (leading/trailing trimmed)", () => {
   fc.assert(
     fc.property(
       stateNameArb,
@@ -192,7 +192,7 @@ test("Invariant 2: lookup is whitespace-insensitive (leading/trailing trimmed)",
   );
 });
 
-test("Invariant 2: normalizeStateName is idempotent", () => {
+test("normalizeStateName is idempotent", () => {
   fc.assert(
     fc.property(exoticStateNameArb, (state) => {
       const once = normalizeStateName(state);
@@ -203,7 +203,7 @@ test("Invariant 2: normalizeStateName is idempotent", () => {
   );
 });
 
-test("Invariant 2: parseConfig normalizes state names in statusOverrides map keys", () => {
+test("parseConfig normalizes state names in statusOverrides map keys", () => {
   fc.assert(
     fc.property(
       stateNameArb.filter((s) => /[a-z]/.test(s)),
@@ -232,11 +232,11 @@ test("Invariant 2: parseConfig normalizes state names in statusOverrides map key
 });
 
 // ============================================================
-// Invariant 3: When overrides are defined for different states,
+// When overrides are defined for different states,
 // they SHALL apply independently.
 // ============================================================
 
-test("Invariant 3: overrides for different states apply independently", () => {
+test("overrides for different states apply independently", () => {
   fc.assert(
     fc.property(
       positiveIntArb,
@@ -277,7 +277,7 @@ test("Invariant 3: overrides for different states apply independently", () => {
   );
 });
 
-test("Invariant 3: one state override does not affect querying another state", () => {
+test("one state override does not affect querying another state", () => {
   fc.assert(
     fc.property(positiveIntArb, (cap) => {
       const settings = defaultSettings();
@@ -298,7 +298,7 @@ test("Invariant 3: one state override does not affect querying another state", (
   );
 });
 
-test("Invariant 3: multiple distinct overrides each resolve to their own values", () => {
+test("multiple distinct overrides each resolve to their own values", () => {
   fc.assert(
     fc.property(
       distinctStateNamesArb,
@@ -332,7 +332,7 @@ test("Invariant 3: multiple distinct overrides each resolve to their own values"
   );
 });
 
-test("Invariant 3: querying override does not mutate the source settings object", () => {
+test("querying override does not mutate the source settings object", () => {
   fc.assert(
     fc.property(positiveIntArb, positiveIntArb, (turnsOverride, timeoutOverride) => {
       const settings = defaultSettings();
@@ -356,11 +356,11 @@ test("Invariant 3: querying override does not mutate the source settings object"
 });
 
 // ============================================================
-// Invariant 4: When a partial override is applied, unmentioned
+// When a partial override is applied, unmentioned
 // fields SHALL be preserved.
 // ============================================================
 
-test("Invariant 4: partial agent override preserves unmentioned agent fields", () => {
+test("partial agent override preserves unmentioned agent fields", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, (maxTurns) => {
       const settings = defaultSettings();
@@ -384,7 +384,7 @@ test("Invariant 4: partial agent override preserves unmentioned agent fields", (
   );
 });
 
-test("Invariant 4: partial codex override preserves unmentioned codex fields", () => {
+test("partial codex override preserves unmentioned codex fields", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, (turnTimeoutMs) => {
       const settings = defaultSettings();
@@ -407,7 +407,7 @@ test("Invariant 4: partial codex override preserves unmentioned codex fields", (
   );
 });
 
-test("Invariant 4: partial claude override preserves unmentioned claude fields", () => {
+test("partial claude override preserves unmentioned claude fields", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, (turnTimeoutMs) => {
       const settings = defaultSettings();
@@ -431,7 +431,7 @@ test("Invariant 4: partial claude override preserves unmentioned claude fields",
   );
 });
 
-test("Invariant 4: override with only agent section leaves codex and claude untouched", () => {
+test("override with only agent section leaves codex and claude untouched", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, (maxTurns) => {
       const settings = defaultSettings();
@@ -457,7 +457,7 @@ test("Invariant 4: override with only agent section leaves codex and claude unto
   );
 });
 
-test("Invariant 4: overriding multiple agent fields at once preserves remaining fields", () => {
+test("overriding multiple agent fields at once preserves remaining fields", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, boundaryPositiveIntArb, (maxTurns, maxConcurrent) => {
       const settings = defaultSettings();
@@ -480,7 +480,7 @@ test("Invariant 4: overriding multiple agent fields at once preserves remaining 
   );
 });
 
-test("Invariant 4: partial override via parseConfig preserves fields not in raw config", () => {
+test("partial override via parseConfig preserves fields not in raw config", () => {
   fc.assert(
     fc.property(boundaryPositiveIntArb, (turns) => {
       const raw = {
@@ -509,11 +509,11 @@ test("Invariant 4: partial override via parseConfig preserves fields not in raw 
 });
 
 // ============================================================
-// Invariant 5: When nested map fields are overridden, they
+// When nested map fields are overridden, they
 // SHALL be deep-merged.
 // ============================================================
 
-test("Invariant 5: codex approvalPolicy deep-merged — override keys merge, base keys preserved", () => {
+test("codex approvalPolicy deep-merged — override keys merge, base keys preserved", () => {
   fc.assert(
     fc.property(fc.boolean(), fc.boolean(), (sandboxApproval, rules) => {
       const settings = defaultSettings();
@@ -544,7 +544,7 @@ test("Invariant 5: codex approvalPolicy deep-merged — override keys merge, bas
   );
 });
 
-test("Invariant 5: codex turnSandboxPolicy deep-merged when both base and override are maps", () => {
+test("codex turnSandboxPolicy deep-merged when both base and override are maps", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 10 }),
@@ -580,7 +580,7 @@ test("Invariant 5: codex turnSandboxPolicy deep-merged when both base and overri
   );
 });
 
-test("Invariant 5: deep merge via parseConfig round-trip preserves unmentioned nested keys", () => {
+test("deep merge via parseConfig round-trip preserves unmentioned nested keys", () => {
   fc.assert(
     fc.property(fc.boolean(), (mcp) => {
       const raw = {
@@ -611,7 +611,7 @@ test("Invariant 5: deep merge via parseConfig round-trip preserves unmentioned n
   );
 });
 
-test("Invariant 5: deep merge with multiple nested levels merges recursively", () => {
+test("deep merge with multiple nested levels merges recursively", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 8 }),
@@ -661,7 +661,7 @@ test("Invariant 5: deep merge with multiple nested levels merges recursively", (
   );
 });
 
-test("Invariant 5: deep merge does NOT apply when base approvalPolicy is a string (named policy)", () => {
+test("deep merge does NOT apply when base approvalPolicy is a string (named policy)", () => {
   fc.assert(
     fc.property(fc.boolean(), (sandboxApproval) => {
       const settings = defaultSettings();
@@ -686,7 +686,7 @@ test("Invariant 5: deep merge does NOT apply when base approvalPolicy is a strin
   );
 });
 
-test("Invariant 5: turnSandboxPolicy override replaces when base is null", () => {
+test("turnSandboxPolicy override replaces when base is null", () => {
   fc.assert(
     fc.property(fc.string({ minLength: 1, maxLength: 8 }), (value) => {
       const settings = defaultSettings();

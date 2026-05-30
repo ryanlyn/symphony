@@ -307,9 +307,9 @@ const safeIssueArb: fc.Arbitrary<Issue> = fc.record({
   assignedToWorker: fc.option(fc.boolean(), { nil: null }),
 }) as fc.Arbitrary<Issue>;
 
-// --- Invariant 1: empty/whitespace body falls back to default prompt ---
+// --- empty/whitespace body falls back to default prompt ---
 
-test("Invariant 1: when workflow prompt body is empty or whitespace-only, system uses minimal default prompt", async () => {
+test("when workflow prompt body is empty or whitespace-only, system uses minimal default prompt", async () => {
   await fc.assert(
     fc.asyncProperty(strictWhitespaceOnlyArb, safeIssueArb, async (template, issue) => {
       const result = await buildPrompt(template, issue);
@@ -326,7 +326,7 @@ test("Invariant 1: when workflow prompt body is empty or whitespace-only, system
   );
 });
 
-test("Invariant 1: effectivePromptTemplate returns defaultPromptTemplate for whitespace inputs", () => {
+test("effectivePromptTemplate returns defaultPromptTemplate for whitespace inputs", () => {
   fc.assert(
     fc.property(strictWhitespaceOnlyArb, (template) => {
       const effective = effectivePromptTemplate(template);
@@ -336,7 +336,7 @@ test("Invariant 1: effectivePromptTemplate returns defaultPromptTemplate for whi
   );
 });
 
-test("Invariant 1: non-whitespace template does NOT fall back to default", () => {
+test("non-whitespace template does NOT fall back to default", () => {
   const nonWhitespaceArb = fc
     .string({ minLength: 1, maxLength: 100 })
     .filter((s) => s.trim() !== "");
@@ -351,9 +351,9 @@ test("Invariant 1: non-whitespace template does NOT fall back to default", () =>
   );
 });
 
-// --- Invariant 2: unknown variable causes strict failure ---
+// --- unknown variable causes strict failure ---
 
-test("Invariant 2: when prompt template references unknown variable, rendering fails strictly", async () => {
+test("when prompt template references unknown variable, rendering fails strictly", async () => {
   await fc.assert(
     fc.asyncProperty(unknownVariableNameArb, async (varName) => {
       const template = `Hello {{ ${varName} }}`;
@@ -364,7 +364,7 @@ test("Invariant 2: when prompt template references unknown variable, rendering f
   );
 });
 
-test("Invariant 2: nested unknown variable references also fail strictly", async () => {
+test("nested unknown variable references also fail strictly", async () => {
   // Known keys in the issuePromptContext: id, identifier, title, description, priority,
   // state, state_type, branch_name, url, assignee_id, blocked_by, labels, assigned_to_worker,
   // created_at, updated_at
@@ -398,7 +398,7 @@ test("Invariant 2: nested unknown variable references also fail strictly", async
   );
 });
 
-test("Invariant 2: deeply nested unknown path fails strictly", async () => {
+test("deeply nested unknown path fails strictly", async () => {
   await fc.assert(
     fc.asyncProperty(unknownVariableNameArb, unknownVariableNameArb, async (path1, path2) => {
       const template = `Data: {{ ${path1}.${path2} }}`;
@@ -409,9 +409,9 @@ test("Invariant 2: deeply nested unknown path fails strictly", async () => {
   );
 });
 
-// --- Invariant 3: unknown filter causes strict failure ---
+// --- unknown filter causes strict failure ---
 
-test("Invariant 3: when prompt template references unknown filter, rendering fails strictly", async () => {
+test("when prompt template references unknown filter, rendering fails strictly", async () => {
   await fc.assert(
     fc.asyncProperty(unknownFilterNameArb, async (filterName) => {
       const template = `Hello {{ issue.title | ${filterName} }}`;
@@ -422,7 +422,7 @@ test("Invariant 3: when prompt template references unknown filter, rendering fai
   );
 });
 
-test("Invariant 3: unknown filter on various value types fails", async () => {
+test("unknown filter on various value types fails", async () => {
   const valueExpressions = [
     "issue.title",
     "issue.id",
@@ -442,7 +442,7 @@ test("Invariant 3: unknown filter on various value types fails", async () => {
   );
 });
 
-test("Invariant 3: chained unknown filter after known filter still fails", async () => {
+test("chained unknown filter after known filter still fails", async () => {
   await fc.assert(
     fc.asyncProperty(unknownFilterNameArb, async (filterName) => {
       // A known filter (upcase) followed by an unknown one should still fail
@@ -454,9 +454,9 @@ test("Invariant 3: chained unknown filter after known filter still fails", async
   );
 });
 
-// --- Invariant 4: issue, attempt, and ensemble are available as template inputs ---
+// --- issue, attempt, and ensemble are available as template inputs ---
 
-test("Invariant 4: issue object is available as template input with expected fields", async () => {
+test("issue object is available as template input with expected fields", async () => {
   await fc.assert(
     fc.asyncProperty(safeIssueArb, async (issue) => {
       const template = `id:{{ issue.id }} ident:{{ issue.identifier }} title:{{ issue.title }} state:{{ issue.state }}`;
@@ -471,7 +471,7 @@ test("Invariant 4: issue object is available as template input with expected fie
   );
 });
 
-test("Invariant 4: snake_case template fields map correctly from camelCase source for any issue", async () => {
+test("snake_case template fields map correctly from camelCase source for any issue", async () => {
   // Verify that for any issue with non-null optional fields, the snake_case
   // template variables produce the corresponding camelCase source values.
   const issueWithFieldsArb = fc.record({
@@ -515,7 +515,7 @@ test("Invariant 4: snake_case template fields map correctly from camelCase sourc
   );
 });
 
-test("Invariant 4: attempt is available as template input", async () => {
+test("attempt is available as template input", async () => {
   const attemptArb = fc.oneof(
     fc.constant(null),
     fc.integer({ min: 0, max: 100 }),
@@ -543,7 +543,7 @@ test("Invariant 4: attempt is available as template input", async () => {
   );
 });
 
-test("Invariant 4: ensemble object is available as template input with slot_index, size, and enabled", async () => {
+test("ensemble object is available as template input with slot_index, size, and enabled", async () => {
   const slotArb = fc.integer({ min: 0, max: 10 });
   const sizeArb = fc.integer({ min: 1, max: 10 });
 
@@ -562,7 +562,7 @@ test("Invariant 4: ensemble object is available as template input with slot_inde
   );
 });
 
-test("Invariant 4: ensemble.enabled is true only when rendered size in output is > 1", async () => {
+test("ensemble.enabled is true only when rendered size in output is > 1", async () => {
   // Verify the invariant from the output side: parse the rendered output to confirm
   // that enabled:true always correlates with size > 1 in the rendered result.
   const sizeArb = fc.integer({ min: 1, max: 50 });
@@ -586,9 +586,9 @@ test("Invariant 4: ensemble.enabled is true only when rendered size in output is
   );
 });
 
-// --- Invariant 5: template interpolation faithfulness ---
+// --- template interpolation faithfulness ---
 
-test("Invariant 5: static text in template passes through unchanged", async () => {
+test("static text in template passes through unchanged", async () => {
   // Any template with only static text (no Liquid tags) should render verbatim
   const staticTextArb = fc
     .string({
@@ -608,7 +608,7 @@ test("Invariant 5: static text in template passes through unchanged", async () =
   );
 });
 
-test("Invariant 5: template containing Liquid expression produces output different from raw template", async () => {
+test("template containing Liquid expression produces output different from raw template", async () => {
   // For any template referencing issue fields with Liquid expressions,
   // the output must differ from the raw template string (proving interpolation occurred).
   await fc.assert(
@@ -625,9 +625,9 @@ test("Invariant 5: template containing Liquid expression produces output differe
   );
 });
 
-// --- Invariant 6: template injection resistance ---
+// --- template injection resistance ---
 
-test("Invariant 6: user-controlled data containing Liquid syntax does not cause template injection", async () => {
+test("user-controlled data containing Liquid syntax does not cause template injection", async () => {
   // Issue fields may contain {{ }}, {% %}, or other Liquid syntax.
   // These must be rendered as literal text (pass-through), not interpreted as template directives.
   await fc.assert(
@@ -644,7 +644,7 @@ test("Invariant 6: user-controlled data containing Liquid syntax does not cause 
   );
 });
 
-test("Invariant 6: Liquid-special characters in issue title are rendered literally, not interpreted", async () => {
+test("Liquid-special characters in issue title are rendered literally, not interpreted", async () => {
   const liquidInjectionArb = fc.oneof(
     fc.constant("{{ 'injected' }}"),
     fc.constant("{% if true %}injected{% endif %}"),
@@ -673,9 +673,9 @@ test("Invariant 6: Liquid-special characters in issue title are rendered literal
   );
 });
 
-// --- Invariant 7: issue.blocked_by and labels arrays are accessible ---
+// --- issue.blocked_by and labels arrays are accessible ---
 
-test("Invariant 7: issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
+test("issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
   const labelsArb = fc.array(
     fc.string({ minLength: 1, maxLength: 10, unit: fc.constantFrom("a", "b", "c", "1", "-") }),
     { minLength: 1, maxLength: 5 },

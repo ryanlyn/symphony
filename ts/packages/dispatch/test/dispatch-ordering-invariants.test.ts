@@ -130,9 +130,9 @@ const arbIssueWithInvalidCreatedAt = (): fc.Arbitrary<Issue> =>
   });
 
 // ---------------------------------------------------------------------------
-// Invariant 0: Sort does not mutate the input array
+// Sort does not mutate the input array
 // ---------------------------------------------------------------------------
-test("invariant 0: sort SHALL NOT mutate the input array", () => {
+test("sort SHALL NOT mutate the input array", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 1, maxLength: 50 }), (issues) => {
       const original = [...issues];
@@ -147,9 +147,9 @@ test("invariant 0: sort SHALL NOT mutate the input array", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 1: Output is a permutation of the input (no additions or drops)
+// Output is a permutation of the input (no additions or drops)
 // ---------------------------------------------------------------------------
-test("invariant 1: sort output SHALL be a permutation of the input (no additions or drops)", () => {
+test("sort output SHALL be a permutation of the input (no additions or drops)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { maxLength: 50 }), (issues) => {
       const sorted = sortForDispatch(issues);
@@ -165,7 +165,7 @@ test("invariant 1: sort output SHALL be a permutation of the input (no additions
   );
 });
 
-test("invariant 1 (singleton): sort of single-element array returns that element", () => {
+test("singleton: sort of single-element array returns that element", () => {
   fc.assert(
     fc.property(arbIssue(), (issue) => {
       const sorted = sortForDispatch([issue]);
@@ -176,7 +176,7 @@ test("invariant 1 (singleton): sort of single-element array returns that element
   );
 });
 
-test("invariant 1 (duplicates): sort handles duplicate references correctly", () => {
+test("duplicates: sort handles duplicate references correctly", () => {
   fc.assert(
     fc.property(arbIssue(), fc.integer({ min: 2, max: 10 }), (issue, count) => {
       const issues = Array(count).fill(issue) as Issue[];
@@ -191,9 +191,9 @@ test("invariant 1 (duplicates): sort handles duplicate references correctly", ()
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 2: Sorting an already-sorted list yields identical result (idempotent)
+// Sorting an already-sorted list yields identical result (idempotent)
 // ---------------------------------------------------------------------------
-test("invariant 2: sort applied to an already-sorted list SHALL be identical (idempotent)", () => {
+test("sort applied to an already-sorted list SHALL be identical (idempotent)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { maxLength: 50 }), (issues) => {
       const once = sortForDispatch(issues);
@@ -208,9 +208,9 @@ test("invariant 2: sort applied to an already-sorted list SHALL be identical (id
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 3: Lower priority number sorts first when priorities differ
+// Lower priority number sorts first when priorities differ
 // ---------------------------------------------------------------------------
-test("invariant 3: dispatch with lower priority number SHALL sort before one with higher priority number", () => {
+test("dispatch with lower priority number SHALL sort before one with higher priority number", () => {
   fc.assert(
     fc.property(arbIssueWithValidPriority(), arbIssueWithValidPriority(), (issueA, issueB) => {
       fc.pre(issueA.priority !== issueB.priority);
@@ -223,7 +223,7 @@ test("invariant 3: dispatch with lower priority number SHALL sort before one wit
   );
 });
 
-test("invariant 3 (all four priorities): list with one of each priority is sorted 1,2,3,4", () => {
+test("all four priorities: list with one of each priority is sorted 1,2,3,4", () => {
   fc.assert(
     fc.property(
       fc
@@ -252,9 +252,9 @@ test("invariant 3 (all four priorities): list with one of each priority is sorte
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 4: Same priority, earlier creation time sorts first
+// Same priority, earlier creation time sorts first
 // ---------------------------------------------------------------------------
-test("invariant 4: same priority with earlier creation time SHALL sort first", () => {
+test("same priority with earlier creation time SHALL sort first", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -298,9 +298,9 @@ test("invariant 4: same priority with earlier creation time SHALL sort first", (
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 5: Same priority and creation time, lexicographically earlier identifier sorts first
+// Same priority and creation time, lexicographically earlier identifier sorts first
 // ---------------------------------------------------------------------------
-test("invariant 5: same priority and creation time, lexicographically earlier identifier SHALL sort first", () => {
+test("same priority and creation time, lexicographically earlier identifier SHALL sort first", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -344,7 +344,7 @@ test("invariant 5: same priority and creation time, lexicographically earlier id
   );
 });
 
-test("invariant 5 (unicode identifiers): handles unicode comparison correctly", () => {
+test("unicode identifiers: handles unicode comparison correctly", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -374,9 +374,9 @@ test("invariant 5 (unicode identifiers): handles unicode comparison correctly", 
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 6: Null, missing, or out-of-range priority sorts last
+// Null, missing, or out-of-range priority sorts last
 // ---------------------------------------------------------------------------
-test("invariant 6: dispatch with null, missing, or out-of-range priority SHALL sort last", () => {
+test("dispatch with null, missing, or out-of-range priority SHALL sort last", () => {
   fc.assert(
     fc.property(
       arbIssueWithValidPriority(),
@@ -391,7 +391,7 @@ test("invariant 6: dispatch with null, missing, or out-of-range priority SHALL s
   );
 });
 
-test("invariant 6 (multi): all invalid-priority dispatches sort after all valid-priority dispatches", () => {
+test("multi: all invalid-priority dispatches sort after all valid-priority dispatches", () => {
   fc.assert(
     fc.property(
       fc.array(arbIssueWithValidPriority(), { minLength: 1, maxLength: 10 }),
@@ -414,9 +414,9 @@ test("invariant 6 (multi): all invalid-priority dispatches sort after all valid-
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 7: Null, missing, or unparseable creation time sorts last within its priority group
+// Null, missing, or unparseable creation time sorts last within its priority group
 // ---------------------------------------------------------------------------
-test("invariant 7: dispatch with null, missing, or unparseable creation time SHALL sort last within its priority group", () => {
+test("dispatch with null, missing, or unparseable creation time SHALL sort last within its priority group", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -445,7 +445,7 @@ test("invariant 7: dispatch with null, missing, or unparseable creation time SHA
   );
 });
 
-test("invariant 7 (multi): within the same priority, all invalid-createdAt dispatches sort after valid ones", () => {
+test("multi: within the same priority, all invalid-createdAt dispatches sort after valid ones", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -504,11 +504,11 @@ test("invariant 7 (multi): within the same priority, all invalid-createdAt dispa
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 8: Total ordering - adjacent pairs in sorted output respect
+// Total ordering - adjacent pairs in sorted output respect
 // the full comparison chain (priority -> createdAt -> identifier)
 // Uses relational assertions rather than oracle functions to avoid circularity.
 // ---------------------------------------------------------------------------
-test("invariant 8: sorted output SHALL respect the full ordering chain for all adjacent pairs", () => {
+test("sorted output SHALL respect the full ordering chain for all adjacent pairs", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 2, maxLength: 50 }), (issues) => {
       const sorted = sortForDispatch(issues);
@@ -559,11 +559,11 @@ test("invariant 8: sorted output SHALL respect the full ordering chain for all a
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 9: Transitivity - if issue A sorts before B and B sorts before C,
+// Transitivity - if issue A sorts before B and B sorts before C,
 // then A sorts before C in any list containing all three.
 // Constructs guaranteed-ordering triples to ensure the assertion always fires.
 // ---------------------------------------------------------------------------
-test("invariant 9: sort SHALL be transitive (A < B < C by priority implies A before C)", () => {
+test("sort SHALL be transitive (A < B < C by priority implies A before C)", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3) as fc.Arbitrary<1 | 2 | 3>,
@@ -623,7 +623,7 @@ test("invariant 9: sort SHALL be transitive (A < B < C by priority implies A bef
   );
 });
 
-test("invariant 9 (transitivity via createdAt): A < B < C by date implies A before C", () => {
+test("transitivity via createdAt: A < B < C by date implies A before C", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),
@@ -676,9 +676,9 @@ test("invariant 9 (transitivity via createdAt): A < B < C by date implies A befo
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 10: Sort is deterministic - same input always gives same output
+// Sort is deterministic - same input always gives same output
 // ---------------------------------------------------------------------------
-test("invariant 10: sort SHALL be deterministic (same input, same output)", () => {
+test("sort SHALL be deterministic (same input, same output)", () => {
   fc.assert(
     fc.property(fc.array(arbIssue(), { minLength: 1, maxLength: 30 }), (issues) => {
       const result1 = sortForDispatch(issues);
@@ -693,10 +693,10 @@ test("invariant 10: sort SHALL be deterministic (same input, same output)", () =
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 11: Priority dominates - a higher priority (lower number) always
+// Priority dominates - a higher priority (lower number) always
 // beats any combination of earlier createdAt or earlier identifier
 // ---------------------------------------------------------------------------
-test("invariant 11: priority SHALL dominate createdAt and identifier in ordering", () => {
+test("priority SHALL dominate createdAt and identifier in ordering", () => {
   fc.assert(
     fc.property(fc.constantFrom(1, 2, 3) as fc.Arbitrary<1 | 2 | 3>, (lowerPriority) => {
       const higherPriority = (lowerPriority + 1) as 2 | 3 | 4;
@@ -729,9 +729,9 @@ test("invariant 11: priority SHALL dominate createdAt and identifier in ordering
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 12: createdAt dominates identifier within the same priority
+// createdAt dominates identifier within the same priority
 // ---------------------------------------------------------------------------
-test("invariant 12: createdAt SHALL dominate identifier within the same priority group", () => {
+test("createdAt SHALL dominate identifier within the same priority group", () => {
   fc.assert(
     fc.property(
       fc.constantFrom(1, 2, 3, 4),

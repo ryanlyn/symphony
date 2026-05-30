@@ -78,11 +78,11 @@ const randomCaseEnsembleArb = fc.array(fc.boolean(), { minLength: 8, maxLength: 
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 1: When a valid label with a positive integer is present, the
+// When a valid label with a positive integer is present, the
 // system SHALL use that integer as ensemble size.
 // ---------------------------------------------------------------------------
 
-test("Invariant 1 -- valid label with positive integer is used as ensemble size", () => {
+test("valid label with positive integer is used as ensemble size", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 10000 }),
@@ -101,7 +101,7 @@ test("Invariant 1 -- valid label with positive integer is used as ensemble size"
   );
 });
 
-test("Invariant 1 -- very large positive integers are accepted", () => {
+test("very large positive integers are accepted", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 2_000_000 }), (n) => {
       const issue = issueWith([`ensemble:${n}`]);
@@ -111,7 +111,7 @@ test("Invariant 1 -- very large positive integers are accepted", () => {
   );
 });
 
-test("Invariant 1 -- leading zeros in the number are accepted (parsed as decimal)", () => {
+test("leading zeros in the number are accepted (parsed as decimal)", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 999 }), (n) => {
       // e.g. "ensemble:007" should parse as 7
@@ -124,11 +124,11 @@ test("Invariant 1 -- leading zeros in the number are accepted (parsed as decimal
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 2: When multiple valid labels are present, the system SHALL use
+// When multiple valid labels are present, the system SHALL use
 // the first encountered.
 // ---------------------------------------------------------------------------
 
-test("Invariant 2 -- first valid ensemble label wins when multiple are present", () => {
+test("first valid ensemble label wins when multiple are present", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -143,7 +143,7 @@ test("Invariant 2 -- first valid ensemble label wins when multiple are present",
   );
 });
 
-test("Invariant 2 -- first valid label wins even when interleaved with invalid labels", () => {
+test("first valid label wins even when interleaved with invalid labels", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 50 }),
@@ -160,7 +160,7 @@ test("Invariant 2 -- first valid label wins even when interleaved with invalid l
   );
 });
 
-test("Invariant 2 -- order matters: swapping labels changes result", () => {
+test("order matters: swapping labels changes result", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 50 }), fc.integer({ min: 51, max: 100 }), (a, b) => {
       const issueAB = issueWith([`ensemble:${a}`, `ensemble:${b}`]);
@@ -173,12 +173,12 @@ test("Invariant 2 -- order matters: swapping labels changes result", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 3: Ensemble size must be positive. Any label whose numeric value
+// Ensemble size must be positive. Any label whose numeric value
 // is zero or non-positive causes ensembleSize to return null (label is
 // skipped). This is a domain invariant: ensemble size < 1 is meaningless.
 // ---------------------------------------------------------------------------
 
-test("Invariant 3 -- any label with numeric value <= 0 is ignored", () => {
+test("any label with numeric value <= 0 is ignored", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -197,7 +197,7 @@ test("Invariant 3 -- any label with numeric value <= 0 is ignored", () => {
   );
 });
 
-test("Invariant 3 -- zero label followed by valid label: valid label is used", () => {
+test("zero label followed by valid label: valid label is used", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 100 }), (n) => {
       // ensemble:0 is skipped, ensemble:n is returned
@@ -207,7 +207,7 @@ test("Invariant 3 -- zero label followed by valid label: valid label is used", (
   );
 });
 
-test("Invariant 3 -- multiple non-positive labels all ignored, first valid wins", () => {
+test("multiple non-positive labels all ignored, first valid wins", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -229,13 +229,13 @@ test("Invariant 3 -- multiple non-positive labels all ignored, first valid wins"
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 4: End-to-end case and whitespace insensitivity through the
+// End-to-end case and whitespace insensitivity through the
 // production pipeline. normalizeIssue trims and lowercases labels, so the
 // system correctly resolves ensemble size regardless of the original label
 // casing or surrounding whitespace in the raw issue data.
 // ---------------------------------------------------------------------------
 
-test("Invariant 4 -- end-to-end: mixed-case labels resolve correctly through normalizeIssue", () => {
+test("end-to-end: mixed-case labels resolve correctly through normalizeIssue", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 100 }), randomCaseEnsembleArb, (n, cased) => {
       const rawLabel = `${cased}:${n}`;
@@ -246,7 +246,7 @@ test("Invariant 4 -- end-to-end: mixed-case labels resolve correctly through nor
   );
 });
 
-test("Invariant 4 -- end-to-end: whitespace-padded labels resolve correctly through normalizeIssue", () => {
+test("end-to-end: whitespace-padded labels resolve correctly through normalizeIssue", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -262,7 +262,7 @@ test("Invariant 4 -- end-to-end: whitespace-padded labels resolve correctly thro
   );
 });
 
-test("Invariant 4 -- end-to-end: combined random case and whitespace through normalizeIssue", () => {
+test("end-to-end: combined random case and whitespace through normalizeIssue", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -279,7 +279,7 @@ test("Invariant 4 -- end-to-end: combined random case and whitespace through nor
   );
 });
 
-test("Invariant 4 -- internal whitespace between colon and number does NOT match", () => {
+test("internal whitespace between colon and number does NOT match", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 100 }), (n) => {
       // Space between colon and number should fail even through the pipeline
@@ -289,7 +289,7 @@ test("Invariant 4 -- internal whitespace between colon and number does NOT match
   );
 });
 
-test("Invariant 4 -- internal whitespace within 'ensemble' keyword does NOT match", () => {
+test("internal whitespace within 'ensemble' keyword does NOT match", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 100 }), (n) => {
       // "ens emble:5" should not match even through the pipeline
@@ -300,12 +300,12 @@ test("Invariant 4 -- internal whitespace within 'ensemble' keyword does NOT matc
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 5: When no valid ensemble label is present, ensembleSize returns
+// When no valid ensemble label is present, ensembleSize returns
 // null. The function does not apply defaults -- that is the caller's
 // responsibility.
 // ---------------------------------------------------------------------------
 
-test("Invariant 5 -- no ensemble labels at all yields null", () => {
+test("no ensemble labels at all yields null", () => {
   fc.assert(
     fc.property(fc.array(nonEnsembleLabelArb, { minLength: 0, maxLength: 10 }), (labels) => {
       const issue = issueWith(labels);
@@ -315,7 +315,7 @@ test("Invariant 5 -- no ensemble labels at all yields null", () => {
   );
 });
 
-test("Invariant 5 -- labels with non-numeric ensemble values yield null", () => {
+test("labels with non-numeric ensemble values yield null", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -342,7 +342,7 @@ test("Invariant 5 -- labels with non-numeric ensemble values yield null", () => 
   );
 });
 
-test("Invariant 5 -- unicode lookalikes and special characters do not match", () => {
+test("unicode lookalikes and special characters do not match", () => {
   const trickLabels = [
     "ensemble:١٢٣", // Arabic-Indic digits that look like 123
     "ensemble:５", // Fullwidth digit 5
@@ -360,7 +360,7 @@ test("Invariant 5 -- unicode lookalikes and special characters do not match", ()
   }
 });
 
-test("Invariant 5 -- non-whitespace control characters embedded in label prevent matching", () => {
+test("non-whitespace control characters embedded in label prevent matching", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -382,7 +382,7 @@ test("Invariant 5 -- non-whitespace control characters embedded in label prevent
   );
 });
 
-test("Invariant 5 -- partial prefix matches do not count", () => {
+test("partial prefix matches do not count", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -396,7 +396,7 @@ test("Invariant 5 -- partial prefix matches do not count", () => {
   );
 });
 
-test("Invariant 5 -- suffix after number prevents matching", () => {
+test("suffix after number prevents matching", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -411,11 +411,11 @@ test("Invariant 5 -- suffix after number prevents matching", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Invariant 7 (return type): The return value is always either null or a
+
 // positive integer. Never NaN, Infinity, fractional, or negative.
 // ---------------------------------------------------------------------------
 
-test("Invariant 7 -- return value is always null or positive integer (comprehensive inputs)", () => {
+test("return value is always null or positive integer (comprehensive inputs)", () => {
   fc.assert(
     fc.property(
       fc.array(

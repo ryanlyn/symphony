@@ -133,9 +133,9 @@ const sshTargetWithoutPort = sshDestination;
 
 const sshTargetAny = fc.oneof(sshTargetWithPort, sshTargetWithoutPort);
 
-// --- Invariant 1: shellEscape produces output that a POSIX shell evaluates back to the original ---
+// --- shellEscape produces output that a POSIX shell evaluates back to the original ---
 
-test("invariant 1: shellEscape wraps value in single quotes preventing unquoted shell metacharacters", () => {
+test("shellEscape wraps value in single quotes preventing unquoted shell metacharacters", () => {
   fc.assert(
     fc.property(shellDangerousString, (input) => {
       const escaped = shellEscape(input);
@@ -153,7 +153,7 @@ test("invariant 1: shellEscape wraps value in single quotes preventing unquoted 
   );
 });
 
-test("invariant 1: shellEscape roundtrip - the escape is reversible to recover the original input", () => {
+test("shellEscape roundtrip - the escape is reversible to recover the original input", () => {
   fc.assert(
     fc.property(shellDangerousString, (input) => {
       const escaped = shellEscape(input);
@@ -169,7 +169,7 @@ test("invariant 1: shellEscape roundtrip - the escape is reversible to recover t
   );
 });
 
-test("invariant 1: remoteShellCommand wraps the command in bash -lc with proper escaping", () => {
+test("remoteShellCommand wraps the command in bash -lc with proper escaping", () => {
   fc.assert(
     fc.property(shellDangerousString, (command) => {
       const result = remoteShellCommand(command);
@@ -183,7 +183,7 @@ test("invariant 1: remoteShellCommand wraps the command in bash -lc with proper 
   );
 });
 
-test("invariant 1: sshArgs includes the shell-escaped command as the final argument", () => {
+test("sshArgs includes the shell-escaped command as the final argument", () => {
   fc.assert(
     fc.property(sshTargetAny, shellDangerousString, (host, command) => {
       const args = sshArgs(host, command);
@@ -197,7 +197,7 @@ test("invariant 1: sshArgs includes the shell-escaped command as the final argum
   );
 });
 
-test("invariant 1: sshArgs always contains -T flag for non-interactive mode", () => {
+test("sshArgs always contains -T flag for non-interactive mode", () => {
   fc.assert(
     fc.property(sshTargetAny, shellDangerousString, (host, command) => {
       const args = sshArgs(host, command);
@@ -207,7 +207,7 @@ test("invariant 1: sshArgs always contains -T flag for non-interactive mode", ()
   );
 });
 
-test("invariant 1 negative: shellEscape output never contains unbalanced quotes", () => {
+test("negative: shellEscape output never contains unbalanced quotes", () => {
   fc.assert(
     fc.property(shellDangerousString, (input) => {
       const escaped = shellEscape(input);
@@ -223,9 +223,9 @@ test("invariant 1 negative: shellEscape output never contains unbalanced quotes"
   );
 });
 
-// --- Invariant 2: parseSshTarget correctly separates destination and port ---
+// --- parseSshTarget correctly separates destination and port ---
 
-test("invariant 2: parseSshTarget roundtrip - destination:port recombines correctly", () => {
+test("parseSshTarget roundtrip - destination:port recombines correctly", () => {
   fc.assert(
     fc.property(sshDestination, sshPort, (dest, port) => {
       const input = `${dest}:${port}`;
@@ -238,7 +238,7 @@ test("invariant 2: parseSshTarget roundtrip - destination:port recombines correc
   );
 });
 
-test("invariant 2: parseSshTarget with no port returns null port and preserves destination", () => {
+test("parseSshTarget with no port returns null port and preserves destination", () => {
   fc.assert(
     fc.property(sshDestination, (host) => {
       const result = parseSshTarget(host);
@@ -249,7 +249,7 @@ test("invariant 2: parseSshTarget with no port returns null port and preserves d
   );
 });
 
-test("invariant 2: parseSshTarget trims whitespace from input", () => {
+test("parseSshTarget trims whitespace from input", () => {
   fc.assert(
     fc.property(
       sshTargetAny,
@@ -266,7 +266,7 @@ test("invariant 2: parseSshTarget trims whitespace from input", () => {
   );
 });
 
-test("invariant 2: parseSshTarget with bracketed IPv6 and port", () => {
+test("parseSshTarget with bracketed IPv6 and port", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -285,7 +285,7 @@ test("invariant 2: parseSshTarget with bracketed IPv6 and port", () => {
   );
 });
 
-test("invariant 2: parseSshTarget bare IPv6 (unbracketed with colons) does not extract port", () => {
+test("parseSshTarget bare IPv6 (unbracketed with colons) does not extract port", () => {
   // Bare IPv6 addresses contain colons but without brackets, so parsing as host:port is ambiguous.
   // The parser should treat the whole thing as destination.
   fc.assert(
@@ -309,9 +309,9 @@ test("invariant 2: parseSshTarget bare IPv6 (unbracketed with colons) does not e
   );
 });
 
-// --- Invariant 3: sshArgs and parseSshTarget are consistent ---
+// --- sshArgs and parseSshTarget are consistent ---
 
-test("invariant 3: sshArgs uses parseSshTarget destination as the host argument", () => {
+test("sshArgs uses parseSshTarget destination as the host argument", () => {
   fc.assert(
     fc.property(sshTargetAny, shellDangerousString, (host, command) => {
       const args = sshArgs(host, command);
@@ -323,7 +323,7 @@ test("invariant 3: sshArgs uses parseSshTarget destination as the host argument"
   );
 });
 
-test("invariant 3: sshArgs port argument matches parseSshTarget port when present", () => {
+test("sshArgs port argument matches parseSshTarget port when present", () => {
   fc.assert(
     fc.property(sshTargetAny, shellDangerousString, (host, command) => {
       const args = sshArgs(host, command);

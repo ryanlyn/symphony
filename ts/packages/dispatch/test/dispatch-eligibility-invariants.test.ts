@@ -191,9 +191,9 @@ function issueArb(
     }));
 }
 
-// --- Invariant 1: Missing required fields -> ineligible ---
+// --- Missing required fields -> ineligible ---
 
-test("invariant 1: missing required fields (id, identifier, title, state) SHALL be ineligible", () => {
+test("missing required fields (id, identifier, title, state) SHALL be ineligible", () => {
   const requiredFields = ["id", "identifier", "title", "state"] as const;
 
   fc.assert(
@@ -221,7 +221,7 @@ test("invariant 1: missing required fields (id, identifier, title, state) SHALL 
   );
 });
 
-test("invariant 1: if shouldDispatchIssue rejects due to missing fields, dispatchBlockReason does not report a blocking reason", () => {
+test("if shouldDispatchIssue rejects due to missing fields, dispatchBlockReason does not report a blocking reason", () => {
   const requiredFields = ["id", "identifier", "title", "state"] as const;
 
   fc.assert(
@@ -246,9 +246,9 @@ test("invariant 1: if shouldDispatchIssue rejects due to missing fields, dispatc
   );
 });
 
-// --- Invariant 2: Terminal state -> ineligible ---
+// --- Terminal state -> ineligible ---
 
-test("invariant 2: terminal state issues SHALL be ineligible", () => {
+test("terminal state issues SHALL be ineligible", () => {
   const defaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
 
   fc.assert(
@@ -266,7 +266,7 @@ test("invariant 2: terminal state issues SHALL be ineligible", () => {
   );
 });
 
-test("invariant 2: issueIsActive returns false for terminal states regardless of case/whitespace", () => {
+test("issueIsActive returns false for terminal states regardless of case/whitespace", () => {
   const defaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
 
   fc.assert(
@@ -279,7 +279,7 @@ test("invariant 2: issueIsActive returns false for terminal states regardless of
   );
 });
 
-test("invariant 2: custom terminal states configured via settings are respected", () => {
+test("custom terminal states configured via settings are respected", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 15 }).filter((s) => s.trim().length > 0),
@@ -302,9 +302,9 @@ test("invariant 2: custom terminal states configured via settings are respected"
   );
 });
 
-// --- Invariant 3: Non-active state -> ineligible ---
+// --- Non-active state -> ineligible ---
 
-test("invariant 3: non-active state issues SHALL be ineligible", () => {
+test("non-active state issues SHALL be ineligible", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -329,7 +329,7 @@ test("invariant 3: non-active state issues SHALL be ineligible", () => {
   );
 });
 
-test("invariant 3: active state comparison is case-insensitive with whitespace handling", () => {
+test("active state comparison is case-insensitive with whitespace handling", () => {
   fc.assert(
     fc.property(caseWhitespaceVariant(["Todo", "In Progress"]), (activeVariant) => {
       const issue = validIssue({
@@ -348,9 +348,9 @@ test("invariant 3: active state comparison is case-insensitive with whitespace h
   );
 });
 
-// --- Invariant 4: Not assigned to this worker -> ineligible ---
+// --- Not assigned to this worker -> ineligible ---
 
-test("invariant 4: issues not assigned to this worker SHALL be ineligible", () => {
+test("issues not assigned to this worker SHALL be ineligible", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 0, max: 10 }),
@@ -366,9 +366,9 @@ test("invariant 4: issues not assigned to this worker SHALL be ineligible", () =
   );
 });
 
-// --- Invariant 5: Unstarted issue with non-terminal blocker -> ineligible ---
+// --- Unstarted issue with non-terminal blocker -> ineligible ---
 
-test("invariant 5: unstarted issue with a non-terminal blocker SHALL be ineligible", () => {
+test("unstarted issue with a non-terminal blocker SHALL be ineligible", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -401,7 +401,7 @@ test("invariant 5: unstarted issue with a non-terminal blocker SHALL be ineligib
   );
 });
 
-test("invariant 5: multiple blockers with at least one non-terminal blocks dispatch", () => {
+test("multiple blockers with at least one non-terminal blocks dispatch", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 0, max: 5 }),
@@ -427,7 +427,7 @@ test("invariant 5: multiple blockers with at least one non-terminal blocks dispa
   );
 });
 
-test("invariant 5: blocker terminal check is case-insensitive with whitespace trimming", () => {
+test("blocker terminal check is case-insensitive with whitespace trimming", () => {
   const defaultTerminalStates = ["Done", "Closed", "Cancelled", "Canceled", "Duplicate"];
   fc.assert(
     fc.property(caseWhitespaceVariant(defaultTerminalStates), (terminalBlockerState) => {
@@ -443,9 +443,9 @@ test("invariant 5: blocker terminal check is case-insensitive with whitespace tr
   );
 });
 
-// --- Invariant 6: Non-unstarted issue with blockers -> still eligible ---
+// --- Non-unstarted issue with blockers -> still eligible ---
 
-test("invariant 6: non-unstarted issue with blockers SHALL still be eligible", () => {
+test("non-unstarted issue with blockers SHALL still be eligible", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -472,7 +472,7 @@ test("invariant 6: non-unstarted issue with blockers SHALL still be eligible", (
   );
 });
 
-test("invariant 6: started issue ignores blockers even with many open blockers", () => {
+test("started issue ignores blockers even with many open blockers", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 10 }), (numBlockers) => {
       const blockers = Array.from({ length: numBlockers }, (_, i) => ({
@@ -494,9 +494,9 @@ test("invariant 6: started issue ignores blockers even with many open blockers",
   );
 });
 
-// --- Invariant 7: Unstarted issue with only terminal blockers -> eligible ---
+// --- Unstarted issue with only terminal blockers -> eligible ---
 
-test("invariant 7: unstarted issue with only terminal blockers SHALL be eligible", () => {
+test("unstarted issue with only terminal blockers SHALL be eligible", () => {
   const defaultTerminalStates = ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"];
   fc.assert(
     fc.property(
@@ -524,7 +524,7 @@ test("invariant 7: unstarted issue with only terminal blockers SHALL be eligible
   );
 });
 
-test("invariant 7: terminal blockers in various case/whitespace forms still allow dispatch", () => {
+test("terminal blockers in various case/whitespace forms still allow dispatch", () => {
   const defaultTerminalStates = ["Done", "Closed", "Cancelled", "Canceled", "Duplicate"];
   fc.assert(
     fc.property(
@@ -552,9 +552,9 @@ test("invariant 7: terminal blockers in various case/whitespace forms still allo
   );
 });
 
-// --- Invariant 8: Global concurrency cap reached -> SHALL not dispatch ---
+// --- Global concurrency cap reached -> SHALL not dispatch ---
 
-test("invariant 8: global concurrency cap reached SHALL not dispatch new work", () => {
+test("global concurrency cap reached SHALL not dispatch new work", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 50 }), fc.nat({ max: 10 }), (cap, extra) => {
       const issue = validIssue({
@@ -571,7 +571,7 @@ test("invariant 8: global concurrency cap reached SHALL not dispatch new work", 
   );
 });
 
-test("invariant 8: dispatchBlockReason returns global_concurrency_cap when at limit", () => {
+test("dispatchBlockReason returns global_concurrency_cap when at limit", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 50 }), (cap) => {
       const issue = validIssue({
@@ -588,7 +588,7 @@ test("invariant 8: dispatchBlockReason returns global_concurrency_cap when at li
   );
 });
 
-test("invariant 8: exactly at cap blocks, one below cap does not block", () => {
+test("exactly at cap blocks, one below cap does not block", () => {
   fc.assert(
     fc.property(fc.integer({ min: 2, max: 100 }), (cap) => {
       const issue = validIssue({
@@ -617,9 +617,9 @@ test("invariant 8: exactly at cap blocks, one below cap does not block", () => {
   );
 });
 
-// --- Invariant 9: Per-state concurrency cap reached -> SHALL not dispatch ---
+// --- Per-state concurrency cap reached -> SHALL not dispatch ---
 
-test("invariant 9: per-state concurrency cap reached SHALL not dispatch new work in that state", () => {
+test("per-state concurrency cap reached SHALL not dispatch new work in that state", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 20 }), fc.nat({ max: 5 }), (perStateCap, extra) => {
       const issue = validIssue({
@@ -642,7 +642,7 @@ test("invariant 9: per-state concurrency cap reached SHALL not dispatch new work
   );
 });
 
-test("invariant 9: per-state cap below limit allows dispatch", () => {
+test("per-state cap below limit allows dispatch", () => {
   fc.assert(
     fc.property(fc.integer({ min: 2, max: 20 }), (perStateCap) => {
       const issue = validIssue({
@@ -664,7 +664,7 @@ test("invariant 9: per-state cap below limit allows dispatch", () => {
   );
 });
 
-test("invariant 9: state normalization for statusOverrides key matching", () => {
+test("state normalization for statusOverrides key matching", () => {
   fc.assert(
     fc.property(
       fc.constantFrom("Todo", "In Progress"),
@@ -692,9 +692,9 @@ test("invariant 9: state normalization for statusOverrides key matching", () => 
   );
 });
 
-// --- Invariant 10: All ensemble slots claimed -> ineligible ---
+// --- All ensemble slots claimed -> ineligible ---
 
-test("invariant 10: all ensemble slots claimed SHALL make the dispatch ineligible", () => {
+test("all ensemble slots claimed SHALL make the dispatch ineligible", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 5 }), (ensembleSize) => {
       const issueId = "issue-ensemble";
@@ -717,7 +717,7 @@ test("invariant 10: all ensemble slots claimed SHALL make the dispatch ineligibl
   );
 });
 
-test("invariant 10: ensemble label overrides settings and all slots claimed blocks dispatch", () => {
+test("ensemble label overrides settings and all slots claimed blocks dispatch", () => {
   fc.assert(
     fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
       const issueId = "issue-ensemble-label";
@@ -741,7 +741,7 @@ test("invariant 10: ensemble label overrides settings and all slots claimed bloc
   );
 });
 
-test("invariant 10: partially claimed ensemble slots still allow dispatch", () => {
+test("partially claimed ensemble slots still allow dispatch", () => {
   fc.assert(
     fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
       const issueId = "issue-partial";
@@ -764,7 +764,7 @@ test("invariant 10: partially claimed ensemble slots still allow dispatch", () =
   );
 });
 
-test("invariant 10: slotKey is injective -- different inputs produce different keys", () => {
+test("slotKey is injective -- different inputs produce different keys", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 30 }),
@@ -782,7 +782,7 @@ test("invariant 10: slotKey is injective -- different inputs produce different k
   );
 });
 
-test("invariant 10: claiming slots for a different issue does not block this issue", () => {
+test("claiming slots for a different issue does not block this issue", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 5 }),
@@ -810,9 +810,9 @@ test("invariant 10: claiming slots for a different issue does not block this iss
   );
 });
 
-// --- Invariant 11: Worker host capacity ---
+// --- Worker host capacity ---
 
-test("invariant 11: workerCapacityAvailable=false SHALL block dispatch", () => {
+test("workerCapacityAvailable=false SHALL block dispatch", () => {
   fc.assert(
     fc.property(fc.constantFrom("Todo", "In Progress"), (activeState) => {
       const issue = validIssue({
@@ -834,7 +834,7 @@ test("invariant 11: workerCapacityAvailable=false SHALL block dispatch", () => {
   );
 });
 
-test("invariant 11: workerCapacityAvailable=true or undefined does NOT block", () => {
+test("workerCapacityAvailable=true or undefined does NOT block", () => {
   fc.assert(
     fc.property(fc.constantFrom(true, undefined), (workerCapacity) => {
       const issue = validIssue({
@@ -855,9 +855,9 @@ test("invariant 11: workerCapacityAvailable=true or undefined does NOT block", (
   );
 });
 
-// --- Invariant 12: Composition - relational properties between functions ---
+// --- Composition - relational properties between functions ---
 
-test("invariant 12: shouldDispatchIssue=true implies ALL sub-checks pass (random issues)", () => {
+test("shouldDispatchIssue=true implies ALL sub-checks pass (random issues)", () => {
   fc.assert(
     fc.property(
       issueArb(),
@@ -879,7 +879,7 @@ test("invariant 12: shouldDispatchIssue=true implies ALL sub-checks pass (random
   );
 });
 
-test("invariant 12: if ANY sub-check fails THEN shouldDispatchIssue returns false", () => {
+test("if ANY sub-check fails THEN shouldDispatchIssue returns false", () => {
   fc.assert(
     fc.property(
       issueArb({

@@ -102,9 +102,9 @@ function effectivePrefix(root: string): string {
   return stripped || "/";
 }
 
-// Invariant 1: When a workspace path is resolved, the path SHALL be a strict
+// When a workspace path is resolved, the path SHALL be a strict
 // descendant of the workspace root.
-test("invariant 1: workspace path is a strict descendant of the workspace root", () => {
+test("workspace path is a strict descendant of the workspace root", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier);
@@ -126,7 +126,7 @@ test("invariant 1: workspace path is a strict descendant of the workspace root",
   );
 });
 
-test("invariant 1: ensemble workspace paths are strict descendants of root", () => {
+test("ensemble workspace paths are strict descendants of root", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -152,7 +152,7 @@ test("invariant 1: ensemble workspace paths are strict descendants of root", () 
   );
 });
 
-test("invariant 1: adversarial identifiers that sanitize to degenerate values are caught by validation", () => {
+test("adversarial identifiers that sanitize to degenerate values are caught by validation", () => {
   // Tests that the security boundary works: when safeIdentifier produces
   // degenerate outputs (".", ".."), either the path collapses to root (which
   // callers must reject), or ensureInsideRoot rejects traversal attempts.
@@ -192,7 +192,7 @@ test("invariant 1: adversarial identifiers that sanitize to degenerate values ar
   );
 });
 
-test("invariant 1 (negative): ensureInsideRoot throws for paths outside root", () => {
+test("negative: ensureInsideRoot throws for paths outside root", () => {
   fc.assert(
     fc.property(absoluteRoot, (root) => {
       // A clearly unrelated sibling path should be rejected
@@ -214,11 +214,11 @@ test("invariant 1 (negative): ensureInsideRoot throws for paths outside root", (
   );
 });
 
-// Invariant 2: When directory names are derived from identifiers, the names
+// When directory names are derived from identifiers, the names
 // SHALL contain only alphanumeric characters, dots, hyphens, and underscores.
 const ALLOWED_CHARS = /^[A-Za-z0-9._-]*$/;
 
-test("invariant 2: safeIdentifier output contains only alphanumeric, dots, hyphens, underscores", () => {
+test("safeIdentifier output contains only alphanumeric, dots, hyphens, underscores", () => {
   fc.assert(
     fc.property(diverseString, (input) => {
       const result = safeIdentifier(input);
@@ -228,7 +228,7 @@ test("invariant 2: safeIdentifier output contains only alphanumeric, dots, hyphe
   );
 });
 
-test("invariant 2: safeIdentifier is a fixed-point for strings already in the safe alphabet", () => {
+test("safeIdentifier is a fixed-point for strings already in the safe alphabet", () => {
   fc.assert(
     fc.property(fc.stringMatching(/^[A-Za-z0-9._-]{1,50}$/), (input) => {
       const result = safeIdentifier(input);
@@ -239,7 +239,7 @@ test("invariant 2: safeIdentifier is a fixed-point for strings already in the sa
   );
 });
 
-test("invariant 2: safeIdentifier produces non-empty output for non-empty string inputs", () => {
+test("safeIdentifier produces non-empty output for non-empty string inputs", () => {
   fc.assert(
     fc.property(fc.string({ minLength: 1, maxLength: 100 }), (input) => {
       const result = safeIdentifier(input);
@@ -250,9 +250,9 @@ test("invariant 2: safeIdentifier produces non-empty output for non-empty string
   );
 });
 
-// Invariant 3: When sanitization is applied to a name, applying sanitization
+// When sanitization is applied to a name, applying sanitization
 // again SHALL produce the same result (idempotent).
-test("invariant 3: safeIdentifier is idempotent on arbitrary strings", () => {
+test("safeIdentifier is idempotent on arbitrary strings", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 100 }), (input) => {
       const once = safeIdentifier(input);
@@ -263,7 +263,7 @@ test("invariant 3: safeIdentifier is idempotent on arbitrary strings", () => {
   );
 });
 
-test("invariant 3: workspacePath output segment is already fully sanitized", () => {
+test("workspacePath output segment is already fully sanitized", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier);
@@ -276,9 +276,9 @@ test("invariant 3: workspacePath output segment is already fully sanitized", () 
   );
 });
 
-// Invariant 5: When a multi-slot ensemble is resolved, each slot SHALL
+// When a multi-slot ensemble is resolved, each slot SHALL
 // receive a distinct workspace path.
-test("invariant 5: ensemble slots produce distinct workspace paths", () => {
+test("ensemble slots produce distinct workspace paths", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -296,7 +296,7 @@ test("invariant 5: ensemble slots produce distinct workspace paths", () => {
   );
 });
 
-test("invariant 5: different identifiers produce different workspace paths", () => {
+test("different identifiers produce different workspace paths", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, validIdentifier, (root, idA, idB) => {
       // Only test when identifiers sanitize to different values
@@ -310,7 +310,7 @@ test("invariant 5: different identifiers produce different workspace paths", () 
   );
 });
 
-test("invariant 5: ensemble paths all share the same parent directory", () => {
+test("ensemble paths all share the same parent directory", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -330,9 +330,9 @@ test("invariant 5: ensemble paths all share the same parent directory", () => {
   );
 });
 
-// Invariant 6: When a single-slot run is resolved, the workspace path SHALL
+// When a single-slot run is resolved, the workspace path SHALL
 // have no slot suffix.
-test("invariant 6: single-slot run has no slot suffix in path", () => {
+test("single-slot run has no slot suffix in path", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier, 0, 1);
@@ -347,7 +347,7 @@ test("invariant 6: single-slot run has no slot suffix in path", () => {
   );
 });
 
-test("invariant 6: contrast with ensemble -- ensemble path has extra segment", () => {
+test("contrast with ensemble -- ensemble path has extra segment", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -367,7 +367,7 @@ test("invariant 6: contrast with ensemble -- ensemble path has extra segment", (
   );
 });
 
-test("invariant 6: ensemble path has exactly two more segments than normalized root", () => {
+test("ensemble path has exactly two more segments than normalized root", () => {
   fc.assert(
     fc.property(
       absoluteRoot,

@@ -77,13 +77,13 @@ const yamlKeyArb = fc
   )
   .map(([first, rest]) => first + rest.join(""));
 
-// --- Invariant 1: parseWorkflowContent rejects non-map YAML front matter with typed errors ---
+// --- parseWorkflowContent rejects non-map YAML front matter with typed errors ---
 //
 // The behavioral contract: when YAML front matter parses to anything other than
 // a plain object (map), parseWorkflowContent SHALL throw an error containing
 // either "workflow_front_matter_not_a_map" or "workflow_parse_error".
 
-test("invariant 1: parseWorkflowContent SHALL produce a typed error when YAML front matter is not a map", () => {
+test("parseWorkflowContent SHALL produce a typed error when YAML front matter is not a map", () => {
   fc.assert(
     fc.property(guaranteedNonMapYamlArb, (yamlValue) => {
       const content = wrapFrontMatter(yamlValue, "body");
@@ -107,7 +107,7 @@ test("invariant 1: parseWorkflowContent SHALL produce a typed error when YAML fr
   );
 });
 
-test("invariant 1: valid map front matter SHALL parse successfully and return config as a plain object", () => {
+test("valid map front matter SHALL parse successfully and return config as a plain object", () => {
   fc.assert(
     fc.property(
       fc.dictionary(yamlKeyArb, fc.constantFrom("value1", "42", "true", "null"), {
@@ -127,7 +127,7 @@ test("invariant 1: valid map front matter SHALL parse successfully and return co
   );
 });
 
-test("invariant 1: content without front matter delimiters SHALL return full content as body with empty config", () => {
+test("content without front matter delimiters SHALL return full content as body with empty config", () => {
   fc.assert(
     fc.property(
       fc.string({ minLength: 1, maxLength: 100 }).filter((s) => !s.startsWith("---")),

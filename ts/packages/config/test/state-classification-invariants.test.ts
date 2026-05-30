@@ -4,7 +4,7 @@ import { normalizeStateName, isTerminalState } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 
-// --- Invariant 1: Normalization SHALL be case-insensitive ---
+// --- Normalization SHALL be case-insensitive ---
 
 test("normalizeStateName — mixed case variants all normalize to the same value", () => {
   fc.assert(
@@ -36,7 +36,7 @@ test("normalizeStateName — output is always fully lowercase (no uppercase char
   );
 });
 
-// --- Invariant 2: Normalization applied twice SHALL produce the same result (idempotent) ---
+// --- Normalization applied twice SHALL produce the same result (idempotent) ---
 
 test("normalizeStateName — applying normalization twice yields the same result as once (idempotent)", () => {
   fc.assert(
@@ -49,7 +49,7 @@ test("normalizeStateName — applying normalization twice yields the same result
   );
 });
 
-// --- Invariant 3: Leading and trailing whitespace SHALL be stripped ---
+// --- Leading and trailing whitespace SHALL be stripped ---
 
 test("normalizeStateName — leading and trailing whitespace is stripped", () => {
   const whitespaceArb = fc
@@ -114,7 +114,7 @@ test("normalizeStateName — internal whitespace is preserved (only leading/trai
   );
 });
 
-// --- Invariant 4: Null or undefined state SHALL be classified as non-terminal ---
+// --- Null or undefined state SHALL be classified as non-terminal ---
 
 test("isTerminalState — null and undefined states are always classified as non-terminal", () => {
   // The function short-circuits on falsy state before examining the list,
@@ -127,7 +127,7 @@ test("isTerminalState — null and undefined states are always classified as non
   assert.equal(isTerminalState(undefined, ["", " ", "undefined", "UNDEFINED"]), false);
 });
 
-// --- Invariant 5: Unknown state SHALL be classified as non-terminal ---
+// --- Unknown state SHALL be classified as non-terminal ---
 
 test("isTerminalState — a state not in the terminal list is classified as non-terminal", () => {
   fc.assert(
@@ -181,7 +181,7 @@ test("isTerminalState — empty terminal list means all states are non-terminal"
   );
 });
 
-// --- Invariant 6: State comparison SHALL be case-insensitive and whitespace-tolerant ---
+// --- State comparison SHALL be case-insensitive and whitespace-tolerant ---
 
 test("isTerminalState — comparison is case-insensitive (any casing of a terminal state matches)", () => {
   fc.assert(
@@ -237,7 +237,7 @@ test("isTerminalState — comparison is both case-insensitive and whitespace-tol
   );
 });
 
-// --- Invariant 7: Consistency between normalizeStateName and isTerminalState ---
+// --- Consistency between normalizeStateName and isTerminalState ---
 
 test("isTerminalState — a state matches its own normalized form in the terminal list", () => {
   fc.assert(
