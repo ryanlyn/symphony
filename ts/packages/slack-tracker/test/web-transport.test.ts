@@ -327,3 +327,90 @@ test("request-path failures (abort/timeout) are annotated with the slack method"
   const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
   await assert.rejects(() => transport.listMentions(["C1"]), /conversations\.history.*timed out/);
 });
+
+test("getMessage requests a single inclusive message and parses the match", async () => {
+  const calls: string[] = [];
+  const fetchImpl = (async (url: string | URL) => {
+    calls.push(String(url));
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: "1.1", text: "<@U1> hi", reactions: [{ name: "eyes", count: 1 }] }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl);
+  const message = await transport.getMessage("C1", "1.1");
+
+  assert.ok(message);
+  assert.equal(message!.ts, "1.1");
+  assert.equal(message!.channel, "C1");
+  assert.deepEqual(message!.reactions, ["eyes"]);
+  const url = new URL(calls[0]!);
+  assert.match(url.pathname, /\/conversations\.history$/);
+  assert.equal(url.searchParams.get("channel"), "C1");
+  assert.equal(url.searchParams.get("latest"), "1.1");
+  assert.equal(url.searchParams.get("inclusive"), "true");
+  assert.equal(url.searchParams.get("limit"), "1");
+});
+
+test("getMessage returns null when no message matches the requested ts", async () => {
+  const fetchImpl = (async () => {
+    return new Response(
+      JSON.stringify({ ok: true, messages: [{ ts: "9.9", text: "<@U1> other", reactions: [] }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl);
+  assert.equal(await transport.getMessage("C1", "1.1"), null);
+});
+
+test("removeReaction posts the channel/timestamp/name to reactions.remove", async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await new SlackWebTransport(settings(), fetchImpl).removeReaction("C1", "1.1", "eyes");
+
+  assert.match(calls[0]!.url, /\/reactions\.remove$/);
+  assert.deepEqual(calls[0]!.body, { channel: "C1", timestamp: "1.1", name: "eyes" });
+});
+
+test("postReply posts to chat.postMessage with thread_ts and text", async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), body: JSON.parse(String(init?.body ?? "{}")) });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  await new SlackWebTransport(settings(), fetchImpl).postReply("C1", "1.1", "done!");
+
+  assert.match(calls[0]!.url, /\/chat\.postMessage$/);
+  assert.deepEqual(calls[0]!.body, { channel: "C1", thread_ts: "1.1", text: "done!" });
+});
+
+test("a 200 response with ok:false surfaces the slack error reason", async () => {
+  const fetchImpl = (async () => {
+    return new Response(JSON.stringify({ ok: false, error: "channel_not_found" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl);
+  await assert.rejects(
+    () => transport.postReply("C1", "1.1", "hi"),
+    /chat\.postMessage failed: channel_not_found/,
+  );
+});
