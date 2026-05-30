@@ -2,44 +2,12 @@
 
 **Date:** 2026-05-29  
 **Total Scenarios Tested:** 210  
-**Passed:** 201  
-**Failed:** 9
+**Passed:** 203  
+**Failed:** 7
 
 ---
 
 ## Failures Found
-
-### Failure 1: S-105
-**Invariant Violated:** Minimum delay floor SHALL prevent zero-delay retry storms  
-**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 9)  
-**Explanation:** `retryBackoffMs(1, 0, "failure")` computes `Math.min(0, 10000) = 0`. With a cap of 0, the retry delay is zero, creating potential retry storms. There is no minimum floor enforced on the result.  
-**Reproduction:**
-```ts
-import { retryBackoffMs } from "@symphony/policies/retry";
-retryBackoffMs(1, 0, "failure"); // Returns 0
-```
-**Suggested Fix:** Enforce a minimum floor (e.g., 1000ms):
-```ts
-const MIN_RETRY_DELAY_MS = 1_000;
-return Math.max(MIN_RETRY_DELAY_MS, Math.min(maxRetryBackoffMs, 10_000 * 2 ** Math.max(0, attempt - 1)));
-```
-
----
-
-### Failure 2: S-106
-**Invariant Violated:** Retry delay SHALL be non-negative  
-**Code Location:** `ts/packages/policies/src/retry.ts` — `retryBackoffMs` (line 9)  
-**Explanation:** `retryBackoffMs(1, -1, "failure")` computes `Math.min(-1, 10000) = -1`. A negative `maxRetryBackoffMs` propagates directly as a negative result. No validation or clamping prevents this.  
-**Reproduction:**
-```ts
-retryBackoffMs(1, -1, "failure"); // Returns -1 — NEGATIVE
-```
-**Suggested Fix:** Clamp result to non-negative:
-```ts
-return Math.max(0, Math.min(maxRetryBackoffMs, 10_000 * 2 ** Math.max(0, attempt - 1)));
-```
-
----
 
 ### Failure 3: S-120
 **Invariant Violated:** Token counts SHALL never become negative / NaN  
@@ -166,14 +134,12 @@ const unstarted = issue.stateType
 
 | # | Module | Bug | Severity |
 |---|--------|-----|----------|
-| 1 | `policies/retry` | No minimum delay floor; cap=0 produces zero delay | Medium |
-| 2 | `policies/retry` | Negative cap propagates as negative delay | Medium |
-| 3 | `policies/usage` | NaN in update corrupts all token totals | High |
-| 4 | `policies/retry` | Continuation bypass ignores cap entirely | Low |
-| 5 | `workspace` | Empty identifier produces root-equal path | Medium |
-| 6 | `dispatch/issueHasOpenBlockers` | State name "Todo" overrides stateType="started" | Medium |
+| 1 | `policies/usage` | NaN in update corrupts all token totals | High |
+| 2 | `policies/retry` | Continuation bypass ignores cap entirely | Low |
+| 3 | `workspace` | Empty identifier produces root-equal path | Medium |
+| 4 | `dispatch/issueHasOpenBlockers` | State name "Todo" overrides stateType="started" | Medium |
 
-(Failures 3-5-6 are variants of bug #3; failures 4-8 are variants of bug #4)
+(Failures 3-5-6 are variants of bug #1; failures 5-8 are variants of bug #2)
 
 ---
 
@@ -1029,21 +995,21 @@ const unstarted = issue.stateType
 **Expected:** Math.min(60000, 10000*2^max(0,-2)) = 10000  
 **Status:** PENDING
 
-### S-105: Cap = 0 means result is 0
+### S-105: Cap = 0 means result is clamped to minimum floor
 **Category:** Retry and Backoff  
-**Invariant:** Never exceeds cap + non-negative  
+**Invariant:** Minimum delay floor prevents zero-delay retry storms  
 **Setup:** attempt=1, cap=0  
 **Action:** retryBackoffMs(1, 0, "failure")  
-**Expected:** Math.min(0, 10000) = 0. Non-negative? Yes. But invariant says "minimum delay floor prevents zero-delay storms"  
-**Status:** **FAILED** — No minimum floor; zero delay allows retry storms
+**Expected:** 1000 (minimum floor enforced)  
+**Status:** PASSED — Fixed: MIN_RETRY_DELAY_MS floor enforced
 
-### S-106: Negative cap produces negative result
+### S-106: Negative cap clamped to minimum floor
 **Category:** Retry and Backoff  
 **Invariant:** Non-negative delay  
 **Setup:** attempt=1, cap=-1  
 **Action:** retryBackoffMs(1, -1, "failure")  
-**Expected:** Math.min(-1, 10000) = -1. NEGATIVE! Invariant violation?  
-**Status:** **FAILED** — Negative cap propagates to negative return value
+**Expected:** 1000 (minimum floor enforced, result always non-negative)  
+**Status:** PASSED — Fixed: MIN_RETRY_DELAY_MS floor guarantees non-negative result
 
 ### S-107: Monotonicity across attempts 1 through 10
 **Category:** Retry and Backoff  
