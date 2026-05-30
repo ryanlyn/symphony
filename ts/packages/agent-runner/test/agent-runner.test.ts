@@ -714,3 +714,195 @@ test("RunController.currentPhase is stopping_session after turn error", async ()
   await assert.rejects(() => controller.run(), "turn_exploded");
   assert.equal(phaseAfterStop, "stopping_session");
 });
+
+test("RunController.currentPhase is starting_session when startSession() fails", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings();
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    adapters: fakeAdapters({
+      executorFactory: () => ({
+        kind: "codex",
+        async startSession() {
+          throw new Error("session_exploded");
+        },
+        async runTurn() {
+          return [{ type: "turn_completed" }];
+        },
+      }),
+    }),
+  });
+
+  await assert.rejects(() => controller.run(), "session_exploded");
+  assert.equal(controller.currentPhase, "starting_session");
+});
+
+test("RunController.currentPhase is stopping_session when abort signal fires mid-turn", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings();
+  const ac = new AbortController();
+  let phaseAfterStop: string | null = null;
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    abortSignal: ac.signal,
+    adapters: fakeAdapters({
+      executorFactory: () => ({
+        kind: "codex",
+        async startSession(input) {
+          input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+          return fakeSession({
+            stop: async () => {
+              phaseAfterStop = controller.currentPhase;
+            },
+          });
+        },
+        async runTurn() {
+          // Abort mid-turn
+          ac.abort();
+          return new Promise(() => {});
+        },
+      }),
+    }),
+  });
+
+  await assert.rejects(() => controller.run(), "agent_run_aborted");
+  assert.equal(phaseAfterStop, "stopping_session");
+});
+
+test("RunController.currentPhase tracks all lifecycle phases including hook, persist, and refresh", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings({
+    hooks: { ...fakeSettings().hooks, beforeRun: "echo setup" },
+  });
+  const phases: string[] = [];
+  let turnCount = 0;
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    fetchIssue: async (currentIssue) => {
+      phases.push(controller.currentPhase);
+      // Return inactive issue on second turn to end the loop
+      if (turnCount >= 2) return { ...currentIssue, state: "Done", stateType: "completed" };
+      return currentIssue;
+    },
+    adapters: fakeAdapters({
+      createWorkspaceForIssue: async () => {
+        phases.push(controller.currentPhase);
+        return "/tmp/workspace/TEST-1";
+      },
+      runHook: async () => {
+        phases.push(controller.currentPhase);
+      },
+      readResumeState: async () => {
+        phases.push(controller.currentPhase);
+        return { status: "missing" };
+      },
+      writeResumeState: async () => {
+        phases.push(controller.currentPhase);
+      },
+      executorFactory: () => ({
+        kind: "codex",
+        async startSession(input) {
+          phases.push(controller.currentPhase);
+          input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+          return fakeSession();
+        },
+        async runTurn() {
+          phases.push(controller.currentPhase);
+          turnCount += 1;
+          return [{ type: "turn_completed" }];
+        },
+      }),
+    }),
+  });
+
+  await controller.run();
+  phases.push(controller.currentPhase);
+
+  // Verify all expected phases appear in the observed sequence
+  assert.ok(phases.includes("preparing_workspace"), "should observe preparing_workspace");
+  assert.ok(phases.includes("running_hook"), "should observe running_hook");
+  assert.ok(phases.includes("checking_resume"), "should observe checking_resume");
+  assert.ok(phases.includes("starting_session"), "should observe starting_session");
+  assert.ok(phases.includes("executing_turn"), "should observe executing_turn");
+  assert.ok(phases.includes("persisting_state"), "should observe persisting_state");
+  assert.ok(phases.includes("refreshing_issue"), "should observe refreshing_issue");
+  assert.equal(phases[phases.length - 1], "completed");
+});
+
+test("RunController.currentPhase is preparing_workspace when workspace creation fails", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings();
+  let phaseAtError: string | null = null;
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    adapters: fakeAdapters({
+      createWorkspaceForIssue: async () => {
+        phaseAtError = controller.currentPhase;
+        throw new Error("workspace_creation_failed");
+      },
+    }),
+  });
+
+  await assert.rejects(() => controller.run(), "workspace_creation_failed");
+  assert.equal(phaseAtError, "preparing_workspace");
+});
+
+test("RunController.currentPhase is starting_session when startSession throws", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings();
+  let phaseAtError: string | null = null;
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    adapters: fakeAdapters({
+      executorFactory: () => ({
+        kind: "codex",
+        async startSession() {
+          phaseAtError = controller.currentPhase;
+          throw new Error("session_start_failed");
+        },
+        async runTurn() {
+          return [{ type: "turn_completed" }];
+        },
+      }),
+    }),
+  });
+
+  await assert.rejects(() => controller.run(), "session_start_failed");
+  assert.equal(phaseAtError, "starting_session");
+});
+
+test("RunController.currentPhase is running_hook when hook execution throws", async () => {
+  const issue = fakeIssue();
+  const settings = fakeSettings({ hooks: { ...fakeSettings().hooks, beforeRun: "echo boom" } });
+  let phaseAtError: string | null = null;
+
+  const controller = new RunController({
+    issue,
+    workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+    settings,
+    adapters: fakeAdapters({
+      runHook: async () => {
+        phaseAtError = controller.currentPhase;
+        throw new Error("hook_execution_failed");
+      },
+    }),
+  });
+
+  await assert.rejects(() => controller.run(), "hook_execution_failed");
+  assert.equal(phaseAtError, "running_hook");
+});

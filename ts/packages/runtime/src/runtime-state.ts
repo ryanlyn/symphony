@@ -8,27 +8,42 @@
 export type RuntimeAppStatus = "starting" | "idle" | "polling" | "running" | "stopping" | "error";
 
 /**
- * Discriminated union representing the lifecycle phase of the SymphonyRuntime.
+ * Flat record representing the lifecycle state of the SymphonyRuntime.
  * This is the single source of truth for app status -- no separate boolean flags needed.
+ *
+ * Uses a single record shape with a phase discriminator rather than a discriminated union.
+ * Adding a cross-cutting field only requires adding it here and in initialRuntimePhase().
+ * See orchestrator's SlotState for the discriminated-union alternative (used when each
+ * phase carries fundamentally different data).
  */
-export type RuntimePhase =
-  | { phase: "idle"; startupCleanupDone: boolean }
-  | { phase: "polling"; startupCleanupDone: boolean; activeRuns: number }
-  | { phase: "running"; activeRuns: number }
-  | { phase: "stopping"; activeRuns: number }
-  | { phase: "error"; lastError: string; activeRuns: number };
+export interface RuntimePhase {
+  phase: "idle" | "polling" | "running" | "stopping" | "error";
+  activeRuns: number;
+  startupCleanupDone: boolean;
+  lastError: string | null;
+}
 
 /**
  * Events that trigger phase transitions in the runtime state machine.
+ *
+ * Named 'RuntimePhaseEvent' to parallel the 'RuntimePhase' state type it belongs to,
+ * and to avoid collision with the RuntimeEvent interface used for runtime log events
+ * in the package's public API.
+ * Conceptually equivalent to SlotEvent in the orchestrator package.
+ *
+ * Note: The agent-runner package uses a simpler imperative RunPhase label rather than
+ * a formal FSM, because its lifecycle is strictly sequential with no concurrent events.
+ * See agent-runner/src/index.ts RunPhase type for that approach.
  */
-export type RuntimeTransition =
+export type RuntimePhaseEvent =
   | { type: "POLL_START" }
   | { type: "POLL_SUCCESS" }
   | { type: "POLL_ERROR"; error: string }
   | { type: "RUN_STARTED" }
   | { type: "RUN_FINISHED" }
   | { type: "STARTUP_CLEANUP_DONE" }
-  | { type: "STOP_REQUESTED" };
+  | { type: "STOP_REQUESTED" }
+  | { type: "RESTART" };
 
 /**
  * Derives the public-facing RuntimeAppStatus from the internal phase.
@@ -46,6 +61,8 @@ export function deriveAppStatus(state: RuntimePhase): RuntimeAppStatus {
       return "stopping";
     case "error":
       return "error";
+    default:
+      return assertNeverPhase(state.phase);
   }
 }
 
@@ -53,35 +70,7 @@ export function deriveAppStatus(state: RuntimePhase): RuntimeAppStatus {
  * Extract whether startup cleanup has been done from the current phase.
  */
 export function isStartupCleanupDone(state: RuntimePhase): boolean {
-  switch (state.phase) {
-    case "idle":
-    case "polling":
-      return state.startupCleanupDone;
-    case "running":
-    case "stopping":
-    case "error":
-      // Once we reach running/stopping/error, startup cleanup has already occurred
-      return true;
-  }
-}
-
-/**
- * Extract the active run count from the current phase.
- * Internal helper used by transitionRuntime.
- */
-function activeRunCount(state: RuntimePhase): number {
-  switch (state.phase) {
-    case "idle":
-      return 0;
-    case "polling":
-      return state.activeRuns;
-    case "running":
-      return state.activeRuns;
-    case "stopping":
-      return state.activeRuns;
-    case "error":
-      return state.activeRuns;
-  }
+  return state.startupCleanupDone;
 }
 
 /**
@@ -93,91 +82,96 @@ export function isStopRequested(state: RuntimePhase): boolean {
   return state.phase === "stopping";
 }
 
-/**
- * @deprecated Use `isStopRequested` for clarity. This alias is kept during migration.
- */
-export const isStopped = isStopRequested;
 
 /**
- * Transition function for the runtime state machine.
- * Given the current phase and an event, returns the next phase.
- *
- * @mutates state - For counter-only updates that stay within the same phase
- * (RUN_STARTED in polling/running, RUN_FINISHED in stopping/error,
- * STARTUP_CLEANUP_DONE in polling), the state object is mutated in place and
- * returned to avoid allocation overhead on the hot path. Phase-changing
- * transitions always return a new object. Do NOT rely on reference equality to
- * detect changes; compare the `phase` field or activeRuns count instead.
+ * Pure transition function for the runtime state machine.
+ * Given the current phase and an event, returns a new phase object.
+ * Pure for the current flat shape (shallow spread suffices). If nested fields
+ * are added, deep-copy or an immutable library will be needed.
  */
-export function transitionRuntime(state: RuntimePhase, event: RuntimeTransition): RuntimePhase {
+export function transitionRuntime(state: RuntimePhase, event: RuntimePhaseEvent): RuntimePhase {
+  // --- Global events (handled regardless of current phase) ---
+
+  // RESTART resets phase based on current activeRuns, preserving startupCleanupDone.
+  // Blocked from "stopping" while activeRuns > 0 to prevent new dispatches during drain.
+  if (event.type === "RESTART") {
+    if (state.phase === "stopping" && state.activeRuns > 0) return state;
+    if (state.activeRuns > 0) {
+      return { ...state, phase: "running", lastError: null };
+    }
+    return { ...state, phase: "idle", lastError: null };
+  }
+
   // STOP_REQUESTED transitions from any non-terminal state
   if (event.type === "STOP_REQUESTED") {
     if (state.phase === "stopping") return state;
-    const runs = activeRunCount(state);
-    return { phase: "stopping", activeRuns: runs };
+    return { ...state, phase: "stopping", lastError: null };
   }
+
+  // --- Phase-specific transitions ---
 
   switch (state.phase) {
     case "idle":
       if (event.type === "POLL_START")
-        return { phase: "polling", startupCleanupDone: state.startupCleanupDone, activeRuns: 0 };
+        return { ...state, phase: "polling" };
       return state;
 
     case "polling":
-      if (event.type === "RUN_STARTED") {
-        state.activeRuns += 1;
-        return state;
-      }
-      if (event.type === "RUN_FINISHED") {
-        state.activeRuns = Math.max(0, state.activeRuns - 1);
-        return state;
-      }
-      if (event.type === "STARTUP_CLEANUP_DONE") {
-        state.startupCleanupDone = true;
-        return state;
-      }
+      if (event.type === "RUN_STARTED")
+        return { ...state, activeRuns: state.activeRuns + 1 };
+      if (event.type === "RUN_FINISHED")
+        return { ...state, activeRuns: Math.max(0, state.activeRuns - 1) };
+      if (event.type === "STARTUP_CLEANUP_DONE")
+        return { ...state, startupCleanupDone: true };
       if (event.type === "POLL_SUCCESS")
         return state.activeRuns > 0
-          ? { phase: "running", activeRuns: state.activeRuns }
-          : { phase: "idle", startupCleanupDone: state.startupCleanupDone };
+          ? { ...state, phase: "running" }
+          : { ...state, phase: "idle" };
       if (event.type === "POLL_ERROR")
-        return { phase: "error", lastError: event.error, activeRuns: state.activeRuns };
+        return { ...state, phase: "error", lastError: event.error };
       return state;
 
     case "running":
       if (event.type === "RUN_FINISHED")
         return state.activeRuns <= 1
-          ? { phase: "idle", startupCleanupDone: true }
-          : { phase: "running", activeRuns: Math.max(0, state.activeRuns - 1) };
-      if (event.type === "RUN_STARTED") {
-        state.activeRuns += 1;
-        return state;
-      }
+          ? { ...state, phase: "idle", activeRuns: 0 }
+          : { ...state, activeRuns: Math.max(0, state.activeRuns - 1) };
+      if (event.type === "RUN_STARTED")
+        return { ...state, activeRuns: state.activeRuns + 1 };
       if (event.type === "POLL_START")
-        return { phase: "polling", startupCleanupDone: true, activeRuns: state.activeRuns };
+        return { ...state, phase: "polling" };
       return state;
 
     case "stopping":
-      if (event.type === "RUN_FINISHED") {
-        state.activeRuns = Math.max(0, state.activeRuns - 1);
-        return state;
-      }
+      // Once stop is requested, this is a drain-only state. RUN_STARTED is rejected
+      // because the runtime must not account for new runs after stop() is called.
+      if (event.type === "RUN_FINISHED")
+        return { ...state, activeRuns: Math.max(0, state.activeRuns - 1) };
       return state;
 
     case "error":
       if (event.type === "POLL_START")
-        return { phase: "polling", startupCleanupDone: true, activeRuns: state.activeRuns };
-      if (event.type === "RUN_FINISHED") {
-        state.activeRuns = Math.max(0, state.activeRuns - 1);
-        return state;
-      }
+        return { ...state, phase: "polling", lastError: null };
+      if (event.type === "RUN_FINISHED")
+        return { ...state, activeRuns: Math.max(0, state.activeRuns - 1) };
       return state;
+
+    default:
+      return assertNeverPhase(state.phase);
   }
+}
+
+/**
+ * Compile-time exhaustiveness guard. If a new phase is added to RuntimePhase['phase']
+ * without handling it in transitionRuntime, this will produce a type error.
+ */
+function assertNeverPhase(_phase: never): never {
+  throw new Error(`Unhandled runtime phase: ${String(_phase)}`);
 }
 
 /**
  * Initial state for the runtime state machine.
  */
 export function initialRuntimePhase(): RuntimePhase {
-  return { phase: "idle", startupCleanupDone: false };
+  return { phase: "idle", activeRuns: 0, startupCleanupDone: false, lastError: null };
 }

@@ -37,13 +37,14 @@ import {
 } from "./runtime-state.js";
 
 export type RuntimeRunner = (input: Parameters<typeof runAgentAttempt>[0]) => Promise<RunResult>;
-export type { RuntimePhase, RuntimeTransition, RuntimeAppStatus } from "./runtime-state.js";
+export type { RuntimePhase, RuntimeAppStatus, RuntimePhaseEvent } from "./runtime-state.js";
+/** @deprecated Use RuntimePhaseEvent instead */
+export type { RuntimePhaseEvent as RuntimeStateEvent } from "./runtime-state.js";
 export {
-  transitionRuntime,
   deriveAppStatus,
+  transitionRuntime,
   initialRuntimePhase,
   isStopRequested,
-  isStopped,
 } from "./runtime-state.js";
 export type RuntimePollStatus = "idle" | "checking" | "error";
 export const RUNTIME_RUN_OUTCOMES = ["success", "failed", "stalled", "canceled"] as const;
@@ -206,6 +207,7 @@ export interface PollOptions {
 
 class ActiveRunHandle {
   readonly controller = new AbortController();
+  private _finishedExternally = false;
 
   constructor(
     readonly key: string,
@@ -221,11 +223,17 @@ class ActiveRunHandle {
     return this.activeRuns.get(this.key) === this;
   }
 
+  /** Whether this run was terminated externally (e.g., by reconciliation or stop). */
+  get wasFinishedExternally(): boolean {
+    return this._finishedExternally;
+  }
+
   abort(): void {
     this.controller.abort();
   }
 
   finishExternally(): void {
+    this._finishedExternally = true;
     this.abort();
     this.release();
   }
@@ -302,7 +310,7 @@ export class SymphonyRuntime {
   }
 
   async start(options: RuntimeStartOptions = {}): Promise<void> {
-    this.runtimePhase = initialRuntimePhase();
+    this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RESTART" });
     do {
       await this.pollOnce({ dryRun: options.dryRun, waitForRuns: options.once });
       if (options.once) break;
@@ -381,7 +389,10 @@ export class SymphonyRuntime {
   }
 
   private async maybeDispatch(issue: Issue): Promise<Array<Promise<void>>> {
+    if (isStopRequested(this.runtimePhase)) return [];
+
     const refreshed = await this.fetchIssueForDispatch(issue);
+    if (isStopRequested(this.runtimePhase)) return [];
     if (!refreshed) {
       this.addEvent("dispatch_skipped", `${issue.identifier} missing_before_dispatch`);
       return [];
@@ -399,6 +410,7 @@ export class SymphonyRuntime {
     this.activeRuns.set(key, handle);
     this.addEvent("run_started", `${refreshed.identifier} slot=${claim.slotIndex}`);
 
+    this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_STARTED" });
     const run = this.runClaim(
       refreshed,
       claim.slotIndex,
@@ -407,10 +419,14 @@ export class SymphonyRuntime {
       claim.workerHost ?? null,
       handle,
     );
-    this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_STARTED" });
     void run.finally(() => {
-      this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_FINISHED" });
-      this.emit();
+      // Only fire RUN_FINISHED if this handle was not already externally terminated
+      // (e.g., by reconcileStalledRuns or abortIssueRuns). This prevents the
+      // activeRuns counter from temporarily disagreeing with the activeRuns Map.
+      if (!handle.wasFinishedExternally) {
+        this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_FINISHED" });
+        this.emit();
+      }
     });
     this.emit();
     return [run];
@@ -457,7 +473,7 @@ export class SymphonyRuntime {
       const entry = this.orchestrator
         .snapshot()
         .running.find((item) => item.issue.id === issue.id && item.slotIndex === slotIndex);
-      this.orchestrator.finish(issue.id, slotIndex, true, undefined, "continuation");
+      this.orchestrator.finish(issue.id, slotIndex, { type: "retry", kind: "continuation" });
       this.syncRetryTimer(issue.id);
       this.recordHistory({
         id: runId,
@@ -492,7 +508,7 @@ export class SymphonyRuntime {
         .running.find((item) => item.issue.id === issue.id && item.slotIndex === slotIndex);
       await this.invalidateResumeStateForRunningEntry(entry, "failure");
       if (!handle.isActive) return;
-      this.orchestrator.finish(issue.id, slotIndex, true, errorMessage(error), "failure");
+      this.orchestrator.finish(issue.id, slotIndex, { type: "retry", error: errorMessage(error), kind: "failure" });
       this.syncRetryTimer(issue.id);
       this.recordHistory({
         id: runId,
@@ -634,9 +650,16 @@ export class SymphonyRuntime {
       const error = `agent_stalled after ${timeoutMs}ms`;
       const entry = this.runningEntry(snapshotEntry.issue.id, snapshotEntry.slotIndex);
       if (!entry) continue;
-      this.orchestrator.finish(entry.issue.id, entry.slotIndex, true, error, "failure");
+      this.orchestrator.finish(entry.issue.id, entry.slotIndex, { type: "retry", error, kind: "failure" });
       this.syncRetryTimer(entry.issue.id);
-      activeHandle?.finishExternally();
+      if (activeHandle) {
+        // Safety invariant: finishExternally() sets wasFinishedExternally=true synchronously,
+        // preventing the run's .finally() handler from firing a duplicate RUN_FINISHED.
+        // This is safe because JavaScript's single-threaded event loop guarantees no
+        // .finally() can interleave between finishExternally() and this RUN_FINISHED dispatch.
+        activeHandle.finishExternally();
+        this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_FINISHED" });
+      }
       await this.invalidateResumeStateForRunningEntry(currentEntry, "stalled");
       this.recordHistory({
         id: runId,
@@ -676,8 +699,10 @@ export class SymphonyRuntime {
 
   private async cleanupTerminalWorkspacesOnce(): Promise<void> {
     if (isStartupCleanupDone(this.runtimePhase)) return;
-    this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "STARTUP_CLEANUP_DONE" });
-    if (!this.client.fetchIssuesByStates) return;
+    if (!this.client.fetchIssuesByStates) {
+      this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "STARTUP_CLEANUP_DONE" });
+      return;
+    }
     try {
       const terminalIssues = await this.client.fetchIssuesByStates(
         this.workflow.settings.tracker.terminalStates,
@@ -688,6 +713,9 @@ export class SymphonyRuntime {
         cleaned += 1;
       }
       if (cleaned > 0) this.addEvent("startup_workspace_cleanup", `terminal=${cleaned}`);
+      // Mark cleanup as done only after successful completion so that a failure
+      // allows the next start() to reattempt the cleanup.
+      this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "STARTUP_CLEANUP_DONE" });
     } catch (error) {
       this.addEvent("startup_workspace_cleanup_failed", errorMessage(error));
     }
@@ -696,7 +724,12 @@ export class SymphonyRuntime {
   private abortIssueRuns(issueId: string): void {
     for (const [key, handle] of this.activeRuns.entries()) {
       if (!key.startsWith(`${issueId}:`)) continue;
+      // Safety invariant: finishExternally() sets wasFinishedExternally=true synchronously,
+      // preventing the run's .finally() handler from firing a duplicate RUN_FINISHED.
+      // This is safe because JavaScript's single-threaded event loop guarantees no
+      // .finally() can interleave between finishExternally() and this RUN_FINISHED dispatch.
       handle.finishExternally();
+      this.runtimePhase = transitionRuntime(this.runtimePhase, { type: "RUN_FINISHED" });
     }
   }
 
@@ -759,6 +792,7 @@ export class SymphonyRuntime {
         return;
       }
       const triggerPoll = () => {
+        if (isStopRequested(this.runtimePhase)) return;
         this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);
         this.pollOnce().catch((error) => {
           this.lastError = errorMessage(error);

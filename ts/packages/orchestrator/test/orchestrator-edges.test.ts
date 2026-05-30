@@ -102,7 +102,7 @@ test("applyUpdate — no-op when slot is not in running phase (FSM guard)", () =
   const orchestrator = new Orchestrator(parseConfig());
   const issue = makeIssue();
   orchestrator.claim(issue);
-  orchestrator.finish(issue.id, 0, true); // slot transitions to retrying
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" }); // slot transitions to retrying
 
   // Attempt update on a slot that is now in retrying phase -- should be ignored
   orchestrator.applyUpdate(issue.id, 0, {
@@ -112,6 +112,44 @@ test("applyUpdate — no-op when slot is not in running phase (FSM guard)", () =
   });
 
   // Usage totals should remain unchanged (no stale update applied)
+  assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 0);
+  assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 0);
+});
+
+test("applyUpdate — no-op when slot is in idle phase (finished without retry)", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+  orchestrator.claim(issue);
+  orchestrator.finish(issue.id, 0, { type: "done" }); // slot transitions to idle via FINISH_NO_RETRY
+
+  // Attempt update on a slot that is now in idle phase -- should be ignored
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    sessionId: "stale-session",
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+
+  // Usage totals should remain unchanged (no stale update applied)
+  assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 0);
+  assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 0);
+});
+
+test("applyUpdate — no-op when slot has been cleaned up (completed phase in FSM)", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+  orchestrator.claim(issue);
+
+  // cleanupIssue transitions the slot to completed
+  orchestrator.cleanupIssue(issue.id);
+
+  // Attempt update on a slot that has been cleaned up -- should be silently dropped
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    sessionId: "stale-session",
+    usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+  });
+
+  // Usage totals should remain zero (no stale update applied)
   assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 0);
   assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 0);
 });
@@ -146,7 +184,7 @@ test("finish — non-normal finish does not create retry entry", () => {
   const issue = makeIssue();
   orchestrator.claim(issue);
 
-  orchestrator.finish(issue.id, 0, false, "crashed");
+  orchestrator.finish(issue.id, 0, { type: "done" });
 
   assert.equal(orchestrator.snapshot().retrying.length, 0);
   assert.equal(orchestrator.snapshot().running.length, 0);
@@ -161,11 +199,11 @@ test("finish — secondsRunning accumulates across multiple finishes", () => {
 
   orchestrator.claim(issueA);
   clock.now = () => new Date(now.getTime() + 10_000);
-  orchestrator.finish(issueA.id, 0, false);
+  orchestrator.finish(issueA.id, 0, { type: "done" });
 
   orchestrator.claim(issueB);
   clock.now = () => new Date(now.getTime() + 25_000);
-  orchestrator.finish(issueB.id, 0, false);
+  orchestrator.finish(issueB.id, 0, { type: "done" });
 
   assert.equal(orchestrator.snapshot().usageTotals.secondsRunning, 25);
 });
@@ -175,10 +213,10 @@ test("finish — finishing same slot twice is idempotent (second is no-op)", () 
   const issue = makeIssue();
   orchestrator.claim(issue);
 
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   const afterFirst = orchestrator.snapshot().usageTotals.secondsRunning;
 
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().usageTotals.secondsRunning, afterFirst);
 });
 
@@ -199,7 +237,7 @@ test("cleanupIssue — removes retry attempts for issue", () => {
   const orchestrator = new Orchestrator(parseConfig());
   const issue = makeIssue();
   orchestrator.claim(issue);
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().retrying.length, 1);
 
   orchestrator.cleanupIssue(issue.id);
@@ -222,7 +260,7 @@ test("cleanupIssue — transitions retry-phase slots to completed (FSM)", () => 
 
   // Claim slot 0, finish with retry -> slot 0 enters retrying phase
   orchestrator.claim(issue);
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().retrying.length, 1);
 
   // Claim slot 1 so it is in running phase
@@ -265,7 +303,7 @@ test("eligibleIssues — inactive issue cleared from retryAttempts", () => {
   const issue = makeIssue();
 
   orchestrator.claim(issue);
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().retrying.length, 1);
 
   const doneIssue = normalizeIssue({
@@ -293,6 +331,121 @@ test("eligibleIssues — issue with unresolved blockers excluded", () => {
 
   const eligible = orchestrator.eligibleIssues([blockedIssue]);
   assert.deepEqual(eligible, []);
+});
+
+// --- applyUpdate usage accumulation (Finding 5) ---
+
+test("applyUpdate — usage tokens accumulate when slot is in running phase (FSM guard passes)", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+  orchestrator.claim(issue);
+
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  });
+
+  assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 100);
+  assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 50);
+  assert.equal(orchestrator.snapshot().usageTotals.totalTokens, 150);
+
+  // Second update accumulates
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+  });
+
+  assert.equal(orchestrator.snapshot().usageTotals.inputTokens, 200);
+  assert.equal(orchestrator.snapshot().usageTotals.outputTokens, 100);
+  assert.equal(orchestrator.snapshot().usageTotals.totalTokens, 300);
+});
+
+// --- releaseStaleClaimsForRetry (Finding 6) ---
+
+test("releaseStaleClaimsForRetry — stale claim released so retry can be re-claimed", () => {
+  const now = new Date("2025-01-01T00:00:00Z");
+  const clock = fakeClock(now);
+  const settings = parseConfig({ agent: { ensemble_size: 1 } });
+  const orchestrator = new Orchestrator(settings, clock);
+  const issue = makeIssue();
+
+  // Claim and finish with retry
+  orchestrator.claim(issue);
+  orchestrator.finish(issue.id, 0, { type: "retry", error: "error", kind: "failure" });
+
+  // Verify retry entry exists
+  assert.equal(orchestrator.snapshot().retrying.length, 1);
+
+  // Advance clock past the retry dueAt
+  clock.now = () => new Date(now.getTime() + 60_000);
+
+  // Claim the same issue again -- releaseStaleClaimsForRetry should clear
+  // the stale claim from slot 0 (which is in retrying phase, not running)
+  const secondClaim = orchestrator.claim(issue);
+  assert.ok(secondClaim);
+  assert.equal(secondClaim?.slotIndex, 0);
+});
+
+// --- FSM and legacy parity (Finding 4) ---
+
+test("FSM and legacy collections stay in sync through claim/update/finish/cleanup", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+
+  // After claim: FSM running, legacy running
+  orchestrator.claim(issue);
+  const key = slotKey(issue.id, 0);
+  assert.equal(orchestrator.state.running.has(key), true);
+  assert.equal(orchestrator.state.claimed.has(key), true);
+
+  // After update: both still consistent
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    sessionId: "sess-1",
+  });
+  const entry = orchestrator.state.running.get(key);
+  assert.equal(entry?.turnCount, 1);
+  assert.equal(entry?.sessionId, "sess-1");
+
+  // After finish: both cleared
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
+  assert.equal(orchestrator.state.running.has(key), false);
+  assert.equal(orchestrator.state.claimed.has(key), false);
+  assert.equal(orchestrator.snapshot().retrying.length, 1);
+
+  // After cleanup: retry cleared too
+  orchestrator.cleanupIssue(issue.id);
+  assert.equal(orchestrator.snapshot().retrying.length, 0);
+  assert.equal(orchestrator.state.completed.has(issue.id), true);
+});
+
+// --- refreshRunningIssue ---
+
+test("refreshRunningIssue — FSM and legacy running map stay in sync", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = makeIssue();
+  orchestrator.claim(issue);
+  const key = slotKey(issue.id, 0);
+
+  const updatedIssue = makeIssue({ title: "Updated title", state: "In Progress" });
+  orchestrator.refreshRunningIssue(updatedIssue);
+
+  // Legacy map entry should have the updated issue
+  const legacyEntry = orchestrator.state.running.get(key);
+  assert.equal(legacyEntry?.issue.title, "Updated title");
+  assert.equal(legacyEntry?.issue.state, "In Progress");
+
+  // Snapshot (reads from legacy path) should also reflect the update
+  const snap = orchestrator.snapshot();
+  assert.equal(snap.running[0]?.issue.title, "Updated title");
+  assert.equal(snap.running[0]?.issue.state, "In Progress");
+
+  // applyUpdate should still work (slot is still in running phase after refresh)
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    sessionId: "post-refresh",
+  });
+  assert.equal(orchestrator.state.running.get(key)?.sessionId, "post-refresh");
 });
 
 // --- ClockPort ---

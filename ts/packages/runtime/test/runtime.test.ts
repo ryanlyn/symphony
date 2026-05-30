@@ -444,7 +444,9 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
 
   try {
     await runtime.pollOnce();
-    const running = orchestrator.snapshot().running[0];
+    // Access internal state directly to set up the stall condition (snapshot
+    // returns defensive copies and cannot be used to mutate internal state).
+    const running = [...orchestrator.state.running.values()][0];
     assert.ok(running);
     running.lastAgentTimestamp = new Date(Date.now() - 1_000);
 
@@ -520,7 +522,9 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
     await runtime.pollOnce();
     await waitFor(() => controls.size === 2, 1_000);
 
-    const entries = orchestrator.snapshot().running;
+    // Access internal state directly to set up stall conditions (snapshot
+    // returns defensive copies and cannot be used to mutate internal state).
+    const entries = [...orchestrator.state.running.values()];
     assert.equal(entries.length, 2);
     for (const entry of entries) {
       entry.lastAgentTimestamp = new Date(Date.now() - 1_000);
@@ -591,7 +595,8 @@ test("runtime does not record late success after stall reconciliation wins", asy
 
   try {
     await runtime.pollOnce();
-    const running = orchestrator.snapshot().running[0];
+    // Access internal state directly to set up the stall condition.
+    const running = [...orchestrator.state.running.values()][0];
     assert.ok(running);
     running.lastAgentTimestamp = new Date(Date.now() - 1_000);
 
@@ -658,7 +663,8 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   try {
     await runtime.pollOnce();
     assert.equal(attempts, 1);
-    const firstEntry = orchestrator.snapshot().running[0];
+    // Access internal state directly to set up the stall condition.
+    const firstEntry = [...orchestrator.state.running.values()][0];
     assert.ok(firstEntry);
     firstEntry.lastAgentTimestamp = new Date(Date.now() - 1_000);
 
@@ -754,7 +760,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
 
   const orchestrator = new Orchestrator(workflow.settings);
   assert.ok(orchestrator.claim(activeIssue));
-  orchestrator.finish(activeIssue.id, 0, true);
+  orchestrator.finish(activeIssue.id, 0, { type: "retry" });
 
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -897,7 +903,8 @@ test("runtime records failed attempts as retryable work and keeps polling", asyn
   assert.equal(snapshot.retrying[0]?.attempt, 1);
   assert.equal(snapshot.retrying[0]?.error, "agent exited: boom");
 
-  const retry = orchestrator.snapshot().retrying[0];
+  // Access internal state directly to expire the retry (snapshot returns copies).
+  const retry = [...orchestrator.state.retryAttempts.values()][0];
   assert.ok(retry);
   retry.dueAt = new Date(Date.now() - 1);
   await runtime.pollOnce({ waitForRuns: true });
@@ -984,11 +991,17 @@ test(
     // rather than polling with arbitrary timeouts.
     const snapshotWaiter = <T>(
       predicate: (snap: ReturnType<typeof runtime.snapshot>) => T | false,
+      timeoutMs = 10_000,
     ) =>
-      new Promise<T>((resolve) => {
+      new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          unsub();
+          reject(new Error(`snapshotWaiter timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
         const unsub = runtime.subscribe((snap) => {
           const result = predicate(snap);
           if (result !== false) {
+            clearTimeout(timer);
             unsub();
             resolve(result);
           }
@@ -996,6 +1009,7 @@ test(
         // Also check current state in case the transition already happened
         const current = predicate(runtime.snapshot());
         if (current !== false) {
+          clearTimeout(timer);
           unsub();
           resolve(current);
         }
@@ -1026,6 +1040,184 @@ test(
     runtime.stop();
   },
 );
+
+test("runtime appStatus transitions to stopping when stop() is called during an active run", async () => {
+  const issue = issueFixture("issue-stop", "MT-STOP");
+  let runStarted = false;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async ({ abortSignal }) => {
+        runStarted = true;
+        await new Promise<void>((_resolve, reject) => {
+          abortSignal?.addEventListener("abort", () => reject(new Error("aborted")), {
+            once: true,
+          });
+        });
+        throw new Error("unreachable");
+      },
+    }),
+  );
+
+  await runtime.pollOnce();
+  await waitFor(() => runStarted, 1_000);
+
+  runtime.stop();
+  assert.equal(runtime.snapshot().appStatus, "stopping");
+});
+
+test("runtime appStatus remains stopping after active run drains, and start() recovers to idle", async () => {
+  const issue = issueFixture("issue-stop-drain", "MT-STOP-DRAIN");
+  let runResolve: (() => void) | null = null;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => {
+        await new Promise<void>((resolve) => {
+          runResolve = resolve;
+        });
+        return {
+          workspace: "/tmp/symphony/MT-STOP-DRAIN",
+          turnCount: 1,
+          updates: [],
+          resumeId: null,
+          agentKind: "codex" as const,
+          finalIssue: issue,
+        };
+      },
+    }),
+  );
+
+  // Start a run
+  await runtime.pollOnce();
+  await waitFor(() => runResolve !== null, 1_000);
+  assert.equal(runtime.snapshot().running.length, 1);
+
+  // Stop while run is active
+  runtime.stop();
+  assert.equal(runtime.snapshot().appStatus, "stopping");
+
+  // Let the run finish (drain completes)
+  runResolve!();
+  await waitFor(() => runtime.snapshot().running.length === 0, 1_000);
+
+  // appStatus should remain stopping (no automatic transition to stopped)
+  assert.equal(runtime.snapshot().appStatus, "stopping");
+
+  // Calling start() (which fires RESTART) recovers to idle
+  const startPromise = runtime.start({ once: true });
+  await startPromise;
+  assert.equal(runtime.snapshot().appStatus, "idle");
+});
+
+test("runtime appStatus transitions to error after POLL_ERROR and recovers on next poll", async () => {
+  const issue = issueFixture("issue-error-recovery", "MT-ERROR-RECOVERY");
+  let callCount = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => {
+          callCount += 1;
+          if (callCount === 1) throw new Error("tracker unavailable");
+          return [];
+        },
+        fetchIssuesByIds: async () => [issue],
+      },
+    }),
+  );
+
+  // First poll errors
+  await assert.rejects(() => runtime.pollOnce(), /tracker unavailable/);
+  assert.equal(runtime.snapshot().appStatus, "error");
+
+  // Second poll recovers
+  await runtime.pollOnce();
+  assert.equal(runtime.snapshot().appStatus, "idle");
+});
+
+test("runtime appStatus transitions through polling during a poll cycle", async () => {
+  const issue = issueFixture("issue-status", "MT-STATUS");
+  const statuses: string[] = [];
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => ({
+        workspace: "/tmp/symphony/MT-STATUS",
+        turnCount: 1,
+        updates: [],
+        resumeId: null,
+        agentKind: "codex",
+        finalIssue: issue,
+      }),
+    }),
+  );
+
+  runtime.subscribe((snapshot) => {
+    statuses.push(snapshot.appStatus);
+  });
+
+  await runtime.pollOnce({ waitForRuns: true });
+
+  // Should have observed 'polling' during the poll and end at 'idle'
+  assert.ok(statuses.includes("polling"), "should observe polling status during poll");
+  assert.equal(statuses[statuses.length - 1], "idle");
+});
+
+test("runtime start() with active runs initializes phase as running and handles RUN_FINISHED", async () => {
+  const issue = issueFixture("issue-restart", "MT-RESTART");
+  let runnerResolve: ((result: RunResult) => void) | null = null;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => {
+        return new Promise<RunResult>((resolve) => {
+          runnerResolve = resolve;
+        });
+      },
+    }),
+  );
+
+  // Start a run via pollOnce (without waitForRuns so it does not block)
+  await runtime.pollOnce();
+  assert.equal(runtime.snapshot().running.length, 1);
+
+  // Now call start() which should re-initialize phase to 'running' with activeRuns > 0
+  const startPromise = runtime.start({ once: true });
+
+  // The runner finishes while start() is looping
+  runnerResolve!({
+    workspace: "/tmp/symphony/MT-RESTART",
+    turnCount: 1,
+    updates: [],
+    resumeId: null,
+    agentKind: "codex",
+    finalIssue: issue,
+  });
+
+  await startPromise;
+
+  // After the run finishes and the subsequent poll completes, verify correct state
+  const snapshot = runtime.snapshot();
+  assert.equal(snapshot.appStatus, "idle");
+  assert.equal(snapshot.runHistory.length >= 1, true);
+});
 
 function workflowFixture(root = "/tmp/symphony-ts-runtime-test"): WorkflowDefinition {
   const settings = parseConfig({

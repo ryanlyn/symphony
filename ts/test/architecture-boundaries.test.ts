@@ -141,7 +141,7 @@ test("ugly retry flow keeps capacity authority in the orchestrator", () => {
   assert.equal(orchestrator.snapshot().running.length, 2);
   assert.equal(orchestrator.snapshot().retrying.length, 1);
 
-  orchestrator.finish(issue.id, 1, false);
+  orchestrator.finish(issue.id, 1, { type: "done" });
   assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, issue.identifier);
   assert.equal(orchestrator.claim(issue)?.slotIndex, 1);
   assert.equal(orchestrator.state.claimed.has(slotKey(issue.id, 1)), true);

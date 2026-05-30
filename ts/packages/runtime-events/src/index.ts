@@ -1,6 +1,14 @@
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
 import type { AgentKind, AgentUpdateType, DispatchBlockEntry, UsageTotals } from "@symphony/domain";
 
+/**
+ * Public-facing runtime app status.
+ *
+ * IMPORTANT: This type MUST stay in sync with RuntimeAppStatus defined in
+ * @symphony/runtime (runtime-state.ts). A compile-time assertion in
+ * runtime/test/runtime-state.test.ts verifies structural equality.
+ * If you add a phase here, add it there (and vice-versa).
+ */
 export type RuntimeAppStatus = "starting" | "idle" | "polling" | "running" | "stopping" | "error";
 export type RuntimePollStatus = "idle" | "checking" | "error";
 export const RUNTIME_RUN_OUTCOMES = ["success", "failed", "stalled", "canceled"] as const;

@@ -39,7 +39,7 @@ test("orchestrator claims ensemble slots independently and snapshots backend-neu
   assert.equal(snapshot.running[0]?.executorPid, "123");
   assert.equal(snapshot.usageTotals.totalTokens, 15);
 
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().retrying[0]?.attempt, 1);
 });
 
@@ -110,7 +110,7 @@ test("orchestrator assigns SSH worker hosts by least loaded capacity", () => {
   assert.equal(orchestrator.claim(secondIssue)?.workerHost, "worker-b:2200");
   assert.equal(orchestrator.claim(thirdIssue), null);
 
-  orchestrator.finish(firstIssue.id, 0, false);
+  orchestrator.finish(firstIssue.id, 0, { type: "done" });
   assert.equal(orchestrator.claim(thirdIssue)?.workerHost, "worker-a:2200");
 });
 
@@ -164,15 +164,18 @@ test("orchestrator gates retry attempts until backoff is due and clears terminal
   const doneIssue = normalizeIssue({ ...issue, state: "Done", stateType: "completed" });
 
   assert.ok(orchestrator.claim(issue));
-  orchestrator.finish(issue.id, 0, true);
-  const retry = orchestrator.snapshot().retrying[0];
-  assert.equal(retry?.attempt, 1);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
+  const retrySnapshot = orchestrator.snapshot().retrying[0];
+  assert.equal(retrySnapshot?.attempt, 1);
   assert.deepEqual(orchestrator.eligibleIssues([issue]), []);
 
+  // Access internal state directly to expire the retry (snapshot returns copies).
+  const retry = orchestrator.state.retryAttempts.get(issue.id);
+  assert.ok(retry);
   retry!.dueAt = new Date(Date.now() - 1);
   assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-RETRY");
   assert.equal(orchestrator.claim(issue)?.retryAttempt, 1);
-  orchestrator.finish(issue.id, 0, true);
+  orchestrator.finish(issue.id, 0, { type: "retry", kind: "failure" });
   assert.equal(orchestrator.snapshot().retrying[0]?.attempt, 2);
 
   assert.deepEqual(orchestrator.eligibleIssues([doneIssue]), []);
@@ -191,7 +194,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
 
   assert.ok(orchestrator.claim(issue));
   const beforeFailure = Date.now();
-  orchestrator.finish(issue.id, 0, true, "agent exited", "failure");
+  orchestrator.finish(issue.id, 0, { type: "retry", error: "agent exited", kind: "failure" });
   let retry = orchestrator.snapshot().retrying[0];
   assert.ok(retry);
   assert.equal(retry.attempt, 1);
@@ -200,7 +203,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   const continuationOrchestrator = new Orchestrator(settings);
   assert.ok(continuationOrchestrator.claim(issue));
   const beforeContinuation = Date.now();
-  continuationOrchestrator.finish(issue.id, 0, true, undefined, "continuation");
+  continuationOrchestrator.finish(issue.id, 0, { type: "retry", kind: "continuation" });
   retry = continuationOrchestrator.snapshot().retrying[0];
   assert.ok(retry);
   assert.equal(retry.attempt, 1);
@@ -210,7 +213,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   retry.dueAt = new Date(Date.now() - 1);
   assert.equal(continuationOrchestrator.claim(issue)?.retryAttempt, 1);
   const beforeSecondContinuation = Date.now();
-  continuationOrchestrator.finish(issue.id, 0, true, undefined, "continuation");
+  continuationOrchestrator.finish(issue.id, 0, { type: "retry", kind: "continuation" });
   retry = continuationOrchestrator.snapshot().retrying[0];
   assert.ok(retry);
   assert.equal(retry.attempt, 1);
@@ -223,9 +226,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   continuationOrchestrator.finish(
     issue.id,
     0,
-    true,
-    "transient failure after healthy continuations",
-    "failure",
+    { type: "retry", error: "transient failure after healthy continuations", kind: "failure" },
   );
   retry = continuationOrchestrator.snapshot().retrying[0];
   assert.ok(retry);

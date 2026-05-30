@@ -61,6 +61,12 @@ export interface RunAgentAttemptAdapters {
 /**
  * Lifecycle phases of a single agent run attempt.
  * Used for observability -- knowing WHERE a run is when it stalls or fails.
+ *
+ * NOTE: This is intentionally NOT a full FSM with a typed event union and transition
+ * function. The phase is an imperative label set linearly as the run progresses through
+ * its sequential steps. There are no branching transitions or external events that
+ * require a formal state machine. This differs from the runtime and orchestrator FSMs
+ * which handle concurrent events and non-linear transitions.
  */
 export type RunPhase =
   | "preparing_workspace"
@@ -209,7 +215,11 @@ export class RunController {
       }
     } finally {
       this.phase = "stopping_session";
-      await session.stop();
+      try {
+        await session.stop();
+      } catch {
+        // session.stop is best-effort; failures must not prevent final persist
+      }
       if (runtime.hooks.afterRun) {
         try {
           await runHook(
