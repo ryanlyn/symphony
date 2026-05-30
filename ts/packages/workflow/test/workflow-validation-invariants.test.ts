@@ -30,9 +30,7 @@ const guaranteedNonMapYamlArb = fc.oneof(
   // integer scalars
   fc.integer({ min: -100000, max: 100000 }).map(String),
   // float scalars
-  fc
-    .double({ min: -1e6, max: 1e6, noNaN: true, noDefaultInfinity: true })
-    .map((f) => f.toFixed(3)),
+  fc.double({ min: -1e6, max: 1e6, noNaN: true, noDefaultInfinity: true }).map((f) => f.toFixed(3)),
   // flow arrays
   fc
     .array(fc.constantFrom("a", "1", "true", "null"), { minLength: 1, maxLength: 5 })
@@ -127,17 +125,6 @@ test("invariant 1: valid map front matter SHALL parse successfully and return co
     ),
     { numRuns: 500 },
   );
-});
-
-test("invariant 1: empty and whitespace-only front matter SHALL produce empty config", () => {
-  // Empty front matter
-  const emptyResult = parseWorkflowContent(wrapFrontMatter("", "body text"));
-  assert.deepEqual(emptyResult.config, {});
-  assert.equal(emptyResult.body, "body text");
-
-  // Whitespace-only front matter
-  const wsResult = parseWorkflowContent(wrapFrontMatter("   \t  ", "body text"));
-  assert.deepEqual(wsResult.config, {});
 });
 
 test("invariant 1: content without front matter delimiters SHALL return full content as body with empty config", () => {

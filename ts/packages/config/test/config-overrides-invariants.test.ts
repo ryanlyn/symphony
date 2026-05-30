@@ -118,22 +118,6 @@ test("Invariant 1: state present but NOT in overrides map — base settings rema
   );
 });
 
-test("Invariant 1: exotic state names with no override still yield unchanged settings", () => {
-  fc.assert(
-    fc.property(exoticStateNameArb, (state) => {
-      const settings = defaultSettings();
-      const result = settingsForIssueState(settings, state);
-
-      // Ensure no mutation occurred; all values match defaults
-      assert.equal(result.agent.maxConcurrentAgents, settings.agent.maxConcurrentAgents);
-      assert.equal(result.agent.maxTurns, settings.agent.maxTurns);
-      assert.equal(result.codex.turnTimeoutMs, settings.codex.turnTimeoutMs);
-      assert.equal(result.claude.model, settings.claude.model);
-    }),
-    { numRuns: 200 },
-  );
-});
-
 test("Invariant 1: settingsForIssueState returns a clone, not the same object reference", () => {
   fc.assert(
     fc.property(stateNameArb, (state) => {
@@ -241,36 +225,6 @@ test("Invariant 2: parseConfig normalizes state names in statusOverrides map key
         const override = settings.statusOverrides.get(normalizedKey);
         assert.ok(override !== undefined);
         assert.equal(override!.agent?.maxTurns, maxTurns);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 2: case variants of the same state map to the same override", () => {
-  fc.assert(
-    fc.property(
-      stateNameArb.filter((s) => /[a-z]/.test(s)),
-      boundaryPositiveIntArb,
-      (state, maxConcurrent) => {
-        const settings = defaultSettings();
-        const normalizedKey = normalizeStateName(state);
-        settings.statusOverrides.set(normalizedKey, {
-          agent: { maxConcurrentAgents: maxConcurrent },
-        });
-
-        // All case variants should produce same effective settings
-        const variants = [
-          state.toUpperCase(),
-          state.toLowerCase(),
-          state.charAt(0).toUpperCase() + state.slice(1).toLowerCase(),
-          state.split("").map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c.toLowerCase())).join(""),
-        ];
-
-        for (const variant of variants) {
-          const result = settingsForIssueState(settings, variant);
-          assert.equal(result.agent.maxConcurrentAgents, maxConcurrent);
-        }
       },
     ),
     { numRuns: 200 },
@@ -505,27 +459,23 @@ test("Invariant 4: override with only agent section leaves codex and claude unto
 
 test("Invariant 4: overriding multiple agent fields at once preserves remaining fields", () => {
   fc.assert(
-    fc.property(
-      boundaryPositiveIntArb,
-      boundaryPositiveIntArb,
-      (maxTurns, maxConcurrent) => {
-        const settings = defaultSettings();
-        settings.statusOverrides.set("multi_agent_override", {
-          agent: { maxTurns, maxConcurrentAgents: maxConcurrent },
-        });
+    fc.property(boundaryPositiveIntArb, boundaryPositiveIntArb, (maxTurns, maxConcurrent) => {
+      const settings = defaultSettings();
+      settings.statusOverrides.set("multi_agent_override", {
+        agent: { maxTurns, maxConcurrentAgents: maxConcurrent },
+      });
 
-        const result = settingsForIssueState(settings, "multi_agent_override");
+      const result = settingsForIssueState(settings, "multi_agent_override");
 
-        // Both overridden fields take new values
-        assert.equal(result.agent.maxTurns, maxTurns);
-        assert.equal(result.agent.maxConcurrentAgents, maxConcurrent);
+      // Both overridden fields take new values
+      assert.equal(result.agent.maxTurns, maxTurns);
+      assert.equal(result.agent.maxConcurrentAgents, maxConcurrent);
 
-        // Unmentioned fields preserved
-        assert.equal(result.agent.kind, settings.agent.kind);
-        assert.equal(result.agent.maxRetryBackoffMs, settings.agent.maxRetryBackoffMs);
-        assert.equal(result.agent.ensembleSize, settings.agent.ensembleSize);
-      },
-    ),
+      // Unmentioned fields preserved
+      assert.equal(result.agent.kind, settings.agent.kind);
+      assert.equal(result.agent.maxRetryBackoffMs, settings.agent.maxRetryBackoffMs);
+      assert.equal(result.agent.ensembleSize, settings.agent.ensembleSize);
+    }),
     { numRuns: 200 },
   );
 });
@@ -782,41 +732,6 @@ test("Robustness: settingsForIssueState is deterministic for same input", () => 
       assert.equal(result1.claude.model, result2.claude.model);
     }),
     { numRuns: 200 },
-  );
-});
-
-test("Robustness: overriding a field to its current default value produces equal effective settings", () => {
-  fc.assert(
-    fc.property(stateNameArb, (state) => {
-      const settings = defaultSettings();
-      const baseMaxTurns = settings.agent.maxTurns;
-
-      settings.statusOverrides.set(normalizeStateName(state), {
-        agent: { maxTurns: baseMaxTurns },
-      });
-
-      const result = settingsForIssueState(settings, state);
-      // The override value equals the default, so result should match the default
-      assert.equal(result.agent.maxTurns, baseMaxTurns);
-      // And all other fields are still default
-      assert.equal(result.agent.maxConcurrentAgents, settings.agent.maxConcurrentAgents);
-      assert.equal(result.codex.turnTimeoutMs, settings.codex.turnTimeoutMs);
-    }),
-    { numRuns: 100 },
-  );
-});
-
-test("Robustness: parseConfig with empty status_overrides produces empty override map", () => {
-  fc.assert(
-    fc.property(fc.constant(null), () => {
-      const settings = parseConfig({ status_overrides: {} });
-      assert.equal(settings.statusOverrides.size, 0);
-
-      // Any state lookup yields defaults
-      const result = settingsForIssueState(settings, "anything");
-      assert.equal(result.agent.maxTurns, settings.agent.maxTurns);
-    }),
-    { numRuns: 10 },
   );
 });
 

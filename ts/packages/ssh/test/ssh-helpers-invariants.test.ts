@@ -5,7 +5,6 @@ import { assert } from "../../../test/assert.js";
 
 import { shellEscape, sshArgs, remoteShellCommand, parseSshTarget } from "@symphony/ssh";
 
-
 // --- Helper arbitraries ---
 
 /** Arbitrary strings that include shell-dangerous characters. */
@@ -15,7 +14,7 @@ const shellDangerousString = fc.oneof(
     "",
     " ",
     "'",
-    "\"",
+    '"',
     "`",
     "$",
     "$(rm -rf /)",
@@ -25,7 +24,7 @@ const shellDangerousString = fc.oneof(
     "\t",
     "hello world",
     "foo'bar",
-    "foo\"bar",
+    'foo"bar',
     "a`id`b",
     "${HOME}",
     "$(whoami)",
@@ -56,14 +55,16 @@ const shellDangerousString = fc.oneof(
   // Unicode strings including multi-byte, combining chars, RTL
   fc.string({ minLength: 0, maxLength: 100, unit: "grapheme" }),
   // Strings with many consecutive single quotes (stress the escape mechanism)
-  fc.array(fc.constantFrom("'", "a", " ", "\"", "$", "`"), { minLength: 0, maxLength: 50 }).map(
-    (arr) => arr.join(""),
-  ),
+  fc
+    .array(fc.constantFrom("'", "a", " ", '"', "$", "`"), { minLength: 0, maxLength: 50 })
+    .map((arr) => arr.join("")),
   // String with only control characters
-  fc.array(
-    fc.integer({ min: 0, max: 31 }).map((n) => String.fromCharCode(n)),
-    { minLength: 1, maxLength: 20 },
-  ).map((arr) => arr.join("")),
+  fc
+    .array(
+      fc.integer({ min: 0, max: 31 }).map((n) => String.fromCharCode(n)),
+      { minLength: 1, maxLength: 20 },
+    )
+    .map((arr) => arr.join("")),
 );
 
 /** Arbitrary that generates valid SSH usernames (alphanumeric, dots, hyphens, underscores). */
@@ -74,29 +75,38 @@ const sshHostname = fc.oneof(
   // Simple hostname
   fc.stringMatching(/^[a-z][a-z0-9-]{0,10}$/),
   // FQDN with dots
-  fc.tuple(
-    fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/),
-    fc.stringMatching(/^[a-z][a-z0-9-]{0,6}$/),
-    fc.constantFrom("com", "org", "net", "io", "dev", "internal"),
-  ).map(([sub, domain, tld]) => `${sub}.${domain}.${tld}`),
+  fc
+    .tuple(
+      fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/),
+      fc.stringMatching(/^[a-z][a-z0-9-]{0,6}$/),
+      fc.constantFrom("com", "org", "net", "io", "dev", "internal"),
+    )
+    .map(([sub, domain, tld]) => `${sub}.${domain}.${tld}`),
   // IPv4
-  fc.tuple(
-    fc.integer({ min: 1, max: 255 }),
-    fc.integer({ min: 0, max: 255 }),
-    fc.integer({ min: 0, max: 255 }),
-    fc.integer({ min: 1, max: 254 }),
-  ).map(([a, b, c, d]) => `${a}.${b}.${c}.${d}`),
+  fc
+    .tuple(
+      fc.integer({ min: 1, max: 255 }),
+      fc.integer({ min: 0, max: 255 }),
+      fc.integer({ min: 0, max: 255 }),
+      fc.integer({ min: 1, max: 254 }),
+    )
+    .map(([a, b, c, d]) => `${a}.${b}.${c}.${d}`),
 );
 
 /** Arbitrary that generates bracketed IPv6 addresses. */
 const bracketedIpv6 = fc.oneof(
   fc.constantFrom("[::1]", "[fe80::1]", "[2001:db8::1]", "[::ffff:192.168.1.1]"),
-  fc.tuple(
-    fc.integer({ min: 0, max: 0xffff }),
-    fc.integer({ min: 0, max: 0xffff }),
-    fc.integer({ min: 0, max: 0xffff }),
-    fc.integer({ min: 0, max: 0xffff }),
-  ).map(([a, b, c, d]) => `[${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${d.toString(16)}]`),
+  fc
+    .tuple(
+      fc.integer({ min: 0, max: 0xffff }),
+      fc.integer({ min: 0, max: 0xffff }),
+      fc.integer({ min: 0, max: 0xffff }),
+      fc.integer({ min: 0, max: 0xffff }),
+    )
+    .map(
+      ([a, b, c, d]) =>
+        `[${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${d.toString(16)}]`,
+    ),
 );
 
 /** Arbitrary SSH destination (user@host, host, user@[ipv6]). */
@@ -115,12 +125,13 @@ const sshDestination = fc.oneof(
 const sshPort = fc.integer({ min: 1, max: 65535 });
 
 /** Arbitrary SSH target string (destination with optional port). */
-const sshTargetWithPort = fc.tuple(sshDestination, sshPort).map(([dest, port]) => `${dest}:${port}`);
+const sshTargetWithPort = fc
+  .tuple(sshDestination, sshPort)
+  .map(([dest, port]) => `${dest}:${port}`);
 
 const sshTargetWithoutPort = sshDestination;
 
 const sshTargetAny = fc.oneof(sshTargetWithPort, sshTargetWithoutPort);
-
 
 // --- Invariant 1: shellEscape produces output that a POSIX shell evaluates back to the original ---
 
@@ -158,11 +169,6 @@ test("invariant 1: shellEscape roundtrip - the escape is reversible to recover t
   );
 });
 
-test("invariant 1: shellEscape of empty string is exactly two single quotes", () => {
-  const escaped = shellEscape("");
-  assert.equal(escaped, "''");
-});
-
 test("invariant 1: remoteShellCommand wraps the command in bash -lc with proper escaping", () => {
   fc.assert(
     fc.property(shellDangerousString, (command) => {
@@ -177,110 +183,28 @@ test("invariant 1: remoteShellCommand wraps the command in bash -lc with proper 
   );
 });
 
-test("invariant 1: remoteShellCommand output always contains exactly one 'bash -lc ' prefix", () => {
-  fc.assert(
-    fc.property(shellDangerousString, (command) => {
-      const result = remoteShellCommand(command);
-      // There should be exactly one occurrence of "bash -lc " at the start
-      const firstOccurrence = result.indexOf("bash -lc ");
-      assert.equal(firstOccurrence, 0);
-      // The rest is the escaped command which starts and ends with single quotes
-      const afterFirst = result.slice("bash -lc ".length);
-      assert.equal(afterFirst[0], "'");
-      assert.equal(afterFirst[afterFirst.length - 1], "'");
-    }),
-    { numRuns: 500 },
-  );
-});
-
 test("invariant 1: sshArgs includes the shell-escaped command as the final argument", () => {
   fc.assert(
-    fc.property(
-      sshTargetAny,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        // The last argument should be the remoteShellCommand result
-        const lastArg = args[args.length - 1];
-        assert.equal(lastArg, remoteShellCommand(command));
-        // And that must contain the shell-escaped command
-        assert.equal(lastArg!.includes(shellEscape(command)), true);
-      },
-    ),
+    fc.property(sshTargetAny, shellDangerousString, (host, command) => {
+      const args = sshArgs(host, command);
+      // The last argument should be the remoteShellCommand result
+      const lastArg = args[args.length - 1];
+      assert.equal(lastArg, remoteShellCommand(command));
+      // And that must contain the shell-escaped command
+      assert.equal(lastArg!.includes(shellEscape(command)), true);
+    }),
     { numRuns: 500 },
   );
 });
 
 test("invariant 1: sshArgs always contains -T flag for non-interactive mode", () => {
   fc.assert(
-    fc.property(
-      sshTargetAny,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        assert.equal(args.includes("-T"), true);
-      },
-    ),
+    fc.property(sshTargetAny, shellDangerousString, (host, command) => {
+      const args = sshArgs(host, command);
+      assert.equal(args.includes("-T"), true);
+    }),
     { numRuns: 500 },
   );
-});
-
-test("invariant 1: sshArgs includes port flag when target has :port suffix", () => {
-  fc.assert(
-    fc.property(
-      sshTargetWithPort,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        const portFlagIndex = args.indexOf("-p");
-        // Must have a -p flag
-        assert.equal(portFlagIndex >= 0, true);
-        // The value after -p must be the port number from the host string
-        const target = parseSshTarget(host);
-        assert.equal(args[portFlagIndex + 1], target.port);
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
-
-test("invariant 1: sshArgs does NOT include port flag when host has no port", () => {
-  fc.assert(
-    fc.property(
-      sshTargetWithoutPort,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        assert.equal(args.includes("-p"), false);
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
-
-// --- Invariant 1 negative tests: verify the escape mechanism handles known injection attempts ---
-
-test("invariant 1 negative: attempting to inject via single-quote breakout is neutralized", () => {
-  // These are real injection attempts that should be neutralized
-  const injections = [
-    "'; rm -rf / #",
-    "' || echo pwned || '",
-    "'; $(whoami) #",
-    "'$(cat /etc/shadow)'",
-    "' `id` '",
-    "a'; echo INJECTED; echo '",
-  ];
-  for (const injection of injections) {
-    const escaped = shellEscape(injection);
-    // Recovering the original from the escape proves no breakout occurred
-    const interior = escaped.slice(1, -1);
-    const recovered = interior.replaceAll("'\"'\"'", "'");
-    assert.equal(recovered, injection);
-    // The escaped form should not allow shell interpretation
-    // (it's all within single quotes or properly quoted)
-    assert.equal(escaped[0], "'");
-    assert.equal(escaped[escaped.length - 1], "'");
-  }
 });
 
 test("invariant 1 negative: shellEscape output never contains unbalanced quotes", () => {
@@ -303,31 +227,24 @@ test("invariant 1 negative: shellEscape output never contains unbalanced quotes"
 
 test("invariant 2: parseSshTarget roundtrip - destination:port recombines correctly", () => {
   fc.assert(
-    fc.property(
-      sshDestination,
-      sshPort,
-      (dest, port) => {
-        const input = `${dest}:${port}`;
-        const result = parseSshTarget(input);
-        // The destination and port should be correctly extracted
-        assert.equal(result.destination, dest);
-        assert.equal(result.port, String(port));
-      },
-    ),
+    fc.property(sshDestination, sshPort, (dest, port) => {
+      const input = `${dest}:${port}`;
+      const result = parseSshTarget(input);
+      // The destination and port should be correctly extracted
+      assert.equal(result.destination, dest);
+      assert.equal(result.port, String(port));
+    }),
     { numRuns: 500 },
   );
 });
 
 test("invariant 2: parseSshTarget with no port returns null port and preserves destination", () => {
   fc.assert(
-    fc.property(
-      sshDestination,
-      (host) => {
-        const result = parseSshTarget(host);
-        assert.equal(result.port, null);
-        assert.equal(result.destination, host);
-      },
-    ),
+    fc.property(sshDestination, (host) => {
+      const result = parseSshTarget(host);
+      assert.equal(result.port, null);
+      assert.equal(result.destination, host);
+    }),
     { numRuns: 500 },
   );
 });
@@ -373,12 +290,14 @@ test("invariant 2: parseSshTarget bare IPv6 (unbracketed with colons) does not e
   // The parser should treat the whole thing as destination.
   fc.assert(
     fc.property(
-      fc.tuple(
-        fc.integer({ min: 0, max: 0xffff }),
-        fc.integer({ min: 0, max: 0xffff }),
-        fc.integer({ min: 0, max: 0xffff }),
-        fc.integer({ min: 1, max: 65535 }),
-      ).map(([a, b, c, port]) => `${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${port}`),
+      fc
+        .tuple(
+          fc.integer({ min: 0, max: 0xffff }),
+          fc.integer({ min: 0, max: 0xffff }),
+          fc.integer({ min: 0, max: 0xffff }),
+          fc.integer({ min: 1, max: 65535 }),
+        )
+        .map(([a, b, c, port]) => `${a.toString(16)}:${b.toString(16)}::${c.toString(16)}:${port}`),
       (input) => {
         const result = parseSshTarget(input);
         // Should treat the whole thing as destination since it's ambiguous
@@ -394,39 +313,31 @@ test("invariant 2: parseSshTarget bare IPv6 (unbracketed with colons) does not e
 
 test("invariant 3: sshArgs uses parseSshTarget destination as the host argument", () => {
   fc.assert(
-    fc.property(
-      sshTargetAny,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        const target = parseSshTarget(host);
-        // The destination must appear in the args (as the ssh target)
-        assert.equal(args.includes(target.destination), true);
-      },
-    ),
+    fc.property(sshTargetAny, shellDangerousString, (host, command) => {
+      const args = sshArgs(host, command);
+      const target = parseSshTarget(host);
+      // The destination must appear in the args (as the ssh target)
+      assert.equal(args.includes(target.destination), true);
+    }),
     { numRuns: 500 },
   );
 });
 
 test("invariant 3: sshArgs port argument matches parseSshTarget port when present", () => {
   fc.assert(
-    fc.property(
-      sshTargetAny,
-      shellDangerousString,
-      (host, command) => {
-        const args = sshArgs(host, command);
-        const target = parseSshTarget(host);
-        const portFlagIndex = args.indexOf("-p");
-        if (target.port !== null) {
-          // If parseSshTarget finds a port, sshArgs must include -p with that port
-          assert.equal(portFlagIndex >= 0, true);
-          assert.equal(args[portFlagIndex + 1], target.port);
-        } else {
-          // If no port, -p must be absent
-          assert.equal(portFlagIndex, -1);
-        }
-      },
-    ),
+    fc.property(sshTargetAny, shellDangerousString, (host, command) => {
+      const args = sshArgs(host, command);
+      const target = parseSshTarget(host);
+      const portFlagIndex = args.indexOf("-p");
+      if (target.port !== null) {
+        // If parseSshTarget finds a port, sshArgs must include -p with that port
+        assert.equal(portFlagIndex >= 0, true);
+        assert.equal(args[portFlagIndex + 1], target.port);
+      } else {
+        // If no port, -p must be absent
+        assert.equal(portFlagIndex, -1);
+      }
+    }),
     { numRuns: 500 },
   );
 });

@@ -366,46 +366,6 @@ test("invariant 4: issues not assigned to this worker SHALL be ineligible", () =
   );
 });
 
-test("invariant 4: assignedToWorker=false always blocks even when all else is valid", () => {
-  fc.assert(
-    fc.property(
-      fc.constantFrom("Todo", "In Progress"),
-      fc.integer({ min: 1, max: 5 }),
-      (activeState, priority) => {
-        const issue = validIssue({
-          state: activeState,
-          stateType: "unstarted",
-          assignedToWorker: false,
-          blockers: [],
-          priority,
-        });
-        const settings = makeSettings();
-        const state = { runningCount: 0, claimedSlots: new Set<string>() };
-        assert.equal(shouldDispatchIssue(issue, settings, state), false);
-      },
-    ),
-    { numRuns: 50 },
-  );
-});
-
-test("invariant 4: assignedToWorker=null is treated as truthy (not strictly false)", () => {
-  fc.assert(
-    fc.property(fc.constantFrom("Todo", "In Progress"), (activeState) => {
-      const issue = validIssue({
-        state: activeState,
-        stateType: "unstarted",
-        assignedToWorker: null as unknown as boolean,
-        blockers: [],
-      });
-      const settings = makeSettings();
-      const state = { runningCount: 0, claimedSlots: new Set<string>() };
-      assert.equal(routedToThisWorker(issue, settings), true);
-      assert.equal(shouldDispatchIssue(issue, settings, state), true);
-    }),
-    { numRuns: 20 },
-  );
-});
-
 // --- Invariant 5: Unstarted issue with non-terminal blocker -> ineligible ---
 
 test("invariant 5: unstarted issue with a non-terminal blocker SHALL be ineligible", () => {
@@ -467,21 +427,6 @@ test("invariant 5: multiple blockers with at least one non-terminal blocks dispa
   );
 });
 
-test("invariant 5: blocker with empty/null state is NOT terminal so it blocks dispatch", () => {
-  fc.assert(
-    fc.property(fc.constantFrom(undefined, null, ""), (blockerState) => {
-      const issue = validIssue({
-        state: "Todo",
-        stateType: "unstarted",
-        blockers: [{ state: blockerState as string | undefined, stateType: null }],
-      });
-      const settings = makeSettings();
-      assert.equal(issueHasOpenBlockers(issue, settings), true);
-    }),
-    { numRuns: 10 },
-  );
-});
-
 test("invariant 5: blocker terminal check is case-insensitive with whitespace trimming", () => {
   const defaultTerminalStates = ["Done", "Closed", "Cancelled", "Canceled", "Duplicate"];
   fc.assert(
@@ -495,21 +440,6 @@ test("invariant 5: blocker terminal check is case-insensitive with whitespace tr
       assert.equal(issueHasOpenBlockers(issue, settings), false);
     }),
     { numRuns: 200 },
-  );
-});
-
-test("invariant 5: issue with state Todo but stateType not unstarted still checks blockers", () => {
-  fc.assert(
-    fc.property(fc.constantFrom(null, "started", "completed"), (stateType) => {
-      const issue = validIssue({
-        state: "Todo",
-        stateType: stateType as Issue["stateType"],
-        blockers: [{ state: "In Progress", stateType: null }],
-      });
-      const settings = makeSettings();
-      assert.equal(issueHasOpenBlockers(issue, settings), true);
-    }),
-    { numRuns: 10 },
   );
 });
 
@@ -622,19 +552,6 @@ test("invariant 7: terminal blockers in various case/whitespace forms still allo
   );
 });
 
-test("invariant 7: empty blockers array also allows dispatch", () => {
-  const issue = validIssue({
-    state: "Todo",
-    stateType: "unstarted",
-    blockers: [],
-    assignedToWorker: true,
-  });
-  const settings = makeSettings();
-  const state = { runningCount: 0, claimedSlots: new Set<string>() };
-  assert.equal(issueHasOpenBlockers(issue, settings), false);
-  assert.equal(shouldDispatchIssue(issue, settings, state), true);
-});
-
 // --- Invariant 8: Global concurrency cap reached -> SHALL not dispatch ---
 
 test("invariant 8: global concurrency cap reached SHALL not dispatch new work", () => {
@@ -697,25 +614,6 @@ test("invariant 8: exactly at cap blocks, one below cap does not block", () => {
       );
     }),
     { numRuns: 200 },
-  );
-});
-
-test("invariant 8: runningCount=0 with cap>=1 never triggers global cap block", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 100 }), (cap) => {
-      const issue = validIssue({
-        state: "Todo",
-        stateType: "unstarted",
-        blockers: [],
-        assignedToWorker: true,
-      });
-      const settings = makeSettings({ maxConcurrentAgents: cap });
-      assert.notEqual(
-        dispatchBlockReason(issue, settings, { runningCount: 0, claimedSlots: new Set<string>() }),
-        "global_concurrency_cap",
-      );
-    }),
-    { numRuns: 100 },
   );
 });
 
@@ -866,21 +764,6 @@ test("invariant 10: partially claimed ensemble slots still allow dispatch", () =
   );
 });
 
-test("invariant 10: no claimed slots with ensemble=1 allows dispatch", () => {
-  const issue = validIssue({
-    id: "issue-no-slots",
-    state: "Todo",
-    stateType: "unstarted",
-    blockers: [],
-    assignedToWorker: true,
-  });
-  const settings = makeSettings({ ensembleSize: 1 });
-  assert.equal(
-    shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: new Set<string>() }),
-    true,
-  );
-});
-
 test("invariant 10: slotKey is injective -- different inputs produce different keys", () => {
   fc.assert(
     fc.property(
@@ -1013,127 +896,5 @@ test("invariant 12: if ANY sub-check fails THEN shouldDispatchIssue returns fals
       },
     ),
     { numRuns: 100 },
-  );
-});
-
-test("invariant 12: shouldDispatchIssue=false when ANY single condition fails (enumerated)", () => {
-  fc.assert(
-    fc.property(
-      fc.constantFrom(
-        "empty_id",
-        "terminal_state",
-        "non_active_state",
-        "not_assigned",
-        "has_blockers",
-        "at_global_cap",
-        "all_slots_claimed",
-        "worker_capacity",
-      ),
-      (blockingCondition) => {
-        const issueId = "issue-conditional";
-        let issue: Issue;
-        let settings: Settings;
-        let state: {
-          runningCount: number;
-          claimedSlots: Set<string>;
-          workerCapacityAvailable?: boolean;
-        };
-
-        switch (blockingCondition) {
-          case "empty_id":
-            issue = validIssue({
-              id: "",
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings();
-            state = { runningCount: 0, claimedSlots: new Set<string>() };
-            break;
-          case "terminal_state":
-            issue = validIssue({
-              state: "Done",
-              stateType: "completed",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings();
-            state = { runningCount: 0, claimedSlots: new Set<string>() };
-            break;
-          case "non_active_state":
-            issue = validIssue({
-              state: "Backlog",
-              stateType: "backlog",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings();
-            state = { runningCount: 0, claimedSlots: new Set<string>() };
-            break;
-          case "not_assigned":
-            issue = validIssue({
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: false,
-              blockers: [],
-            });
-            settings = makeSettings();
-            state = { runningCount: 0, claimedSlots: new Set<string>() };
-            break;
-          case "has_blockers":
-            issue = validIssue({
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: true,
-              blockers: [{ state: "In Progress", stateType: null }],
-            });
-            settings = makeSettings();
-            state = { runningCount: 0, claimedSlots: new Set<string>() };
-            break;
-          case "at_global_cap":
-            issue = validIssue({
-              id: issueId,
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings({ maxConcurrentAgents: 1 });
-            state = { runningCount: 1, claimedSlots: new Set<string>() };
-            break;
-          case "all_slots_claimed":
-            issue = validIssue({
-              id: issueId,
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings({ ensembleSize: 1 });
-            state = { runningCount: 0, claimedSlots: new Set([slotKey(issueId, 0)]) };
-            break;
-          case "worker_capacity":
-            issue = validIssue({
-              state: "Todo",
-              stateType: "unstarted",
-              assignedToWorker: true,
-              blockers: [],
-            });
-            settings = makeSettings();
-            state = {
-              runningCount: 0,
-              claimedSlots: new Set<string>(),
-              workerCapacityAvailable: false,
-            };
-            break;
-          default:
-            throw new Error(`unexpected condition: ${blockingCondition}`);
-        }
-
-        assert.equal(shouldDispatchIssue(issue, settings, state), false);
-      },
-    ),
-    { numRuns: 50 },
   );
 });

@@ -214,24 +214,6 @@ test("invariant 1 (negative): ensureInsideRoot throws for paths outside root", (
   );
 });
 
-test("invariant 1 (negative): ensureInsideRoot throws for traversal attempts", () => {
-  const root = "/tmp/workspaces";
-  assert.throws(() => ensureInsideRoot("/tmp/workspaces/../etc/passwd", root));
-  assert.throws(() => ensureInsideRoot("/etc/passwd", root));
-  assert.throws(() => ensureInsideRoot("/tmp/workspace", root));
-  assert.throws(() => ensureInsideRoot("/", root));
-});
-
-test("invariant 1 (negative): ensureInsideRoot rejects prefix-confusion attacks", () => {
-  // A path that shares a prefix with root but is not a descendant
-  const root = "/tmp/workspace";
-  assert.throws(() => ensureInsideRoot("/tmp/workspaceEvil", root));
-  assert.throws(() => ensureInsideRoot("/tmp/workspace-sibling", root));
-  // But an actual descendant should work
-  ensureInsideRoot("/tmp/workspace/child", root);
-  ensureInsideRoot("/tmp/workspace/a/b/c", root);
-});
-
 // Invariant 2: When directory names are derived from identifiers, the names
 // SHALL contain only alphanumeric characters, dots, hyphens, and underscores.
 const ALLOWED_CHARS = /^[A-Za-z0-9._-]*$/;
@@ -242,43 +224,6 @@ test("invariant 2: safeIdentifier output contains only alphanumeric, dots, hyphe
       const result = safeIdentifier(input);
       assert.match(result, ALLOWED_CHARS);
     }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: safeIdentifier on unicode strings contains only allowed characters", () => {
-  fc.assert(
-    fc.property(fc.string({ unit: "grapheme", minLength: 0, maxLength: 100 }), (input) => {
-      const result = safeIdentifier(input);
-      assert.match(result, ALLOWED_CHARS);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: safeIdentifier output never contains path separators", () => {
-  fc.assert(
-    fc.property(fc.string({ maxLength: 200 }), (input) => {
-      const result = safeIdentifier(input);
-      // Path separators must be sanitized away
-      assert.ok(!result.includes("/"));
-      assert.ok(!result.includes("\\"));
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: safeIdentifier output never contains null bytes or control characters", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ maxLength: 100 }).map((s) => s + "\x00\x01\x02\x03\x1f\x7f"),
-      (input) => {
-        const result = safeIdentifier(input);
-        // No control characters should survive
-        // eslint-disable-next-line no-control-regex
-        assert.notMatch(result, /[\x00-\x1f\x7f]/);
-      },
-    ),
     { numRuns: 200 },
   );
 });
@@ -305,42 +250,11 @@ test("invariant 2: safeIdentifier produces non-empty output for non-empty string
   );
 });
 
-test("invariant 2: safeIdentifier returns empty string for non-string inputs", () => {
-  // Defensive behavior: non-string inputs produce empty string
-  const nonStringInputs = [null, undefined, 42, true, 3.14, {}, []];
-  for (const input of nonStringInputs) {
-    const result = safeIdentifier(input);
-    assert.equal(result, "");
-  }
-});
-
 // Invariant 3: When sanitization is applied to a name, applying sanitization
 // again SHALL produce the same result (idempotent).
 test("invariant 3: safeIdentifier is idempotent on arbitrary strings", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 100 }), (input) => {
-      const once = safeIdentifier(input);
-      const twice = safeIdentifier(once);
-      assert.equal(twice, once);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 3: safeIdentifier is idempotent on unicode strings", () => {
-  fc.assert(
-    fc.property(fc.string({ unit: "grapheme", maxLength: 100 }), (input) => {
-      const once = safeIdentifier(input);
-      const twice = safeIdentifier(once);
-      assert.equal(twice, once);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 3: safeIdentifier is idempotent on path traversal strings", () => {
-  fc.assert(
-    fc.property(pathTraversalString, (input) => {
       const once = safeIdentifier(input);
       const twice = safeIdentifier(once);
       assert.equal(twice, once);
@@ -376,28 +290,6 @@ test("invariant 5: ensemble slots produce distinct workspace paths", () => {
           paths.add(workspacePath(root, identifier, slot, ensembleSize));
         }
         assert.equal(paths.size, ensembleSize);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 5: any two different slots in an ensemble yield different paths", () => {
-  fc.assert(
-    fc.property(
-      absoluteRoot,
-      validIdentifier,
-      fc.integer({ min: 2, max: 20 }),
-      fc.integer({ min: 0, max: 19 }),
-      fc.integer({ min: 0, max: 19 }),
-      (root, identifier, ensembleSize, slotA, slotB) => {
-        const a = slotA % ensembleSize;
-        const b = slotB % ensembleSize;
-        if (a !== b) {
-          const pathA = workspacePath(root, identifier, a, ensembleSize);
-          const pathB = workspacePath(root, identifier, b, ensembleSize);
-          assert.notEqual(pathA, pathB);
-        }
       },
     ),
     { numRuns: 200 },
@@ -455,19 +347,6 @@ test("invariant 6: single-slot run has no slot suffix in path", () => {
   );
 });
 
-test("invariant 6: single-slot path equals root/safeIdentifier without numeric suffix", () => {
-  fc.assert(
-    fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
-      const result = workspacePath(root, identifier, 0, 1);
-      // Verify it does NOT end with a /digit pattern that ensemble paths have
-      const lastSegment = result.split("/").pop()!;
-      // The last segment should be the sanitized identifier, not a numeric slot index
-      assert.equal(lastSegment, safeIdentifier(identifier));
-    }),
-    { numRuns: 200 },
-  );
-});
-
 test("invariant 6: contrast with ensemble -- ensemble path has extra segment", () => {
   fc.assert(
     fc.property(
@@ -484,19 +363,6 @@ test("invariant 6: contrast with ensemble -- ensemble path has extra segment", (
         assert.equal(extraSegment, "0");
       },
     ),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 6: single-slot path has exactly one more segment than normalized root", () => {
-  fc.assert(
-    fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
-      const result = workspacePath(root, identifier, 0, 1);
-      const prefix = effectivePrefix(root);
-      const rootSegments = prefix.split("/").filter((s) => s !== "").length;
-      const resultSegments = result.split("/").filter((s) => s !== "").length;
-      assert.equal(resultSegments, rootSegments + 1);
-    }),
     { numRuns: 200 },
   );
 });

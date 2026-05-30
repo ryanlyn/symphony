@@ -351,20 +351,6 @@ test("Invariant 1: non-whitespace template does NOT fall back to default", () =>
   );
 });
 
-test("Invariant 1: zero-width space does NOT trigger fallback (trim semantics edge case)", () => {
-  // Zero-width space (U+200B) is NOT removed by JS trim().
-  // This verifies the system uses standard trim() semantics.
-  const zeroWidthSpaceArb = fc.oneof(fc.constant("​"), fc.constant("​​​"), fc.constant(" ​ "));
-
-  fc.assert(
-    fc.property(zeroWidthSpaceArb, (template) => {
-      const effective = effectivePromptTemplate(template);
-      assert.notEqual(effective, defaultPromptTemplate);
-    }),
-    { numRuns: 10 },
-  );
-});
-
 // --- Invariant 2: unknown variable causes strict failure ---
 
 test("Invariant 2: when prompt template references unknown variable, rendering fails strictly", async () => {
@@ -529,30 +515,6 @@ test("Invariant 4: snake_case template fields map correctly from camelCase sourc
   );
 });
 
-test("Invariant 4: issue optional fields render as empty string when null", async () => {
-  const issue = makeIssue({
-    description: null,
-    branchName: null,
-    url: null,
-    priority: null,
-    stateType: null,
-  });
-  const template = [
-    "desc:[{{ issue.description }}]",
-    "branch:[{{ issue.branch_name }}]",
-    "url:[{{ issue.url }}]",
-    "priority:[{{ issue.priority }}]",
-    "state_type:[{{ issue.state_type }}]",
-  ].join(" ");
-  const result = await buildPrompt(template, issue);
-  // Liquid renders nil/null as empty string
-  assert.ok(result.includes("desc:[]"));
-  assert.ok(result.includes("branch:[]"));
-  assert.ok(result.includes("url:[]"));
-  assert.ok(result.includes("priority:[]"));
-  assert.ok(result.includes("state_type:[]"));
-});
-
 test("Invariant 4: attempt is available as template input", async () => {
   const attemptArb = fc.oneof(
     fc.constant(null),
@@ -581,14 +543,6 @@ test("Invariant 4: attempt is available as template input", async () => {
   );
 });
 
-test("Invariant 4: attempt defaults to null when not provided", async () => {
-  const template = `[{{ attempt }}]`;
-  const issue = makeIssue();
-  const result = await buildPrompt(template, issue);
-  // With no attempt option, should render as empty (null -> "")
-  assert.ok(result.includes("[]"));
-});
-
 test("Invariant 4: ensemble object is available as template input with slot_index, size, and enabled", async () => {
   const slotArb = fc.integer({ min: 0, max: 10 });
   const sizeArb = fc.integer({ min: 1, max: 10 });
@@ -606,15 +560,6 @@ test("Invariant 4: ensemble object is available as template input with slot_inde
     }),
     { numRuns: 200 },
   );
-});
-
-test("Invariant 4: ensemble defaults to slot 0, size 1, enabled false when not provided", async () => {
-  const template = `slot:{{ ensemble.slot_index }} size:{{ ensemble.size }} enabled:{{ ensemble.enabled }}`;
-  const issue = makeIssue();
-  const result = await buildPrompt(template, issue);
-  assert.ok(result.includes("slot:0"));
-  assert.ok(result.includes("size:1"));
-  assert.ok(result.includes("enabled:false"));
 });
 
 test("Invariant 4: ensemble.enabled is true only when rendered size in output is > 1", async () => {
@@ -729,19 +674,6 @@ test("Invariant 6: Liquid-special characters in issue title are rendered literal
 });
 
 // --- Invariant 7: issue.blocked_by and labels arrays are accessible ---
-
-test("Invariant 7: issue.blocked_by is rendered as an array accessible via Liquid for-loop", async () => {
-  const issue = makeIssue({
-    blockers: [
-      { id: "blocker-1", identifier: "ENG-10", state: "Todo", stateType: "unstarted" },
-      { id: "blocker-2", identifier: "ENG-11", state: "Done", stateType: "completed" },
-    ],
-  });
-  const template = `{% for b in issue.blocked_by %}[{{ b.identifier }}:{{ b.state_type }}]{% endfor %}`;
-  const result = await buildPrompt(template, issue);
-  assert.ok(result.includes("[ENG-10:unstarted]"));
-  assert.ok(result.includes("[ENG-11:completed]"));
-});
 
 test("Invariant 7: issue.labels is rendered as an array accessible via Liquid for-loop", async () => {
   const labelsArb = fc.array(

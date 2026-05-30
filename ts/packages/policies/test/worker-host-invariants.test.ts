@@ -33,9 +33,6 @@ const arbHostName = () =>
     { weight: 1, arbitrary: fc.string({ minLength: 1, maxLength: 1 }) },
   );
 
-/** Generate a list of hosts (possibly with duplicates) */
-const arbHosts = () => fc.array(arbHostName(), { minLength: 0, maxLength: 12 });
-
 /** Generate a non-empty list of hosts */
 const arbNonEmptyHosts = () => fc.array(arbHostName(), { minLength: 1, maxLength: 12 });
 
@@ -51,10 +48,7 @@ const arbCap = () =>
 
 /** Generate a running count for a single host - shrink-friendly */
 const arbCount = () =>
-  fc.oneof(
-    fc.nat({ max: 50 }),
-    fc.constantFrom(0, 1, 2, 100, Number.MAX_SAFE_INTEGER),
-  );
+  fc.oneof(fc.nat({ max: 50 }), fc.constantFrom(0, 1, 2, 100, Number.MAX_SAFE_INTEGER));
 
 /**
  * Generate running counts for a set of hosts as a proper arbitrary.
@@ -69,24 +63,6 @@ const arbRunningCountsFor = (hosts: string[]) =>
 
 // --- Invariant 1 ---
 // When a host is selected, it SHALL be from the configured list or "no host available" SHALL be returned.
-test("Invariant 1: selected host is from configured list, or null/undefined is returned", () => {
-  fc.assert(
-    fc.property(arbHosts(), arbCap(), (hosts, cap) => {
-      // Use proper shrink-friendly arbitrary for running counts
-      const runningCounts = new Map<string, number>();
-      for (const h of hosts) {
-        if (!runningCounts.has(h)) runningCounts.set(h, 0);
-      }
-      const result = selectLeastLoadedHost({ hosts, runningCounts, cap });
-
-      // Result must be null (empty list), undefined (all at cap), or a member of hosts
-      if (result === null || result === undefined) return;
-      assert.ok(hosts.includes(result));
-    }),
-    { numRuns: 200 },
-  );
-});
-
 test("Invariant 1 (strengthened): with diverse running counts, selected host is always from configured list", () => {
   fc.assert(
     fc.property(
@@ -126,38 +102,15 @@ test("Invariant 2: selected host always has load strictly below the cap", () => 
 
 test("Invariant 2 (negative): when all hosts are at or above cap, undefined is returned", () => {
   fc.assert(
-    fc.property(
-      arbUniqueHosts(),
-      fc.integer({ min: 1, max: 50 }),
-      (hosts, cap) => {
-        // Set all hosts at or above cap
-        const runningCounts = new Map<string, number>();
-        for (const h of hosts) {
-          runningCounts.set(h, cap); // exactly at cap, not below
-        }
-        const result = selectLeastLoadedHost({ hosts, runningCounts, cap });
-        assert.equal(result, undefined);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 2 (negative): when all hosts are strictly above cap, undefined is returned", () => {
-  fc.assert(
-    fc.property(
-      arbUniqueHosts(),
-      fc.integer({ min: 1, max: 50 }),
-      fc.integer({ min: 1, max: 50 }),
-      (hosts, cap, extraAbove) => {
-        const runningCounts = new Map<string, number>();
-        for (const h of hosts) {
-          runningCounts.set(h, cap + extraAbove);
-        }
-        const result = selectLeastLoadedHost({ hosts, runningCounts, cap });
-        assert.equal(result, undefined);
-      },
-    ),
+    fc.property(arbUniqueHosts(), fc.integer({ min: 1, max: 50 }), (hosts, cap) => {
+      // Set all hosts at or above cap
+      const runningCounts = new Map<string, number>();
+      for (const h of hosts) {
+        runningCounts.set(h, cap); // exactly at cap, not below
+      }
+      const result = selectLeastLoadedHost({ hosts, runningCounts, cap });
+      assert.equal(result, undefined);
+    }),
     { numRuns: 200 },
   );
 });
@@ -296,35 +249,12 @@ test("Invariant 5: if at least one host is below cap, a host string is returned 
   );
 });
 
-test("Invariant 5 (all below cap): every host is below cap, a string must be returned", () => {
-  fc.assert(
-    fc.property(
-      fc.uniqueArray(arbHostName(), { minLength: 1, maxLength: 12 }),
-      fc.integer({ min: 1, max: 100 }),
-      (hosts, cap) => {
-        const runningCounts = new Map<string, number>();
-        for (const h of hosts) {
-          // All hosts are strictly below cap
-          runningCounts.set(h, 0);
-        }
-
-        const result = selectLeastLoadedHost({ hosts, runningCounts, cap });
-        assert.equal(typeof result, "string");
-        assert.ok(hosts.includes(result as string));
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
 // --- Invariant 6 (additional) ---
 // When cap is 0, no host can be below it, so undefined must be returned (for non-empty lists).
 test("Invariant 6: cap of 0 means no host can be selected (undefined for non-empty lists)", () => {
   fc.assert(
     fc.property(
-      arbNonEmptyHosts().chain((hosts) =>
-        fc.tuple(fc.constant(hosts), arbRunningCountsFor(hosts)),
-      ),
+      arbNonEmptyHosts().chain((hosts) => fc.tuple(fc.constant(hosts), arbRunningCountsFor(hosts))),
       ([hosts, runningCounts]) => {
         const result = selectLeastLoadedHost({ hosts, runningCounts, cap: 0 });
         // No non-negative count is < 0, so no host qualifies

@@ -1,67 +1,347 @@
 import { test } from "vitest";
 import fc from "fast-check";
-
 import type { Issue, Settings } from "@symphony/domain";
+import { normalizeRouteName, defaultSettings } from "@symphony/config";
 
 import { assert } from "../../../test/assert.js";
-import { normalizeRouteName, defaultSettings } from "@symphony/config";
-import {
-  dispatchBlockReason,
-  firstUnclaimedSlot,
-  issueHasOpenBlockers,
-  routeNames,
-  routedToThisWorker,
-  shouldDispatchIssue,
-  slotKey,
-  sortForDispatch,
-} from "@symphony/dispatch";
 
-function makeSettings(overrides: { acceptUnrouted?: boolean; onlyRoutes?: string[] | null; routeLabelPrefix?: string; activeStates?: string[]; terminalStates?: string[]; maxConcurrentAgents?: number; ensembleSize?: number } = {}): Settings {
+import { routeNames, routedToThisWorker } from "@symphony/dispatch";
+
+function makeSettings(
+  overrides: {
+    acceptUnrouted?: boolean;
+    onlyRoutes?: string[] | null;
+    routeLabelPrefix?: string;
+    activeStates?: string[];
+    terminalStates?: string[];
+    maxConcurrentAgents?: number;
+    ensembleSize?: number;
+  } = {},
+): Settings {
   const s = defaultSettings();
   s.tracker.dispatch.acceptUnrouted = overrides.acceptUnrouted ?? true;
   s.tracker.dispatch.onlyRoutes = overrides.onlyRoutes ?? null;
   s.tracker.dispatch.routeLabelPrefix = overrides.routeLabelPrefix ?? "Symphony:";
   if (overrides.activeStates) s.tracker.activeStates = overrides.activeStates;
   if (overrides.terminalStates) s.tracker.terminalStates = overrides.terminalStates;
-  if (overrides.maxConcurrentAgents !== undefined) s.agent.maxConcurrentAgents = overrides.maxConcurrentAgents;
+  if (overrides.maxConcurrentAgents !== undefined)
+    s.agent.maxConcurrentAgents = overrides.maxConcurrentAgents;
   if (overrides.ensembleSize !== undefined) s.agent.ensembleSize = overrides.ensembleSize;
   return s;
 }
 
 function issueWith(overrides: Partial<Issue>): Issue {
-  return { id: "id-1", identifier: "TEST-1", title: "Test issue", state: "Todo", stateType: "unstarted", description: null, branchName: null, url: null, priority: 1, createdAt: null, updatedAt: null, labels: [], blockers: [], assigneeId: null, assignedToWorker: true, ...overrides };
+  return {
+    id: "id-1",
+    identifier: "TEST-1",
+    title: "Test issue",
+    state: "Todo",
+    stateType: "unstarted",
+    description: null,
+    branchName: null,
+    url: null,
+    priority: 1,
+    createdAt: null,
+    updatedAt: null,
+    labels: [],
+    blockers: [],
+    assigneeId: null,
+    assignedToWorker: true,
+    ...overrides,
+  };
 }
 
-const arbRouteName = fc.oneof(fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim().length > 0), fc.constantFrom("team-alpha", "deploy_v2", "ci.main", "backend", "frontend-3", "ops_infra.prod", "release-2024.01", "ML-pipeline"));
-const arbRouteNameNoColon = fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim().length > 0 && !s.includes(":"));
-const arbWhitespace = fc.array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 5 }).map((a) => a.join(""));
-const arbDateString = fc.integer({ min: 1577836800000, max: 1893456000000 }).map((ts) => new Date(ts).toISOString());
-
-test("normalizeRouteName - normalization is idempotent", () => { fc.assert(fc.property(fc.string({ maxLength: 100 }), (input) => { const once = normalizeRouteName(input); assert.equal(normalizeRouteName(once), once); }), { numRuns: 50 }); });
-test("normalizeRouteName - output is always lowercase and trimmed", () => { fc.assert(fc.property(fc.string({ minLength: 1, maxLength: 80 }), (input) => { const result = normalizeRouteName(input); assert.equal(result, result.toLowerCase()); assert.equal(result, result.trim()); }), { numRuns: 50 }); });
-test("routeNames - whitespace-only suffix is not valid", () => { fc.assert(fc.property(fc.constantFrom("Symphony:", "Route:", "Team:", "X:"), arbWhitespace, (prefix, ws) => { assert.equal(routeNames(issueWith({ labels: [`${prefix}${ws}`] }), makeSettings({ routeLabelPrefix: prefix })).length, 0); }), { numRuns: 100 }); });
-test("routeNames - prefix matching is case-insensitive", () => { fc.assert(fc.property(arbRouteNameNoColon, fc.constantFrom("Symphony:", "Route:", "Team:"), (routeSuffix, prefix) => { const prefixBase = prefix.slice(0, -1); const s = makeSettings({ routeLabelPrefix: prefix }); const fromUpper = routeNames(issueWith({ labels: [`${prefix.toUpperCase()}${routeSuffix}`] }), s); const fromLower = routeNames(issueWith({ labels: [`${prefix.toLowerCase()}${routeSuffix}`] }), s); const fromMixed = routeNames(issueWith({ labels: [`${prefixBase[0]!.toUpperCase()}${prefixBase.slice(1).toLowerCase()}:${routeSuffix}`] }), s); assert.deepEqual(fromUpper, fromLower); assert.deepEqual(fromLower, fromMixed); assert.ok(fromUpper.length > 0); }), { numRuns: 200 }); });
-test("routeNames - extracted route is always normalized", () => { fc.assert(fc.property(fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0), (routeSuffix) => { const routes = routeNames(issueWith({ labels: [`Symphony:${routeSuffix}`] }), makeSettings({ routeLabelPrefix: "Symphony:" })); for (const route of routes) { assert.equal(route, route.toLowerCase()); assert.equal(route, route.trim()); } }), { numRuns: 200 }); });
-test("routedToThisWorker - null allowlist accepts all routes", () => { fc.assert(fc.property(arbRouteName, (routeName) => { assert.ok(routedToThisWorker(issueWith({ labels: [`Symphony:${routeName}`] }), makeSettings({ onlyRoutes: null }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - empty allowlist rejects all routes", () => { fc.assert(fc.property(arbRouteName, (routeName) => { assert.ok(!routedToThisWorker(issueWith({ labels: [`Symphony:${routeName}`] }), makeSettings({ onlyRoutes: [] }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - no route label and unrouted disabled means ineligible", () => { fc.assert(fc.property(fc.array(fc.string({ minLength: 1, maxLength: 20 }).filter((l) => !l.toLowerCase().startsWith("symphony:")), { maxLength: 5 }), (labels) => { assert.ok(!routedToThisWorker(issueWith({ labels }), makeSettings({ acceptUnrouted: false }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - no route label with unrouted enabled accepts", () => { fc.assert(fc.property(fc.array(fc.string({ minLength: 1, maxLength: 20 }).filter((l) => !l.toLowerCase().startsWith("symphony:")), { maxLength: 5 }), (labels) => { assert.ok(routedToThisWorker(issueWith({ labels }), makeSettings({ acceptUnrouted: true }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - whitespace-only suffix means rejected", () => { const arbWs = fc.array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 5 }).map((a) => a.join("")); fc.assert(fc.property(fc.constantFrom("Symphony:", "Route:", "Team:"), arbWs, (prefix, ws) => { assert.ok(!routedToThisWorker(issueWith({ labels: [`${prefix}${ws}`] }), makeSettings({ routeLabelPrefix: prefix, acceptUnrouted: true }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - allowlist matching is case-insensitive", () => { fc.assert(fc.property(arbRouteNameNoColon, (routeName) => { const issue = issueWith({ labels: [`Symphony:${routeName}`] }); assert.ok(routedToThisWorker(issue, makeSettings({ onlyRoutes: [routeName.toUpperCase()] }))); assert.ok(routedToThisWorker(issue, makeSettings({ onlyRoutes: [routeName.toLowerCase()] }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - assignedToWorker false always rejects", () => { fc.assert(fc.property(fc.array(fc.string({ minLength: 1, maxLength: 20 }), { maxLength: 5 }), fc.boolean(), fc.oneof(fc.constant(null), fc.array(fc.string({ minLength: 1, maxLength: 10 }), { maxLength: 3 })), (labels, acceptUnrouted, onlyRoutes) => { assert.ok(!routedToThisWorker(issueWith({ labels, assignedToWorker: false }), makeSettings({ acceptUnrouted, onlyRoutes }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - route in allowlist is accepted", () => { fc.assert(fc.property(arbRouteNameNoColon, fc.array(arbRouteNameNoColon, { minLength: 0, maxLength: 4 }), (routeName, others) => { assert.ok(routedToThisWorker(issueWith({ labels: [`Symphony:${routeName}`] }), makeSettings({ onlyRoutes: [routeName, ...others] }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - route NOT in allowlist is rejected", () => { const poolA = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]; const poolB = ["one", "two", "three", "four", "five", "six"]; fc.assert(fc.property(fc.constantFrom(...poolA), fc.array(fc.constantFrom(...poolB), { minLength: 1, maxLength: 4 }), (routeName, allowlist) => { assert.ok(!routedToThisWorker(issueWith({ labels: [`Symphony:${routeName}`] }), makeSettings({ onlyRoutes: allowlist }))); }), { numRuns: 200 }); });
-test("routedToThisWorker - multiple labels, accepted if ANY in allowlist", () => { fc.assert(fc.property(arbRouteNameNoColon, fc.array(arbRouteNameNoColon, { minLength: 1, maxLength: 4 }), (allowedRoute, others) => { const nonColliding = others.filter((r) => normalizeRouteName(r) !== normalizeRouteName(allowedRoute)); assert.ok(routedToThisWorker(issueWith({ labels: [...nonColliding.map((r) => `Symphony:${r}`), `Symphony:${allowedRoute}`] }), makeSettings({ onlyRoutes: [allowedRoute] }))); }), { numRuns: 500 }); });
-test("routeNames - non-matching labels are ignored", () => { fc.assert(fc.property(fc.constantFrom("Symphony:", "Route:", "Team:"), fc.array(fc.string({ minLength: 1, maxLength: 20 }).filter((l) => { const lo = l.toLowerCase(); return !lo.startsWith("symphony:") && !lo.startsWith("route:") && !lo.startsWith("team:"); }), { minLength: 1, maxLength: 5 }), (prefix, labels) => { assert.equal(routeNames(issueWith({ labels }), makeSettings({ routeLabelPrefix: prefix })).length, 0); }), { numRuns: 200 }); });
-test("sortForDispatch - output is a permutation of input", () => { const arbIssue = fc.record({ id: fc.uuid(), identifier: fc.string({ minLength: 1, maxLength: 10 }).map((s) => `TEST-${s}`), title: fc.string({ minLength: 1, maxLength: 30 }), state: fc.constantFrom("Todo", "In Progress"), stateType: fc.constantFrom("unstarted", "started") as fc.Arbitrary<"unstarted" | "started">, priority: fc.oneof(fc.constant(null), fc.integer({ min: 1, max: 4 })), createdAt: fc.oneof(fc.constant(null), arbDateString), labels: fc.constant([] as string[]), blockers: fc.constant([] as Issue["blockers"]), assignedToWorker: fc.constant(true) }) as fc.Arbitrary<Issue>; fc.assert(fc.property(fc.array(arbIssue, { minLength: 0, maxLength: 20 }), (issues) => { const sorted = sortForDispatch(issues); assert.equal(sorted.length, issues.length); const ids = new Set(sorted.map((i) => i.id)); for (const issue of issues) assert.ok(ids.has(issue.id)); }), { numRuns: 500 }); });
-test("sortForDispatch - sorting is idempotent", () => { const arbIssue = fc.record({ id: fc.uuid(), identifier: fc.string({ minLength: 1, maxLength: 8 }).map((s) => `T-${s}`), title: fc.string({ minLength: 1, maxLength: 20 }), state: fc.constantFrom("Todo", "In Progress"), stateType: fc.constantFrom("unstarted", "started") as fc.Arbitrary<"unstarted" | "started">, priority: fc.oneof(fc.constant(null), fc.integer({ min: 1, max: 4 })), createdAt: fc.oneof(fc.constant(null), arbDateString), labels: fc.constant([] as string[]), blockers: fc.constant([] as Issue["blockers"]), assignedToWorker: fc.constant(true) }) as fc.Arbitrary<Issue>; fc.assert(fc.property(fc.array(arbIssue, { minLength: 0, maxLength: 15 }), (issues) => { const sorted = sortForDispatch(issues); const again = sortForDispatch(sorted); for (let i = 0; i < sorted.length; i++) assert.equal(sorted[i]!.id, again[i]!.id); }), { numRuns: 500 }); });
-test("sortForDispatch - higher priority comes first", () => { fc.assert(fc.property(fc.integer({ min: 1, max: 4 }), fc.integer({ min: 1, max: 4 }), (priA, priB) => { const sorted = sortForDispatch([issueWith({ priority: priA, id: "a", identifier: "A-1" }), issueWith({ priority: priB, id: "b", identifier: "B-1" })]); if (priA < priB) assert.equal(sorted[0]!.id, "a"); else if (priB < priA) assert.equal(sorted[0]!.id, "b"); }), { numRuns: 200 }); });
-test("shouldDispatchIssue true implies dispatchBlockReason null", () => { fc.assert(fc.property(fc.integer({ min: 0, max: 5 }), fc.integer({ min: 1, max: 10 }), (runningCount, maxConcurrent) => { const settings = makeSettings({ maxConcurrentAgents: maxConcurrent, activeStates: ["Todo", "In Progress"], ensembleSize: 1 }); const issue = issueWith({ state: "Todo", stateType: "unstarted", assignedToWorker: true, labels: [], blockers: [] }); const state = { runningCount, runningByState: new Map<string, number>(), claimedSlots: new Set<string>() }; if (shouldDispatchIssue(issue, settings, state)) assert.equal(dispatchBlockReason(issue, settings, state), null); }), { numRuns: 500 }); });
-test("dispatchBlockReason - global_concurrency_cap at capacity", () => { fc.assert(fc.property(fc.integer({ min: 1, max: 20 }), (max) => { const settings = makeSettings({ maxConcurrentAgents: max, activeStates: ["Todo"], ensembleSize: 1 }); assert.equal(dispatchBlockReason(issueWith({ state: "Todo", stateType: "unstarted", labels: [], blockers: [] }), settings, { runningCount: max, runningByState: new Map(), claimedSlots: new Set() }), "global_concurrency_cap"); }), { numRuns: 200 }); });
-test("dispatchBlockReason - null when issue not active", () => { fc.assert(fc.property(fc.constantFrom("Closed", "Cancelled", "Done"), (state) => { const settings = makeSettings({ activeStates: ["Todo"], terminalStates: [state], maxConcurrentAgents: 10 }); assert.equal(dispatchBlockReason(issueWith({ state, labels: [], blockers: [] }), settings, { runningCount: 0 }), null); }), { numRuns: 50 }); });
-test("firstUnclaimedSlot - null iff all slots claimed", () => { fc.assert(fc.property(fc.integer({ min: 1, max: 8 }), fc.array(fc.integer({ min: 0, max: 7 }), { maxLength: 8 }), (ensembleSize, indices) => { const settings = makeSettings({ ensembleSize }); const issue = issueWith({ id: "issue-x", labels: [] }); const claimed = new Set<string>(); for (const idx of indices) { if (idx < ensembleSize) claimed.add(slotKey("issue-x", idx)); } const result = firstUnclaimedSlot(issue, settings, claimed); let count = 0; for (let i = 0; i < ensembleSize; i++) { if (claimed.has(slotKey("issue-x", i))) count++; } if (count >= ensembleSize) assert.equal(result, null); else { assert.ok(result !== null); assert.ok(!claimed.has(slotKey("issue-x", result!))); assert.ok(result! >= 0 && result! < ensembleSize); } }), { numRuns: 500 }); });
-test("firstUnclaimedSlot - prefers preferredSlotIndex", () => { fc.assert(fc.property(fc.integer({ min: 2, max: 6 }), fc.integer({ min: 0, max: 5 }), (ensembleSize, preferred) => { fc.pre(preferred < ensembleSize); assert.equal(firstUnclaimedSlot(issueWith({ id: "y", labels: [] }), makeSettings({ ensembleSize }), new Set(), preferred), preferred); }), { numRuns: 200 }); });
-test("firstUnclaimedSlot - falls back when preferred claimed", () => { fc.assert(fc.property(fc.integer({ min: 2, max: 6 }), fc.integer({ min: 0, max: 5 }), (ensembleSize, preferred) => { fc.pre(preferred < ensembleSize); const claimed = new Set([slotKey("z", preferred)]); const result = firstUnclaimedSlot(issueWith({ id: "z", labels: [] }), makeSettings({ ensembleSize }), claimed); if (ensembleSize > 1) { assert.ok(result !== null); assert.ok(result !== preferred); assert.ok(!claimed.has(slotKey("z", result!))); } }), { numRuns: 200 }); });
-test("issueHasOpenBlockers - only true for unstarted with non-terminal blockers", () => { fc.assert(fc.property(fc.constantFrom("unstarted", "started", "completed", "canceled") as fc.Arbitrary<"unstarted" | "started" | "completed" | "canceled">, fc.constantFrom("Todo", "In Progress", "Done", "Closed"), fc.array(fc.record({ id: fc.uuid(), identifier: fc.string({ minLength: 1, maxLength: 5 }), state: fc.constantFrom("Todo", "In Progress", "Done", "Closed") }), { maxLength: 3 }), (stateType, state, blockers) => { const settings = makeSettings({ activeStates: ["Todo", "In Progress"], terminalStates: ["Done", "Closed"] }); const hasBlockers = issueHasOpenBlockers(issueWith({ state, stateType, blockers }), settings); if (stateType !== "unstarted" && state.trim().toLowerCase() !== "todo") assert.ok(!hasBlockers); if (hasBlockers) assert.ok(blockers.some((b) => b.state !== "Done" && b.state !== "Closed")); }), { numRuns: 500 }); });
-test("shouldDispatchIssue - false for inactive issues", () => { fc.assert(fc.property(fc.constantFrom("Closed", "Cancelled", "Done", "Duplicate"), (state) => { const settings = makeSettings({ activeStates: ["Todo", "In Progress"], terminalStates: ["Closed", "Cancelled", "Done", "Duplicate"], maxConcurrentAgents: 100 }); assert.ok(!shouldDispatchIssue(issueWith({ state, labels: [], blockers: [], assignedToWorker: true }), settings, { runningCount: 0, claimedSlots: new Set() })); }), { numRuns: 100 }); });
-test("shouldDispatchIssue - false when all slots claimed", () => { fc.assert(fc.property(fc.integer({ min: 1, max: 5 }), (ensembleSize) => { const settings = makeSettings({ activeStates: ["Todo"], maxConcurrentAgents: 100, ensembleSize }); const issue = issueWith({ id: "full", state: "Todo", stateType: "unstarted", labels: [], blockers: [] }); const claimed = new Set<string>(); for (let i = 0; i < ensembleSize; i++) claimed.add(slotKey("full", i)); assert.ok(!shouldDispatchIssue(issue, settings, { runningCount: 0, runningByState: new Map(), claimedSlots: claimed })); }), { numRuns: 200 }); });
+const arbRouteName = fc.oneof(
+  fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim().length > 0),
+  fc.constantFrom(
+    "team-alpha",
+    "deploy_v2",
+    "ci.main",
+    "backend",
+    "frontend-3",
+    "ops_infra.prod",
+    "release-2024.01",
+    "ML-pipeline",
+  ),
+);
+const arbRouteNameNoColon = fc
+  .string({ minLength: 1, maxLength: 12 })
+  .filter((s) => s.trim().length > 0 && !s.includes(":"));
+const arbWhitespace = fc
+  .array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 5 })
+  .map((a) => a.join(""));
+test("normalizeRouteName - normalization is idempotent", () => {
+  fc.assert(
+    fc.property(fc.string({ maxLength: 100 }), (input) => {
+      const once = normalizeRouteName(input);
+      assert.equal(normalizeRouteName(once), once);
+    }),
+    { numRuns: 50 },
+  );
+});
+test("normalizeRouteName - output is always lowercase and trimmed", () => {
+  fc.assert(
+    fc.property(fc.string({ minLength: 1, maxLength: 80 }), (input) => {
+      const result = normalizeRouteName(input);
+      assert.equal(result, result.toLowerCase());
+      assert.equal(result, result.trim());
+    }),
+    { numRuns: 50 },
+  );
+});
+test("routeNames - whitespace-only suffix is not valid", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("Symphony:", "Route:", "Team:", "X:"),
+      arbWhitespace,
+      (prefix, ws) => {
+        assert.equal(
+          routeNames(
+            issueWith({ labels: [`${prefix}${ws}`] }),
+            makeSettings({ routeLabelPrefix: prefix }),
+          ).length,
+          0,
+        );
+      },
+    ),
+    { numRuns: 100 },
+  );
+});
+test("routeNames - prefix matching is case-insensitive", () => {
+  fc.assert(
+    fc.property(
+      arbRouteNameNoColon,
+      fc.constantFrom("Symphony:", "Route:", "Team:"),
+      (routeSuffix, prefix) => {
+        const prefixBase = prefix.slice(0, -1);
+        const s = makeSettings({ routeLabelPrefix: prefix });
+        const fromUpper = routeNames(
+          issueWith({ labels: [`${prefix.toUpperCase()}${routeSuffix}`] }),
+          s,
+        );
+        const fromLower = routeNames(
+          issueWith({ labels: [`${prefix.toLowerCase()}${routeSuffix}`] }),
+          s,
+        );
+        const fromMixed = routeNames(
+          issueWith({
+            labels: [
+              `${prefixBase[0]!.toUpperCase()}${prefixBase.slice(1).toLowerCase()}:${routeSuffix}`,
+            ],
+          }),
+          s,
+        );
+        assert.deepEqual(fromUpper, fromLower);
+        assert.deepEqual(fromLower, fromMixed);
+        assert.ok(fromUpper.length > 0);
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routeNames - extracted route is always normalized", () => {
+  fc.assert(
+    fc.property(
+      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
+      (routeSuffix) => {
+        const routes = routeNames(
+          issueWith({ labels: [`Symphony:${routeSuffix}`] }),
+          makeSettings({ routeLabelPrefix: "Symphony:" }),
+        );
+        for (const route of routes) {
+          assert.equal(route, route.toLowerCase());
+          assert.equal(route, route.trim());
+        }
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - null allowlist accepts all routes", () => {
+  fc.assert(
+    fc.property(arbRouteName, (routeName) => {
+      assert.ok(
+        routedToThisWorker(
+          issueWith({ labels: [`Symphony:${routeName}`] }),
+          makeSettings({ onlyRoutes: null }),
+        ),
+      );
+    }),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - empty allowlist rejects all routes", () => {
+  fc.assert(
+    fc.property(arbRouteName, (routeName) => {
+      assert.ok(
+        !routedToThisWorker(
+          issueWith({ labels: [`Symphony:${routeName}`] }),
+          makeSettings({ onlyRoutes: [] }),
+        ),
+      );
+    }),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - no route label and unrouted disabled means ineligible", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc
+          .string({ minLength: 1, maxLength: 20 })
+          .filter((l) => !l.toLowerCase().startsWith("symphony:")),
+        { maxLength: 5 },
+      ),
+      (labels) => {
+        assert.ok(
+          !routedToThisWorker(issueWith({ labels }), makeSettings({ acceptUnrouted: false })),
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - no route label with unrouted enabled accepts", () => {
+  fc.assert(
+    fc.property(
+      fc.array(
+        fc
+          .string({ minLength: 1, maxLength: 20 })
+          .filter((l) => !l.toLowerCase().startsWith("symphony:")),
+        { maxLength: 5 },
+      ),
+      (labels) => {
+        assert.ok(
+          routedToThisWorker(issueWith({ labels }), makeSettings({ acceptUnrouted: true })),
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - whitespace-only suffix means rejected", () => {
+  const arbWs = fc
+    .array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 0, maxLength: 5 })
+    .map((a) => a.join(""));
+  fc.assert(
+    fc.property(fc.constantFrom("Symphony:", "Route:", "Team:"), arbWs, (prefix, ws) => {
+      assert.ok(
+        !routedToThisWorker(
+          issueWith({ labels: [`${prefix}${ws}`] }),
+          makeSettings({ routeLabelPrefix: prefix, acceptUnrouted: true }),
+        ),
+      );
+    }),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - allowlist matching is case-insensitive", () => {
+  fc.assert(
+    fc.property(arbRouteNameNoColon, (routeName) => {
+      const issue = issueWith({ labels: [`Symphony:${routeName}`] });
+      assert.ok(routedToThisWorker(issue, makeSettings({ onlyRoutes: [routeName.toUpperCase()] })));
+      assert.ok(routedToThisWorker(issue, makeSettings({ onlyRoutes: [routeName.toLowerCase()] })));
+    }),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - assignedToWorker false always rejects", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.string({ minLength: 1, maxLength: 20 }), { maxLength: 5 }),
+      fc.boolean(),
+      fc.oneof(
+        fc.constant(null),
+        fc.array(fc.string({ minLength: 1, maxLength: 10 }), { maxLength: 3 }),
+      ),
+      (labels, acceptUnrouted, onlyRoutes) => {
+        assert.ok(
+          !routedToThisWorker(
+            issueWith({ labels, assignedToWorker: false }),
+            makeSettings({ acceptUnrouted, onlyRoutes }),
+          ),
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - route in allowlist is accepted", () => {
+  fc.assert(
+    fc.property(
+      arbRouteNameNoColon,
+      fc.array(arbRouteNameNoColon, { minLength: 0, maxLength: 4 }),
+      (routeName, others) => {
+        assert.ok(
+          routedToThisWorker(
+            issueWith({ labels: [`Symphony:${routeName}`] }),
+            makeSettings({ onlyRoutes: [routeName, ...others] }),
+          ),
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - route NOT in allowlist is rejected", () => {
+  const poolA = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+  const poolB = ["one", "two", "three", "four", "five", "six"];
+  fc.assert(
+    fc.property(
+      fc.constantFrom(...poolA),
+      fc.array(fc.constantFrom(...poolB), { minLength: 1, maxLength: 4 }),
+      (routeName, allowlist) => {
+        assert.ok(
+          !routedToThisWorker(
+            issueWith({ labels: [`Symphony:${routeName}`] }),
+            makeSettings({ onlyRoutes: allowlist }),
+          ),
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});
+test("routedToThisWorker - multiple labels, accepted if ANY in allowlist", () => {
+  fc.assert(
+    fc.property(
+      arbRouteNameNoColon,
+      fc.array(arbRouteNameNoColon, { minLength: 1, maxLength: 4 }),
+      (allowedRoute, others) => {
+        const nonColliding = others.filter(
+          (r) => normalizeRouteName(r) !== normalizeRouteName(allowedRoute),
+        );
+        assert.ok(
+          routedToThisWorker(
+            issueWith({
+              labels: [...nonColliding.map((r) => `Symphony:${r}`), `Symphony:${allowedRoute}`],
+            }),
+            makeSettings({ onlyRoutes: [allowedRoute] }),
+          ),
+        );
+      },
+    ),
+    { numRuns: 500 },
+  );
+});
+test("routeNames - non-matching labels are ignored", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("Symphony:", "Route:", "Team:"),
+      fc.array(
+        fc.string({ minLength: 1, maxLength: 20 }).filter((l) => {
+          const lo = l.toLowerCase();
+          return !lo.startsWith("symphony:") && !lo.startsWith("route:") && !lo.startsWith("team:");
+        }),
+        { minLength: 1, maxLength: 5 },
+      ),
+      (prefix, labels) => {
+        assert.equal(
+          routeNames(issueWith({ labels }), makeSettings({ routeLabelPrefix: prefix })).length,
+          0,
+        );
+      },
+    ),
+    { numRuns: 200 },
+  );
+});

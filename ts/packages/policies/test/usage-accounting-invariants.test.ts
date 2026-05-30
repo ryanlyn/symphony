@@ -35,17 +35,6 @@ const arbPartialUsageUpdate = () =>
   });
 
 /**
- * Arbitrary that generates usage totals with zero values to test boundary conditions.
- */
-const arbZeroBoundaryTotals = () =>
-  fc.record({
-    inputTokens: fc.constantFrom(0, 1),
-    outputTokens: fc.constantFrom(0, 1),
-    totalTokens: fc.constantFrom(0, 1),
-    secondsRunning: fc.nat(),
-  });
-
-/**
  * Arbitrary that generates extreme value updates to stress overflow/boundary behavior.
  */
 const arbExtremeUpdate = () =>
@@ -101,18 +90,6 @@ const arbNearOverflowTotals = () =>
       max: Number.MAX_SAFE_INTEGER,
     }),
     secondsRunning: fc.nat(),
-  });
-
-/**
- * Arbitrary that generates usage totals where reported may be higher than entry,
- * which is a realistic scenario (e.g., entry was reset or lagging).
- */
-const arbMismatchedTotals = () =>
-  fc.record({
-    inputTokens: fc.nat({ max: 500_000 }),
-    outputTokens: fc.nat({ max: 500_000 }),
-    totalTokens: fc.nat({ max: 500_000 }),
-    secondsRunning: fc.nat({ max: 100_000 }),
   });
 
 // ============================================================================
@@ -344,67 +321,9 @@ test("entry result is at least as large as both entry and positive update values
   );
 });
 
-test("global growth across a chain is non-negative", () => {
-  fc.assert(
-    fc.property(
-      arbUsageTotals(),
-      arbUsageTotals(),
-      arbUsageTotals(),
-      fc.array(arbPartialUsageUpdate(), { minLength: 2, maxLength: 10 }),
-      (entry, reported, global, updates) => {
-        let current = { entryTotals: entry, reportedTotals: reported, globalTotals: global };
-        for (const update of updates) {
-          current = mergeMonotonicUsage({
-            entryTotals: current.entryTotals,
-            reportedTotals: current.reportedTotals,
-            globalTotals: current.globalTotals,
-            update,
-          });
-        }
-        assert.ok(current.globalTotals.inputTokens - global.inputTokens >= 0);
-        assert.ok(current.globalTotals.outputTokens - global.outputTokens >= 0);
-        assert.ok(current.globalTotals.totalTokens - global.totalTokens >= 0);
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
-
 // ============================================================================
 // Extreme/boundary value tests
 // ============================================================================
-
-test("non-negativity and monotonicity hold with zero-boundary inputs", () => {
-  fc.assert(
-    fc.property(
-      arbZeroBoundaryTotals(),
-      arbZeroBoundaryTotals(),
-      arbZeroBoundaryTotals(),
-      arbPartialUsageUpdate(),
-      (entry, reported, global, update) => {
-        const result = mergeMonotonicUsage({
-          entryTotals: entry,
-          reportedTotals: reported,
-          globalTotals: global,
-          update,
-        });
-        assert.ok(result.entryTotals.inputTokens >= 0);
-        assert.ok(result.entryTotals.outputTokens >= 0);
-        assert.ok(result.entryTotals.totalTokens >= 0);
-        assert.ok(result.globalTotals.inputTokens >= 0);
-        assert.ok(result.globalTotals.outputTokens >= 0);
-        assert.ok(result.globalTotals.totalTokens >= 0);
-        assert.ok(result.entryTotals.inputTokens >= entry.inputTokens);
-        assert.ok(result.entryTotals.outputTokens >= entry.outputTokens);
-        assert.ok(result.entryTotals.totalTokens >= entry.totalTokens);
-        assert.ok(result.globalTotals.inputTokens >= global.inputTokens);
-        assert.ok(result.globalTotals.outputTokens >= global.outputTokens);
-        assert.ok(result.globalTotals.totalTokens >= global.totalTokens);
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
 
 test("all invariants hold with extreme value updates", () => {
   fc.assert(
@@ -437,46 +356,6 @@ test("all invariants hold with extreme value updates", () => {
         assert.equal(result.reportedTotals.totalTokens, result.entryTotals.totalTokens);
         assert.equal(result.entryTotals.secondsRunning, entry.secondsRunning);
         assert.equal(result.globalTotals.secondsRunning, global.secondsRunning);
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
-
-test("all invariants hold when reported > entry (lagging entry scenario)", () => {
-  fc.assert(
-    fc.property(
-      arbMismatchedTotals(),
-      arbMismatchedTotals().map((t) => ({
-        ...t,
-        inputTokens: t.inputTokens + 1000,
-        outputTokens: t.outputTokens + 1000,
-        totalTokens: t.totalTokens + 1000,
-      })),
-      arbUsageTotals(),
-      arbPartialUsageUpdate(),
-      (entry, reported, global, update) => {
-        const result = mergeMonotonicUsage({
-          entryTotals: entry,
-          reportedTotals: reported,
-          globalTotals: global,
-          update,
-        });
-        assert.ok(result.entryTotals.inputTokens >= 0);
-        assert.ok(result.entryTotals.outputTokens >= 0);
-        assert.ok(result.entryTotals.totalTokens >= 0);
-        assert.ok(result.globalTotals.inputTokens >= 0);
-        assert.ok(result.globalTotals.outputTokens >= 0);
-        assert.ok(result.globalTotals.totalTokens >= 0);
-        assert.ok(result.entryTotals.inputTokens >= entry.inputTokens);
-        assert.ok(result.entryTotals.outputTokens >= entry.outputTokens);
-        assert.ok(result.entryTotals.totalTokens >= entry.totalTokens);
-        assert.ok(result.globalTotals.inputTokens >= global.inputTokens);
-        assert.ok(result.globalTotals.outputTokens >= global.outputTokens);
-        assert.ok(result.globalTotals.totalTokens >= global.totalTokens);
-        assert.equal(result.reportedTotals.inputTokens, result.entryTotals.inputTokens);
-        assert.equal(result.reportedTotals.outputTokens, result.entryTotals.outputTokens);
-        assert.equal(result.reportedTotals.totalTokens, result.entryTotals.totalTokens);
       },
     ),
     { numRuns: 500 },

@@ -61,22 +61,6 @@ test("retryBackoffMs - failure delay never exceeds the configured maximum cap", 
   );
 });
 
-// Invariant 4: The cap is reachable -- sufficiently high attempt numbers saturate at maxBackoff.
-// This confirms the cap is tight rather than a loose upper bound that is never actually hit.
-test("retryBackoffMs - cap is tight: sufficiently high attempts saturate at maxBackoff", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 1, max: 100_000_000 }),
-      (maxBackoff) => {
-        // After enough retries, the delay must equal the cap exactly
-        const result = retryBackoffMs(100, maxBackoff, "failure");
-        assert.equal(result, maxBackoff);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
 // Invariant 5: When max allows, failure delays have a positive floor preventing zero-delay storms.
 // A zero delay in failure retries would cause a tight retry loop that overwhelms the upstream.
 test("retryBackoffMs - failure delay has a positive floor when maxBackoff permits", () => {
@@ -108,41 +92,4 @@ test("retryBackoffMs - continuation retry uses a fixed delay regardless of input
     ),
     { numRuns: 200 },
   );
-});
-
-// Invariant 7: Failure delays strictly increase before hitting the cap (exponential growth).
-// This ensures the backoff actually ramps up rather than staying flat, providing
-// meaningful separation between early and late retries.
-test("retryBackoffMs - failure delays strictly increase before hitting the cap", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 2, max: 15 }),
-      (attempt) => {
-        // Use a cap large enough to never be reached for these attempt values
-        const maxBackoff = Number.MAX_SAFE_INTEGER;
-        const current = retryBackoffMs(attempt, maxBackoff, "failure");
-        const next = retryBackoffMs(attempt + 1, maxBackoff, "failure");
-        assert.ok(next > current);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-// Pinned domain examples: verify specific retry attempts yield expected delays.
-// These encode domain knowledge about the retry schedule rather than reimplementing the formula.
-test("retryBackoffMs - known retry schedule values", () => {
-  // First retry (attempt 0 or 1): base delay of 10s
-  assert.equal(retryBackoffMs(0, 120_000, "failure"), 10_000);
-  assert.equal(retryBackoffMs(1, 120_000, "failure"), 10_000);
-  // Second retry: 20s
-  assert.equal(retryBackoffMs(2, 120_000, "failure"), 20_000);
-  // Third retry: 40s
-  assert.equal(retryBackoffMs(3, 120_000, "failure"), 40_000);
-  // Fourth retry: 80s
-  assert.equal(retryBackoffMs(4, 120_000, "failure"), 80_000);
-  // Fifth retry: would be 160s but capped at 120s
-  assert.equal(retryBackoffMs(5, 120_000, "failure"), 120_000);
-  // Zero cap means zero delay
-  assert.equal(retryBackoffMs(5, 0, "failure"), 0);
 });

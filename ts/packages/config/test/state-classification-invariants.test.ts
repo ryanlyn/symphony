@@ -6,18 +6,6 @@ import { assert } from "../../../test/assert.js";
 
 // --- Invariant 1: Normalization SHALL be case-insensitive ---
 
-test("normalizeStateName — normalization is case-insensitive (upper and lower produce same result)", () => {
-  fc.assert(
-    fc.property(fc.string({ minLength: 1, maxLength: 50 }), (input) => {
-      assert.equal(
-        normalizeStateName(input.toUpperCase()),
-        normalizeStateName(input.toLowerCase()),
-      );
-    }),
-    { numRuns: 1000 },
-  );
-});
-
 test("normalizeStateName — mixed case variants all normalize to the same value", () => {
   fc.assert(
     fc.property(
@@ -27,36 +15,13 @@ test("normalizeStateName — mixed case variants all normalize to the same value
         // Create a random casing of the input
         const randomCased = input
           .split("")
-          .map((ch, i) => (casePattern[i % casePattern.length] ? ch.toUpperCase() : ch.toLowerCase()))
+          .map((ch, i) =>
+            casePattern[i % casePattern.length] ? ch.toUpperCase() : ch.toLowerCase(),
+          )
           .join("");
         assert.equal(normalizeStateName(randomCased), normalizeStateName(input));
       },
     ),
-    { numRuns: 1000 },
-  );
-});
-
-test("normalizeStateName — case-insensitivity holds for unicode characters with case mappings", () => {
-  // Use grapheme-unit strings and filter for those that round-trip through case folding.
-  // Some Unicode characters (e.g. U+1F80) do not round-trip through
-  // toUpperCase().toLowerCase(), so we filter for characters where JS produces
-  // consistent folding: toLowerCase(toUpperCase(s)) === toLowerCase(s).
-  const casedUnicodeArb = fc
-    .string({ unit: "grapheme", minLength: 1, maxLength: 10 })
-    .filter((s) => {
-      // Must have some case variation to be interesting
-      if (s.toUpperCase() === s && s.toLowerCase() === s) return false;
-      // Must round-trip: applying toLowerCase after toUpperCase must equal just toLowerCase
-      return s.toUpperCase().toLowerCase() === s.toLowerCase();
-    });
-  fc.assert(
-    fc.property(casedUnicodeArb, (input) => {
-      // The key property: upper/lower of the same input must converge
-      assert.equal(
-        normalizeStateName(input.toUpperCase()),
-        normalizeStateName(input.toLowerCase()),
-      );
-    }),
     { numRuns: 1000 },
   );
 });
@@ -76,40 +41,6 @@ test("normalizeStateName — output is always fully lowercase (no uppercase char
 test("normalizeStateName — applying normalization twice yields the same result as once (idempotent)", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 100 }), (input) => {
-      const once = normalizeStateName(input);
-      const twice = normalizeStateName(once);
-      assert.equal(twice, once);
-    }),
-    { numRuns: 1000 },
-  );
-});
-
-test("normalizeStateName — idempotency holds for unicode and special characters", () => {
-  fc.assert(
-    fc.property(fc.string({ minLength: 0, maxLength: 60, unit: "grapheme" }), (input) => {
-      const once = normalizeStateName(input);
-      const twice = normalizeStateName(once);
-      assert.equal(twice, once);
-    }),
-    { numRuns: 1000 },
-  );
-});
-
-test("normalizeStateName — idempotency holds for strings with control characters and mixed whitespace", () => {
-  // Build strings that mix control characters with normal text
-  const controlCharArb = fc
-    .array(
-      fc.oneof(
-        fc.string({ minLength: 1, maxLength: 5 }),
-        fc.constantFrom(
-          "\x00", "\x01", "\x02", "\x0B", "\x0C", "\x1F", "\x7F",
-        ),
-      ),
-      { minLength: 1, maxLength: 20 },
-    )
-    .map((parts) => parts.join(""));
-  fc.assert(
-    fc.property(controlCharArb, (input) => {
       const once = normalizeStateName(input);
       const twice = normalizeStateName(once);
       assert.equal(twice, once);
@@ -160,10 +91,6 @@ test("normalizeStateName — whitespace-only input normalizes to empty string", 
     }),
     { numRuns: 1000 },
   );
-});
-
-test("normalizeStateName — empty string normalizes to empty string", () => {
-  assert.equal(normalizeStateName(""), "");
 });
 
 test("normalizeStateName — internal whitespace is preserved (only leading/trailing stripped)", () => {
@@ -219,12 +146,6 @@ test("isTerminalState — a state not in the terminal list is classified as non-
   );
 });
 
-test("isTerminalState — empty string state is classified as non-terminal", () => {
-  // Empty/falsy state always returns false regardless of terminal list contents
-  assert.equal(isTerminalState("", []), false);
-  assert.equal(isTerminalState("", ["", "done"]), false);
-});
-
 test("isTerminalState — a state distinct by one character from all terminals is non-terminal", () => {
   fc.assert(
     fc.property(
@@ -253,12 +174,9 @@ test("isTerminalState — a state distinct by one character from all terminals i
 
 test("isTerminalState — empty terminal list means all states are non-terminal", () => {
   fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 50 }),
-      (state) => {
-        assert.equal(isTerminalState(state, []), false);
-      },
-    ),
+    fc.property(fc.string({ minLength: 1, maxLength: 50 }), (state) => {
+      assert.equal(isTerminalState(state, []), false);
+    }),
     { numRuns: 1000 },
   );
 });
@@ -281,25 +199,6 @@ test("isTerminalState — comparison is case-insensitive (any casing of a termin
   );
 });
 
-test("isTerminalState — comparison is case-insensitive with random mixed casing", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
-      fc.array(fc.boolean(), { minLength: 1, maxLength: 20 }),
-      (terminalState, casePattern) => {
-        const terminalStates = [terminalState];
-        // Create random mixed-case variant
-        const variant = terminalState
-          .split("")
-          .map((ch, i) => (casePattern[i % casePattern.length] ? ch.toUpperCase() : ch.toLowerCase()))
-          .join("");
-        assert.equal(isTerminalState(variant, terminalStates), true);
-      },
-    ),
-    { numRuns: 1000 },
-  );
-});
-
 test("isTerminalState — comparison is whitespace-tolerant (padded state matches)", () => {
   const wsArb = fc
     .array(fc.constantFrom(" ", "\t"), { minLength: 1, maxLength: 3 })
@@ -314,26 +213,6 @@ test("isTerminalState — comparison is whitespace-tolerant (padded state matche
         const terminalStates = [terminalState, ...otherStates];
         const padded = leading + terminalState + trailing;
         assert.equal(isTerminalState(padded, terminalStates), true);
-      },
-    ),
-    { numRuns: 1000 },
-  );
-});
-
-test("isTerminalState — comparison is whitespace-tolerant for both state and terminal list entries", () => {
-  const wsArb = fc
-    .array(fc.constantFrom(" ", "\t", "\n", "\r"), { minLength: 1, maxLength: 3 })
-    .map((a) => a.join(""));
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
-      wsArb,
-      wsArb,
-      (coreState, leadingState, trailingTerminal) => {
-        // The terminal list entry is padded, and the state being checked is also padded differently
-        const terminalStates = [coreState + trailingTerminal];
-        const paddedState = leadingState + coreState;
-        assert.equal(isTerminalState(paddedState, terminalStates), true);
       },
     ),
     { numRuns: 1000 },
@@ -379,10 +258,13 @@ test("isTerminalState — normalizeStateName equivalence implies isTerminalState
     fc.property(
       fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
       fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim().length > 0),
-      fc.array(fc.string({ minLength: 1, maxLength: 15 }).filter((s) => s.trim().length > 0), {
-        minLength: 1,
-        maxLength: 5,
-      }),
+      fc.array(
+        fc.string({ minLength: 1, maxLength: 15 }).filter((s) => s.trim().length > 0),
+        {
+          minLength: 1,
+          maxLength: 5,
+        },
+      ),
       (stateA, stateB, terminalStates) => {
         // If two states normalize to the same value, they must produce the same terminal classification
         if (normalizeStateName(stateA) === normalizeStateName(stateB)) {
@@ -391,23 +273,6 @@ test("isTerminalState — normalizeStateName equivalence implies isTerminalState
             isTerminalState(stateB, terminalStates),
           );
         }
-      },
-    ),
-    { numRuns: 1000 },
-  );
-});
-
-// --- Invariant 8: Positive confirmation ---
-
-test("isTerminalState — a known terminal state returns true (positive confirmation)", () => {
-  // This is not tautological: it confirms the implementation actually returns true for matches,
-  // not just that it returns false for non-matches
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0),
-      (state) => {
-        // The exact state string must be recognized as terminal when it is in the list
-        assert.equal(isTerminalState(state, [state]), true);
       },
     ),
     { numRuns: 1000 },

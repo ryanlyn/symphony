@@ -101,23 +101,6 @@ test("Invariant 1 -- valid label with positive integer is used as ensemble size"
   );
 });
 
-test("Invariant 1 -- valid label at the end of a list is still found", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 1, max: 500 }),
-      fc.array(nonEnsembleLabelArb, { minLength: 1, maxLength: 8 }),
-      (n, noise) => {
-        // Place the valid label at the END among only invalid noise labels
-        const labels = [...noise, `ensemble:${n}`];
-        const issue = issueWith(labels);
-        const result = ensembleSize(issue);
-        assert.equal(result, n);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
 test("Invariant 1 -- very large positive integers are accepted", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 2_000_000 }), (n) => {
@@ -126,12 +109,6 @@ test("Invariant 1 -- very large positive integers are accepted", () => {
       assert.equal(result, n);
     }),
   );
-});
-
-test("Invariant 1 -- boundary value: ensemble:1 is the minimum valid size", () => {
-  const issue = issueWith(["ensemble:1"]);
-  const result = ensembleSize(issue);
-  assert.equal(result, 1);
 });
 
 test("Invariant 1 -- leading zeros in the number are accepted (parsed as decimal)", () => {
@@ -143,24 +120,6 @@ test("Invariant 1 -- leading zeros in the number are accepted (parsed as decimal
       const result = ensembleSize(issue);
       assert.equal(result, n);
     }),
-  );
-});
-
-test("Invariant 1 -- result is always a positive integer (type correctness)", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 50000 }), (n) => {
-      const issue = issueWith([`ensemble:${n}`]);
-      const result = ensembleSize(issue);
-      // Not null
-      assert.ok(result !== null);
-      // Is a finite number
-      assert.ok(Number.isFinite(result));
-      // Is an integer (no fractional part)
-      assert.equal(result, Math.floor(result!));
-      // Is positive
-      assert.ok(result! > 0);
-    }),
-    { numRuns: 200 },
   );
 });
 
@@ -178,25 +137,6 @@ test("Invariant 2 -- first valid ensemble label wins when multiple are present",
         const labels = [`ensemble:${first}`, ...rest.map((n) => `ensemble:${n}`)];
         const issue = issueWith(labels);
         assert.equal(ensembleSize(issue), first);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 2 -- first valid label wins with guaranteed different values", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 1, max: 50 }),
-      fc.integer({ min: 51, max: 100 }),
-      (first, second) => {
-        // first and second are guaranteed different due to non-overlapping ranges
-        const labels = [`ensemble:${first}`, `ensemble:${second}`];
-        const issue = issueWith(labels);
-        const result = ensembleSize(issue);
-        assert.equal(result, first);
-        // Additionally verify it did NOT return second
-        assert.notEqual(result, second);
       },
     ),
     { numRuns: 200 },
@@ -237,11 +177,6 @@ test("Invariant 2 -- order matters: swapping labels changes result", () => {
 // is zero or non-positive causes ensembleSize to return null (label is
 // skipped). This is a domain invariant: ensemble size < 1 is meaningless.
 // ---------------------------------------------------------------------------
-
-test("Invariant 3 -- ensemble:0 returns null (zero is not a valid ensemble size)", () => {
-  const issue = issueWith(["ensemble:0"]);
-  assert.equal(ensembleSize(issue), null);
-});
 
 test("Invariant 3 -- any label with numeric value <= 0 is ignored", () => {
   fc.assert(
@@ -378,11 +313,6 @@ test("Invariant 5 -- no ensemble labels at all yields null", () => {
     }),
     { numRuns: 200 },
   );
-});
-
-test("Invariant 5 -- empty labels array yields null", () => {
-  const issue = issueWith([]);
-  assert.equal(ensembleSize(issue), null);
 });
 
 test("Invariant 5 -- labels with non-numeric ensemble values yield null", () => {

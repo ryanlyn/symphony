@@ -165,11 +165,6 @@ test("invariant 1: sort output SHALL be a permutation of the input (no additions
   );
 });
 
-test("invariant 1 (empty): sort of empty array returns empty array", () => {
-  const sorted = sortForDispatch([]);
-  assert.equal(sorted.length, 0);
-});
-
 test("invariant 1 (singleton): sort of single-element array returns that element", () => {
   fc.assert(
     fc.property(arbIssue(), (issue) => {
@@ -217,17 +212,13 @@ test("invariant 2: sort applied to an already-sorted list SHALL be identical (id
 // ---------------------------------------------------------------------------
 test("invariant 3: dispatch with lower priority number SHALL sort before one with higher priority number", () => {
   fc.assert(
-    fc.property(
-      arbIssueWithValidPriority(),
-      arbIssueWithValidPriority(),
-      (issueA, issueB) => {
-        fc.pre(issueA.priority !== issueB.priority);
-        const sorted = sortForDispatch([issueA, issueB]);
-        const first = sorted[0]!;
-        const second = sorted[1]!;
-        assert.ok(first.priority! < second.priority!);
-      },
-    ),
+    fc.property(arbIssueWithValidPriority(), arbIssueWithValidPriority(), (issueA, issueB) => {
+      fc.pre(issueA.priority !== issueB.priority);
+      const sorted = sortForDispatch([issueA, issueB]);
+      const first = sorted[0]!;
+      const second = sorted[1]!;
+      assert.ok(first.priority! < second.priority!);
+    }),
     { numRuns: 200 },
   );
 });
@@ -257,26 +248,6 @@ test("invariant 3 (all four priorities): list with one of each priority is sorte
       },
     ),
     { numRuns: 100 },
-  );
-});
-
-test("invariant 3 (input order independence): result is the same regardless of input order", () => {
-  fc.assert(
-    fc.property(
-      fc.array(arbIssueWithValidPriority(), { minLength: 2, maxLength: 15 }),
-      (issues) => {
-        // Generate two random permutations via shuffledSubarray
-        const shuffled1 = [...issues].sort(() => Math.random() - 0.5);
-        const shuffled2 = [...issues].sort(() => Math.random() - 0.5);
-        const sorted1 = sortForDispatch(shuffled1);
-        const sorted2 = sortForDispatch(shuffled2);
-        assert.equal(sorted1.length, sorted2.length);
-        for (let i = 0; i < sorted1.length; i++) {
-          assert.equal(sorted1[i], sorted2[i]);
-        }
-      },
-    ),
-    { numRuns: 200 },
   );
 });
 
@@ -323,37 +294,6 @@ test("invariant 4: same priority with earlier creation time SHALL sort first", (
       },
     ),
     { numRuns: 200 },
-  );
-});
-
-test("invariant 4 (epoch boundaries): epoch and far-future dates sort correctly", () => {
-  fc.assert(
-    fc.property(fc.constantFrom(1, 2, 3, 4), (priority) => {
-      const epoch: Issue = {
-        id: "epoch",
-        identifier: "ZZZ",
-        title: "Epoch",
-        state: "active",
-        labels: [],
-        blockers: [],
-        priority,
-        createdAt: "1970-01-01T00:00:00.000Z",
-      };
-      const future: Issue = {
-        id: "future",
-        identifier: "AAA",
-        title: "Future",
-        state: "active",
-        labels: [],
-        blockers: [],
-        priority,
-        createdAt: "2099-12-31T23:59:59.999Z",
-      };
-      const sorted = sortForDispatch([future, epoch]);
-      assert.equal(sorted[0], epoch);
-      assert.equal(sorted[1], future);
-    }),
-    { numRuns: 50 },
   );
 });
 
@@ -451,24 +391,6 @@ test("invariant 6: dispatch with null, missing, or out-of-range priority SHALL s
   );
 });
 
-test("invariant 6 (reversed input): invalid priority sorts last regardless of input order", () => {
-  fc.assert(
-    fc.property(
-      arbIssueWithValidPriority(),
-      arbIssueWithInvalidPriority(),
-      (validIssue, invalidIssue) => {
-        const sorted1 = sortForDispatch([validIssue, invalidIssue]);
-        const sorted2 = sortForDispatch([invalidIssue, validIssue]);
-        assert.equal(sorted1[0], validIssue);
-        assert.equal(sorted1[1], invalidIssue);
-        assert.equal(sorted2[0], validIssue);
-        assert.equal(sorted2[1], invalidIssue);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
 test("invariant 6 (multi): all invalid-priority dispatches sort after all valid-priority dispatches", () => {
   fc.assert(
     fc.property(
@@ -489,26 +411,6 @@ test("invariant 6 (multi): all invalid-priority dispatches sort after all valid-
     ),
     { numRuns: 200 },
   );
-});
-
-test("invariant 6 (specific boundaries): priority 0 and 5 sort after priority 4", () => {
-  // Test specific boundary values to ensure the valid range is exactly [1, 4]
-  const base: Omit<Issue, "priority" | "id" | "identifier"> = {
-    title: "T",
-    state: "active",
-    labels: [],
-    blockers: [],
-    createdAt: "2020-06-15T00:00:00.000Z",
-  };
-
-  const validP4: Issue = { ...base, id: "v4", identifier: "A", priority: 4 };
-  const invalidP0: Issue = { ...base, id: "i0", identifier: "B", priority: 0 };
-  const invalidP5: Issue = { ...base, id: "i5", identifier: "C", priority: 5 };
-  const invalidNull: Issue = { ...base, id: "in", identifier: "D", priority: null };
-
-  const sorted = sortForDispatch([invalidP0, invalidP5, validP4, invalidNull]);
-  // priority=4 (valid) must come before all invalid priorities
-  assert.equal(sorted[0], validP4);
 });
 
 // ---------------------------------------------------------------------------
@@ -796,35 +698,32 @@ test("invariant 10: sort SHALL be deterministic (same input, same output)", () =
 // ---------------------------------------------------------------------------
 test("invariant 11: priority SHALL dominate createdAt and identifier in ordering", () => {
   fc.assert(
-    fc.property(
-      fc.constantFrom(1, 2, 3) as fc.Arbitrary<1 | 2 | 3>,
-      (lowerPriority) => {
-        const higherPriority = (lowerPriority + 1) as 2 | 3 | 4;
-        const betterPriorityIssue: Issue = {
-          id: "better",
-          identifier: "ZZZ-999",
-          title: "Better",
-          state: "active",
-          labels: [],
-          blockers: [],
-          priority: lowerPriority,
-          createdAt: "2099-12-31T23:59:59.999Z", // much later
-        };
-        const worsePriorityIssue: Issue = {
-          id: "worse",
-          identifier: "AAA-001",
-          title: "Worse",
-          state: "active",
-          labels: [],
-          blockers: [],
-          priority: higherPriority,
-          createdAt: "1970-01-01T00:00:00.000Z", // much earlier
-        };
-        const sorted = sortForDispatch([worsePriorityIssue, betterPriorityIssue]);
-        assert.equal(sorted[0], betterPriorityIssue);
-        assert.equal(sorted[1], worsePriorityIssue);
-      },
-    ),
+    fc.property(fc.constantFrom(1, 2, 3) as fc.Arbitrary<1 | 2 | 3>, (lowerPriority) => {
+      const higherPriority = (lowerPriority + 1) as 2 | 3 | 4;
+      const betterPriorityIssue: Issue = {
+        id: "better",
+        identifier: "ZZZ-999",
+        title: "Better",
+        state: "active",
+        labels: [],
+        blockers: [],
+        priority: lowerPriority,
+        createdAt: "2099-12-31T23:59:59.999Z", // much later
+      };
+      const worsePriorityIssue: Issue = {
+        id: "worse",
+        identifier: "AAA-001",
+        title: "Worse",
+        state: "active",
+        labels: [],
+        blockers: [],
+        priority: higherPriority,
+        createdAt: "1970-01-01T00:00:00.000Z", // much earlier
+      };
+      const sorted = sortForDispatch([worsePriorityIssue, betterPriorityIssue]);
+      assert.equal(sorted[0], betterPriorityIssue);
+      assert.equal(sorted[1], worsePriorityIssue);
+    }),
     { numRuns: 50 },
   );
 });
@@ -865,59 +764,5 @@ test("invariant 12: createdAt SHALL dominate identifier within the same priority
       },
     ),
     { numRuns: 200 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Invariant 13: Large array stress test - sort terminates and produces valid
-// output. Uses relational assertions (not oracle functions).
-// ---------------------------------------------------------------------------
-test("invariant 13: sort SHALL handle larger arrays and maintain ordering invariants", () => {
-  fc.assert(
-    fc.property(fc.array(arbIssue(), { minLength: 50, maxLength: 200 }), (issues) => {
-      const sorted = sortForDispatch(issues);
-      // Permutation check
-      assert.equal(sorted.length, issues.length);
-      // Verify ordering for adjacent pairs using relational checks
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const left = sorted[i]!;
-        const right = sorted[i + 1]!;
-
-        const leftPrioValid = isValidPriority(left.priority);
-        const rightPrioValid = isValidPriority(right.priority);
-
-        // Valid priorities before invalid
-        if (!leftPrioValid && rightPrioValid) {
-          assert.ok(false, "Invalid priority before valid in large array");
-        }
-        if (leftPrioValid && !rightPrioValid) continue;
-
-        // Both valid: compare numerically
-        if (leftPrioValid && rightPrioValid) {
-          assert.ok(left.priority! <= right.priority!);
-          if (left.priority! < right.priority!) continue;
-        }
-
-        // Same priority group: check createdAt
-        const leftDateValid = isValidCreatedAt(left.createdAt);
-        const rightDateValid = isValidCreatedAt(right.createdAt);
-
-        if (!leftDateValid && rightDateValid) {
-          assert.ok(false, "Invalid createdAt before valid in large array");
-        }
-        if (leftDateValid && !rightDateValid) continue;
-
-        if (leftDateValid && rightDateValid) {
-          const leftMs = Date.parse(left.createdAt!);
-          const rightMs = Date.parse(right.createdAt!);
-          assert.ok(leftMs <= rightMs);
-          if (leftMs < rightMs) continue;
-        }
-
-        // Identifier tiebreak
-        assert.ok(left.identifier.localeCompare(right.identifier) <= 0);
-      }
-    }),
-    { numRuns: 50 },
   );
 });

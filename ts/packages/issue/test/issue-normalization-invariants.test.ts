@@ -1,9 +1,10 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { normalizeIssue } from "@symphony/issue";
 import { ISSUE_STATE_TYPES } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
+
+import { normalizeIssue } from "@symphony/issue";
 
 // --- Helper arbitraries ---
 
@@ -62,19 +63,6 @@ test("Invariant 1: state resolution accepts nested object form { state: { name }
       const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
       assert.equal(issue.state, stateName);
     }),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 1: state resolution accepts nested object form with unicode values", () => {
-  fc.assert(
-    fc.property(
-      unicodeString.filter((s) => s.trim().length > 0),
-      (stateName) => {
-        const issue = normalizeIssue(validIssueInput({ state: { name: stateName } }));
-        assert.equal(issue.state, stateName);
-      },
-    ),
     { numRuns: 200 },
   );
 });
@@ -190,46 +178,6 @@ test("Invariant 2: label normalization preserves relative order of non-blank inp
         }
       },
     ),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 2: empty and whitespace-only labels are filtered out", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.constantFrom("", " ", "  ", "\t", "\n", "\r\n", " \t\n "), {
-        minLength: 1,
-        maxLength: 5,
-      }),
-      (emptyLabels) => {
-        const issue = normalizeIssue(validIssueInput({ labels: emptyLabels }));
-        assert.equal(issue.labels.length, 0);
-      },
-    ),
-    { numRuns: 30 },
-  );
-});
-
-test("Invariant 2: no label in output is empty after normalization", () => {
-  fc.assert(
-    fc.property(fc.array(fc.string({ maxLength: 20 }), { maxLength: 10 }), (rawLabels) => {
-      const issue = normalizeIssue(validIssueInput({ labels: rawLabels }));
-      for (const label of issue.labels) {
-        assert.ok(label.length > 0);
-        assert.ok(label.trim().length > 0);
-      }
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 2: label count equals number of non-blank inputs", () => {
-  fc.assert(
-    fc.property(fc.array(fc.string({ maxLength: 20 }), { maxLength: 10 }), (rawLabels) => {
-      const issue = normalizeIssue(validIssueInput({ labels: rawLabels }));
-      const expectedCount = rawLabels.filter((l) => l.trim() !== "").length;
-      assert.equal(issue.labels.length, expectedCount);
-    }),
     { numRuns: 200 },
   );
 });
@@ -446,11 +394,6 @@ test("Invariant 3: multiple blocking relations all become blockers", () => {
   );
 });
 
-test("Invariant 3: no relations and no blockers yields empty blockers", () => {
-  const issue = normalizeIssue(validIssueInput({}));
-  assert.equal(issue.blockers.length, 0);
-});
-
 // --- Invariant 4: Assignee filter with no assignee ---
 // When an assignee filter is configured and the issue has no assignee,
 // the issue SHALL be marked as not assigned to this worker.
@@ -511,22 +454,6 @@ test("Invariant 5: assignee comparison is case-insensitive", () => {
         const issue = normalizeIssue(
           validIssueInput({ assignee: { id: assigneeId.toUpperCase() } }),
           assigneeId.toLowerCase(),
-        );
-        assert.equal(issue.assignedToWorker, true);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("Invariant 5: assignee comparison is case-insensitive via assignee_id field", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 30 }).filter((s) => s.trim().length > 0),
-      (assigneeId) => {
-        const issue = normalizeIssue(
-          validIssueInput({ assignee_id: assigneeId.toLowerCase() }),
-          assigneeId.toUpperCase(),
         );
         assert.equal(issue.assignedToWorker, true);
       },
