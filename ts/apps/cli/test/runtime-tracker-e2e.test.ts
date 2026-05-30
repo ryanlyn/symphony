@@ -98,9 +98,12 @@ test("runtime discovers a bot-mention issue from a real Slack transport via crea
     { SLACK_BOT_TOKEN: "xoxb-test" },
   );
 
-  // Use the real SlackTrackerClient against an in-memory transport. createTrackerClient would
-  // build a SlackWebTransport (network), so inject the in-memory transport via the client class
-  // the factory selects, then prove the runtime's candidate path surfaces the active mention.
+  // Prove the production factory selects the Slack client for kind:"slack" WITHOUT touching the
+  // network: createTrackerClient builds a SlackWebTransport-backed client, so we only assert its
+  // type and never poll it (a real fetch would hit Slack). The behavioral e2e below then reuses
+  // the same SlackTrackerClient class with an in-memory transport so candidate discovery is real.
+  assert.ok(createTrackerClient(settings) instanceof SlackTrackerClient);
+
   const client = new SlackTrackerClient(settings, transport);
 
   const candidates = await client.fetchCandidateIssues();

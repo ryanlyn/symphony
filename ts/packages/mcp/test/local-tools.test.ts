@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
+import { BoardStore } from "@symphony/local-tracker";
 import { test } from "vitest";
 
 import { assert } from "../../../test/assert.js";
@@ -50,6 +51,22 @@ test("local tools create, update status, and comment on the board", async () => 
   const file = await readFile(path.join(dir, "BOARD-1.md"), "utf8");
   assert.match(file, /status: In Progress/);
   assert.match(file, /agent: opened PR/);
+});
+
+test("local_create_issue persists the body so it round-trips as the issue description", async () => {
+  const { dir, settings } = await localSettings();
+  const body = "Steps to reproduce:\n1. open the app\n2. it crashes";
+
+  const created = await executeTool("local_create_issue", { title: "Crash", body }, settings);
+  assert.equal(created.success, true);
+  // The tool's own returned issue carries the body through as the description.
+  assert.equal((created.result as { issue: { description: string } }).issue.description, body);
+
+  // And it is actually persisted: a fresh BoardStore reading the same dir (the path the daemon
+  // polls) sees the body as the description, proving the write reaches disk, not just the response.
+  const reread = await new BoardStore(dir).getByIds(["BOARD-1"]);
+  assert.equal(reread.length, 1);
+  assert.equal(reread[0]!.description, body);
 });
 
 test("local tools reject unknown names", async () => {

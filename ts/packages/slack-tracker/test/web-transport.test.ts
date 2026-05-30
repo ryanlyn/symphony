@@ -67,6 +67,35 @@ test("listMentions filters to the configured bot user when botUserId is set", as
   );
 });
 
+test("listMentions falls back to any mention when no botUserId is configured", async () => {
+  // Negative control for the bot-id filter, on the SAME web transport and identical payload as the
+  // positive test above. With NO botUserId set, a message mentioning a non-bot user ("1.1",
+  // <@U_OTHER>) IS returned via the any-mention fallback. The only difference from the positive
+  // test is the absent botUserId, so its disappearance there is provably the filter at work - not
+  // some unrelated parsing of those messages.
+  const fetchImpl = (async () => {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { ts: "1.1", text: "<@U_OTHER> human chatter", reactions: [] },
+          { ts: "1.2", text: "<@U_BOT> do it", reactions: [] },
+          { ts: "1.3", text: "<@U_BOT|worker> and this", reactions: [] },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl);
+  const messages = await transport.listMentions(["C1"]);
+
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.1", "1.2", "1.3"],
+  );
+});
+
 test("listMentions follows response_metadata.next_cursor across pages", async () => {
   const calls: Array<{ url: string }> = [];
   const fetchImpl = (async (url: string | URL) => {
