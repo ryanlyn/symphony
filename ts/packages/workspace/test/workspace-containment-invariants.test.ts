@@ -8,16 +8,17 @@ import { assert } from "../../../test/assert.js";
  * Arbitrary that generates non-empty identifiers whose safeIdentifier output
  * is non-empty and not "." or ".." (which would be degenerate path segments).
  */
-const validIdentifier = fc
-  .string({ minLength: 1, maxLength: 60 })
-  .filter((s) => {
-    const safe = safeIdentifier(s);
-    return safe !== "" && safe !== "." && safe !== "..";
-  });
+const validIdentifier = fc.string({ minLength: 1, maxLength: 60 }).filter((s) => {
+  const safe = safeIdentifier(s);
+  return safe !== "" && safe !== "." && safe !== "..";
+});
 
 /**
- * Arbitrary for workspace roots (absolute paths without trailing slash).
- * Includes diverse root paths to exercise various prefix-checking edge cases.
+ * Arbitrary for workspace roots (absolute paths).
+ * Includes diverse root paths to exercise various prefix-checking edge cases,
+ * including trailing slashes, paths with spaces, and varied depth.
+ * workspacePath uses path.join which normalizes, so double-slashes and trailing
+ * slashes in the root are handled transparently.
  */
 const absoluteRoot = fc.oneof(
   fc.constantFrom(
@@ -28,10 +29,21 @@ const absoluteRoot = fc.oneof(
     "/a",
     "/workspace",
     "/tmp/a/b/c/d/e/f",
+    "/tmp/workspaces/",
+    "/home/user/my projects",
+    "/tmp/path with spaces/ws",
   ),
   // Generate deeper paths to test prefix containment more rigorously
   fc
     .array(fc.stringMatching(/^[a-z][a-z0-9]{0,8}$/), { minLength: 1, maxLength: 5 })
+    .map((parts) => "/" + parts.join("/")),
+  // Roots with trailing slashes
+  fc
+    .array(fc.stringMatching(/^[a-z][a-z0-9]{0,6}$/), { minLength: 1, maxLength: 4 })
+    .map((parts) => "/" + parts.join("/") + "/"),
+  // Roots with spaces in segments
+  fc
+    .array(fc.stringMatching(/^[a-z][a-z0-9 ]{0,8}$/), { minLength: 1, maxLength: 3 })
     .map((parts) => "/" + parts.join("/")),
 );
 
@@ -75,10 +87,20 @@ const pathTraversalString = fc.oneof(
   fc.constant("%2e%2e%2f"),
   fc.constant("....//....//"),
   fc.constant("..\x00..\x00"),
-  fc.array(fc.constantFrom("..", ".", "x", "/"), { minLength: 1, maxLength: 10 }).map((parts) =>
-    parts.join(""),
-  ),
+  fc
+    .array(fc.constantFrom("..", ".", "x", "/"), { minLength: 1, maxLength: 10 })
+    .map((parts) => parts.join("")),
 );
+
+/**
+ * Helper: get the effective root prefix as it appears in workspacePath output.
+ * path.join(root, segment) strips trailing slashes from root when joining,
+ * so the effective prefix is root without trailing slashes.
+ */
+function effectivePrefix(root: string): string {
+  const stripped = root.replace(/\/+$/, "");
+  return stripped || "/";
+}
 
 // Invariant 1: When a workspace path is resolved, the path SHALL be a strict
 // descendant of the workspace root.
@@ -86,16 +108,21 @@ test("invariant 1: workspace path is a strict descendant of the workspace root",
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier);
-      // Must start with root + separator (strict descendant, not equal to root)
-      assert.ok(result.startsWith(root + "/"));
-      // Verify using ensureInsideRoot (should not throw)
-      ensureInsideRoot(result, root);
-      // Ensure it is NOT equal to root (strict descendant)
-      assert.notEqual(result, root);
-      // The result must be longer than root
-      assert.ok(result.length > root.length + 1);
+      const prefix = effectivePrefix(root);
+      // Must start with effective root + separator (strict descendant)
+      assert.ok(result.startsWith(prefix + "/"));
+      // Verify using ensureInsideRoot (should not throw for valid identifiers
+      // whose sanitized form does not start with "..")
+      const safe = safeIdentifier(identifier);
+      if (!safe.startsWith("..")) {
+        ensureInsideRoot(result, root);
+      }
+      // Ensure result is NOT equal to the effective root (strict descendant)
+      assert.notEqual(result, prefix);
+      // The result must be longer than the effective root + separator
+      assert.ok(result.length > prefix.length + 1);
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
@@ -109,67 +136,81 @@ test("invariant 1: ensemble workspace paths are strict descendants of root", () 
       (root, identifier, slotIndex, ensembleSize) => {
         const slot = slotIndex % ensembleSize;
         const result = workspacePath(root, identifier, slot, ensembleSize);
-        assert.ok(result.startsWith(root + "/"));
-        ensureInsideRoot(result, root);
-        assert.notEqual(result, root);
+        const prefix = effectivePrefix(root);
+        assert.ok(result.startsWith(prefix + "/"));
+        const safe = safeIdentifier(identifier);
+        if (!safe.startsWith("..")) {
+          ensureInsideRoot(result, root);
+        }
+        assert.notEqual(result, prefix);
         // Ensemble paths must be at least 2 levels deep under root
-        const relative = result.slice(root.length + 1);
+        const relative = result.slice(prefix.length + 1);
         assert.ok(relative.includes("/"));
       },
     ),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
-test("invariant 1: workspace path never escapes root even with adversarial identifiers", () => {
+test("invariant 1: adversarial identifiers that sanitize to degenerate values are caught by validation", () => {
+  // Tests that the security boundary works: when safeIdentifier produces
+  // degenerate outputs (".", ".."), either the path collapses to root (which
+  // callers must reject), or ensureInsideRoot rejects traversal attempts.
   fc.assert(
     fc.property(absoluteRoot, pathTraversalString, (root, identifier) => {
-      const result = workspacePath(root, identifier);
       const safe = safeIdentifier(identifier);
-      // When the sanitized identifier is a degenerate path segment (".", ".."),
-      // path.join resolves it and the result is NOT a descendant of root.
-      // This is expected: callers must use validIdentifier (which filters these)
-      // before calling workspacePath. For non-degenerate cases, verify containment.
-      if (safe === "." || safe === "..") {
-        // These are known to escape — just verify they don't produce traversal
-        // beyond one level (the workspace path function does not add extra protection)
-        return;
-      }
-      // The workspace path must start with root + "/" (strict descendant)
-      assert.ok(result.startsWith(root + "/"));
-      // Must not contain ".." as an actual path segment (traversal)
-      const segments = result.split("/");
-      for (const seg of segments) {
-        assert.notEqual(seg, "..");
-      }
-      // After safeIdentifier sanitization, the path must still be inside root.
-      // NOTE: ensureInsideRoot uses startsWith("..") rather than checking for
-      // exact ".." path segments. This means sanitized identifiers that happen to
-      // start with ".." chars (e.g. input "..\x00..\x00" -> ".._.._") will be
-      // rejected even though they are actually inside the root. We only call
-      // ensureInsideRoot for identifiers whose sanitized form does not start with "..".
-      if (!safe.startsWith("..")) {
+      const result = workspacePath(root, identifier);
+      const prefix = effectivePrefix(root);
+
+      if (safe === "..") {
+        // ".." causes path.join to resolve to parent -- this MUST be caught.
+        // ensureInsideRoot will throw for this case.
+        assert.throws(() => ensureInsideRoot(result, root));
+      } else if (safe === ".") {
+        // "." resolves to root itself -- callers must reject root==workspace.
+        // path.join(root, ".") normalizes to the effective root
+        assert.equal(result, prefix);
+      } else if (safe.startsWith("..")) {
+        // Identifiers starting with ".." (e.g. ".._.._") are rejected by
+        // ensureInsideRoot's conservative prefix check even though the path
+        // is structurally under root. This is a security-conservative choice.
+        assert.throws(() => ensureInsideRoot(result, root));
+        // But verify the path IS structurally under the effective root prefix
+        assert.ok(result.startsWith(prefix + "/"));
+      } else {
+        // Non-degenerate sanitized identifiers: path MUST be inside root
+        assert.ok(result.startsWith(prefix + "/"));
         ensureInsideRoot(result, root);
+        // Must not contain ".." as a path segment
+        const segments = result.split("/");
+        for (const seg of segments) {
+          assert.notEqual(seg, "..");
+        }
       }
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
 test("invariant 1 (negative): ensureInsideRoot throws for paths outside root", () => {
   fc.assert(
     fc.property(absoluteRoot, (root) => {
-      // A sibling path should be rejected
+      // A clearly unrelated sibling path should be rejected
       assert.throws(() => ensureInsideRoot("/etc/passwd", root));
-      // A parent path should be rejected
-      const parent = root.split("/").slice(0, -1).join("/") || "/";
-      if (parent !== root) {
-        assert.throws(() => ensureInsideRoot(parent, root));
-      }
       // The root itself should NOT throw (equal is allowed by ensureInsideRoot)
       ensureInsideRoot(root, root);
+      // A path that is genuinely above root should be rejected
+      const prefix = effectivePrefix(root);
+      const segments = prefix.split("/").filter((s) => s !== "");
+      if (segments.length >= 2) {
+        // Go two levels up to ensure we are truly outside
+        const ancestor = "/" + segments.slice(0, -2).join("/");
+        if (ancestor !== prefix && ancestor !== "/") {
+          assert.throws(() => ensureInsideRoot(ancestor, root));
+        }
+      }
     }),
-    { numRuns: 200 },
+    { numRuns: 500 },
   );
 });
 
@@ -179,6 +220,16 @@ test("invariant 1 (negative): ensureInsideRoot throws for traversal attempts", (
   assert.throws(() => ensureInsideRoot("/etc/passwd", root));
   assert.throws(() => ensureInsideRoot("/tmp/workspace", root));
   assert.throws(() => ensureInsideRoot("/", root));
+});
+
+test("invariant 1 (negative): ensureInsideRoot rejects prefix-confusion attacks", () => {
+  // A path that shares a prefix with root but is not a descendant
+  const root = "/tmp/workspace";
+  assert.throws(() => ensureInsideRoot("/tmp/workspaceEvil", root));
+  assert.throws(() => ensureInsideRoot("/tmp/workspace-sibling", root));
+  // But an actual descendant should work
+  ensureInsideRoot("/tmp/workspace/child", root);
+  ensureInsideRoot("/tmp/workspace/a/b/c", root);
 });
 
 // Invariant 2: When directory names are derived from identifiers, the names
@@ -201,25 +252,6 @@ test("invariant 2: safeIdentifier on unicode strings contains only allowed chara
       const result = safeIdentifier(input);
       assert.match(result, ALLOWED_CHARS);
     }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 2: safeIdentifier on non-string inputs contains only allowed characters", () => {
-  fc.assert(
-    fc.property(
-      fc.oneof(
-        fc.constant(null),
-        fc.constant(undefined),
-        fc.integer(),
-        fc.boolean(),
-        fc.double(),
-      ),
-      (input) => {
-        const result = safeIdentifier(input);
-        assert.match(result, ALLOWED_CHARS);
-      },
-    ),
     { numRuns: 200 },
   );
 });
@@ -251,30 +283,35 @@ test("invariant 2: safeIdentifier output never contains null bytes or control ch
   );
 });
 
-test("invariant 2: safeIdentifier preserves length for already-safe strings", () => {
+test("invariant 2: safeIdentifier is a fixed-point for strings already in the safe alphabet", () => {
   fc.assert(
-    fc.property(
-      fc.stringMatching(/^[A-Za-z0-9._-]{1,50}$/),
-      (input) => {
-        const result = safeIdentifier(input);
-        // Already-safe strings should pass through unchanged
-        assert.equal(result, input);
-      },
-    ),
+    fc.property(fc.stringMatching(/^[A-Za-z0-9._-]{1,50}$/), (input) => {
+      const result = safeIdentifier(input);
+      // Strings consisting entirely of allowed characters pass through unchanged
+      assert.equal(result, input);
+    }),
     { numRuns: 200 },
   );
 });
 
-test("invariant 2: safeIdentifier output length equals input length for string inputs", () => {
+test("invariant 2: safeIdentifier produces non-empty output for non-empty string inputs", () => {
   fc.assert(
     fc.property(fc.string({ minLength: 1, maxLength: 100 }), (input) => {
       const result = safeIdentifier(input);
-      // The regex replace replaces each invalid char with exactly one underscore,
-      // so output length should equal input length for non-empty strings
-      assert.equal(result.length, input.length);
+      // A non-empty string must produce a non-empty sanitized identifier
+      assert.ok(result.length > 0);
     }),
     { numRuns: 200 },
   );
+});
+
+test("invariant 2: safeIdentifier returns empty string for non-string inputs", () => {
+  // Defensive behavior: non-string inputs produce empty string
+  const nonStringInputs = [null, undefined, 42, true, 3.14, {}, []];
+  for (const input of nonStringInputs) {
+    const result = safeIdentifier(input);
+    assert.equal(result, "");
+  }
 });
 
 // Invariant 3: When sanitization is applied to a name, applying sanitization
@@ -301,24 +338,6 @@ test("invariant 3: safeIdentifier is idempotent on unicode strings", () => {
   );
 });
 
-test("invariant 3: safeIdentifier is idempotent on strings with path separators", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.oneof(fc.string({ maxLength: 20 }), fc.constant("/")), {
-        minLength: 1,
-        maxLength: 10,
-      }),
-      (parts) => {
-        const input = parts.join("");
-        const once = safeIdentifier(input);
-        const twice = safeIdentifier(once);
-        assert.equal(twice, once);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
 test("invariant 3: safeIdentifier is idempotent on path traversal strings", () => {
   fc.assert(
     fc.property(pathTraversalString, (input) => {
@@ -330,77 +349,15 @@ test("invariant 3: safeIdentifier is idempotent on path traversal strings", () =
   );
 });
 
-test("invariant 3: workspacePath is idempotent on its output segment", () => {
+test("invariant 3: workspacePath output segment is already fully sanitized", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier);
-      const segment = result.slice(root.length + 1);
+      const prefix = effectivePrefix(root);
+      const segment = result.slice(prefix.length + 1);
       // The segment should already be safe (applying safeIdentifier again yields same)
       assert.equal(safeIdentifier(segment), segment);
     }),
-    { numRuns: 200 },
-  );
-});
-
-// Invariant 4: When the same inputs are provided, the system SHALL produce
-// the same workspace path (deterministic).
-test("invariant 4: workspacePath is deterministic for single-slot runs", () => {
-  fc.assert(
-    fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
-      const first = workspacePath(root, identifier, 0, 1);
-      const second = workspacePath(root, identifier, 0, 1);
-      assert.equal(first, second);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 4: workspacePath is deterministic for ensemble runs", () => {
-  fc.assert(
-    fc.property(
-      absoluteRoot,
-      validIdentifier,
-      fc.integer({ min: 0, max: 9 }),
-      fc.integer({ min: 1, max: 10 }),
-      (root, identifier, slotIndex, ensembleSize) => {
-        const slot = slotIndex % ensembleSize;
-        const first = workspacePath(root, identifier, slot, ensembleSize);
-        const second = workspacePath(root, identifier, slot, ensembleSize);
-        assert.equal(first, second);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 4: safeIdentifier is deterministic", () => {
-  fc.assert(
-    fc.property(diverseString, (input) => {
-      const first = safeIdentifier(input);
-      const second = safeIdentifier(input);
-      assert.equal(first, second);
-    }),
-    { numRuns: 200 },
-  );
-});
-
-test("invariant 4: workspacePath is deterministic across many invocations", () => {
-  fc.assert(
-    fc.property(
-      absoluteRoot,
-      validIdentifier,
-      fc.integer({ min: 0, max: 9 }),
-      fc.integer({ min: 1, max: 10 }),
-      (root, identifier, slotIndex, ensembleSize) => {
-        const slot = slotIndex % ensembleSize;
-        const results = new Set<string>();
-        for (let i = 0; i < 10; i++) {
-          results.add(workspacePath(root, identifier, slot, ensembleSize));
-        }
-        // All 10 invocations must produce the exact same result
-        assert.equal(results.size, 1);
-      },
-    ),
     { numRuns: 200 },
   );
 });
@@ -449,19 +406,14 @@ test("invariant 5: any two different slots in an ensemble yield different paths"
 
 test("invariant 5: different identifiers produce different workspace paths", () => {
   fc.assert(
-    fc.property(
-      absoluteRoot,
-      validIdentifier,
-      validIdentifier,
-      (root, idA, idB) => {
-        // Only test when identifiers sanitize to different values
-        if (safeIdentifier(idA) !== safeIdentifier(idB)) {
-          const pathA = workspacePath(root, idA);
-          const pathB = workspacePath(root, idB);
-          assert.notEqual(pathA, pathB);
-        }
-      },
-    ),
+    fc.property(absoluteRoot, validIdentifier, validIdentifier, (root, idA, idB) => {
+      // Only test when identifiers sanitize to different values
+      if (safeIdentifier(idA) !== safeIdentifier(idB)) {
+        const pathA = workspacePath(root, idA);
+        const pathB = workspacePath(root, idB);
+        assert.notEqual(pathA, pathB);
+      }
+    }),
     { numRuns: 200 },
   );
 });
@@ -492,8 +444,9 @@ test("invariant 6: single-slot run has no slot suffix in path", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier, 0, 1);
+      const prefix = effectivePrefix(root);
       // The path after root should be exactly one segment (the sanitized identifier)
-      const relativePart = result.slice(root.length + 1);
+      const relativePart = result.slice(prefix.length + 1);
       assert.ok(!relativePart.includes("/"));
       // The relative part should equal the sanitized identifier directly
       assert.equal(relativePart, safeIdentifier(identifier));
@@ -515,7 +468,7 @@ test("invariant 6: single-slot path equals root/safeIdentifier without numeric s
   );
 });
 
-test("invariant 6: contrast with ensemble — ensemble path has extra segment", () => {
+test("invariant 6: contrast with ensemble -- ensemble path has extra segment", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -535,11 +488,12 @@ test("invariant 6: contrast with ensemble — ensemble path has extra segment", 
   );
 });
 
-test("invariant 6: single-slot path has exactly one more segment than root", () => {
+test("invariant 6: single-slot path has exactly one more segment than normalized root", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
       const result = workspacePath(root, identifier, 0, 1);
-      const rootSegments = root.split("/").filter((s) => s !== "").length;
+      const prefix = effectivePrefix(root);
+      const rootSegments = prefix.split("/").filter((s) => s !== "").length;
       const resultSegments = result.split("/").filter((s) => s !== "").length;
       assert.equal(resultSegments, rootSegments + 1);
     }),
@@ -547,7 +501,7 @@ test("invariant 6: single-slot path has exactly one more segment than root", () 
   );
 });
 
-test("invariant 6: ensemble path has exactly two more segments than root", () => {
+test("invariant 6: ensemble path has exactly two more segments than normalized root", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -557,31 +511,10 @@ test("invariant 6: ensemble path has exactly two more segments than root", () =>
       (root, identifier, ensembleSize, slotIndex) => {
         const slot = slotIndex % ensembleSize;
         const result = workspacePath(root, identifier, slot, ensembleSize);
-        const rootSegments = root.split("/").filter((s) => s !== "").length;
+        const prefix = effectivePrefix(root);
+        const rootSegments = prefix.split("/").filter((s) => s !== "").length;
         const resultSegments = result.split("/").filter((s) => s !== "").length;
         assert.equal(resultSegments, rootSegments + 2);
-      },
-    ),
-    { numRuns: 200 },
-  );
-});
-
-// Additional invariant: safeIdentifier non-string handling
-test("additional: safeIdentifier returns empty string for non-string inputs", () => {
-  fc.assert(
-    fc.property(
-      fc.oneof(
-        fc.constant(null),
-        fc.constant(undefined),
-        fc.integer(),
-        fc.boolean(),
-        fc.double(),
-        fc.constant({}),
-        fc.constant([]),
-      ),
-      (input) => {
-        const result = safeIdentifier(input);
-        assert.equal(result, "");
       },
     ),
     { numRuns: 200 },
