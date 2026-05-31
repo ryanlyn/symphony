@@ -772,83 +772,37 @@ describe("INVARIANT: When all ensemble slots are claimed, the dispatch SHALL be 
       { numRuns: 50 },
     );
   });
-});
 
-test("ensemble label overrides settings and all slots claimed blocks dispatch", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
-      const issueId = "issue-ensemble-label";
-      const issue = validIssue({
-        id: issueId,
-        state: "Todo",
-        stateType: "unstarted",
-        blockers: [],
-        assignedToWorker: true,
-        labels: [`ensemble:${ensembleSize}`],
-      });
-      const settings = makeSettings({ ensembleSize: 1 });
-      const claimed = new Set<string>();
-      for (let i = 0; i < ensembleSize; i++) claimed.add(slotKey(issueId, i));
-      assert.equal(
-        shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: claimed }),
-        false,
-      );
-    }),
-    { numRuns: 50 },
-  );
-});
-
-test("partially claimed ensemble slots still allow dispatch", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
-      const issueId = "issue-partial";
-      const issue = validIssue({
-        id: issueId,
-        state: "Todo",
-        stateType: "unstarted",
-        blockers: [],
-        assignedToWorker: true,
-      });
-      const settings = makeSettings({ ensembleSize });
-      const claimed = new Set<string>();
-      for (let i = 0; i < ensembleSize - 1; i++) claimed.add(slotKey(issueId, i));
-      assert.equal(
-        shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: claimed }),
-        true,
-      );
-    }),
-    { numRuns: 50 },
-  );
-});
-
-test("slotKey is injective -- different inputs produce different keys", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 30 }),
-      fc.string({ minLength: 1, maxLength: 30 }),
-      fc.integer({ min: 0, max: 100 }),
-      fc.integer({ min: 0, max: 100 }),
-      (issueIdA, issueIdB, slotA, slotB) => {
-        if (issueIdA !== issueIdB)
-          assert.notEqual(slotKey(issueIdA, slotA), slotKey(issueIdB, slotA));
-        if (slotA !== slotB) assert.notEqual(slotKey(issueIdA, slotA), slotKey(issueIdA, slotB));
-        assert.equal(slotKey(issueIdA, slotA), slotKey(issueIdA, slotA));
-      },
-    ),
-    { numRuns: 500 },
-  );
-});
-
-test("claiming slots for a different issue does not block this issue", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 1, max: 5 }),
-      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim() !== ""),
-      fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim() !== ""),
-      (ensembleSize, issueIdA, issueIdB) => {
-        fc.pre(issueIdA !== issueIdB);
+  test("ensemble label overrides settings and all slots claimed blocks dispatch", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
+        const issueId = "issue-ensemble-label";
         const issue = validIssue({
-          id: issueIdA,
+          id: issueId,
+          state: "Todo",
+          stateType: "unstarted",
+          blockers: [],
+          assignedToWorker: true,
+          labels: [`ensemble:${ensembleSize}`],
+        });
+        const settings = makeSettings({ ensembleSize: 1 });
+        const claimed = new Set<string>();
+        for (let i = 0; i < ensembleSize; i++) claimed.add(slotKey(issueId, i));
+        assert.equal(
+          shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: claimed }),
+          false,
+        );
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  test("partially claimed ensemble slots still allow dispatch", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 2, max: 5 }), (ensembleSize) => {
+        const issueId = "issue-partial";
+        const issue = validIssue({
+          id: issueId,
           state: "Todo",
           stateType: "unstarted",
           blockers: [],
@@ -856,15 +810,61 @@ test("claiming slots for a different issue does not block this issue", () => {
         });
         const settings = makeSettings({ ensembleSize });
         const claimed = new Set<string>();
-        for (let i = 0; i < ensembleSize; i++) claimed.add(slotKey(issueIdB, i));
+        for (let i = 0; i < ensembleSize - 1; i++) claimed.add(slotKey(issueId, i));
         assert.equal(
           shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: claimed }),
           true,
         );
-      },
-    ),
-    { numRuns: 100 },
-  );
+      }),
+      { numRuns: 50 },
+    );
+  });
+
+  test("slotKey is injective -- different inputs produce different keys", () => {
+    fc.assert(
+      fc.property(
+        fc.string({ minLength: 1, maxLength: 30 }),
+        fc.string({ minLength: 1, maxLength: 30 }),
+        fc.integer({ min: 0, max: 100 }),
+        fc.integer({ min: 0, max: 100 }),
+        (issueIdA, issueIdB, slotA, slotB) => {
+          if (issueIdA !== issueIdB)
+            assert.notEqual(slotKey(issueIdA, slotA), slotKey(issueIdB, slotA));
+          if (slotA !== slotB) assert.notEqual(slotKey(issueIdA, slotA), slotKey(issueIdA, slotB));
+          assert.equal(slotKey(issueIdA, slotA), slotKey(issueIdA, slotA));
+        },
+      ),
+      { numRuns: 500 },
+    );
+  });
+
+  test("claiming slots for a different issue does not block this issue", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 5 }),
+        fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim() !== ""),
+        fc.string({ minLength: 1, maxLength: 20 }).filter((s) => s.trim() !== ""),
+        (ensembleSize, issueIdA, issueIdB) => {
+          fc.pre(issueIdA !== issueIdB);
+          const issue = validIssue({
+            id: issueIdA,
+            state: "Todo",
+            stateType: "unstarted",
+            blockers: [],
+            assignedToWorker: true,
+          });
+          const settings = makeSettings({ ensembleSize });
+          const claimed = new Set<string>();
+          for (let i = 0; i < ensembleSize; i++) claimed.add(slotKey(issueIdB, i));
+          assert.equal(
+            shouldDispatchIssue(issue, settings, { runningCount: 0, claimedSlots: claimed }),
+            true,
+          );
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
 });
 
 describe("INVARIANT: When all worker hosts are at capacity, the system SHALL not dispatch new work.", () => {
@@ -889,27 +889,27 @@ describe("INVARIANT: When all worker hosts are at capacity, the system SHALL not
       { numRuns: 20 },
     );
   });
-});
 
-test("workerCapacityAvailable=true or undefined does NOT block", () => {
-  fc.assert(
-    fc.property(fc.constantFrom(true, undefined), (workerCapacity) => {
-      const issue = validIssue({
-        state: "Todo",
-        stateType: "unstarted",
-        blockers: [],
-        assignedToWorker: true,
-      });
-      const settings = makeSettings();
-      const state = {
-        runningCount: 0,
-        claimedSlots: new Set<string>(),
-        workerCapacityAvailable: workerCapacity,
-      };
-      assert.notEqual(dispatchBlockReason(issue, settings, state), "worker_host_capacity");
-    }),
-    { numRuns: 10 },
-  );
+  test("workerCapacityAvailable=true or undefined does NOT block", () => {
+    fc.assert(
+      fc.property(fc.constantFrom(true, undefined), (workerCapacity) => {
+        const issue = validIssue({
+          state: "Todo",
+          stateType: "unstarted",
+          blockers: [],
+          assignedToWorker: true,
+        });
+        const settings = makeSettings();
+        const state = {
+          runningCount: 0,
+          claimedSlots: new Set<string>(),
+          workerCapacityAvailable: workerCapacity,
+        };
+        assert.notEqual(dispatchBlockReason(issue, settings, state), "worker_host_capacity");
+      }),
+      { numRuns: 10 },
+    );
+  });
 });
 
 describe("INVARIANT: When shouldDispatchIssue returns true, all sub-checks SHALL pass.", () => {
@@ -934,24 +934,24 @@ describe("INVARIANT: When shouldDispatchIssue returns true, all sub-checks SHALL
       { numRuns: 500 },
     );
   });
-});
 
-test("if ANY sub-check fails THEN shouldDispatchIssue returns false", () => {
-  fc.assert(
-    fc.property(
-      issueArb({
-        validFields: true,
-        activeState: false,
-        assignedToWorker: true,
-        hasOpenBlockers: false,
-      }),
-      (issue) => {
-        const settings = makeSettings();
-        const state = { runningCount: 0, claimedSlots: new Set<string>() };
-        assert.equal(issueIsActive(issue, settings), false);
-        assert.equal(shouldDispatchIssue(issue, settings, state), false);
-      },
-    ),
-    { numRuns: 100 },
-  );
+  test("if ANY sub-check fails THEN shouldDispatchIssue returns false", () => {
+    fc.assert(
+      fc.property(
+        issueArb({
+          validFields: true,
+          activeState: false,
+          assignedToWorker: true,
+          hasOpenBlockers: false,
+        }),
+        (issue) => {
+          const settings = makeSettings();
+          const state = { runningCount: 0, claimedSlots: new Set<string>() };
+          assert.equal(issueIsActive(issue, settings), false);
+          assert.equal(shouldDispatchIssue(issue, settings, state), false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
 });
