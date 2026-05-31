@@ -1,9 +1,11 @@
 import { describe, test } from "vitest";
 import fc from "fast-check";
 import { retryBackoffMs } from "@symphony/cli";
-import { MIN_RETRY_DELAY_MS } from "@symphony/policies";
 
 import { assert } from "../../../test/assert.js";
+
+import { MIN_RETRY_DELAY_MS } from "@symphony/policies";
+
 
 test("retryBackoffMs — monotonically non-decreasing for failure kind", () => {
   fc.assert(
