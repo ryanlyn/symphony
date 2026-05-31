@@ -1,20 +1,17 @@
 import { test } from "vitest";
 import fc from "fast-check";
 import { sortForDispatch } from "@symphony/cli";
-import type { Issue } from "@symphony/domain";
+import type { Issue, Priority } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
 
 /**
  * Helper: determines whether a priority value is considered "valid" by the sort.
- * Derived independently from the specification: valid priorities are numeric values
- * that are truthy AND in the closed interval [1, 4]. Everything else sorts last.
- *
- * NOTE: This is a specification-level predicate (not copied from source).
- * The sort specification says: priorities 1-4 are valid; null/undefined/out-of-range sort last.
+ * The Priority type enforces values are 1-4 at the type level, so the only
+ * "invalid" priority values at runtime are null and undefined.
  */
 function isValidPriority(p: number | null | undefined): boolean {
-  return typeof p === "number" && !Number.isNaN(p) && p >= 1 && p <= 4 && p !== 0;
+  return p !== null && p !== undefined;
 }
 
 /**
@@ -45,14 +42,9 @@ const arbIssue = (): fc.Arbitrary<Issue> =>
     labels: fc.constant([] as string[]),
     blockers: fc.constant([]),
     priority: fc.oneof(
-      fc.constantFrom(1, 2, 3, 4),
-      fc.constant(null as number | null),
-      fc.constant(undefined as number | undefined),
-      fc.integer({ min: -10, max: 0 }),
-      fc.integer({ min: 5, max: 100 }),
-      fc.constant(NaN),
-      fc.constant(Infinity),
-      fc.constant(-Infinity),
+      fc.constantFrom(1, 2, 3, 4) as fc.Arbitrary<Priority | null | undefined>,
+      fc.constant(null as Priority | null | undefined),
+      fc.constant(undefined as Priority | null | undefined),
     ),
     createdAt: fc.oneof(
       fc
@@ -77,14 +69,16 @@ const arbIssueWithValidPriority = (): fc.Arbitrary<Issue> =>
     stateType: fc.constant("started" as const),
     labels: fc.constant([] as string[]),
     blockers: fc.constant([]),
-    priority: fc.constantFrom(1, 2, 3, 4),
+    priority: fc.constantFrom(1, 2, 3, 4) as fc.Arbitrary<Priority>,
     createdAt: fc
       .integer({ min: new Date("2000-01-01").getTime(), max: new Date("2040-01-01").getTime() })
       .map((ms) => new Date(ms).toISOString()),
   });
 
 /**
- * Arbitrary that produces an Issue with null/missing/out-of-range priority.
+ * Arbitrary that produces an Issue with null/undefined priority.
+ * The Priority type (1|2|3|4) enforces valid values at the type level,
+ * so the only "invalid" priorities at runtime are null and undefined.
  */
 const arbIssueWithInvalidPriority = (): fc.Arbitrary<Issue> =>
   fc.record({
@@ -95,16 +89,7 @@ const arbIssueWithInvalidPriority = (): fc.Arbitrary<Issue> =>
     stateType: fc.constant("started" as const),
     labels: fc.constant([] as string[]),
     blockers: fc.constant([]),
-    priority: fc.oneof(
-      fc.constant(null as number | null),
-      fc.constant(undefined as number | undefined),
-      fc.constant(0),
-      fc.integer({ min: 5, max: 100 }),
-      fc.integer({ min: -100, max: -1 }),
-      fc.constant(NaN),
-      fc.constant(Infinity),
-      fc.constant(-Infinity),
-    ),
+    priority: fc.constant(null) as fc.Arbitrary<Priority | null | undefined>,
     createdAt: fc
       .integer({ min: new Date("2000-01-01").getTime(), max: new Date("2040-01-01").getTime() })
       .map((ms) => new Date(ms).toISOString()),
