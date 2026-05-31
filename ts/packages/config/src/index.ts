@@ -37,6 +37,7 @@ const coercedBoolean = z.union([
   z.literal("true").transform(() => true),
   z.literal("false").transform(() => false),
 ]);
+const optionalHookScript = z.string().nullable().optional();
 
 const appServerAgentRecordSchema = z
   .object({
@@ -99,10 +100,10 @@ const workerRawSchema = z
   .strict();
 const hooksRawSchema = z
   .object({
-    afterCreate: z.string().optional(),
-    beforeRun: z.string().optional(),
-    afterRun: z.string().optional(),
-    beforeRemove: z.string().optional(),
+    afterCreate: optionalHookScript,
+    beforeRun: optionalHookScript,
+    afterRun: optionalHookScript,
+    beforeRemove: optionalHookScript,
     timeoutMs: coercedPositiveInt.optional(),
   })
   .strict();
@@ -525,6 +526,9 @@ function parseAgents(
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
     const executor = stringValue(recordRaw.executor, normalized === "codex" ? "appserver" : "acp");
+    if (executor !== "appserver" && executor !== "acp") {
+      throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
+    }
     const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
     agents[normalized] = parseAgentRecord(parsed, {
       codex: baseAgents.codex as AppServerAgentConfig,
@@ -812,7 +816,8 @@ function configErrorMessage(error: z.ZodError, baseLabel?: string): string {
   if (issue.code === "invalid_type") {
     const expected = (issue as { expected?: string }).expected;
     if (expected === "string") return `${label} must be a string`;
-    if (expected === "number") return `${label} must be a positive integer`;
+    if (expected === "number") return integerMessageForLabel(label);
+    if (expected === "array") return `${label} must be a list of strings`;
     return `${label} must be a map`;
   }
   if (issue.code === "too_small") return `${label} must be a positive integer`;
@@ -822,10 +827,18 @@ function configErrorMessage(error: z.ZodError, baseLabel?: string): string {
     const innerErrors = (issue as { errors?: unknown[][] }).errors;
     const firstInner = innerErrors?.[0]?.[0] as { expected?: string } | undefined;
     if (firstInner?.expected === "boolean") return `expected a boolean`;
-    if (firstInner?.expected === "number") return `${label} must be a positive integer`;
+    if (firstInner?.expected === "number") return integerMessageForLabel(label);
     return `${label} is invalid: ${issue.message}`;
   }
   return `${label} is invalid: ${issue.message}`;
+}
+
+function integerMessageForLabel(label: string): string {
+  const kind =
+    label === "server.port" || label.endsWith(".stall_timeout_ms")
+      ? "a non-negative integer"
+      : "a positive integer";
+  return `${label} must be ${kind}`;
 }
 
 function camelToSnake(s: string): string {
