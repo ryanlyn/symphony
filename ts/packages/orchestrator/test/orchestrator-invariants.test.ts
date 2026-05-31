@@ -298,12 +298,13 @@ describe("INVARIANT: When a retry becomes due, stale claimed slots SHALL be rele
     // Add stale claim (claimed but NOT running)
     orch.state.claimed.add(slotKey(issue.id, 0));
 
-    // Set a retry entry with dueAt in the past
+    // Set a retry entry with monotonicDeadlineMs in the past
     orch.state.retryAttempts.set(issue.id, {
       issueId: issue.id,
       identifier: issue.identifier,
       attempt: 1,
-      dueAt: new Date(clock.now().getTime() - 1000),
+      monotonicDeadlineMs: clock.monotonicMs() - 1,
+      dueAtIso: new Date(clock.now().getTime() - 1000).toISOString(),
       error: "agent exited",
     });
 
