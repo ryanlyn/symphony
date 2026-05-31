@@ -157,26 +157,47 @@ export class BoardStore {
     await fs.mkdir(this.dir, { recursive: true });
     const contents = this.render(parsed);
     // Serialize id allocation per board DIRECTORY under the same module-level lock so concurrent
-    // creates in one daemon do not all scan the same nextId in lockstep. The exclusive "wx" write
+    // creates in one daemon do not all scan the same nextId in lockstep. The no-overwrite link
     // below is still the authoritative guard (it also defends against any external writer), so the
     // lock is an optimization that also keeps the bounded retry loop from churning.
     return withLock(path.resolve(this.dir), async () => {
-      // Allocate an id with an exclusive create so two racing creates can never pick the
-      // same BOARD-<n>. On collision (EEXIST) we recompute the next id and retry within a
-      // bounded loop rather than blindly overwriting an existing issue file.
-      const attempts = 64;
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        const id = await this.nextId();
-        const target = this.filePath(id);
-        try {
-          await fs.writeFile(target, contents, { encoding: "utf8", flag: "wx" });
-          return await this.read(id);
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
-          throw err;
+      // Crash-atomic publish: write the full contents to a sibling TEMP file first, then PUBLISH
+      // it to the final BOARD-<n>.md with a no-overwrite hard link. fs.link is atomic and fails
+      // with EEXIST if the target already exists, so it is collision-safe (two racing creates can
+      // never pick the same BOARD-<n>, and an external writer is still defended against) AND
+      // crash-safe (a process death mid-write leaves only the ignored temp, never a truncated
+      // BOARD-<n>.md - issueIds() filters to /^BOARD-\d+$/ so the dotted temp is invisible). On
+      // EEXIST we recompute nextId and retry the link, reusing the same fully-written temp file.
+      //
+      // The temp name is NOT a "<BOARD-n>.md" stem (it is dotted and ends in .tmp) so it is never
+      // mistaken for an issue; the id is not part of the name because one temp serves every retry.
+      const tmp = path.join(
+        this.dir,
+        `.BOARD-create.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
+      );
+      try {
+        await fs.writeFile(tmp, contents, "utf8");
+        // Allocate an id with a no-overwrite link so two racing creates can never publish over the
+        // same BOARD-<n>. On collision (EEXIST) we recompute the next id and retry within a bounded
+        // loop rather than blindly overwriting an existing issue file.
+        const attempts = 64;
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          const id = await this.nextId();
+          const target = this.filePath(id);
+          try {
+            await fs.link(tmp, target);
+            return await this.read(id);
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
+            throw err;
+          }
         }
+        throw new Error(`failed to allocate a board id after ${attempts} attempts`);
+      } finally {
+        // Always drop the temp (success or failure). A leftover is harmless - issueIds() ignores
+        // it - but removing it keeps the board dir clean. force:true so a never-created temp is fine.
+        await fs.rm(tmp, { force: true }).catch(() => {});
       }
-      throw new Error(`failed to allocate a board id after ${attempts} attempts`);
     });
   }
 

@@ -1,8 +1,9 @@
+import { promises as nodeFs } from "node:fs";
 import { mkdtemp, readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { test } from "vitest";
+import { test, vi } from "vitest";
 
 import { assert } from "../../../test/assert.js";
 
@@ -323,6 +324,56 @@ test("concurrent create calls allocate unique ids without losing writes", async 
     const fileStat = await stat(path.join(dir, `${id}.md`));
     assert.equal(fileStat.isFile(), true);
   }
+});
+
+test("create publishes crash-atomically: no temp scratch left, file fully-formed", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+
+  const created = await store.create({ title: "Crash safe", body: "Body text", status: "Todo" });
+  assert.equal(created.identifier, "BOARD-1");
+
+  // No ".tmp" scratch file survives a successful create (the finally always unlinks it).
+  const entries = (await readdir(dir)).sort();
+  assert.deepEqual(entries, ["BOARD-1.md"]);
+  assert.equal(
+    entries.some((f) => f.endsWith(".tmp")),
+    false,
+  );
+
+  // The published file is fully-formed: it parses with the correct title and status.
+  const issue = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(issue.title, "Crash safe");
+  assert.equal(issue.state, "Todo");
+  assert.equal(issue.description, "Body text");
+});
+
+test("create leaves NO partial BOARD file when the publish (link) fails", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+
+  // Stub fs.link so the publish step throws a non-EEXIST error once. The fully-written temp must
+  // never become a visible BOARD-<n>.md, and the finally must still clean the temp away.
+  const linkSpy = vi
+    .spyOn(nodeFs, "link")
+    .mockRejectedValueOnce(Object.assign(new Error("simulated publish failure"), { code: "EIO" }));
+  try {
+    await assert.rejects(
+      () => store.create({ title: "Doomed", body: "Body", status: "Todo" }),
+      /simulated publish failure/,
+    );
+  } finally {
+    linkSpy.mockRestore();
+  }
+
+  // No BOARD-<n>.md was published, and no temp scratch file leaked into the board dir.
+  const entries = (await readdir(dir)).sort();
+  assert.deepEqual(entries, []);
+
+  // The board is still healthy: a subsequent create succeeds and claims the first id.
+  const ok = await store.create({ title: "Recovered", status: "Todo" });
+  assert.equal(ok.identifier, "BOARD-1");
+  assert.deepEqual((await readdir(dir)).sort(), ["BOARD-1.md"]);
 });
 
 test("concurrent updateStatus and appendComment on one issue lose nothing (shared module lock)", async () => {
