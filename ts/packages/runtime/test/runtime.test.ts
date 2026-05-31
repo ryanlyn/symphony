@@ -12,6 +12,13 @@ import {
   writeResumeState,
 } from "@symphony/cli";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
+import type {
+  EnsembleSize,
+  NonNegativeTimeoutMs,
+  PositiveIntervalMs,
+  PositiveTimeoutMs,
+} from "@symphony/domain";
+import { unsafeBrand } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
 import { initGitRepo, tempDir, writeExecutable } from "../../../test/helpers.js";
@@ -407,7 +414,7 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   const issue = issueFixture("issue-stalled", "MT-STALLED");
   const root = await tempDir("symphony-ts-runtime-stall-resume");
   const workflow = workflowFixture(root);
-  workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.codex.stallTimeoutMs = unsafeBrand<NonNegativeTimeoutMs>(50);
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
   await initGitRepo(workspace);
   await writeResumeState(workspace, {
@@ -474,9 +481,9 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
   const issue = issueFixture("issue-ensemble-stall-race", "MT-ENSEMBLE-RACE");
   const root = await tempDir("symphony-ts-runtime-ensemble-stall-race");
   const workflow = workflowFixture(root);
-  workflow.settings.agent.ensembleSize = 2;
-  workflow.settings.codex.stallTimeoutMs = 50;
-  workflow.settings.worker.sshTimeoutMs = 2_000;
+  workflow.settings.agent.ensembleSize = unsafeBrand<EnsembleSize>(2);
+  workflow.settings.codex.stallTimeoutMs = unsafeBrand<NonNegativeTimeoutMs>(50);
+  workflow.settings.worker.sshTimeoutMs = unsafeBrand<PositiveTimeoutMs>(2_000);
   const orchestrator = new Orchestrator(workflow.settings);
   const controls = new Map<
     number,
@@ -573,7 +580,7 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
 test("runtime does not record late success after stall reconciliation wins", async () => {
   const issue = issueFixture("issue-late-success", "MT-LATE-SUCCESS");
   const workflow = workflowFixture();
-  workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.codex.stallTimeoutMs = unsafeBrand<NonNegativeTimeoutMs>(50);
   const orchestrator = new Orchestrator(workflow.settings);
   let aborted = false;
   const runControl: { resolve?: (value: any) => void } = {};
@@ -631,8 +638,8 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   const issue = issueFixture("issue-stale-finally", "MT-STALE-FINALLY");
   const root = await tempDir("symphony-ts-runtime-stale-finally");
   const workflow = workflowFixture(root);
-  workflow.settings.agent.maxRetryBackoffMs = 0;
-  workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.agent.maxRetryBackoffMs = unsafeBrand<PositiveTimeoutMs>(1);
+  workflow.settings.codex.stallTimeoutMs = unsafeBrand<NonNegativeTimeoutMs>(50);
   const orchestrator = new Orchestrator(workflow.settings);
   let attempts = 0;
   const abortedAttempts = new Set<number>();
@@ -963,8 +970,8 @@ test("runtime schedules retry refresh timers independently of the poll cadence",
   const issue = issueFixture("issue-timer-retry", "MT-TIMER");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   const workflow = workflowFixture();
-  workflow.settings.polling.intervalMs = 60_000;
-  workflow.settings.agent.maxRetryBackoffMs = 20;
+  workflow.settings.polling.intervalMs = unsafeBrand<PositiveIntervalMs>(60_000);
+  workflow.settings.agent.maxRetryBackoffMs = unsafeBrand<PositiveTimeoutMs>(20);
   let attempts = 0;
   const runtime = new SymphonyRuntime(
     runtimeOptions({

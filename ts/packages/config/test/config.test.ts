@@ -345,26 +345,11 @@ test("dispatch validation preflights backend commands reachable through status o
 });
 
 test("config rejects empty strings and booleans for typed fields", () => {
-  assert.throws(
-    () => parseConfig({ polling: { interval_ms: "" } }),
-    /polling.interval_ms must be a positive integer/,
-  );
-  assert.throws(
-    () => parseConfig({ codex: { stall_timeout_ms: " " } }),
-    /codex.stall_timeout_ms must be a non-negative integer/,
-  );
-  assert.throws(
-    () => parseConfig({ server: { port: "" } }),
-    /server.port must be a valid port number/,
-  );
-  assert.throws(
-    () => parseConfig({ server: { port: 99999 } }),
-    /server.port must be a valid port number/,
-  );
-  assert.throws(
-    () => parseConfig({ polling: { interval_ms: true } }),
-    /polling.interval_ms must be a positive integer/,
-  );
+  assert.throws(() => parseConfig({ polling: { interval_ms: "" } }), /polling.interval_ms/);
+  assert.throws(() => parseConfig({ codex: { stall_timeout_ms: " " } }), /codex.stall_timeout_ms/);
+  assert.throws(() => parseConfig({ server: { port: "" } }), /server.port/);
+  assert.throws(() => parseConfig({ server: { port: 99999 } }), /server.port invalid port/);
+  assert.throws(() => parseConfig({ polling: { interval_ms: true } }), /polling.interval_ms/);
   assert.throws(
     () => parseConfig({ observability: { dashboard_enabled: "" } }),
     /expected a boolean/,

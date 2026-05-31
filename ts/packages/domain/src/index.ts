@@ -44,6 +44,135 @@ export const CODEX_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full
 
 export type CodexSandboxMode = (typeof CODEX_SANDBOX_MODES)[number];
 
+// ─── Bound constants ────────────────────────────────────────────────────────
+
+export const PORT_MAX = 65535;
+export const ONE_WEEK_MS = 604_800_000;
+export const RENDER_INTERVAL_MAX_MS = 60_000;
+export const CONCURRENCY_MAX = 1000;
+export const MAX_TURNS_MAX = 10_000;
+export const ENSEMBLE_SIZE_MAX = 100;
+
+// ─── Branded numeric types ──────────────────────────────────────────────────
+
+declare const PositiveTimeoutMsBrand: unique symbol;
+export type PositiveTimeoutMs = number & { readonly [PositiveTimeoutMsBrand]: true };
+
+declare const NonNegativeTimeoutMsBrand: unique symbol;
+export type NonNegativeTimeoutMs = number & { readonly [NonNegativeTimeoutMsBrand]: true };
+
+declare const PositiveIntervalMsBrand: unique symbol;
+export type PositiveIntervalMs = number & { readonly [PositiveIntervalMsBrand]: true };
+
+declare const RenderIntervalMsBrand: unique symbol;
+export type RenderIntervalMs = number & { readonly [RenderIntervalMsBrand]: true };
+
+declare const ConcurrencyBrand: unique symbol;
+export type Concurrency = number & { readonly [ConcurrencyBrand]: true };
+
+declare const MaxTurnsBrand: unique symbol;
+export type MaxTurns = number & { readonly [MaxTurnsBrand]: true };
+
+declare const EnsembleSizeBrand: unique symbol;
+export type EnsembleSize = number & { readonly [EnsembleSizeBrand]: true };
+
+declare const PortBrand: unique symbol;
+export type Port = number & { readonly [PortBrand]: true };
+
+// ─── Type guards / validators ───────────────────────────────────────────────
+
+function isInt(n: number): boolean {
+  return Number.isInteger(n);
+}
+
+export function isValidPort(n: number): n is Port {
+  return isInt(n) && n >= 0 && n <= PORT_MAX;
+}
+
+export function isValidTimeout(n: number): n is PositiveTimeoutMs {
+  return isInt(n) && n >= 1 && n <= ONE_WEEK_MS;
+}
+
+export function isValidNonNegativeTimeout(n: number): n is NonNegativeTimeoutMs {
+  return isInt(n) && n >= 0 && n <= ONE_WEEK_MS;
+}
+
+export function isValidInterval(n: number): n is PositiveIntervalMs {
+  return isInt(n) && n >= 1 && n <= ONE_WEEK_MS;
+}
+
+export function isValidRenderInterval(n: number): n is RenderIntervalMs {
+  return isInt(n) && n >= 1 && n <= RENDER_INTERVAL_MAX_MS;
+}
+
+export function isValidConcurrency(n: number): n is Concurrency {
+  return isInt(n) && n >= 1 && n <= CONCURRENCY_MAX;
+}
+
+export function isValidMaxTurns(n: number): n is MaxTurns {
+  return isInt(n) && n >= 1 && n <= MAX_TURNS_MAX;
+}
+
+export function isValidEnsembleSize(n: number): n is EnsembleSize {
+  return isInt(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
+}
+
+// ─── Branded constructors (validate + return branded type, or throw) ─────────
+
+export function Port(n: number): Port {
+  if (!isValidPort(n)) throw new RangeError(`invalid port: ${n} (expected 0–${PORT_MAX})`);
+  return n;
+}
+
+export function PositiveTimeoutMs(n: number): PositiveTimeoutMs {
+  if (!isValidTimeout(n)) throw new RangeError(`invalid timeout: ${n} (expected 1–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function NonNegativeTimeoutMs(n: number): NonNegativeTimeoutMs {
+  if (!isValidNonNegativeTimeout(n))
+    throw new RangeError(`invalid timeout: ${n} (expected 0–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function PositiveIntervalMs(n: number): PositiveIntervalMs {
+  if (!isValidInterval(n))
+    throw new RangeError(`invalid interval: ${n} (expected 1–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function RenderIntervalMs(n: number): RenderIntervalMs {
+  if (!isValidRenderInterval(n))
+    throw new RangeError(`invalid render interval: ${n} (expected 1–${RENDER_INTERVAL_MAX_MS})`);
+  return n;
+}
+
+export function Concurrency(n: number): Concurrency {
+  if (!isValidConcurrency(n))
+    throw new RangeError(`invalid concurrency: ${n} (expected 1–${CONCURRENCY_MAX})`);
+  return n;
+}
+
+export function MaxTurns(n: number): MaxTurns {
+  if (!isValidMaxTurns(n))
+    throw new RangeError(`invalid maxTurns: ${n} (expected 1–${MAX_TURNS_MAX})`);
+  return n;
+}
+
+export function EnsembleSize(n: number): EnsembleSize {
+  if (!isValidEnsembleSize(n))
+    throw new RangeError(`invalid ensemble size: ${n} (expected 1–${ENSEMBLE_SIZE_MAX})`);
+  return n;
+}
+
+/**
+ * Unsafe cast — for use in test fixtures only. Bypasses brand enforcement.
+ * Production code must go through validated type guards or @symphony/config schema parsing.
+ */
+export function unsafeBrand<T extends number>(value: number): T {
+  return value as unknown as T;
+}
+
 export const AGENT_UPDATE_TYPES = [
   "workspace_prepared",
   "session_started",
@@ -173,12 +302,12 @@ export interface WorkerSettings {
    */
   sshHosts: string[];
   /** Timeout (ms) for each individual SSH command used in worker setup, execution, and cleanup. */
-  sshTimeoutMs: number;
+  sshTimeoutMs: PositiveTimeoutMs;
   /**
    * Per-host cap on concurrent agent runs. When every host is at capacity, dispatch waits
    * instead of running locally. Undefined means the global {@link AgentSettings.maxConcurrentAgents} applies per host.
    */
-  maxConcurrentAgentsPerHost?: number | undefined;
+  maxConcurrentAgentsPerHost?: Concurrency | undefined;
 }
 
 /**
@@ -188,16 +317,16 @@ export interface AgentSettings {
   /** Default backend name to launch (e.g. `"codex"`, `"claude"`); must key into {@link Settings.agents}. */
   kind: AgentKind;
   /** Upper bound on concurrent agent runs across the whole instance. */
-  maxConcurrentAgents: number;
+  maxConcurrentAgents: Concurrency;
   /** Maximum back-to-back turns a single worker session may run before exiting and yielding. */
-  maxTurns: number;
+  maxTurns: MaxTurns;
   /** Cap (ms) on exponential retry backoff between attempts on the same issue. */
-  maxRetryBackoffMs: number;
+  maxRetryBackoffMs: PositiveTimeoutMs;
   /**
    * Default number of independent parallel slots dispatched per issue.
    * Overridden per-issue by an `ensemble:<n>` label.
    */
-  ensembleSize: number;
+  ensembleSize: EnsembleSize;
 }
 
 /**
@@ -223,9 +352,9 @@ export interface AcpAgentConfig {
   /** Informational permission-mode string for the bridge (e.g. Claude's `"dontAsk"`); not interpreted by ACP directly. */
   permissionMode?: string | undefined;
   /** Hard limit (ms) on a single ACP turn before it is force-cancelled. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) after which a session with no agent events is treated as stalled and aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
   /** When true, launch the bridge with only the MCP servers Symphony injected (no user-side MCP config). */
   strictMcpConfig?: boolean | undefined;
 }
@@ -256,11 +385,11 @@ export interface CodexSettings {
    */
   turnSandboxPolicy: Record<string, unknown> | null;
   /** Hard limit (ms) on a single Codex turn before it is treated as timed out. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Per-request JSON-RPC read timeout (ms) for app-server method calls. */
-  readTimeoutMs: number;
+  readTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) before a session with no events is force-aborted as stalled. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
 }
 
 /**
@@ -275,9 +404,9 @@ export interface ClaudeSettings {
   /** Claude Code permission mode forwarded to the bridge, e.g. `"dontAsk"`, `"acceptEdits"`, `"plan"`. */
   permissionMode: string;
   /** Hard limit (ms) on a single Claude turn before it is force-cancelled. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) before a stalled session is aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
   /** When true, launch Claude with only Symphony's injected MCP servers (ignore user MCP config). */
   strictMcpConfig: boolean;
 }
@@ -288,9 +417,9 @@ export interface ClaudeSettings {
 export interface ObservabilitySettings {
   dashboardEnabled: boolean;
   /** How often (ms) status snapshots are refreshed from the orchestrator. */
-  refreshMs: number;
+  refreshMs: PositiveIntervalMs;
   /** Minimum interval (ms) between successive UI redraws; throttles render-side work. */
-  renderIntervalMs: number;
+  renderIntervalMs: RenderIntervalMs;
 }
 
 /**
@@ -303,7 +432,7 @@ export interface ServerSettings {
    * TCP port to bind. Undefined disables the server unless the active agent backend requires it
    * (e.g. Claude, which needs the MCP endpoint). `0` requests an ephemeral local port.
    */
-  port?: number | undefined;
+  port?: Port | undefined;
 }
 
 /**
@@ -340,7 +469,7 @@ export interface HooksSettings {
    */
   beforeRemove?: string | null | undefined;
   /** Per-hook execution timeout (ms) applied to all four hooks above. */
-  timeoutMs: number;
+  timeoutMs: PositiveTimeoutMs;
 }
 
 /**
@@ -366,7 +495,7 @@ export interface WorkspaceSettings {
 export interface Settings {
   tracker: TrackerSettings;
   /** Cadence at which the tracker is polled for candidate issues, in milliseconds. */
-  polling: { intervalMs: number };
+  polling: { intervalMs: PositiveIntervalMs };
   workspace: WorkspaceSettings;
   worker: WorkerSettings;
   hooks: HooksSettings;

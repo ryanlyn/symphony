@@ -1,8 +1,9 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { parseConfig, ONE_WEEK_MS, PORT_MAX } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
+
+import { parseConfig, ONE_WEEK_MS, PORT_MAX } from "@symphony/config";
 
 // --- camelToSnake (tested indirectly via error labels) ---
 
@@ -122,10 +123,7 @@ test("coercedPort — accepts valid port as string", () => {
 test("coercedPort — rejects ports above 65535", () => {
   fc.assert(
     fc.property(fc.integer({ min: PORT_MAX + 1, max: 1_000_000 }), (n) => {
-      assert.throws(
-        () => parseConfig({ server: { port: n } }),
-        /server.port must be a valid port number/,
-      );
+      assert.throws(() => parseConfig({ server: { port: n } }), /server.port invalid port/);
     }),
   );
 });
@@ -133,10 +131,7 @@ test("coercedPort — rejects ports above 65535", () => {
 test("coercedPort — rejects negative ports", () => {
   fc.assert(
     fc.property(fc.integer({ min: -1_000_000, max: -1 }), (n) => {
-      assert.throws(
-        () => parseConfig({ server: { port: n } }),
-        /server.port must be a valid port number/,
-      );
+      assert.throws(() => parseConfig({ server: { port: n } }), /server.port invalid port/);
     }),
   );
 });

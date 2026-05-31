@@ -5,6 +5,8 @@ import path from "node:path";
 import { test, vi } from "vitest";
 import { AcpExecutor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
+import type { NonNegativeTimeoutMs, PositiveTimeoutMs } from "@symphony/domain";
+import { unsafeBrand } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
 import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js";
@@ -134,7 +136,7 @@ test("ACP executor times out stalled bridge turns and emits a typed failure", as
   const root = await tempDir("symphony-ts-acp-stall");
   const fake = await writeFakeAcpBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const settings = acpSettings(root, fake, trace, "stall", 50);
+  const settings = acpSettings(root, fake, trace, "stall", unsafeBrand<PositiveTimeoutMs>(50));
   const updates: AgentUpdate[] = [];
   const executor = new AcpExecutor("claude");
   const session = await executor.startSession({
@@ -202,7 +204,7 @@ function acpSettings(
   fake: string,
   trace: string,
   mode: string,
-  turnTimeoutMs = 5_000,
+  turnTimeoutMs: PositiveTimeoutMs = unsafeBrand<PositiveTimeoutMs>(5_000),
 ) {
   return parseConfig({
     workspace: { root: path.dirname(root) },
@@ -213,7 +215,7 @@ function acpSettings(
         bridge_command: process.execPath,
         bridge_args: [fake, mode, trace],
         turn_timeout_ms: turnTimeoutMs,
-        stall_timeout_ms: 0,
+        stall_timeout_ms: unsafeBrand<NonNegativeTimeoutMs>(0),
       },
     },
   });

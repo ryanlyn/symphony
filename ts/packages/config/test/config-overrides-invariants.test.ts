@@ -1,14 +1,17 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
+import { unsafeBrand } from "@symphony/domain";
+import type { MaxTurns, Concurrency, PositiveTimeoutMs } from "@symphony/domain";
+
+import { assert } from "../../../test/assert.js";
+
 import {
   defaultSettings,
   settingsForIssueState,
   parseConfig,
   normalizeStateName,
   MAX_TURNS_MAX,
-} from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+} from "@symphony/config";
 
 // --- Helper arbitraries ---
 
@@ -52,6 +55,14 @@ const boundaryPositiveIntArb = fc.oneof(
 
 /** Generates a maxTurns value within schema bounds for parseConfig tests. */
 const schemaMaxTurnsArb = fc.integer({ min: 1, max: MAX_TURNS_MAX });
+
+// Branded arbitrary helpers for typed override fields
+const maxTurnsArb = positiveIntArb.map((n) => unsafeBrand<MaxTurns>(n));
+const concurrencyArb = positiveIntArb.map((n) => unsafeBrand<Concurrency>(n));
+const timeoutMsArb = positiveIntArb.map((n) => unsafeBrand<PositiveTimeoutMs>(n));
+const boundaryMaxTurnsArb = boundaryPositiveIntArb.map((n) => unsafeBrand<MaxTurns>(n));
+const boundaryConcurrencyArb = boundaryPositiveIntArb.map((n) => unsafeBrand<Concurrency>(n));
+const boundaryTimeoutMsArb = boundaryPositiveIntArb.map((n) => unsafeBrand<PositiveTimeoutMs>(n));
 
 /** Generates a pair of distinct state names (normalized). */
 const distinctStateNamesArb = fc
@@ -97,7 +108,7 @@ describe("INVARIANT: When no override is present, the base settings SHALL remain
 
 test("state present but NOT in overrides map — base settings remain unchanged", () => {
   fc.assert(
-    fc.property(stateNameArb, positiveIntArb, (state, cap) => {
+    fc.property(stateNameArb, concurrencyArb, (state, cap) => {
       const settings = defaultSettings();
       // Add an override for a DIFFERENT state
       settings.statusOverrides.set("__unrelated_state__", {
@@ -140,7 +151,7 @@ describe("INVARIANT: When override lookup is performed, it SHALL be case-insensi
     fc.assert(
       fc.property(
         stateNameArb.filter((s) => /[a-z]/.test(s)),
-        positiveIntArb,
+        maxTurnsArb,
         (state, maxTurns) => {
           const settings = defaultSettings();
           const normalizedKey = state.trim().toLowerCase();
@@ -171,7 +182,7 @@ test("lookup is whitespace-insensitive (leading/trailing trimmed)", () => {
   fc.assert(
     fc.property(
       stateNameArb,
-      positiveIntArb,
+      maxTurnsArb,
       fc.constantFrom("  ", "\t", " \t ", "   "),
       (state, maxTurns, pad) => {
         const settings = defaultSettings();
@@ -233,10 +244,10 @@ describe("INVARIANT: When overrides are defined for different states, they SHALL
   test("overrides for different states apply independently", () => {
     fc.assert(
       fc.property(
-        positiveIntArb,
-        positiveIntArb,
-        fc.integer({ min: 1, max: 50 }),
-        fc.integer({ min: 51, max: 100 }),
+        timeoutMsArb,
+        timeoutMsArb,
+        fc.integer({ min: 1, max: 50 }).map((n) => unsafeBrand<MaxTurns>(n)),
+        fc.integer({ min: 51, max: 100 }).map((n) => unsafeBrand<MaxTurns>(n)),
         (timeoutA, timeoutB, turnsA, turnsB) => {
           const settings = defaultSettings();
           settings.statusOverrides.set("state_alpha", {
@@ -274,7 +285,7 @@ describe("INVARIANT: When overrides are defined for different states, they SHALL
 
 test("one state override does not affect querying another state", () => {
   fc.assert(
-    fc.property(positiveIntArb, (cap) => {
+    fc.property(concurrencyArb, (cap) => {
       const settings = defaultSettings();
       settings.statusOverrides.set("overridden", {
         agent: { maxConcurrentAgents: cap },
@@ -297,8 +308,8 @@ test("multiple distinct overrides each resolve to their own values", () => {
   fc.assert(
     fc.property(
       distinctStateNamesArb,
-      boundaryPositiveIntArb,
-      boundaryPositiveIntArb,
+      boundaryMaxTurnsArb,
+      boundaryMaxTurnsArb,
       fc.boolean(),
       ([stateA, stateB], turnsA, turnsB, strictMcp) => {
         const settings = defaultSettings();
@@ -329,7 +340,7 @@ test("multiple distinct overrides each resolve to their own values", () => {
 
 test("querying override does not mutate the source settings object", () => {
   fc.assert(
-    fc.property(positiveIntArb, positiveIntArb, (turnsOverride, timeoutOverride) => {
+    fc.property(maxTurnsArb, timeoutMsArb, (turnsOverride, timeoutOverride) => {
       const settings = defaultSettings();
       const originalMaxTurns = settings.agent.maxTurns;
       const originalTimeout = settings.codex.turnTimeoutMs;
@@ -353,7 +364,7 @@ test("querying override does not mutate the source settings object", () => {
 describe("INVARIANT: When a partial override is applied, unmentioned fields SHALL be preserved", () => {
   test("partial agent override preserves unmentioned agent fields", () => {
     fc.assert(
-      fc.property(boundaryPositiveIntArb, (maxTurns) => {
+      fc.property(boundaryMaxTurnsArb, (maxTurns) => {
         const settings = defaultSettings();
         // Only override maxTurns
         settings.statusOverrides.set("partial", {
@@ -378,7 +389,7 @@ describe("INVARIANT: When a partial override is applied, unmentioned fields SHAL
 
 test("partial codex override preserves unmentioned codex fields", () => {
   fc.assert(
-    fc.property(boundaryPositiveIntArb, (turnTimeoutMs) => {
+    fc.property(boundaryTimeoutMsArb, (turnTimeoutMs) => {
       const settings = defaultSettings();
       settings.statusOverrides.set("partial_codex", {
         codex: { turnTimeoutMs },
@@ -401,7 +412,7 @@ test("partial codex override preserves unmentioned codex fields", () => {
 
 test("partial claude override preserves unmentioned claude fields", () => {
   fc.assert(
-    fc.property(boundaryPositiveIntArb, (turnTimeoutMs) => {
+    fc.property(boundaryTimeoutMsArb, (turnTimeoutMs) => {
       const settings = defaultSettings();
       settings.statusOverrides.set("partial_claude", {
         claude: { turnTimeoutMs },
@@ -425,7 +436,7 @@ test("partial claude override preserves unmentioned claude fields", () => {
 
 test("override with only agent section leaves codex and claude untouched", () => {
   fc.assert(
-    fc.property(boundaryPositiveIntArb, (maxTurns) => {
+    fc.property(boundaryMaxTurnsArb, (maxTurns) => {
       const settings = defaultSettings();
       settings.statusOverrides.set("agent_only", {
         agent: { maxTurns },
@@ -451,7 +462,7 @@ test("override with only agent section leaves codex and claude untouched", () =>
 
 test("overriding multiple agent fields at once preserves remaining fields", () => {
   fc.assert(
-    fc.property(boundaryPositiveIntArb, boundaryPositiveIntArb, (maxTurns, maxConcurrent) => {
+    fc.property(boundaryMaxTurnsArb, boundaryConcurrencyArb, (maxTurns, maxConcurrent) => {
       const settings = defaultSettings();
       settings.statusOverrides.set("multi_agent_override", {
         agent: { maxTurns, maxConcurrentAgents: maxConcurrent },
@@ -702,7 +713,7 @@ test("turnSandboxPolicy override replaces when base is null", () => {
 
 test("Robustness: settingsForIssueState is deterministic for same input", () => {
   fc.assert(
-    fc.property(stateNameArb, boundaryPositiveIntArb, (state, maxTurns) => {
+    fc.property(stateNameArb, boundaryMaxTurnsArb, (state, maxTurns) => {
       const settings = defaultSettings();
       const normalizedKey = normalizeStateName(state);
       settings.statusOverrides.set(normalizedKey, {
@@ -723,9 +734,9 @@ test("Robustness: settingsForIssueState is deterministic for same input", () => 
 test("Robustness: override with all three sections applies each independently", () => {
   fc.assert(
     fc.property(
-      boundaryPositiveIntArb,
-      boundaryPositiveIntArb,
-      boundaryPositiveIntArb,
+      boundaryMaxTurnsArb,
+      boundaryTimeoutMsArb,
+      boundaryTimeoutMsArb,
       (agentTurns, codexTimeout, claudeTimeout) => {
         const settings = defaultSettings();
         settings.statusOverrides.set("all_sections", {

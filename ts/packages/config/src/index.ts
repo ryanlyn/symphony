@@ -14,7 +14,19 @@ import type {
   TrackerKind,
   TrackerSettings,
 } from "@symphony/domain";
-import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
+import {
+  CODEX_APPROVAL_POLICY_NAMES,
+  CODEX_SANDBOX_MODES,
+  TRACKER_KINDS,
+  Port,
+  PositiveTimeoutMs,
+  NonNegativeTimeoutMs,
+  PositiveIntervalMs,
+  RenderIntervalMs,
+  Concurrency,
+  MaxTurns,
+  EnsembleSize,
+} from "@symphony/domain";
 
 const numericInput = z.union([
   z.number().refine((n) => !Number.isNaN(n), { message: "must not be NaN" }),
@@ -25,60 +37,38 @@ const numericInput = z.union([
     .refine((n) => !Number.isNaN(n), { message: "must be a number" }),
 ]);
 
-export const PORT_MAX = 65535;
-export const ONE_WEEK_MS = 604_800_000;
-export const RENDER_INTERVAL_MAX_MS = 60_000;
-export const CONCURRENCY_MAX = 1000;
-export const MAX_TURNS_MAX = 10_000;
-export const ENSEMBLE_SIZE_MAX = 100;
+export {
+  PORT_MAX,
+  ONE_WEEK_MS,
+  RENDER_INTERVAL_MAX_MS,
+  CONCURRENCY_MAX,
+  MAX_TURNS_MAX,
+  ENSEMBLE_SIZE_MAX,
+} from "@symphony/domain";
 
-const coercedPort = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 0 && n <= PORT_MAX, {
-    message: `must be a valid port number (0-${PORT_MAX})`,
-  })
-  .describe("non-negative");
+function branded<T>(construct: (n: number) => T) {
+  return (n: number, ctx: z.RefinementCtx): T => {
+    try {
+      return construct(n);
+    } catch (e) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: (e as Error).message });
+      return z.NEVER;
+    }
+  };
+}
 
-const coercedTimeoutMs = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
-    message: `must be a positive integer no greater than ${ONE_WEEK_MS} (1 week)`,
-  })
-  .describe("positive");
-
+const coercedPort = numericInput.transform(branded(Port)).describe("non-negative");
+const coercedTimeoutMs = numericInput.transform(branded(PositiveTimeoutMs)).describe("positive");
 const coercedNonNegativeTimeoutMs = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 0 && n <= ONE_WEEK_MS, {
-    message: `must be a non-negative integer no greater than ${ONE_WEEK_MS} (1 week)`,
-  })
+  .transform(branded(NonNegativeTimeoutMs))
   .describe("non-negative");
-
-const coercedIntervalMs = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
-    message: `must be a positive integer no greater than ${ONE_WEEK_MS} (1 week)`,
-  })
-  .describe("positive");
-
+const coercedIntervalMs = numericInput.transform(branded(PositiveIntervalMs)).describe("positive");
 const coercedRenderIntervalMs = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= RENDER_INTERVAL_MAX_MS, {
-    message: `must be a positive integer no greater than ${RENDER_INTERVAL_MAX_MS}`,
-  })
+  .transform(branded(RenderIntervalMs))
   .describe("positive");
-
-const coercedConcurrency = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= CONCURRENCY_MAX, {
-    message: `must be an integer between 1 and ${CONCURRENCY_MAX}`,
-  })
-  .describe("positive");
-
-const coercedMaxTurns = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= MAX_TURNS_MAX, {
-    message: `must be an integer between 1 and ${MAX_TURNS_MAX}`,
-  })
-  .describe("positive");
-
-const coercedEnsembleSize = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX, {
-    message: `must be an integer between 1 and ${ENSEMBLE_SIZE_MAX}`,
-  })
-  .describe("positive");
+const coercedConcurrency = numericInput.transform(branded(Concurrency)).describe("positive");
+const coercedMaxTurns = numericInput.transform(branded(MaxTurns)).describe("positive");
+const coercedEnsembleSize = numericInput.transform(branded(EnsembleSize)).describe("positive");
 
 const coercedBoolean = z.union([
   z.boolean(),
@@ -326,16 +316,16 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
     },
     threadSandbox: "workspace-write",
     turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
+    turnTimeoutMs: PositiveTimeoutMs(3_600_000),
+    readTimeoutMs: PositiveTimeoutMs(5_000),
+    stallTimeoutMs: NonNegativeTimeoutMs(300_000),
   };
   const claude: ClaudeSettings = {
     command: "claude-agent-acp",
     model: "claude-opus-4-6[1m]",
     permissionMode: "dontAsk",
-    turnTimeoutMs: 3_600_000,
-    stallTimeoutMs: 300_000,
+    turnTimeoutMs: PositiveTimeoutMs(3_600_000),
+    stallTimeoutMs: NonNegativeTimeoutMs(300_000),
     strictMcpConfig: true,
   };
   return {
@@ -350,27 +340,27 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
         routeLabelPrefix: "Symphony:",
       },
     },
-    polling: { intervalMs: 30_000 },
+    polling: { intervalMs: PositiveIntervalMs(30_000) },
     workspace: {
       root: workspaceRoot,
       rootExpression: workspaceRoot,
     },
-    worker: { sshHosts: [], sshTimeoutMs: 60_000 },
-    hooks: { timeoutMs: 60_000 },
+    worker: { sshHosts: [], sshTimeoutMs: PositiveTimeoutMs(60_000) },
+    hooks: { timeoutMs: PositiveTimeoutMs(60_000) },
     agent: {
       kind: "codex",
-      maxConcurrentAgents: 10,
-      maxTurns: 20,
-      maxRetryBackoffMs: 300_000,
-      ensembleSize: 1,
+      maxConcurrentAgents: Concurrency(10),
+      maxTurns: MaxTurns(20),
+      maxRetryBackoffMs: PositiveTimeoutMs(300_000),
+      ensembleSize: EnsembleSize(1),
     },
     agents: defaultAgentRecords(codex, claude),
     codex,
     claude,
     observability: {
       dashboardEnabled: true,
-      refreshMs: 1_000,
-      renderIntervalMs: 16,
+      refreshMs: PositiveIntervalMs(1_000),
+      renderIntervalMs: RenderIntervalMs(16),
     },
     server: { host: "127.0.0.1" },
     logging: { logFile: joinPath(cwd, "log/symphony.log") },
