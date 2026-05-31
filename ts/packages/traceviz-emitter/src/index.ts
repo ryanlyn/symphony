@@ -28,7 +28,11 @@ export class TraceEmitter {
       sessionId: update.sessionId ?? null,
       executorPid: update.executorPid ?? null,
     });
-    void appendFile(TraceEmitter.tracePathForIssue(this.traceDir, issueId), line + "\n");
+    void appendFile(TraceEmitter.tracePathForIssue(this.traceDir, issueId), line + "\n").catch(
+      (err: unknown) => {
+        console.error(`[TraceEmitter] Failed to write trace for issue ${issueId}:`, err);
+      },
+    );
   }
 
   clear(issueId: string): void {

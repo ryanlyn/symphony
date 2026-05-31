@@ -47,7 +47,7 @@ export function TicketSelector({ tickets, selectedId, onSelect }: TicketSelector
       {selectedId && (
         <span
           className={cn(
-            "absolute -right-4 top-1/2 -translate-y-1/2 ml-2 h-2 w-2 rounded-full",
+            "absolute right-10 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full",
             statusColor(tickets.find((t) => t.issueId === selectedId)?.status ?? "idle"),
           )}
         />

@@ -47,7 +47,7 @@ export function App() {
         {selectedTicketId ? (
           <div className="space-y-6">
             {stats && <Dashboard stats={stats} />}
-            <Timeline events={events} loading={loading} />
+            <Timeline key={selectedTicketId} events={events} loading={loading} />
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-32 text-center">
