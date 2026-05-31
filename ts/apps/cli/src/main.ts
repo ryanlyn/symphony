@@ -19,7 +19,6 @@ import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
-import { TraceEmitter } from "@symphony/traceviz-emitter";
 import type { Settings, WorkflowDefinition } from "@symphony/domain";
 
 import {
@@ -115,14 +114,11 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     const workflow = await loadRuntimeWorkflow();
     await configureLogFile(workflow.settings.logging.logFile);
 
-    const traceEmitter = new TraceEmitter(path.join(process.cwd(), "traces"));
-
     const runtime = new SymphonyRuntime({
       workflow,
       clientFactory: createTrackerClient,
       reloadWorkflow: loadRuntimeWorkflow,
       runner: runAgentAttempt,
-      traceEmitter,
       ...runtimeAdapters,
     });
     let server: ObservabilityServerHandle | null = null;

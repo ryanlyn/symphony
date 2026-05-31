@@ -17,7 +17,6 @@ import { RetryScheduler } from "@symphony/retry-scheduler";
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
 import type {
   AgentKind,
-  AgentUpdate,
   AgentUpdateType,
   DispatchBlockEntry,
   Issue,
@@ -176,9 +175,6 @@ export interface SymphonyRuntimeOptions {
     | ((workspace: string, workerHost?: string | null, timeoutMs?: number) => Promise<void>)
     | undefined;
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
-  traceEmitter?:
-    | { emit(issueId: string, issueIdentifier: string, update: AgentUpdate): void }
-    | undefined;
   now?: (() => Date) | undefined;
 }
 
@@ -432,7 +428,6 @@ export class SymphonyRuntime {
         slotIndex,
         onUpdate: (update) => {
           this.orchestrator.applyUpdate(issue.id, slotIndex, update);
-          this.input.traceEmitter?.emit(issue.id, issue.identifier, update);
           this.addEvent(update.type, `${issue.identifier} ${update.type}`);
         },
         fetchIssue: async (current) => {
