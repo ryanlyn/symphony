@@ -25,19 +25,55 @@ const numericInput = z.union([
     .refine((n) => !Number.isNaN(n), { message: "must be a number" }),
 ]);
 
-const coercedPositiveInt = numericInput
-  .refine((n) => Number.isInteger(n) && n > 0, { message: "must be a positive integer" })
-  .describe("positive");
-
-const coercedNonNegativeInt = numericInput
-  .refine((n) => Number.isInteger(n) && n >= 0, { message: "must be a non-negative integer" })
-  .describe("non-negative");
-
 const coercedPort = numericInput
   .refine((n) => Number.isInteger(n) && n >= 0 && n <= 65535, {
     message: "must be a valid port number (0-65535)",
   })
   .describe("non-negative");
+
+const ONE_WEEK_MS = 604_800_000;
+
+const coercedTimeoutMs = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
+    message: "must be a positive integer no greater than 604800000 (1 week)",
+  })
+  .describe("positive");
+
+const coercedNonNegativeTimeoutMs = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 0 && n <= ONE_WEEK_MS, {
+    message: "must be a non-negative integer no greater than 604800000 (1 week)",
+  })
+  .describe("non-negative");
+
+const coercedIntervalMs = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
+    message: "must be a positive integer no greater than 604800000 (1 week)",
+  })
+  .describe("positive");
+
+const coercedRenderIntervalMs = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= 60_000, {
+    message: "must be a positive integer no greater than 60000",
+  })
+  .describe("positive");
+
+const coercedConcurrency = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= 1000, {
+    message: "must be an integer between 1 and 1000",
+  })
+  .describe("positive");
+
+const coercedMaxTurns = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= 10000, {
+    message: "must be an integer between 1 and 10000",
+  })
+  .describe("positive");
+
+const coercedEnsembleSize = numericInput
+  .refine((n) => Number.isInteger(n) && n >= 1 && n <= 100, {
+    message: "must be an integer between 1 and 100",
+  })
+  .describe("positive");
 
 const coercedBoolean = z.union([
   z.boolean(),
@@ -57,9 +93,9 @@ const appServerAgentRecordSchema = z
     approvalPolicy: approvalPolicySchema,
     threadSandbox: z.string().optional(),
     turnSandboxPolicy: sandboxPolicySchema,
-    turnTimeoutMs: coercedPositiveInt.optional(),
-    readTimeoutMs: coercedPositiveInt.optional(),
-    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    turnTimeoutMs: coercedTimeoutMs.optional(),
+    readTimeoutMs: coercedTimeoutMs.optional(),
+    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
   })
   .strict();
 const acpAgentRecordSchema = z
@@ -70,8 +106,8 @@ const acpAgentRecordSchema = z
     command: z.string().optional(),
     model: z.string().optional(),
     permissionMode: z.string().optional(),
-    turnTimeoutMs: coercedPositiveInt.optional(),
-    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    turnTimeoutMs: coercedTimeoutMs.optional(),
+    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
     strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
@@ -100,13 +136,13 @@ const trackerRawSchema = z
   })
   .strict();
 
-const pollingRawSchema = z.object({ intervalMs: coercedPositiveInt.optional() }).strict();
+const pollingRawSchema = z.object({ intervalMs: coercedIntervalMs.optional() }).strict();
 const workspaceRawSchema = z.object({ root: z.string().optional() }).strict();
 const workerRawSchema = z
   .object({
     sshHosts: z.array(z.string()).optional(),
-    sshTimeoutMs: coercedPositiveInt.optional(),
-    maxConcurrentAgentsPerHost: coercedPositiveInt.optional(),
+    sshTimeoutMs: coercedTimeoutMs.optional(),
+    maxConcurrentAgentsPerHost: coercedConcurrency.optional(),
   })
   .strict();
 const hooksRawSchema = z
@@ -115,16 +151,16 @@ const hooksRawSchema = z
     beforeRun: optionalHookScript,
     afterRun: optionalHookScript,
     beforeRemove: optionalHookScript,
-    timeoutMs: coercedPositiveInt.optional(),
+    timeoutMs: coercedTimeoutMs.optional(),
   })
   .strict();
 const agentRawSchema = z
   .object({
     kind: z.string().optional(),
-    maxConcurrentAgents: coercedPositiveInt.optional(),
-    maxTurns: coercedPositiveInt.optional(),
-    maxRetryBackoffMs: coercedPositiveInt.optional(),
-    ensembleSize: coercedPositiveInt.optional(),
+    maxConcurrentAgents: coercedConcurrency.optional(),
+    maxTurns: coercedMaxTurns.optional(),
+    maxRetryBackoffMs: coercedTimeoutMs.optional(),
+    ensembleSize: coercedEnsembleSize.optional(),
   })
   .strict();
 const codexRawSchema = z
@@ -133,9 +169,9 @@ const codexRawSchema = z
     approvalPolicy: approvalPolicySchema,
     threadSandbox: z.string().optional(),
     turnSandboxPolicy: sandboxPolicySchema,
-    turnTimeoutMs: coercedPositiveInt.optional(),
-    readTimeoutMs: coercedPositiveInt.optional(),
-    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    turnTimeoutMs: coercedTimeoutMs.optional(),
+    readTimeoutMs: coercedTimeoutMs.optional(),
+    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
   })
   .strict();
 const claudeRawSchema = z
@@ -143,16 +179,16 @@ const claudeRawSchema = z
     command: z.string().optional(),
     model: z.string().optional(),
     permissionMode: z.string().optional(),
-    turnTimeoutMs: coercedPositiveInt.optional(),
-    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    turnTimeoutMs: coercedTimeoutMs.optional(),
+    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
     strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
 const observabilityRawSchema = z
   .object({
     dashboardEnabled: coercedBoolean.optional(),
-    refreshMs: coercedPositiveInt.optional(),
-    renderIntervalMs: coercedPositiveInt.optional(),
+    refreshMs: coercedIntervalMs.optional(),
+    renderIntervalMs: coercedRenderIntervalMs.optional(),
   })
   .strict();
 const serverRawSchema = z

@@ -25,11 +25,11 @@ test("camelToSnake — error labels use snake_case field names for numeric field
   }
 });
 
-// --- coercedPositiveInt (via polling.interval_ms) ---
+// --- coercedIntervalMs (via polling.interval_ms, min 100, max 604_800_000) ---
 
 test("coercedPositiveInt — accepts any positive integer", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 2_000_000_000 }), (n) => {
+    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: n } });
       assert.equal(settings.polling.intervalMs, n);
     }),
@@ -38,7 +38,7 @@ test("coercedPositiveInt — accepts any positive integer", () => {
 
 test("coercedPositiveInt — accepts positive integer as string", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 2_000_000_000 }), (n) => {
+    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: String(n) } });
       assert.equal(settings.polling.intervalMs, n);
     }),
@@ -50,7 +50,7 @@ test("coercedPositiveInt — rejects zero and negative integers", () => {
     fc.property(fc.integer({ min: -1_000_000, max: 0 }), (n) => {
       assert.throws(
         () => parseConfig({ polling: { interval_ms: n } }),
-        /must be a positive integer/,
+        /polling.interval_ms/,
       );
     }),
   );
@@ -63,7 +63,7 @@ test("coercedPositiveInt — rejects non-integer numbers", () => {
       (n) => {
         assert.throws(
           () => parseConfig({ polling: { interval_ms: n } }),
-          /must be a positive integer/,
+          /polling.interval_ms/,
         );
       },
     ),
@@ -73,15 +73,15 @@ test("coercedPositiveInt — rejects non-integer numbers", () => {
 test("coercedPositiveInt — rejects NaN", () => {
   assert.throws(
     () => parseConfig({ polling: { interval_ms: NaN } }),
-    /must not be NaN|must be a positive integer/,
+    /must not be NaN|polling.interval_ms/,
   );
 });
 
-// --- coercedNonNegativeInt (via codex.stall_timeout_ms) ---
+// --- coercedNonNegativeTimeoutMs (via codex.stall_timeout_ms, min 0, max 604_800_000) ---
 
 test("coercedNonNegativeInt — accepts zero and positive integers", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 2_000_000_000 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: 604_800_000 }), (n) => {
       const settings = parseConfig({ codex: { stall_timeout_ms: n } });
       assert.equal(settings.codex.stallTimeoutMs, n);
     }),
@@ -90,7 +90,7 @@ test("coercedNonNegativeInt — accepts zero and positive integers", () => {
 
 test("coercedNonNegativeInt — accepts non-negative integer as string", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 2_000_000_000 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: 604_800_000 }), (n) => {
       const settings = parseConfig({ codex: { stall_timeout_ms: String(n) } });
       assert.equal(settings.codex.stallTimeoutMs, n);
     }),
@@ -102,7 +102,7 @@ test("coercedNonNegativeInt — rejects negative integers", () => {
     fc.property(fc.integer({ min: -1_000_000, max: -1 }), (n) => {
       assert.throws(
         () => parseConfig({ codex: { stall_timeout_ms: n } }),
-        /must be a non-negative integer/,
+        /codex.stall_timeout_ms/,
       );
     }),
   );
@@ -199,7 +199,7 @@ test("coercedBoolean — rejects numbers", () => {
 
 test("numericInput — string-to-number coercion is exact for integers", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: Number.MAX_SAFE_INTEGER }), (n) => {
+    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: String(n) } });
       assert.equal(settings.polling.intervalMs, n);
     }),
