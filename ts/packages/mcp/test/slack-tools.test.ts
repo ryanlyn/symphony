@@ -310,6 +310,31 @@ test("slack_update_status add-before-remove happy path swaps to a single target"
   assert.deepEqual(msg!.reactions, ["white_check_mark"]);
 });
 
+test("slack_update_status succeeds for a case-variant status and reports the canonical state", async () => {
+  // emojiForState resolves the status case-insensitively, so "done" maps to white_check_mark and the
+  // swap takes effect. The success-path verification must compare the effective ranked state against
+  // the target emoji's CANONICAL mapped state ("Done"), not the raw "done" the agent passed - an
+  // exact-string check would otherwise falsely report that the correctly-applied update did not take
+  // effect.
+  const transport = new InMemorySlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> do the thing", reactions: ["eyes"] }],
+  });
+
+  const result = await executeTool(
+    "slack_update_status",
+    { issueId: "C1:1.1", status: "done" },
+    settings(),
+    fetch,
+    { slackTransport: transport },
+  );
+
+  assert.equal(result.success, true);
+  // The reported status is the canonical mapped name, not the raw lowercase input.
+  assert.equal((result.result as { status: string }).status, "Done");
+  const msg = await transport.getMessage("C1", "1.1");
+  assert.deepEqual(msg!.reactions, ["white_check_mark"]);
+});
+
 test("slack_update_status rejects a channel that is not in tracker.channels", async () => {
   // Seed the disallowed channel with a real bot-mention message so the only failing guard is
   // the channel allow-list, and assert no reaction side effect occurred.

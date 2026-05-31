@@ -143,9 +143,16 @@ export async function executeSlackTool(
         // our writes: re-fetch and recompute the ranked status. Only report success if it matches
         // the requested status; otherwise a lingering (e.g. human-authored) reaction still shadows
         // the target and the read path would mis-report the OLD/wrong status.
+        //
+        // Compare against the target emoji's CANONICAL mapped state (map[target]), not the raw
+        // agent-supplied `status` string: emojiForState resolves `status` case-insensitively, so a
+        // caller passing "done" instead of "Done" would otherwise fail this exact-string equality
+        // check on the success path even though the swap took effect, falsely reporting that a
+        // correctly-applied update did not take effect.
+        const canonicalState = map[target] ?? status;
         const effective = await currentManagedReactions(transport, channel, ts, map);
-        if (effective && stateFromReactions(effective, map) === status) {
-          return { success: true, result: { ok: true, status } };
+        if (effective && sameState(stateFromReactions(effective, map), canonicalState)) {
+          return { success: true, result: { ok: true, status: canonicalState } };
         }
         const observed = effective ?? [];
         return {
@@ -241,6 +248,11 @@ async function currentManagedReactions(
   }
   if (!message) return null;
   return message.reactions.filter((r) => map[r]);
+}
+
+/** Compare two state names case-insensitively, mirroring emojiForState's lookup semantics. */
+function sameState(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 /** Compare two reaction lists as sets (order- and duplicate-insensitive). */
