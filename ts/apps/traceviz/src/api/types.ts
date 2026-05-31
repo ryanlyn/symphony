@@ -72,6 +72,12 @@ export interface TurnStartedEvent {
   timestamp: string;
 }
 
+export interface TurnFailedEvent {
+  kind: "turn_failed";
+  text: string;
+  timestamp: string;
+}
+
 export interface NotificationEvent {
   kind: "notification";
   text: string;
@@ -90,6 +96,7 @@ export type DisplayEvent =
   | ToolCallEvent
   | TurnCompletedEvent
   | TurnStartedEvent
+  | TurnFailedEvent
   | NotificationEvent
   | UnknownEvent;
 

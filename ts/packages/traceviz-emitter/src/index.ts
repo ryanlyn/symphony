@@ -1,4 +1,5 @@
-import { mkdirSync, appendFileSync, unlinkSync, existsSync } from "node:fs";
+import { mkdirSync, unlinkSync, existsSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AgentUpdate } from "@symphony/domain";
@@ -27,7 +28,7 @@ export class TraceEmitter {
       sessionId: update.sessionId ?? null,
       executorPid: update.executorPid ?? null,
     });
-    appendFileSync(TraceEmitter.tracePathForIssue(this.traceDir, issueId), line + "\n");
+    void appendFile(TraceEmitter.tracePathForIssue(this.traceDir, issueId), line + "\n");
   }
 
   clear(issueId: string): void {

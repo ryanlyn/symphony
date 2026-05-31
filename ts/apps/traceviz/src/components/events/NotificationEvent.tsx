@@ -1,10 +1,10 @@
 import { Info } from "lucide-react";
 
-import type { NotificationEvent as NotificationEventType } from "../../api/types";
+import type { NotificationEvent as NotificationEventType, TurnFailedEvent } from "../../api/types";
 import { formatTimestamp } from "../../lib/utils";
 
 interface NotificationEventProps {
-  event: NotificationEventType;
+  event: NotificationEventType | TurnFailedEvent;
 }
 
 export function NotificationEvent({ event }: NotificationEventProps) {

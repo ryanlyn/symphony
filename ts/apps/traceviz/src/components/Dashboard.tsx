@@ -1,4 +1,4 @@
-import type React from "react";
+import type { ReactNode } from "react";
 import {
   Clock,
   RotateCcw,
@@ -18,7 +18,7 @@ interface DashboardProps {
 interface StatCardProps {
   label: string;
   value: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   color: string;
 }
 

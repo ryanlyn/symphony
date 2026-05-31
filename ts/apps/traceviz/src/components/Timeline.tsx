@@ -30,6 +30,7 @@ function renderEvent(event: DisplayEvent, index: number) {
       return <ToolCallEvent key={key} event={event} />;
     case "turn_completed":
       return <TurnCompletedEvent key={key} event={event} />;
+    case "turn_failed":
     case "notification":
       return <NotificationEvent key={key} event={event} />;
     default:
@@ -67,12 +68,16 @@ function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
 export function Timeline({ events, loading }: TimelineProps) {
   const [sortNewest, setSortNewest] = useState(false);
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
-  const [allExpanded, setAllExpanded] = useState(false);
 
   const grouped = useMemo(() => {
     const groups = groupByTurn(events);
     return sortNewest ? [...groups].reverse() : groups;
   }, [events, sortNewest]);
+
+  const allExpanded = useMemo(
+    () => grouped.length > 0 && grouped.every((g) => expandedTurns.has(g.turnIndex)),
+    [grouped, expandedTurns],
+  );
 
   const toggleTurn = (turn: number) => {
     setExpandedTurns((prev) => {
@@ -86,10 +91,8 @@ export function Timeline({ events, loading }: TimelineProps) {
   const toggleAll = () => {
     if (allExpanded) {
       setExpandedTurns(new Set());
-      setAllExpanded(false);
     } else {
       setExpandedTurns(new Set(grouped.map((g) => g.turnIndex)));
-      setAllExpanded(true);
     }
   };
 

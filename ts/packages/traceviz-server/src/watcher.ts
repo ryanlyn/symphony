@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { DisplayEvent } from "./models/display-events.js";
@@ -65,9 +65,7 @@ export class TraceWatcher {
     for (const state of this.fileStates.values()) {
       const turnStartedCount = state.events.filter((e) => e.kind === "turn_started").length;
       const turnCompletedCount = state.events.filter((e) => e.kind === "turn_completed").length;
-      const hasFailed = state.events.some(
-        (e) => e.kind === "notification" && e.text.startsWith("Turn turn_failed"),
-      );
+      const hasFailed = state.events.some((e) => e.kind === "turn_failed");
 
       let status: TicketInfo["status"] = "idle";
       if (hasFailed) {
@@ -125,7 +123,11 @@ export class TraceWatcher {
   private async scan(callback: WatcherCallback): Promise<void> {
     if (this.stopped) return;
     if (this.scanning) return; // Skip if previous scan is still in progress
-    if (!existsSync(this.traceDir)) return;
+    try {
+      await access(this.traceDir);
+    } catch {
+      return;
+    }
 
     this.scanning = true;
     try {

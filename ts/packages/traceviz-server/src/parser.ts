@@ -172,6 +172,25 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
+      case "tool_call_update": {
+        // Partial update for a pending tool call (e.g., streaming output).
+        // Attach partial output to the pending event; it will be finalized by tool_result/tool_call_completed.
+        const payload =
+          typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
+        const toolUseId = (payload.id as string) ?? (payload.toolUseId as string) ?? "";
+        const pending = pendingToolCalls.get(toolUseId);
+        if (pending) {
+          // Accumulate partial output if provided
+          const partialOutput = (payload.output as string | null) ?? null;
+          if (partialOutput !== null && typeof pending.event.output === "string") {
+            pending.event.output = pending.event.output + partialOutput;
+          } else if (partialOutput !== null) {
+            pending.event.output = partialOutput;
+          }
+        }
+        break;
+      }
+
       case "tool_result":
       case "tool_call_completed":
       case "tool_call_failed": {
@@ -261,7 +280,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
           }
         }
         events.push({
-          kind: "notification",
+          kind: "turn_failed",
           text: `Turn ${raw.type}: ${typeof msg === "string" ? msg : JSON.stringify(msg ?? "")}`,
           timestamp: ts,
         });
