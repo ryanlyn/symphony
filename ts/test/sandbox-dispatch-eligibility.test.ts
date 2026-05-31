@@ -208,10 +208,9 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Started issue WITH blockers is still dispatched
-  // (blockers only gate unstarted issues)
+  // Started issue WITH blockers is not dispatched
   // -------------------------------------------------------------------------
-  test("started issue with blockers is still dispatched", async () => {
+  test("started issue with blockers is not dispatched", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("started-blocked", "STARTED-BLOCKED", {
@@ -222,7 +221,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
       ],
       pollTicks: 1,
     });
-    expect(result.events.some((e) => e.type === "run_started")).toBe(true);
+    expect(result.events.some((e) => e.type === "run_started")).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -407,9 +406,8 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Originally a bug where state="Todo" triggered blocker check even with
-  // stateType="started". Fixed: issueHasOpenBlockers now only checks stateType.
-  test("stateType=started + state=Todo is NOT gated by blockers (fixed)", async () => {
+  // Any non-terminal blocker gates dispatch, even when the state type is started.
+  test("stateType=started + state=Todo is gated by blockers", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("s184-bug", "S184-1", {
@@ -428,10 +426,8 @@ describe("Sandbox: Dispatch Eligibility", () => {
       pollTicks: 1,
     });
 
-    // This SHOULD dispatch because stateType="started" means blockers should
-    // not gate. But due to the bug, state="Todo" triggers the blocker check.
     expect(
       result.events.some((e) => e.type === "run_started" && e.message.includes("S184-1")),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

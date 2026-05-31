@@ -157,7 +157,7 @@ describe("Sandbox: Reconciliation", () => {
     expect(assertions.every((a) => a.passed)).toBe(true);
   });
 
-  test("blocker added to STARTED issue does not abort (blockers only gate unstarted)", async () => {
+  test("blocker added to STARTED issue aborts running work", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("x", "X-1", {
@@ -182,13 +182,9 @@ describe("Sandbox: Reconciliation", () => {
       ],
     });
 
-    // A started issue should NOT be affected by added blockers
-    // (blockers only gate unstarted issues)
-    // NOTE: This test documents expected behavior: blockers only gate unstarted issues.
-    // With state="In Progress" (not "Todo"), the || bug doesn't trigger.
     const assertions = checkAssertions(result, [
       { type: "event_occurred", eventType: "run_started", messageContains: "X-1" },
-      { type: "event_not_occurred", eventType: "run_reconciled" },
+      { type: "event_occurred", eventType: "run_reconciled", messageContains: "blocked" },
     ]);
     expect(assertions.every((a) => a.passed)).toBe(true);
   });
