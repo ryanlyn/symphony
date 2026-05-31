@@ -56,10 +56,28 @@ export async function executeSlackTool(
         }
         const message = await transport.getMessage(channel, ts);
         const present = (message?.reactions ?? []).filter((r) => map[r]);
-        for (const reaction of present) {
-          if (reaction !== target) await transport.removeReaction(channel, ts, reaction);
+        // Add-before-remove so the message is never left without a managed status reaction.
+        // The read path maps a missing managed reaction to "Todo", so an add failure must
+        // never erase the existing status, and a cleanup failure must leave the target intact.
+        if (!present.includes(target)) {
+          try {
+            await transport.addReaction(channel, ts, target);
+          } catch (error) {
+            // Adding the new status failed; leave every existing reaction untouched so the
+            // prior status is preserved rather than erased.
+            return failure((error as Error).message);
+          }
         }
-        if (!present.includes(target)) await transport.addReaction(channel, ts, target);
+        const stale = present.filter((r) => r !== target);
+        for (const reaction of stale) {
+          try {
+            await transport.removeReaction(channel, ts, reaction);
+          } catch (error) {
+            // The target is already present, so the intended status holds. Surface the
+            // cleanup failure but never remove the target while a stale reaction lingers.
+            return failure((error as Error).message);
+          }
+        }
         return { success: true, result: { ok: true, status } };
       }
       case "slack_comment": {
