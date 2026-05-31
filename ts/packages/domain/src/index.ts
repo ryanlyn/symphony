@@ -82,7 +82,7 @@ export type Port = number & { readonly [PortBrand]: true };
 // ─── Type guards / validators ───────────────────────────────────────────────
 
 function isInt(n: number): boolean {
-  return Number.isInteger(n) && !Number.isNaN(n);
+  return Number.isInteger(n);
 }
 
 export function isValidPort(n: number): n is Port {
@@ -115,6 +115,55 @@ export function isValidMaxTurns(n: number): n is MaxTurns {
 
 export function isValidEnsembleSize(n: number): n is EnsembleSize {
   return isInt(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
+}
+
+// ─── Branded constructors (validate + return branded type, or throw) ─────────
+
+export function Port(n: number): Port {
+  if (!isValidPort(n)) throw new RangeError(`invalid port: ${n} (expected 0–${PORT_MAX})`);
+  return n;
+}
+
+export function PositiveTimeoutMs(n: number): PositiveTimeoutMs {
+  if (!isValidTimeout(n))
+    throw new RangeError(`invalid timeout: ${n} (expected 1–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function NonNegativeTimeoutMs(n: number): NonNegativeTimeoutMs {
+  if (!isValidNonNegativeTimeout(n))
+    throw new RangeError(`invalid timeout: ${n} (expected 0–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function PositiveIntervalMs(n: number): PositiveIntervalMs {
+  if (!isValidInterval(n))
+    throw new RangeError(`invalid interval: ${n} (expected 1–${ONE_WEEK_MS})`);
+  return n;
+}
+
+export function RenderIntervalMs(n: number): RenderIntervalMs {
+  if (!isValidRenderInterval(n))
+    throw new RangeError(`invalid render interval: ${n} (expected 1–${RENDER_INTERVAL_MAX_MS})`);
+  return n;
+}
+
+export function Concurrency(n: number): Concurrency {
+  if (!isValidConcurrency(n))
+    throw new RangeError(`invalid concurrency: ${n} (expected 1–${CONCURRENCY_MAX})`);
+  return n;
+}
+
+export function MaxTurns(n: number): MaxTurns {
+  if (!isValidMaxTurns(n))
+    throw new RangeError(`invalid maxTurns: ${n} (expected 1–${MAX_TURNS_MAX})`);
+  return n;
+}
+
+export function EnsembleSize(n: number): EnsembleSize {
+  if (!isValidEnsembleSize(n))
+    throw new RangeError(`invalid ensemble size: ${n} (expected 1–${ENSEMBLE_SIZE_MAX})`);
+  return n;
 }
 
 /**

@@ -638,7 +638,7 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   const issue = issueFixture("issue-stale-finally", "MT-STALE-FINALLY");
   const root = await tempDir("symphony-ts-runtime-stale-finally");
   const workflow = workflowFixture(root);
-  workflow.settings.agent.maxRetryBackoffMs = unsafeBrand<PositiveTimeoutMs>(0);
+  workflow.settings.agent.maxRetryBackoffMs = unsafeBrand<PositiveTimeoutMs>(1);
   workflow.settings.codex.stallTimeoutMs = unsafeBrand<NonNegativeTimeoutMs>(50);
   const orchestrator = new Orchestrator(workflow.settings);
   let attempts = 0;

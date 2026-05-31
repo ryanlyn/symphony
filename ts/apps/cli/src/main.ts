@@ -19,7 +19,8 @@ import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
-import type { Port, Settings, WorkflowDefinition } from "@symphony/domain";
+import type { Settings, WorkflowDefinition } from "@symphony/domain";
+import { Port } from "@symphony/domain";
 
 import {
   createRunsCommand,
@@ -107,7 +108,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         runtimeDefaultSettingsOptions(),
       );
       applyCliOverrides(workflow, options);
-      if (boundServerPort !== null) workflow.settings.server.port = boundServerPort as Port;
+      if (boundServerPort !== null) workflow.settings.server.port = Port(boundServerPort);
       validateDispatchConfig(workflow.settings);
       return workflow;
     };
@@ -134,7 +135,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         host: workflow.settings.server.host,
         port: workflow.settings.server.port ?? 0,
       });
-      workflow.settings.server.port = server.port as Port;
+      workflow.settings.server.port = Port(server.port);
       boundServerPort = server.port;
       process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
     }
@@ -201,7 +202,7 @@ function cliOptionsFromCommander(parsed: CliCommanderOptions, workflowPath?: str
 }
 
 function applyCliOverrides(workflow: WorkflowDefinition, options: CliOptions): void {
-  if (options.port !== null) workflow.settings.server.port = options.port as Port;
+  if (options.port !== null) workflow.settings.server.port = Port(options.port);
   if (options.logsRoot !== null) {
     workflow.settings.logging.logFile = path.join(
       path.resolve(options.logsRoot),
