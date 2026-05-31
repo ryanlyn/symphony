@@ -4,16 +4,16 @@
  * immediately, without a Linear API key or workspace.
  *
  * Usage:
- *   npx tsx demo/seed-local.ts [dir] [count]
+ *   npx tsx sandbox/seed-local.ts [dir] [count]
  *
  * Arguments (both optional):
  *   dir    target board directory (default: .symphony/board)
  *   count  how many of the sample issues to create (default: all of them)
  *
  * Examples:
- *   npx tsx demo/seed-local.ts                       # seeds ./.symphony/board
- *   npx tsx demo/seed-local.ts /tmp/demo-board       # seeds an explicit dir
- *   npx tsx demo/seed-local.ts .symphony/board 2     # seeds only the first 2 issues
+ *   npx tsx sandbox/seed-local.ts                       # seeds ./.symphony/board
+ *   npx tsx sandbox/seed-local.ts /tmp/demo-board       # seeds an explicit dir
+ *   npx tsx sandbox/seed-local.ts .symphony/board 2     # seeds only the first 2 issues
  *
  * Issues are written as `BOARD-<n>.md` files via @symphony/local-tracker's BoardStore so
  * the ids and on-disk format stay correct and match what the running tracker expects.
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
   console.log("Point tracker.path at this directory and run Symphony with kind: local.");
 }
 
-// Only run when invoked directly (e.g. `npx tsx demo/seed-local.ts`), not when imported
+// Only run when invoked directly (e.g. `npx tsx sandbox/seed-local.ts`), not when imported
 // by a test that exercises seedLocalBoard / SEED_ISSUES.
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((err) => {

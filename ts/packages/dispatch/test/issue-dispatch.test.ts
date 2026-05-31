@@ -45,30 +45,22 @@ test("normalizes Linear issue fields used by dispatch", () => {
   assert.deepEqual(issue.labels, ["symphony:backend", "ensemble:3"]);
   assert.equal(issue.blockers[0]?.state, "Closed");
   assert.equal(issue.blockers[0]?.stateType, "completed");
-  assert.equal(
-    normalizeIssue({
-      id: "unknown-state-type",
-      identifier: "MT-UNKNOWN-STATE-TYPE",
-      title: "Unknown state type",
-      state: { name: "Todo", type: "needs-review" },
-      relations: [
-        {
-          relatedIssue: {
-            id: "unknown-blocker-state-type",
-            identifier: "MT-BLOCKER",
-            state: { name: "Review", type: "needs-review" },
-          },
-        },
-      ],
-    }).stateType,
-    null,
+  assert.throws(
+    () =>
+      normalizeIssue({
+        id: "unknown-state-type",
+        identifier: "MT-UNKNOWN-STATE-TYPE",
+        title: "Unknown state type",
+        state: { name: "Todo", type: "needs-review" },
+      }),
+    /stateType is required/,
   );
   assert.equal(
     normalizeIssue({
       id: "unknown-blocker-state-type-root",
       identifier: "MT-UNKNOWN-BLOCKER",
       title: "Unknown blocker state type",
-      state: "Todo",
+      state: { name: "Todo", type: "unstarted" },
       relations: [
         {
           type: "Blocks",
@@ -87,7 +79,7 @@ test("normalizes Linear issue fields used by dispatch", () => {
       id: "float-priority",
       identifier: "MT-FLOAT",
       title: "Float priority",
-      state: "Todo",
+      state: { name: "Todo", type: "unstarted" },
       priority: 1.5,
     }).priority,
     null,
@@ -108,7 +100,7 @@ test("normalizes Linear issue fields used by dispatch", () => {
         id: "unassigned",
         identifier: "MT-UNASSIGNED",
         title: "Unassigned",
-        state: "Todo",
+        state: { name: "Todo", type: "unstarted" },
         assignee: null,
       },
       "worker@example.com",
@@ -121,7 +113,7 @@ test("normalizes Linear issue fields used by dispatch", () => {
         id: "email-only",
         identifier: "MT-EMAIL",
         title: "Email only",
-        state: "Todo",
+        state: { name: "Todo", type: "unstarted" },
         assignee: { email: "worker@example.com" },
       },
       "worker@example.com",
@@ -141,7 +133,7 @@ test("route and assignee rules match the SPEC", () => {
     id: "i1",
     identifier: "MT-1",
     title: "Title",
-    state: "Todo",
+    state: { name: "Todo", type: "unstarted" },
     labels: ["Symphony:Backend"],
   });
 
@@ -163,6 +155,7 @@ test("slack hashtag routing resolves #route- labels via route_label_prefix", () 
     identifier: "SLK-1",
     title: "Routed",
     state: "Todo",
+    state_type: "unstarted",
     labels: ["route-backend"],
   });
   assert.deepEqual(routeNames(routed, matching), ["backend"]);
@@ -182,6 +175,7 @@ test("slack plain hashtag labels are unrouted under route_label_prefix", () => {
     identifier: "SLK-2",
     title: "Plain hashtag",
     state: "Todo",
+    state_type: "unstarted",
     labels: ["backend"],
   });
 
@@ -208,7 +202,7 @@ test("empty route labels are routed labels but are not dispatchable as unrouted"
     id: "empty-route",
     identifier: "MT-EMPTY",
     title: "Empty route",
-    state: "Todo",
+    state: { name: "Todo", type: "unstarted" },
     labels: ["Symphony:"],
   });
 
@@ -222,7 +216,12 @@ test("dispatch block reasons classify capacity gates without hiding routing fail
     agent: { max_concurrent_agents: 1 },
     status_overrides: { Todo: { agent: { max_concurrent_agents: 1 } } },
   });
-  const issue = normalizeIssue({ id: "i1", identifier: "MT-1", title: "Title", state: "Todo" });
+  const issue = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "Title",
+    state: { name: "Todo", type: "unstarted" },
+  });
   const runningByState = new Map([["Todo", 1]]);
 
   assert.equal(
@@ -268,7 +267,7 @@ test("unstarted blockers and ensemble slot claims are enforced", () => {
     id: "i2",
     identifier: "MT-2",
     title: "Title",
-    state: "Todo",
+    state: { name: "Todo", type: "unstarted" },
     labels: ["ensemble:3"],
   });
   const claimed = new Set([slotKey(issue.id, 0), slotKey(issue.id, 1)]);
@@ -283,7 +282,7 @@ test("dispatch sort is priority, creation time, identifier", () => {
       id: "3",
       identifier: "MT-3",
       title: "C",
-      state: "Todo",
+      state: { name: "Todo", type: "unstarted" },
       labels: [],
       blockers: [],
       priority: null,
@@ -293,7 +292,7 @@ test("dispatch sort is priority, creation time, identifier", () => {
       id: "2",
       identifier: "MT-2",
       title: "B",
-      state: "Todo",
+      state: { name: "Todo", type: "unstarted" },
       labels: [],
       blockers: [],
       priority: 1,
@@ -303,7 +302,7 @@ test("dispatch sort is priority, creation time, identifier", () => {
       id: "1",
       identifier: "MT-1",
       title: "A",
-      state: "Todo",
+      state: { name: "Todo", type: "unstarted" },
       labels: [],
       blockers: [],
       priority: 1,
@@ -322,7 +321,7 @@ test("dispatch sort is priority, creation time, identifier", () => {
         id: "utc",
         identifier: "MT-UTC",
         title: "UTC",
-        state: "Todo",
+        state: { name: "Todo", type: "unstarted" },
         labels: [],
         blockers: [],
         priority: 1,
@@ -332,7 +331,7 @@ test("dispatch sort is priority, creation time, identifier", () => {
         id: "offset",
         identifier: "MT-OFFSET",
         title: "Offset",
-        state: "Todo",
+        state: { name: "Todo", type: "unstarted" },
         labels: [],
         blockers: [],
         priority: 1,

@@ -20,6 +20,15 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+test("a custom/unknown status falls back to a valid stateType (normalizeIssue requires one)", async () => {
+  const dir = await tempBoard();
+  await writeFile(path.join(dir, "BOARD-7.md"), "---\nstatus: Reviewing\n---\n# Custom status\n", "utf8");
+  const store = new BoardStore(dir);
+  const issue = (await store.getByIds(["BOARD-7"]))[0]!;
+  assert.equal(issue.state, "Reviewing");
+  assert.equal(issue.stateType, "unstarted");
+});
+
 test("create allocates incrementing BOARD ids and round-trips", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);

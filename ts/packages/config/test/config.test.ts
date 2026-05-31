@@ -376,6 +376,18 @@ test("config rejects empty strings and booleans for typed fields", () => {
     /polling.interval_ms must be a positive integer/,
   );
   assert.throws(
+    () => parseConfig({ codex: { stall_timeout_ms: " " } }),
+    /codex.stall_timeout_ms must be a non-negative integer/,
+  );
+  assert.throws(
+    () => parseConfig({ server: { port: "" } }),
+    /server.port must be a valid port number/,
+  );
+  assert.throws(
+    () => parseConfig({ server: { port: 99999 } }),
+    /server.port must be a valid port number/,
+  );
+  assert.throws(
     () => parseConfig({ polling: { interval_ms: true } }),
     /polling.interval_ms must be a positive integer/,
   );
@@ -386,11 +398,10 @@ test("config rejects empty strings and booleans for typed fields", () => {
   assert.throws(() => parseConfig({ tracker: { kind: "" } }), /unsupported tracker.kind/);
 });
 
-test("stall timeout zero and workflow logging extension match Elixir config semantics", () => {
+test("stall_timeout_ms=0 is accepted as a valid value at top-level and in status overrides", () => {
   const settings = parseConfig({
     codex: { stall_timeout_ms: 0 },
     claude: { stall_timeout_ms: 0 },
-    logging: { log_file: "tmp/custom/symphony.log" },
     status_overrides: {
       Todo: {
         codex: { stall_timeout_ms: 0 },
@@ -401,11 +412,53 @@ test("stall timeout zero and workflow logging extension match Elixir config sema
 
   assert.equal(settings.codex.stallTimeoutMs, 0);
   assert.equal(settings.claude.stallTimeoutMs, 0);
-  assert.equal(settings.logging.logFile, "./log/symphony.log");
 
   const effective = settingsForIssueState(settings, "Todo");
   assert.equal(effective.codex.stallTimeoutMs, 0);
   assert.equal(effective.claude.stallTimeoutMs, 0);
+});
+
+test("hooks accept explicit null as disabled", () => {
+  const settings = parseConfig({
+    hooks: {
+      after_create: null,
+      before_run: null,
+      after_run: null,
+      before_remove: null,
+    },
+  });
+
+  assert.equal(settings.hooks.afterCreate, null);
+  assert.equal(settings.hooks.beforeRun, null);
+  assert.equal(settings.hooks.afterRun, null);
+  assert.equal(settings.hooks.beforeRemove, null);
+});
+
+test("config reports useful errors for list fields and agent executors", () => {
+  assert.throws(
+    () => parseConfig({ tracker: { active_states: "Todo" } }),
+    /tracker.active_states must be a list of strings/,
+  );
+  assert.throws(
+    () => parseConfig({ worker: { ssh_hosts: "worker-a" } }),
+    /worker.ssh_hosts must be a list of strings/,
+  );
+  assert.throws(
+    () => parseConfig({ agents: { pi: { executor: "acp", bridge_args: "--safe-mode" } } }),
+    /agents.pi.bridge_args must be a list of strings/,
+  );
+  assert.throws(
+    () => parseConfig({ agents: { pi: { executor: "foo" } } }),
+    /unsupported agents.pi.executor: foo/,
+  );
+});
+
+test("config ignores custom logging.log_file and uses default path", () => {
+  const settings = parseConfig({
+    logging: { log_file: "tmp/custom/symphony.log" },
+  });
+
+  assert.equal(settings.logging.logFile, "./log/symphony.log");
 });
 
 test("status overrides reject legacy per-state map and unknown sections", () => {

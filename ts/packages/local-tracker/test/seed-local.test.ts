@@ -5,7 +5,7 @@ import path from "node:path";
 import { test } from "vitest";
 
 import { assert } from "../../../test/assert.js";
-import { SEED_ISSUES, seedLocalBoard } from "../../../demo/seed-local.js";
+import { SEED_ISSUES, seedLocalBoard } from "../../../sandbox/seed-local.js";
 
 import { BoardStore } from "@symphony/local-tracker";
 

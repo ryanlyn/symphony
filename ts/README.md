@@ -199,9 +199,9 @@ To seed a board so you can try `kind: local` immediately, use the demo seeder, w
 sample `BOARD-<n>.md` files through the same `BoardStore` the running tracker uses:
 
 ```sh
-npx tsx demo/seed-local.ts                  # seeds ./.symphony/board
-npx tsx demo/seed-local.ts /tmp/demo-board  # seeds an explicit directory
-npx tsx demo/seed-local.ts .symphony/board 2 # seeds only the first 2 issues
+npx tsx sandbox/seed-local.ts                  # seeds ./.symphony/board
+npx tsx sandbox/seed-local.ts /tmp/demo-board  # seeds an explicit directory
+npx tsx sandbox/seed-local.ts .symphony/board 2 # seeds only the first 2 issues
 ```
 
 Point `tracker.path` at the directory you seeded and run Symphony as usual.

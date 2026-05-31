@@ -9,15 +9,15 @@ workspace, just a directory of `BOARD-<n>.md` files.
 
 ```bash
 cd /home/coder/work/symphony/ts
-npx tsx demo/seed-local.ts
+npx tsx sandbox/seed-local.ts
 ```
 
 This writes a few sample issues (a couple in `Todo`, one in `In Progress`) into
 `.symphony/board/` via `@symphony/local-tracker`'s `BoardStore`, so the ids and on-disk
 format match what the running tracker expects.
 
-- Seed a different directory: `npx tsx demo/seed-local.ts /tmp/demo-board`
-- Seed fewer issues: `npx tsx demo/seed-local.ts .symphony/board 2`
+- Seed a different directory: `npx tsx sandbox/seed-local.ts /tmp/demo-board`
+- Seed fewer issues: `npx tsx sandbox/seed-local.ts .symphony/board 2`
 
 Point a workflow at the board with `tracker.kind: local` and `tracker.path: .symphony/board`
 (matching the directory you seeded), then run Symphony as below.
