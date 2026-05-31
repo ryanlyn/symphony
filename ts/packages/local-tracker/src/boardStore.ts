@@ -195,8 +195,19 @@ export class BoardStore {
     let entries: string[];
     try {
       entries = await fs.readdir(this.dir);
-    } catch {
-      return [];
+    } catch (err) {
+      // A MISSING board directory is a legitimately empty board: return [] so list()/byStatus()/
+      // fetchCandidateIssues report no issues. But any OTHER failure (EACCES on a locked-down dir,
+      // ENOTDIR when the path points at a file, etc.) means the board is misconfigured or broken,
+      // and silently returning [] would make it look idle - hiding the operator action needed.
+      // Re-throw with the dir in the message so the runtime poll-loop guard records a poll_error
+      // (it catches throws from fetchCandidateIssues, logs, and keeps the daemon alive) instead of
+      // swallowing the failure.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`failed to read board directory ${JSON.stringify(this.dir)}: ${reason}`, {
+        cause: err,
+      });
     }
     return entries
       .filter((f) => f.endsWith(".md"))

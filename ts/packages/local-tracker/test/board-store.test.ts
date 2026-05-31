@@ -14,6 +14,11 @@ async function tempBoard(): Promise<string> {
   return dir;
 }
 
+/** Escape a literal string (e.g. an absolute path with regex metacharacters) for use in a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("create allocates incrementing BOARD ids and round-trips", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);
@@ -346,6 +351,27 @@ test("concurrent updateStatus and appendComment on one issue lose nothing (share
   // Round-trip through a fresh store to confirm the final file is still well-formed.
   const issue = (await new BoardStore(dir).getByIds(["BOARD-1"]))[0]!;
   assert.equal(issue.state, "In Progress");
+});
+
+test("list() treats a MISSING board directory as an empty board (ENOENT -> [])", async () => {
+  // A nonexistent dir is a legitimately empty board: no issues yet, no error.
+  const dir = path.join(await tempBoard(), "does-not-exist-yet");
+  const store = new BoardStore(dir);
+  assert.deepEqual(await store.list(), []);
+  assert.deepEqual(await store.byStatus(["Todo"]), []);
+});
+
+test("list()/byStatus() THROW with the path when the board dir is a file (ENOTDIR)", async () => {
+  // Point the store at a REGULAR FILE rather than a directory. fs.readdir fails with ENOTDIR,
+  // which must surface as a throw (with the path in the message) instead of looking like an
+  // empty board - so the runtime poll-loop guard records a poll_error for the operator.
+  const parent = await tempBoard();
+  const filePath = path.join(parent, "board-file");
+  await writeFile(filePath, "not a directory", "utf8");
+
+  const store = new BoardStore(filePath);
+  await assert.rejects(() => store.list(), new RegExp(escapeRegExp(filePath)));
+  await assert.rejects(() => store.byStatus(["Todo"]), new RegExp(escapeRegExp(filePath)));
 });
 
 test("CRLF board files parse with clean status and description", async () => {
