@@ -206,7 +206,7 @@ export class BoardStore {
       description: input.body ?? "",
       comments: "",
     };
-    await fs.mkdir(this.dir, { recursive: true });
+    await this.ensureBoardDir();
     const contents = this.render(parsed);
     // Serialize id allocation per board DIRECTORY under the same module-level lock so concurrent
     // creates in one daemon do not all scan the same nextId in lockstep. The no-overwrite link
@@ -258,6 +258,48 @@ export class BoardStore {
         await fs.rm(tmp, { force: true }).catch(() => {});
       }
     });
+  }
+
+  /**
+   * Create the board directory durably so a freshly-created board survives a crash. mkdir alone
+   * is not enough: fsyncing this.dir after publishing a file persists the entries INSIDE it, but
+   * NOT the directory entry in the PARENT that makes a newly-created board dir reachable. On a
+   * first-run board (the .symphony/board path did not exist) a crash right after create() could
+   * otherwise lose the entire new directory and the acknowledged issue even though the file and
+   * the board dir were synced.
+   *
+   * fs.mkdir(dir, { recursive: true }) returns the path of the FIRST (topmost) directory it
+   * actually created, or undefined when nothing was created (the dir already existed). When it
+   * created something, every directory along the chain from that topmost-created dir down to (and
+   * including) this.dir is brand new, and each gained a new child entry in its own parent. To make
+   * the whole chain reachable we fsync each parent that gained a new entry: path.dirname(topmost)
+   * (the pre-existing parent that gained the top new dir) plus every newly-created directory from
+   * the topmost down to - but NOT including - this.dir (this.dir's own entry is fsynced by the
+   * existing post-publish fsyncDir(this.dir), which persists the new FILE entry inside it). When
+   * nothing was created (dir already existed) there is no parent entry to flush. fsyncDir is
+   * best-effort (it swallows dir-fsync-unsupported errors), so platforms that cannot fsync a dir
+   * handle are unaffected.
+   */
+  private async ensureBoardDir(): Promise<void> {
+    const firstCreated = await fs.mkdir(this.dir, { recursive: true });
+    if (!firstCreated) return;
+    // Every directory that gained a NEW child entry along the freshly-created chain must be
+    // fsynced so the chain is reachable. Those are exactly the parents of each newly-created
+    // directory: path.dirname(top) (the pre-existing dir that gained `top`) through to
+    // path.dirname(this.dir) (the last new dir above this.dir). We walk UP from this.dir's parent
+    // and stop after flushing path.dirname(top). this.dir itself is intentionally skipped - its
+    // own entry is persisted by the post-publish fsyncDir(this.dir) that flushes the new file.
+    const top = path.resolve(firstCreated);
+    const stop = path.dirname(top);
+    let parent = path.dirname(path.resolve(this.dir));
+    // Guard against an unexpected loop at a filesystem root (path.dirname("/") === "/").
+    while (true) {
+      await fsyncDir(parent);
+      if (parent === stop) break;
+      const next = path.dirname(parent);
+      if (next === parent) break;
+      parent = next;
+    }
   }
 
   private filePath(id: string): string {
@@ -353,7 +395,7 @@ export class BoardStore {
    * expose a name whose data has not yet reached disk (which would otherwise read back empty).
    */
   private async write(id: string, p: ParsedFile): Promise<void> {
-    await fs.mkdir(this.dir, { recursive: true });
+    await this.ensureBoardDir();
     const target = this.filePath(id);
     const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {

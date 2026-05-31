@@ -388,6 +388,52 @@ test("create fsyncs the temp contents before publish and the dir after publish",
   assert.deepEqual((await readdir(dir)).sort(), ["BOARD-1.md"]);
 });
 
+test("first create fsyncs the PARENT of a newly-created board dir (new-dir entry is durable)", async () => {
+  // A first-run board whose parent does not exist yet: <tmp>/new-parent/board. mkdir creates the
+  // whole chain. fsyncing the board dir alone persists entries INSIDE it but NOT the directory
+  // entry in the parent that makes the new board dir reachable, so a crash right after create()
+  // could lose the entire board. The parent of the newly-created board dir must be fsynced too.
+  const tmp = await mkdtemp(path.join(tmpdir(), "board-first-run-"));
+  const parent = path.join(tmp, "new-parent");
+  const dir = path.join(parent, "board");
+  const store = new BoardStore(dir);
+
+  const synced: string[] = [];
+  const realOpen = nodeFs.open.bind(nodeFs);
+  const openSpy = vi
+    .spyOn(nodeFs, "open")
+    .mockImplementation(async (p: Parameters<typeof nodeFs.open>[0], ...rest) => {
+      const fh = await (realOpen as typeof nodeFs.open)(p, ...rest);
+      const realSync = fh.sync.bind(fh);
+      fh.sync = async () => {
+        synced.push(path.resolve(String(p)));
+        return realSync();
+      };
+      return fh;
+    });
+  try {
+    await store.create({ title: "First run", body: "Body", status: "Todo" });
+  } finally {
+    openSpy.mockRestore();
+  }
+
+  // The board dir itself was fsynced (post-publish, persists the new file entry)...
+  assert.ok(
+    synced.includes(path.resolve(dir)),
+    `expected the board dir to be fsynced, saw ${JSON.stringify(synced)}`,
+  );
+  // ...AND its parent was fsynced so the newly-created board-dir entry survives a crash.
+  assert.ok(
+    synced.includes(path.resolve(parent)),
+    `expected the new board dir's PARENT to be fsynced, saw ${JSON.stringify(synced)}`,
+  );
+
+  // The created issue is fully durable and round-trips.
+  const issue = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(issue.title, "First run");
+  assert.equal(issue.state, "Todo");
+});
+
 test("create leaves NO partial BOARD file when the publish (link) fails", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);
