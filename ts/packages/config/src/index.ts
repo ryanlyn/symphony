@@ -16,13 +16,21 @@ import type {
 } from "@symphony/domain";
 import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
 
-const coercedPositiveInt = z
-  .union([z.number(), z.string().transform(Number)])
-  .refine((n) => Number.isInteger(n) && n > 0, { message: "must be a positive integer" });
+const numericInput = z.union([
+  z.number(),
+  z
+    .string()
+    .refine((s) => s.trim() !== "", { message: "must not be empty" })
+    .transform(Number),
+]);
 
-const coercedNonNegativeInt = z
-  .union([z.number(), z.string().transform(Number)])
-  .refine((n) => Number.isInteger(n) && n >= 0, { message: "must be a non-negative integer" });
+const coercedPositiveInt = numericInput.refine((n) => Number.isInteger(n) && n > 0, {
+  message: "must be a positive integer",
+});
+
+const coercedNonNegativeInt = numericInput.refine((n) => Number.isInteger(n) && n >= 0, {
+  message: "must be a non-negative integer",
+});
 
 const coercedBoolean = z.union([
   z.boolean(),
@@ -518,7 +526,7 @@ function parseAgents(
     const recordRaw = asRecord(value, `agents.${normalized}`);
     const executor = stringValue(recordRaw.executor, normalized === "codex" ? "appserver" : "acp");
     const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
-    agents[normalized] = parseAgentRecord(normalized, parsed, {
+    agents[normalized] = parseAgentRecord(parsed, {
       codex: baseAgents.codex as AppServerAgentConfig,
       claude: baseAgents.claude as AcpAgentConfig,
     });
@@ -535,7 +543,6 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
 }
 
 function parseAgentRecord(
-  _name: string,
   raw: AgentRecordRaw,
   defaults: { codex: AppServerAgentConfig; claude: AcpAgentConfig },
 ): AgentConfig {
@@ -811,10 +818,12 @@ function configErrorMessage(error: z.ZodError, baseLabel?: string): string {
   if (issue.code === "too_small") return `${label} must be a positive integer`;
   if (issue.code === "custom") return `${label} ${issue.message}`;
   if (issue.code === "invalid_union") {
+    // Inspect the first branch's inner error to determine the expected type.
     const innerErrors = (issue as { errors?: unknown[][] }).errors;
     const firstInner = innerErrors?.[0]?.[0] as { expected?: string } | undefined;
     if (firstInner?.expected === "boolean") return `expected a boolean`;
-    return `${label} must be a positive integer`;
+    if (firstInner?.expected === "number") return `${label} must be a positive integer`;
+    return `${label} is invalid: ${issue.message}`;
   }
   return `${label} is invalid: ${issue.message}`;
 }
@@ -959,15 +968,15 @@ function resolveEnv(value: string, env: NodeJS.ProcessEnv): string {
 }
 
 function resolveConfiguredSecret(
-  value: unknown,
+  value: string | undefined,
   env: NodeJS.ProcessEnv,
   fallbackEnvName: string,
 ): string | undefined {
-  if (value === undefined || value === null) {
+  if (value === undefined) {
     const fallback = nonEmptyString(env[fallbackEnvName]);
     return resolveOnePasswordRef(fallback, env);
   }
-  const resolved = resolveEnv(stringValue(value, ""), env);
+  const resolved = resolveEnv(value, env);
   const secret = nonEmptyString(resolved) ?? nonEmptyString(env[fallbackEnvName]);
   return resolveOnePasswordRef(secret, env);
 }
