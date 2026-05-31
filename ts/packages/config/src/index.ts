@@ -16,29 +16,43 @@ import type {
 } from "@symphony/domain";
 import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
 
+const coercedPositiveInt = z
+  .union([z.number(), z.string().transform(Number)])
+  .refine((n) => Number.isInteger(n) && n > 0, { message: "must be a positive integer" });
+
+const coercedNonNegativeInt = z
+  .union([z.number(), z.string().transform(Number)])
+  .refine((n) => Number.isInteger(n) && n >= 0, { message: "must be a non-negative integer" });
+
+const coercedBoolean = z.union([
+  z.boolean(),
+  z.literal("true").transform(() => true),
+  z.literal("false").transform(() => false),
+]);
+
 const appServerAgentRecordSchema = z
   .object({
     executor: z.literal("appserver"),
-    command: z.unknown().optional(),
+    command: z.string().optional(),
     approvalPolicy: z.unknown().optional(),
-    threadSandbox: z.unknown().optional(),
+    threadSandbox: z.string().optional(),
     turnSandboxPolicy: z.unknown().optional(),
-    turnTimeoutMs: z.unknown().optional(),
-    readTimeoutMs: z.unknown().optional(),
-    stallTimeoutMs: z.unknown().optional(),
+    turnTimeoutMs: coercedPositiveInt.optional(),
+    readTimeoutMs: coercedPositiveInt.optional(),
+    stallTimeoutMs: coercedNonNegativeInt.optional(),
   })
   .strict();
 const acpAgentRecordSchema = z
   .object({
     executor: z.literal("acp"),
-    bridgeCommand: z.unknown().optional(),
-    bridgeArgs: z.unknown().optional(),
-    command: z.unknown().optional(),
-    model: z.unknown().optional(),
-    permissionMode: z.unknown().optional(),
-    turnTimeoutMs: z.unknown().optional(),
-    stallTimeoutMs: z.unknown().optional(),
-    strictMcpConfig: z.unknown().optional(),
+    bridgeCommand: z.string().optional(),
+    bridgeArgs: z.array(z.string()).optional(),
+    command: z.string().optional(),
+    model: z.string().optional(),
+    permissionMode: z.string().optional(),
+    turnTimeoutMs: coercedPositiveInt.optional(),
+    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
 const agentRecordSchema = z.discriminatedUnion("executor", [
@@ -48,86 +62,86 @@ const agentRecordSchema = z.discriminatedUnion("executor", [
 
 const trackerRawSchema = z
   .object({
-    kind: z.unknown().optional(),
-    endpoint: z.unknown().optional(),
-    apiKey: z.unknown().optional(),
-    projectSlug: z.unknown().optional(),
-    assignee: z.unknown().optional(),
-    activeStates: z.unknown().optional(),
-    terminalStates: z.unknown().optional(),
+    kind: z.string().optional(),
+    endpoint: z.string().optional(),
+    apiKey: z.string().optional(),
+    projectSlug: z.string().optional(),
+    assignee: z.string().optional(),
+    activeStates: z.array(z.string()).optional(),
+    terminalStates: z.array(z.string()).optional(),
     dispatch: z
       .object({
-        acceptUnrouted: z.unknown().optional(),
-        onlyRoutes: z.unknown().optional(),
-        routeLabelPrefix: z.unknown().optional(),
+        acceptUnrouted: coercedBoolean.optional(),
+        onlyRoutes: z.array(z.string()).nullable().optional(),
+        routeLabelPrefix: z.string().optional(),
       })
       .strict()
       .optional(),
   })
   .strict();
 
-const pollingRawSchema = z.object({ intervalMs: z.unknown().optional() }).strict();
-const workspaceRawSchema = z.object({ root: z.unknown().optional() }).strict();
+const pollingRawSchema = z.object({ intervalMs: coercedPositiveInt.optional() }).strict();
+const workspaceRawSchema = z.object({ root: z.string().optional() }).strict();
 const workerRawSchema = z
   .object({
-    sshHosts: z.unknown().optional(),
-    sshTimeoutMs: z.unknown().optional(),
-    maxConcurrentAgentsPerHost: z.unknown().optional(),
+    sshHosts: z.array(z.string()).optional(),
+    sshTimeoutMs: coercedPositiveInt.optional(),
+    maxConcurrentAgentsPerHost: coercedPositiveInt.optional(),
   })
   .strict();
 const hooksRawSchema = z
   .object({
-    afterCreate: z.unknown().optional(),
-    beforeRun: z.unknown().optional(),
-    afterRun: z.unknown().optional(),
-    beforeRemove: z.unknown().optional(),
-    timeoutMs: z.unknown().optional(),
+    afterCreate: z.string().optional(),
+    beforeRun: z.string().optional(),
+    afterRun: z.string().optional(),
+    beforeRemove: z.string().optional(),
+    timeoutMs: coercedPositiveInt.optional(),
   })
   .strict();
 const agentRawSchema = z
   .object({
-    kind: z.unknown().optional(),
-    maxConcurrentAgents: z.unknown().optional(),
-    maxTurns: z.unknown().optional(),
-    maxRetryBackoffMs: z.unknown().optional(),
-    ensembleSize: z.unknown().optional(),
+    kind: z.string().optional(),
+    maxConcurrentAgents: coercedPositiveInt.optional(),
+    maxTurns: coercedPositiveInt.optional(),
+    maxRetryBackoffMs: coercedPositiveInt.optional(),
+    ensembleSize: coercedPositiveInt.optional(),
   })
   .strict();
 const codexRawSchema = z
   .object({
-    command: z.unknown().optional(),
+    command: z.string().optional(),
     approvalPolicy: z.unknown().optional(),
-    threadSandbox: z.unknown().optional(),
+    threadSandbox: z.string().optional(),
     turnSandboxPolicy: z.unknown().optional(),
-    turnTimeoutMs: z.unknown().optional(),
-    readTimeoutMs: z.unknown().optional(),
-    stallTimeoutMs: z.unknown().optional(),
+    turnTimeoutMs: coercedPositiveInt.optional(),
+    readTimeoutMs: coercedPositiveInt.optional(),
+    stallTimeoutMs: coercedNonNegativeInt.optional(),
   })
   .strict();
 const claudeRawSchema = z
   .object({
-    command: z.unknown().optional(),
-    model: z.unknown().optional(),
-    permissionMode: z.unknown().optional(),
-    turnTimeoutMs: z.unknown().optional(),
-    stallTimeoutMs: z.unknown().optional(),
-    strictMcpConfig: z.unknown().optional(),
+    command: z.string().optional(),
+    model: z.string().optional(),
+    permissionMode: z.string().optional(),
+    turnTimeoutMs: coercedPositiveInt.optional(),
+    stallTimeoutMs: coercedNonNegativeInt.optional(),
+    strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
 const observabilityRawSchema = z
   .object({
-    dashboardEnabled: z.unknown().optional(),
-    refreshMs: z.unknown().optional(),
-    renderIntervalMs: z.unknown().optional(),
+    dashboardEnabled: coercedBoolean.optional(),
+    refreshMs: coercedPositiveInt.optional(),
+    renderIntervalMs: coercedPositiveInt.optional(),
   })
   .strict();
 const serverRawSchema = z
   .object({
-    host: z.unknown().optional(),
-    port: z.unknown().optional(),
+    host: z.string().optional(),
+    port: coercedNonNegativeInt.optional(),
   })
   .strict();
-const loggingRawSchema = z.object({ logFile: z.unknown().optional() }).strict();
+const loggingRawSchema = z.object({ logFile: z.string().optional() }).strict();
 const rawRecordSchema = z.record(z.string(), z.unknown());
 const partialAgentRawSchema = agentRawSchema.partial().strict();
 const partialCodexRawSchema = codexRawSchema.partial().strict();
@@ -315,11 +329,7 @@ export function parseConfig(
   settings.tracker = parseTracker(settings.tracker, trackerRaw, env);
 
   const pollingRaw = parsed.polling ?? {};
-  settings.polling.intervalMs = positiveInt(
-    pollingRaw.intervalMs,
-    settings.polling.intervalMs,
-    "polling.interval_ms",
-  );
+  settings.polling.intervalMs = pollingRaw.intervalMs ?? settings.polling.intervalMs;
 
   const workspaceRaw = parsed.workspace ?? {};
   const workspaceRootFallback = settings.workspace.rootExpression ?? settings.workspace.root;
@@ -332,19 +342,10 @@ export function parseConfig(
   settings.workspace.root = expandLocalPath(workspaceRootExpression, env);
 
   const workerRaw = parsed.worker ?? {};
-  settings.worker.sshHosts = stringArray(workerRaw.sshHosts, settings.worker.sshHosts);
-  settings.worker.sshTimeoutMs = positiveInt(
-    workerRaw.sshTimeoutMs,
-    settings.worker.sshTimeoutMs,
-    "worker.ssh_timeout_ms",
-  );
-  const hostCap = workerRaw.maxConcurrentAgentsPerHost;
-  if (hostCap !== undefined) {
-    settings.worker.maxConcurrentAgentsPerHost = positiveInt(
-      hostCap,
-      1,
-      "worker.max_concurrent_agents_per_host",
-    );
+  settings.worker.sshHosts = workerRaw.sshHosts ?? settings.worker.sshHosts;
+  settings.worker.sshTimeoutMs = workerRaw.sshTimeoutMs ?? settings.worker.sshTimeoutMs;
+  if (workerRaw.maxConcurrentAgentsPerHost !== undefined) {
+    settings.worker.maxConcurrentAgentsPerHost = workerRaw.maxConcurrentAgentsPerHost;
   }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
@@ -355,25 +356,15 @@ export function parseConfig(
   applyKnownAgentRecords(settings);
 
   const observabilityRaw = parsed.observability ?? {};
-  settings.observability.dashboardEnabled = booleanValue(
-    observabilityRaw.dashboardEnabled,
-    settings.observability.dashboardEnabled,
-  );
-  settings.observability.refreshMs = positiveInt(
-    observabilityRaw.refreshMs,
-    settings.observability.refreshMs,
-    "observability.refresh_ms",
-  );
-  settings.observability.renderIntervalMs = positiveInt(
-    observabilityRaw.renderIntervalMs,
-    settings.observability.renderIntervalMs,
-    "observability.render_interval_ms",
-  );
+  settings.observability.dashboardEnabled =
+    observabilityRaw.dashboardEnabled ?? settings.observability.dashboardEnabled;
+  settings.observability.refreshMs = observabilityRaw.refreshMs ?? settings.observability.refreshMs;
+  settings.observability.renderIntervalMs =
+    observabilityRaw.renderIntervalMs ?? settings.observability.renderIntervalMs;
 
   const serverRaw = parsed.server ?? {};
-  settings.server.host = stringValue(serverRaw.host, settings.server.host);
-  const port = serverRaw.port;
-  if (port !== undefined) settings.server.port = nonNegativeInt(port, "server.port");
+  settings.server.host = serverRaw.host ?? settings.server.host;
+  if (serverRaw.port !== undefined) settings.server.port = serverRaw.port;
 
   settings.statusOverrides = parseStatusOverrides(parsed.statusOverrides ?? {});
   return settings;
@@ -444,18 +435,18 @@ function parseTracker(
       : trackerKindValue(kindRaw, "tracker.kind");
 
   const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, "LINEAR_API_KEY");
-  const projectSlug = resolveEnv(stringValue(trackerRaw.projectSlug, ""), env) || undefined;
+  const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
   const assignee = resolveConfiguredSecret(trackerRaw.assignee, env, "LINEAR_ASSIGNEE");
 
   return {
     ...defaults,
     kind,
-    endpoint: stringValue(trackerRaw.endpoint, defaults.endpoint),
+    endpoint: trackerRaw.endpoint ?? defaults.endpoint,
     apiKey,
     projectSlug,
     assignee,
-    activeStates: stringArray(trackerRaw.activeStates, defaults.activeStates),
-    terminalStates: stringArray(trackerRaw.terminalStates, defaults.terminalStates),
+    activeStates: trackerRaw.activeStates ?? defaults.activeStates,
+    terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
     dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
   };
 }
@@ -469,11 +460,11 @@ function expandLocalPath(value: string, env: NodeJS.ProcessEnv): string {
 }
 
 function resolveWorkspaceRootExpression(
-  value: unknown,
+  value: string | undefined,
   fallback: string,
   env: NodeJS.ProcessEnv,
 ): string {
-  const expression = stringValue(value, fallback);
+  const expression = value ?? fallback;
   return nonEmptyString(expandLocalPath(expression, env)) === undefined ? fallback : expression;
 }
 
@@ -484,41 +475,33 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
       ? null
       : onlyRoutesRaw === undefined
         ? defaults.onlyRoutes
-        : normalizeOnlyRoutes(stringArray(onlyRoutesRaw, []));
+        : normalizeOnlyRoutes(onlyRoutesRaw);
   return {
-    acceptUnrouted: booleanValue(raw.acceptUnrouted, defaults.acceptUnrouted),
+    acceptUnrouted: raw.acceptUnrouted ?? defaults.acceptUnrouted,
     onlyRoutes,
-    routeLabelPrefix: stringValue(raw.routeLabelPrefix, defaults.routeLabelPrefix).trim(),
+    routeLabelPrefix: (raw.routeLabelPrefix ?? defaults.routeLabelPrefix).trim(),
   };
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {
   return {
-    afterCreate: optionalString(hooksRaw.afterCreate),
-    beforeRun: optionalString(hooksRaw.beforeRun),
-    afterRun: optionalString(hooksRaw.afterRun),
-    beforeRemove: optionalString(hooksRaw.beforeRemove),
-    timeoutMs: positiveInt(hooksRaw.timeoutMs, defaults.timeoutMs, "hooks.timeout_ms"),
+    afterCreate: hooksRaw.afterCreate ?? null,
+    beforeRun: hooksRaw.beforeRun ?? null,
+    afterRun: hooksRaw.afterRun ?? null,
+    beforeRemove: hooksRaw.beforeRemove ?? null,
+    timeoutMs: hooksRaw.timeoutMs ?? defaults.timeoutMs,
   };
 }
 
 function parseAgent(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
-  const kind = stringValue(agentRaw.kind, defaults.kind);
+  const kind = agentRaw.kind ?? defaults.kind;
 
   return {
     kind,
-    maxConcurrentAgents: positiveInt(
-      agentRaw.maxConcurrentAgents ?? undefined,
-      defaults.maxConcurrentAgents,
-      "agent.max_concurrent_agents",
-    ),
-    maxTurns: positiveInt(agentRaw.maxTurns, defaults.maxTurns, "agent.max_turns"),
-    maxRetryBackoffMs: positiveInt(
-      agentRaw.maxRetryBackoffMs ?? undefined,
-      defaults.maxRetryBackoffMs,
-      "agent.max_retry_backoff_ms",
-    ),
-    ensembleSize: positiveInt(agentRaw.ensembleSize, defaults.ensembleSize, "agent.ensemble_size"),
+    maxConcurrentAgents: agentRaw.maxConcurrentAgents ?? defaults.maxConcurrentAgents,
+    maxTurns: agentRaw.maxTurns ?? defaults.maxTurns,
+    maxRetryBackoffMs: agentRaw.maxRetryBackoffMs ?? defaults.maxRetryBackoffMs,
+    ensembleSize: agentRaw.ensembleSize ?? defaults.ensembleSize,
   };
 }
 
@@ -543,28 +526,25 @@ function parseAgents(
   return agents;
 }
 
-function parseAgentRecordSchema(
-  raw: Record<string, unknown>,
-  label: string,
-): Record<string, unknown> {
+type AgentRecordRaw = z.infer<typeof agentRecordSchema>;
+
+function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): AgentRecordRaw {
   const result = agentRecordSchema.safeParse(raw);
   if (result.success) return result.data;
   throw new Error(configErrorMessage(result.error, label));
 }
 
 function parseAgentRecord(
-  name: string,
-  raw: Record<string, unknown>,
+  _name: string,
+  raw: AgentRecordRaw,
   defaults: { codex: AppServerAgentConfig; claude: AcpAgentConfig },
 ): AgentConfig {
-  const executor = stringValue(raw.executor, name === "codex" ? "appserver" : "acp");
-  if (executor === "appserver") return parseAppServerAgent(raw, defaults.codex);
-  if (executor === "acp") return parseAcpAgent(raw, defaults.claude, `agents.${name}`);
-  throw new Error(`unsupported agents.${name}.executor: ${executor}`);
+  if (raw.executor === "appserver") return parseAppServerAgent(raw, defaults.codex);
+  return parseAcpAgent(raw, defaults.claude);
 }
 
 function parseAppServerAgent(
-  raw: Record<string, unknown>,
+  raw: z.infer<typeof appServerAgentRecordSchema>,
   defaults: AppServerAgentConfig,
 ): AppServerAgentConfig {
   const codex = parseCodex(defaults, raw);
@@ -572,27 +552,18 @@ function parseAppServerAgent(
 }
 
 function parseAcpAgent(
-  raw: Record<string, unknown>,
+  raw: z.infer<typeof acpAgentRecordSchema>,
   defaults: AcpAgentConfig,
-  label: string,
 ): AcpAgentConfig {
   return {
     executor: "acp",
-    bridgeCommand: stringValue(raw.bridgeCommand ?? raw.command, defaults.bridgeCommand),
-    bridgeArgs: stringArray(raw.bridgeArgs, defaults.bridgeArgs),
-    model: optionalString(raw.model) ?? defaults.model,
-    permissionMode: optionalString(raw.permissionMode) ?? defaults.permissionMode,
-    turnTimeoutMs: positiveInt(
-      raw.turnTimeoutMs,
-      defaults.turnTimeoutMs,
-      `${label}.turn_timeout_ms`,
-    ),
-    stallTimeoutMs: nonNegativeIntWithFallback(
-      raw.stallTimeoutMs,
-      defaults.stallTimeoutMs,
-      `${label}.stall_timeout_ms`,
-    ),
-    strictMcpConfig: booleanValue(raw.strictMcpConfig, defaults.strictMcpConfig ?? true),
+    bridgeCommand: raw.bridgeCommand ?? raw.command ?? defaults.bridgeCommand,
+    bridgeArgs: raw.bridgeArgs ?? defaults.bridgeArgs,
+    model: raw.model ?? defaults.model,
+    permissionMode: raw.permissionMode ?? defaults.permissionMode,
+    turnTimeoutMs: raw.turnTimeoutMs ?? defaults.turnTimeoutMs,
+    stallTimeoutMs: raw.stallTimeoutMs ?? defaults.stallTimeoutMs,
+    strictMcpConfig: raw.strictMcpConfig ?? defaults.strictMcpConfig ?? true,
   };
 }
 
@@ -643,7 +614,7 @@ function applyKnownAgentRecords(settings: Settings): void {
 
 function parseCodex(defaults: CodexSettings, codexRaw: CodexRaw): CodexSettings {
   return {
-    command: stringValue(codexRaw.command, defaults.command),
+    command: codexRaw.command ?? defaults.command,
     approvalPolicy: approvalPolicyValue(
       codexRaw.approvalPolicy,
       defaults.approvalPolicy,
@@ -659,40 +630,20 @@ function parseCodex(defaults: CodexSettings, codexRaw: CodexRaw): CodexSettings 
       defaults.turnSandboxPolicy,
       "codex.turn_sandbox_policy",
     ),
-    turnTimeoutMs: positiveInt(
-      codexRaw.turnTimeoutMs,
-      defaults.turnTimeoutMs,
-      "codex.turn_timeout_ms",
-    ),
-    readTimeoutMs: positiveInt(
-      codexRaw.readTimeoutMs,
-      defaults.readTimeoutMs,
-      "codex.read_timeout_ms",
-    ),
-    stallTimeoutMs: nonNegativeIntWithFallback(
-      codexRaw.stallTimeoutMs ?? undefined,
-      defaults.stallTimeoutMs,
-      "codex.stall_timeout_ms",
-    ),
+    turnTimeoutMs: codexRaw.turnTimeoutMs ?? defaults.turnTimeoutMs,
+    readTimeoutMs: codexRaw.readTimeoutMs ?? defaults.readTimeoutMs,
+    stallTimeoutMs: codexRaw.stallTimeoutMs ?? defaults.stallTimeoutMs,
   };
 }
 
 function parseClaude(defaults: ClaudeSettings, claudeRaw: ClaudeRaw): ClaudeSettings {
   return {
-    command: stringValue(claudeRaw.command, defaults.command),
-    model: stringValue(claudeRaw.model, defaults.model),
-    permissionMode: stringValue(claudeRaw.permissionMode ?? undefined, defaults.permissionMode),
-    turnTimeoutMs: positiveInt(
-      claudeRaw.turnTimeoutMs ?? undefined,
-      defaults.turnTimeoutMs,
-      "claude.turn_timeout_ms",
-    ),
-    stallTimeoutMs: nonNegativeIntWithFallback(
-      claudeRaw.stallTimeoutMs ?? undefined,
-      defaults.stallTimeoutMs,
-      "claude.stall_timeout_ms",
-    ),
-    strictMcpConfig: booleanValue(claudeRaw.strictMcpConfig ?? undefined, defaults.strictMcpConfig),
+    command: claudeRaw.command ?? defaults.command,
+    model: claudeRaw.model ?? defaults.model,
+    permissionMode: claudeRaw.permissionMode ?? defaults.permissionMode,
+    turnTimeoutMs: claudeRaw.turnTimeoutMs ?? defaults.turnTimeoutMs,
+    stallTimeoutMs: claudeRaw.stallTimeoutMs ?? defaults.stallTimeoutMs,
+    strictMcpConfig: claudeRaw.strictMcpConfig ?? defaults.strictMcpConfig,
   };
 }
 
@@ -715,20 +666,17 @@ function parseStatusOverrides(raw: StatusOverridesRaw): Map<string, PartialRunti
 
 function parsePartialAgent(raw: Partial<AgentRaw>): Partial<AgentSettings> {
   const next: Partial<AgentSettings> = {};
-  const kind = raw.kind;
-  if (kind !== undefined) {
-    next.kind = stringValue(kind, "");
-  }
-  putPositive(raw, next, "maxConcurrentAgents", "maxConcurrentAgents");
-  putPositive(raw, next, "maxTurns", "maxTurns");
-  putPositive(raw, next, "maxRetryBackoffMs", "maxRetryBackoffMs");
-  putPositive(raw, next, "ensembleSize", "ensembleSize");
+  if (raw.kind !== undefined) next.kind = raw.kind;
+  if (raw.maxConcurrentAgents !== undefined) next.maxConcurrentAgents = raw.maxConcurrentAgents;
+  if (raw.maxTurns !== undefined) next.maxTurns = raw.maxTurns;
+  if (raw.maxRetryBackoffMs !== undefined) next.maxRetryBackoffMs = raw.maxRetryBackoffMs;
+  if (raw.ensembleSize !== undefined) next.ensembleSize = raw.ensembleSize;
   return next;
 }
 
 function parsePartialCodex(raw: Partial<CodexRaw>): Partial<CodexSettings> {
   const next: Partial<CodexSettings> = {};
-  if (raw.command !== undefined) next.command = stringValue(raw.command, "");
+  if (raw.command !== undefined) next.command = raw.command;
   if (raw.approvalPolicy !== undefined) {
     next.approvalPolicy = approvalPolicyValue(
       raw.approvalPolicy,
@@ -750,24 +698,20 @@ function parsePartialCodex(raw: Partial<CodexRaw>): Partial<CodexSettings> {
       "status_overrides.*.codex.turn_sandbox_policy",
     );
   }
-  putPositive(raw, next, "turnTimeoutMs", "turnTimeoutMs");
-  putPositive(raw, next, "readTimeoutMs", "readTimeoutMs");
-  putNonNegative(raw, next, "stallTimeoutMs", "stallTimeoutMs");
+  if (raw.turnTimeoutMs !== undefined) next.turnTimeoutMs = raw.turnTimeoutMs;
+  if (raw.readTimeoutMs !== undefined) next.readTimeoutMs = raw.readTimeoutMs;
+  if (raw.stallTimeoutMs !== undefined) next.stallTimeoutMs = raw.stallTimeoutMs;
   return next;
 }
 
 function parsePartialClaude(raw: Partial<ClaudeRaw>): Partial<ClaudeSettings> {
   const next: Partial<ClaudeSettings> = {};
-  if (raw.command !== undefined) next.command = stringValue(raw.command, "");
-  if (raw.model !== undefined) next.model = stringValue(raw.model, "");
-  if (raw.permissionMode !== undefined) {
-    next.permissionMode = stringValue(raw.permissionMode, "");
-  }
-  if (raw.strictMcpConfig !== undefined) {
-    next.strictMcpConfig = booleanValue(raw.strictMcpConfig, true);
-  }
-  putPositive(raw, next, "turnTimeoutMs", "turnTimeoutMs");
-  putNonNegative(raw, next, "stallTimeoutMs", "stallTimeoutMs");
+  if (raw.command !== undefined) next.command = raw.command;
+  if (raw.model !== undefined) next.model = raw.model;
+  if (raw.permissionMode !== undefined) next.permissionMode = raw.permissionMode;
+  if (raw.strictMcpConfig !== undefined) next.strictMcpConfig = raw.strictMcpConfig;
+  if (raw.turnTimeoutMs !== undefined) next.turnTimeoutMs = raw.turnTimeoutMs;
+  if (raw.stallTimeoutMs !== undefined) next.stallTimeoutMs = raw.stallTimeoutMs;
   return next;
 }
 
@@ -859,16 +803,31 @@ function configErrorMessage(error: z.ZodError, baseLabel?: string): string {
     return `${label} contains unsupported keys: ${issue.keys.join(", ")}`;
   }
   if (issue.code === "invalid_type") {
+    const expected = (issue as { expected?: string }).expected;
+    if (expected === "string") return `${label} must be a string`;
+    if (expected === "number") return `${label} must be a positive integer`;
     return `${label} must be a map`;
   }
+  if (issue.code === "too_small") return `${label} must be a positive integer`;
+  if (issue.code === "custom") return `${label} ${issue.message}`;
+  if (issue.code === "invalid_union") {
+    const innerErrors = (issue as { errors?: unknown[][] }).errors;
+    const firstInner = innerErrors?.[0]?.[0] as { expected?: string } | undefined;
+    if (firstInner?.expected === "boolean") return `expected a boolean`;
+    return `${label} must be a positive integer`;
+  }
   return `${label} is invalid: ${issue.message}`;
+}
+
+function camelToSnake(s: string): string {
+  return s.replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }
 
 function pathLabel(
   pathSegments: readonly (string | number | symbol)[],
   baseLabel?: string,
 ): string {
-  const suffix = pathSegments.map(String).join(".");
+  const suffix = pathSegments.map((seg) => camelToSnake(String(seg))).join(".");
   if (suffix && baseLabel) return `${baseLabel}.${suffix}`;
   if (suffix) return suffix;
   return baseLabel ?? "workflow";
@@ -985,53 +944,12 @@ function optionalMap(
   return value;
 }
 
-function optionalString(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  const text = String(value);
-  return text === "" ? null : text;
-}
-
-function stringArray(value: unknown, fallback: string[]): string[] {
-  if (value === undefined || value === null) return [...fallback];
-  if (!Array.isArray(value)) throw new Error("expected a list of strings");
-  return value.map((item) => String(item));
-}
-
 function normalizeOnlyRoutes(routes: string[]): string[] {
   const normalized = routes.map(normalizeRouteName);
   if (normalized.some((route) => route === "")) {
     throw new Error("tracker.dispatch.only_routes must not contain blank routes");
   }
   return [...new Set(normalized)];
-}
-
-function positiveInt(value: unknown, fallback: number, label: string): number {
-  if (value === undefined || value === null) return fallback;
-  const number = numberValue(value);
-  if (!Number.isInteger(number) || number <= 0)
-    throw new Error(`${label} must be a positive integer`);
-  return number;
-}
-
-function nonNegativeInt(value: unknown, label: string): number {
-  const number = numberValue(value);
-  if (!Number.isInteger(number) || number < 0)
-    throw new Error(`${label} must be a non-negative integer`);
-  return number;
-}
-
-function nonNegativeIntWithFallback(value: unknown, fallback: number, label: string): number {
-  if (value === undefined || value === null) return fallback;
-  return nonNegativeInt(value, label);
-}
-
-function booleanValue(value: unknown, fallback: boolean): boolean {
-  if (value === undefined || value === null) return fallback;
-  if (typeof value === "boolean") return value;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  throw new Error("expected a boolean");
 }
 
 function resolveEnv(value: string, env: NodeJS.ProcessEnv): string {
@@ -1085,35 +1003,9 @@ function expandPathVariables(value: string, env: NodeJS.ProcessEnv): string {
   return name === null ? value : (env[name] ?? "");
 }
 
-function numberValue(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") return value.trim() === "" ? Number.NaN : Number(value);
-  return Number.NaN;
-}
-
 function wholeEnvName(value: string): string | null {
   const match = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(value);
   return match?.[1] ?? null;
-}
-
-function putPositive<T extends object>(
-  raw: Record<string, unknown>,
-  target: T,
-  key: string,
-  property: keyof T,
-): void {
-  const value = raw[key];
-  if (value !== undefined) target[property] = positiveInt(value, 1, String(property)) as T[keyof T];
-}
-
-function putNonNegative<T extends object>(
-  raw: Record<string, unknown>,
-  target: T,
-  key: string,
-  property: keyof T,
-): void {
-  const value = raw[key];
-  if (value !== undefined) target[property] = nonNegativeInt(value, String(property)) as T[keyof T];
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
