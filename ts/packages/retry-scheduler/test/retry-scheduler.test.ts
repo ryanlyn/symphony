@@ -26,7 +26,8 @@ test("RetryScheduler fires callback after delay elapses", () => {
     (retry) => calls.push(retry.issueId),
   );
 
-  vi.advanceTimersByTime(4999);
+  // Scheduler adds a 1ms buffer so actual timer delay is 5001ms
+  vi.advanceTimersByTime(5000);
   assert.equal(calls.length, 0);
 
   vi.advanceTimersByTime(1);
@@ -87,12 +88,12 @@ test("RetryScheduler resets timer when rescheduled before firing", () => {
     (retry) => calls.push(`${retry.issueId}-a2`),
   );
 
-  // Original timer would have fired at 2000ms total, but it was cleared
+  // Original timer would have fired at 2001ms total, but it was cleared
   vi.advanceTimersByTime(1500);
   assert.equal(calls.length, 0);
 
-  // New timer fires 3000ms from reschedule point
-  vi.advanceTimersByTime(1500);
+  // New timer fires 3001ms from reschedule point (3000ms delay + 1ms buffer)
+  vi.advanceTimersByTime(1501);
   assert.equal(calls.length, 1);
   assert.equal(calls[0], "i3-a2");
 

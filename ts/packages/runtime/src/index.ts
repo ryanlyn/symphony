@@ -743,7 +743,21 @@ export class SymphonyRuntime {
       ) {
         return;
       }
-      if (this.pollInProgress) return;
+      // Fix: when a poll is already in progress, wait for it to complete and then trigger
+      // a new poll. Previously, the timer callback returned immediately when pollInProgress
+      // was set, causing the retry to be silently dropped since the timer was already consumed.
+      // Invariant: a due retry must always result in a poll, even if it fires during an
+      // existing poll cycle.
+      if (this.pollInProgress) {
+        void this.pollInProgress.then(() => {
+          this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);
+          this.pollOnce().catch((error) => {
+            this.lastError = errorMessage(error);
+            this.addEvent("retry_timer_error", this.lastError);
+          });
+        });
+        return;
+      }
       this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);
       this.pollOnce().catch((error) => {
         this.lastError = errorMessage(error);
