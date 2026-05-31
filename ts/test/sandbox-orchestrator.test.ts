@@ -8,7 +8,8 @@ import type { ChaosLinearClient } from "../sandbox/sandbox.js";
  *
  * These exercise the complete runtime pipeline: claim, finish, retry timing,
  * ensemble slots, cleanup, usage tracking, worker host selection, and concurrency.
- * Scenarios are drawn from S-146 to S-160 and S-191 to S-204 in the scenarios YAML.
+ * Covers claim, finish, retry timing, ensemble slots, cleanup, usage tracking,
+ * worker host selection, and concurrency.
  */
 describe("Sandbox: Orchestrator Scheduling", () => {
   test("single issue claimed and completed", async () => {
@@ -30,8 +31,8 @@ describe("Sandbox: Orchestrator Scheduling", () => {
     expect(result.finalSnapshot.runHistory.length).toBeGreaterThanOrEqual(1);
   });
 
-  // Known bug: Failure 15 (S-1255) - ensemble retry permanently degrades to effective
-  // ensemble:1. The retry keyed by issueId blocks all ensemble slots during delay.
+  // Known bug: ensemble retry permanently degrades to effective ensemble:1.
+  // The retry keyed by issueId blocks all ensemble slots during delay.
   test.fails(
     "ensemble:2 claims distinct slots (both run_started events contain different slot numbers)",
     async () => {

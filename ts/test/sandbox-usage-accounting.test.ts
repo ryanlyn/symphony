@@ -1,7 +1,6 @@
 /**
  * Usage Accounting integration tests via the sandbox's runScenario.
  *
- * Covers scenarios S-611, S-612, S-614 from the "Usage Accounting" category.
  * Each test exercises token usage accumulation behavior through the full
  * runtime, using the FakeAgentRunner to emit controllable usage per turn.
  */
@@ -12,7 +11,7 @@ import { runScenario, makeIssue } from "../sandbox/sandbox.js";
 
 describe("Usage Accounting (sandbox scenarios)", () => {
   // ---------------------------------------------------------------------------
-  // S-611: tokens accumulate across turns for single issue
+  // Tokens accumulate across turns for single issue
   // Invariant: Monotonic growth
   //
   // The runtime uses monotonic watermark-based usage tracking. Each turn reports
@@ -25,7 +24,7 @@ describe("Usage Accounting (sandbox scenarios)", () => {
   // reports produce zero delta. So we verify the final total equals the
   // per-turn watermark value (since each turn reports the same cumulative total).
   // ---------------------------------------------------------------------------
-  test("S-611: tokens accumulate across turns for single issue", async () => {
+  test("tokens accumulate across turns for single issue (monotonic growth)", async () => {
     // The FakeAgentRunner reports the same usagePerTurn value on each turn.
     // Under monotonic merge, the entry totals reach the watermark on turn 1
     // and remain there (subsequent identical reports produce zero delta).
@@ -81,7 +80,7 @@ describe("Usage Accounting (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-612: global totals equal sum of all issues usage
+  // Global totals equal sum of all issues usage
   // Invariant: Global aggregates
   //
   // Under monotonic watermark-based usage, each issue's usage is determined by
@@ -91,7 +90,7 @@ describe("Usage Accounting (sandbox scenarios)", () => {
   // watermark value. The global total should equal the sum of all issues'
   // watermark values.
   // ---------------------------------------------------------------------------
-  test("S-612: global totals equal sum of all issues usage", async () => {
+  test("global totals equal sum of all issues usage (global aggregates)", async () => {
     // Three concurrent issues each with distinct usage watermark values.
     const result = await runScenario({
       issues: [
@@ -175,10 +174,10 @@ describe("Usage Accounting (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-614: zero token reports keep totals at zero
+  // Zero token reports keep totals at zero
   // Invariant: Monotonic (0 not > previous)
   // ---------------------------------------------------------------------------
-  test("S-614: zero token reports keep totals at zero", async () => {
+  test("zero token reports keep totals at zero (monotonic)", async () => {
     const result = await runScenario({
       issues: [makeIssue("z-1", "Z-1", { state: "Todo", stateType: "unstarted" })],
       runnerConfig: {

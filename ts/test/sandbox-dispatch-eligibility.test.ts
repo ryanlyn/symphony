@@ -4,7 +4,7 @@ import { runScenario, makeIssue, checkAssertions } from "../sandbox/sandbox.js";
 
 describe("Sandbox: Dispatch Eligibility", () => {
   // -------------------------------------------------------------------------
-  // S-026: Issue with empty id is not dispatched
+  // Issue with empty id is not dispatched
   // -------------------------------------------------------------------------
   test("issue with empty id is not dispatched", async () => {
     const result = await runScenario({
@@ -36,7 +36,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-027: Issue with empty identifier is not dispatched
+  // Issue with empty identifier is not dispatched
   // -------------------------------------------------------------------------
   test("issue with empty identifier is not dispatched", async () => {
     const result = await runScenario({
@@ -67,7 +67,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-028: Issue with empty title is not dispatched
+  // Issue with empty title is not dispatched
   // -------------------------------------------------------------------------
   test("issue with empty title is not dispatched", async () => {
     const result = await runScenario({
@@ -98,7 +98,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-029: Issue with empty state is not dispatched
+  // Issue with empty state is not dispatched
   // -------------------------------------------------------------------------
   test("issue with empty state is not dispatched", async () => {
     const result = await runScenario({
@@ -129,7 +129,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-030: Terminal state issue is not dispatched
+  // Terminal state issue is not dispatched
   // -------------------------------------------------------------------------
   test("terminal state issue is not dispatched", async () => {
     const result = await runScenario({
@@ -140,7 +140,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-031: Non-active state issue is not dispatched
+  // Non-active state issue is not dispatched
   // -------------------------------------------------------------------------
   test("non-active state issue is not dispatched", async () => {
     const result = await runScenario({
@@ -151,7 +151,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-032: Issue with assignedToWorker=false is not dispatched
+  // Issue with assignedToWorker=false is not dispatched
   // -------------------------------------------------------------------------
   test("issue with assignedToWorker=false is not dispatched", async () => {
     const result = await runScenario({
@@ -170,7 +170,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-033: Unstarted issue with non-terminal blocker is not dispatched
+  // Unstarted issue with non-terminal blocker is not dispatched
   // -------------------------------------------------------------------------
   test("unstarted issue with non-terminal blocker is not dispatched", async () => {
     const result = await runScenario({
@@ -187,8 +187,8 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-034: Unstarted issue with mix of terminal and non-terminal blockers
-  //        is not dispatched (any non-terminal blocker gates)
+  // Unstarted issue with mix of terminal and non-terminal blockers
+  // is not dispatched (any non-terminal blocker gates)
   // -------------------------------------------------------------------------
   test("unstarted issue with any non-terminal blocker is not dispatched", async () => {
     const result = await runScenario({
@@ -208,8 +208,8 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-035: Started issue WITH blockers is still dispatched
-  //        (blockers only gate unstarted issues)
+  // Started issue WITH blockers is still dispatched
+  // (blockers only gate unstarted issues)
   // -------------------------------------------------------------------------
   test("started issue with blockers is still dispatched", async () => {
     const result = await runScenario({
@@ -226,7 +226,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-036: Unstarted issue with all blockers resolved is eligible
+  // Unstarted issue with all blockers resolved is eligible
   // -------------------------------------------------------------------------
   test("unstarted issue with all blockers resolved is dispatched", async () => {
     const result = await runScenario({
@@ -260,7 +260,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-037: Global concurrency cap respected (cap=2, 5 issues)
+  // Global concurrency cap respected (cap=2, 5 issues)
   // -------------------------------------------------------------------------
   test("global concurrency cap is respected", async () => {
     const issues = Array.from({ length: 5 }, (_, i) =>
@@ -287,7 +287,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-039: Per-state cap respected via statusOverrides
+  // Per-state cap respected via statusOverrides
   // -------------------------------------------------------------------------
   test("per-state concurrency cap is respected via statusOverrides", async () => {
     const issues = Array.from({ length: 4 }, (_, i) =>
@@ -317,7 +317,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-041: All ensemble slots claimed -> not dispatched again
+  // All ensemble slots claimed -> not dispatched again
   // -------------------------------------------------------------------------
   test("issue with all ensemble slots claimed is not dispatched again", async () => {
     const result = await runScenario({
@@ -347,7 +347,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-043: Active state issue with all conditions met is dispatched
+  // Active state issue with all conditions met is dispatched
   // -------------------------------------------------------------------------
   test("active state issue with all conditions met is dispatched", async () => {
     const result = await runScenario({
@@ -364,7 +364,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-053: Unstarted issue with no blockers is eligible
+  // Unstarted issue with no blockers is eligible
   // -------------------------------------------------------------------------
   test("unstarted issue with no blockers is eligible", async () => {
     const result = await runScenario({
@@ -383,7 +383,7 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-037/S-054: Global concurrency cap at limit prevents dispatch
+  // Global concurrency cap at limit prevents dispatch
   // (cap=0 is invalid config; test cap=1 with 1 already running)
   // -------------------------------------------------------------------------
   test("global concurrency cap at limit prevents further dispatch", async () => {
@@ -407,9 +407,9 @@ describe("Sandbox: Dispatch Eligibility", () => {
   });
 
   // -------------------------------------------------------------------------
-  // S-184: Originally a bug where state="Todo" triggered blocker check even with
+  // Originally a bug where state="Todo" triggered blocker check even with
   // stateType="started". Fixed: issueHasOpenBlockers now only checks stateType.
-  test("S-184: stateType=started + state=Todo is NOT gated by blockers (fixed)", async () => {
+  test("stateType=started + state=Todo is NOT gated by blockers (fixed)", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("s184-bug", "S184-1", {

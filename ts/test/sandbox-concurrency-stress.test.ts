@@ -10,7 +10,7 @@ import type { SandboxScenario, ChaosLinearClient } from "../sandbox/sandbox.js";
 
 describe("Sandbox: Concurrency and Stress", () => {
   // ---------------------------------------------------------------------------
-  // S-1001: No starvation under load
+  // No starvation under load
   // ---------------------------------------------------------------------------
   test(
     "no starvation: all 20 issues eventually dispatched under cap=5",
@@ -41,7 +41,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1002: High load
+  // High load
   // ---------------------------------------------------------------------------
   test("high load: 20 issues, cap=5, 5 ticks, no errors", { timeout: 10_000 }, async () => {
     const issues = Array.from({ length: 20 }, (_, i) =>
@@ -69,7 +69,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1003 to S-1010: Chaos rate sweep
+  // Chaos rate sweep
   // ---------------------------------------------------------------------------
   test.each([0.1, 0.5, 0.9])(
     "chaos rate sweep: failure rate %f does not crash the system",
@@ -101,7 +101,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1011 to S-1020: Rapid mutations
+  // Rapid mutations
   // ---------------------------------------------------------------------------
   test(
     "rapid mutations: 10 mutations across 5 ticks, system stable",
@@ -154,7 +154,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1021 to S-1050: Ensemble slot management
+  // Ensemble slot management
   // ---------------------------------------------------------------------------
   test(
     "ensemble slot management: 3 issues with ensemble:2, cap=4, correct slot arithmetic",
@@ -189,7 +189,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1051 to S-1080: Varying latencies
+  // Varying latencies
   // ---------------------------------------------------------------------------
   test(
     "varying latencies: runner with different per-turn latencies, cap respected",
@@ -228,7 +228,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1081 to S-1100: Mixed ensemble sizes competing for cap
+  // Mixed ensemble sizes competing for cap
   // ---------------------------------------------------------------------------
   test("mixed ensemble sizes [1,2,3] competing for cap=5", { timeout: 10_000 }, async () => {
     const issues = [
@@ -258,7 +258,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1101 to S-1120: Intermittent fetch errors
+  // Intermittent fetch errors
   // ---------------------------------------------------------------------------
   test(
     "intermittent fetch errors: some issues always fail to fetch, others succeed",
@@ -301,7 +301,7 @@ describe("Sandbox: Concurrency and Stress", () => {
   );
 
   // ---------------------------------------------------------------------------
-  // S-1121 to S-1150: Sequential unblocking (dependency chain)
+  // Sequential unblocking (dependency chain)
   // ---------------------------------------------------------------------------
   test(
     "sequential unblocking: chain of 3 issues, each depends on previous",

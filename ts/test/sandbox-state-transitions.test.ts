@@ -1,9 +1,9 @@
 /**
  * Integration tests for "State Transitions" category via the sandbox's runScenario.
  *
- * Covers scenarios S-1151 through S-1250 testing issue lifecycle transitions,
- * reconciliation behavior on state changes, route/assignee mismatch handling,
- * blocker interactions with running workers, and complex multi-issue state changes.
+ * Tests issue lifecycle transitions, reconciliation behavior on state changes,
+ * route/assignee mismatch handling, blocker interactions with running workers,
+ * and complex multi-issue state changes.
  */
 
 import { describe, expect, test } from "vitest";
@@ -13,9 +13,9 @@ import type { ChaosLinearClient } from "../sandbox/sandbox.js";
 
 describe("Sandbox: State Transitions", () => {
   // ---------------------------------------------------------------------------
-  // S-1151: Full lifecycle: issue progresses Todo -> In Progress -> Done
+  // Full lifecycle: issue progresses Todo -> In Progress -> Done
   // ---------------------------------------------------------------------------
-  describe("S-1151: Full lifecycle handled: dispatched during active states, cleaned up when terminal", () => {
+  describe("Full lifecycle handled: dispatched during active states, cleaned up when terminal", () => {
     test("issue dispatched in Todo, transitions through In Progress, cleaned up at Done", async () => {
       const result = await runScenario({
         issues: [makeIssue("lifecycle-1", "LIFE-1", { state: "Todo", stateType: "unstarted" })],
@@ -92,9 +92,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1152: Terminal state triggers workspace cleanup after cancellation
+  // Terminal state triggers workspace cleanup after cancellation
   // ---------------------------------------------------------------------------
-  describe("S-1152: Terminal state stops worker and triggers workspace cleanup", () => {
+  describe("Terminal state stops worker and triggers workspace cleanup", () => {
     test("cancellation triggers workspace_cleanup event", async () => {
       const result = await runScenario({
         issues: [makeIssue("cancel-1", "CAN-1", { state: "In Progress", stateType: "started" })],
@@ -153,9 +153,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1153: Issue moved to backlog stops worker but keeps workspace
+  // Issue moved to backlog stops worker but keeps workspace
   // ---------------------------------------------------------------------------
-  describe("S-1153: Inactive (non-terminal) state stops worker but preserves workspace", () => {
+  describe("Inactive (non-terminal) state stops worker but preserves workspace", () => {
     test("issue moved to Backlog stops worker but no workspace_cleanup fires", async () => {
       const result = await runScenario({
         issues: [makeIssue("backlog-1", "BKL-1", { state: "In Progress", stateType: "started" })],
@@ -212,9 +212,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1154 to S-1160: Route mismatch mid-run stops worker via reconciliation
+  // Route mismatch mid-run stops worker via reconciliation
   // ---------------------------------------------------------------------------
-  describe("S-1154: Route mismatch triggers reconciliation stop", () => {
+  describe("Route mismatch triggers reconciliation stop", () => {
     test("changing labels to a different route mid-run stops the worker", async () => {
       const result = await runScenario({
         issues: [
@@ -343,9 +343,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1161 to S-1170: assignedToWorker set to false mid-run stops worker
+  // assignedToWorker set to false mid-run stops worker
   // ---------------------------------------------------------------------------
-  describe("S-1161: Assignee mismatch triggers reconciliation stop", () => {
+  describe("Assignee mismatch triggers reconciliation stop", () => {
     test("assignedToWorker=false mid-run stops worker via reconciliation", async () => {
       const result = await runScenario({
         issues: [makeIssue("assign-1", "ASN-1", { state: "In Progress", stateType: "started" })],
@@ -420,9 +420,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1171 to S-1180: Blocker added to in-progress issue does not stop running worker
+  // Blocker added to in-progress issue does not stop running worker
   // ---------------------------------------------------------------------------
-  describe("S-1171: New blocker on started issue does not trigger reconciliation stop", () => {
+  describe("New blocker on started issue does not trigger reconciliation stop", () => {
     test("blocker added to in-progress (started) issue does NOT stop worker", async () => {
       const result = await runScenario({
         issues: [makeIssue("blocker-1", "BLK-1", { state: "In Progress", stateType: "started" })],
@@ -511,9 +511,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1181 to S-1190: Issue re-dispatched after returning to active state from backlog
+  // Issue re-dispatched after returning to active state from backlog
   // ---------------------------------------------------------------------------
-  describe("S-1181: Each state transition evaluated on next reconcile: re-dispatch after return to active", () => {
+  describe("Each state transition evaluated on next reconcile: re-dispatch after return to active", () => {
     test("issue dispatched, moved to backlog (stopped), returned to active (re-dispatched)", async () => {
       const result = await runScenario({
         issues: [
@@ -574,9 +574,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1191 to S-1200: Three issues with simultaneous state changes handled independently
+  // Three issues with simultaneous state changes handled independently
   // ---------------------------------------------------------------------------
-  describe("S-1191: Each issue handled independently during reconciliation", () => {
+  describe("Each issue handled independently during reconciliation", () => {
     test("three issues: one terminal, one inactive, one still active -- handled independently", async () => {
       const result = await runScenario({
         issues: [
@@ -682,9 +682,9 @@ describe("Sandbox: State Transitions", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-1201 to S-1250: Complex state changes with blockers resolved mid-run
+  // Complex state changes with blockers resolved mid-run
   // ---------------------------------------------------------------------------
-  describe("S-1201: System stability under complex state changes with dependency resolution", () => {
+  describe("System stability under complex state changes with dependency resolution", () => {
     test("blocker removal enables dispatch of previously blocked issue", async () => {
       const result = await runScenario({
         issues: [

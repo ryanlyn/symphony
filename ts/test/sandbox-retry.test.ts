@@ -9,7 +9,8 @@ import type { ChaosLinearClient } from "../sandbox/sandbox.js";
  * These exercise the complete retry pipeline: failure retries with exponential
  * backoff, continuation retries, backoff cap enforcement, stability under
  * repeated failures, and timing verification.
- * Scenarios are drawn from S-096 to S-110, S-185, S-206, S-210 in the scenarios YAML.
+ * Covers failure retries, continuation retries, backoff cap enforcement,
+ * stability under repeated failures, and timing verification.
  */
 describe("Sandbox: Retry and Backoff", () => {
   test("failed issue retried with backoff", async () => {

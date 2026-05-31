@@ -6,14 +6,13 @@ import { runScenario, makeIssue, checkAssertions } from "../sandbox/sandbox.js";
  * Integration tests for dispatch ordering invariants via full sandbox runs.
  *
  * These exercise the complete runtime pipeline (polling, dispatch, sorting, running)
- * rather than unit-testing the sort function alone. Scenarios are drawn from
- * S-211 to S-249 in the scenarios YAML (Dispatch Ordering section).
+ * rather than unit-testing the sort function alone.
  *
- * Non-integer priority scenarios (S-222 to S-232) verify that normalizeIssue
- * correctly rejects floats, preventing the original prioritySort bug.
+ * Non-integer priority scenarios verify that normalizeIssue correctly rejects
+ * floats, preventing the original prioritySort bug.
  */
 describe("Sandbox: Dispatch Ordering", () => {
-  test("S-211: lower priority number dispatches first", async () => {
+  test("lower priority number dispatches first", async () => {
     const result = await runScenario({
       issues: [makeIssue("a", "A-1", { priority: 4 }), makeIssue("b", "B-1", { priority: 1 })],
       settingsOverrides: { agent: { maxConcurrentAgents: 10 } },
@@ -26,7 +25,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-212: all 4 priority levels sorted correctly from reverse input", async () => {
+  test("all 4 priority levels sorted correctly from reverse input", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("d", "D-1", { priority: 4 }),
@@ -44,7 +43,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-213: zero priority (below valid range) sorts last", async () => {
+  test("zero priority (below valid range) sorts last", async () => {
     const result = await runScenario({
       issues: [makeIssue("a", "A-1", { priority: 0 }), makeIssue("b", "B-1", { priority: 4 })],
       settingsOverrides: { agent: { maxConcurrentAgents: 10 } },
@@ -57,7 +56,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-216: null priority sorts last", async () => {
+  test("null priority sorts last", async () => {
     const result = await runScenario({
       issues: [makeIssue("a", "A-1", { priority: null }), makeIssue("b", "B-1", { priority: 4 })],
       settingsOverrides: { agent: { maxConcurrentAgents: 10 } },
@@ -70,7 +69,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-217: same priority uses earlier createdAt", async () => {
+  test("same priority uses earlier createdAt", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "A-1", { priority: 2, createdAt: "2024-06-01" }),
@@ -86,7 +85,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-218: same priority+time uses lexicographic identifier", async () => {
+  test("same priority+time uses lexicographic identifier", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "MT-9", { priority: 2, createdAt: "2024-01-01" }),
@@ -102,7 +101,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-219: null creation time sorts last within priority group", async () => {
+  test("null creation time sorts last within priority group", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "A-1", { priority: 2, createdAt: null }),
@@ -118,7 +117,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  // Scenarios S-222, S-223, S-224, S-228, S-232: float priority bugs
+  // Float priority bugs
   //
   // The YAML marks these FAILED because sortForDispatch alone lacks Number.isInteger().
   // In the full integration path, normalizeIssue (via priorityOrNull) rejects non-integer
@@ -131,7 +130,7 @@ describe("Sandbox: Dispatch Ordering", () => {
   // which is what test.fails() expects.
 
   test.fails(
-    "S-222: non-integer priority 2.5 should sort last (BUG: masked by normalizeIssue)",
+    "non-integer priority 2.5 should sort last (BUG: masked by normalizeIssue)",
     async () => {
       const result = await runScenario({
         issues: [makeIssue("a", "A-1", { priority: 2.5 }), makeIssue("b", "B-1", { priority: 3 })],
@@ -147,7 +146,7 @@ describe("Sandbox: Dispatch Ordering", () => {
   );
 
   test.fails(
-    "S-223: non-integer priority 1.5 should sort last (BUG: masked by normalizeIssue)",
+    "non-integer priority 1.5 should sort last (BUG: masked by normalizeIssue)",
     async () => {
       const result = await runScenario({
         issues: [makeIssue("a", "A-1", { priority: 1.5 }), makeIssue("b", "B-1", { priority: 2 })],
@@ -163,7 +162,7 @@ describe("Sandbox: Dispatch Ordering", () => {
   );
 
   test.fails(
-    "S-224: non-integer priority 3.9 should sort last (BUG: masked by normalizeIssue)",
+    "non-integer priority 3.9 should sort last (BUG: masked by normalizeIssue)",
     async () => {
       const result = await runScenario({
         issues: [makeIssue("a", "A-1", { priority: 3.9 }), makeIssue("b", "B-1", { priority: 4 })],
@@ -179,7 +178,7 @@ describe("Sandbox: Dispatch Ordering", () => {
   );
 
   test.fails(
-    "S-228: priority 1.001 should sort last, not before priority 2 (BUG: masked by normalizeIssue)",
+    "priority 1.001 should sort last, not before priority 2 (BUG: masked by normalizeIssue)",
     async () => {
       const result = await runScenario({
         issues: [
@@ -198,7 +197,7 @@ describe("Sandbox: Dispatch Ordering", () => {
   );
 
   test.fails(
-    "S-232: multiple non-integer priorities all treated as valid (BUG: masked by normalizeIssue)",
+    "multiple non-integer priorities all treated as valid (BUG: masked by normalizeIssue)",
     async () => {
       const result = await runScenario({
         issues: [
@@ -221,7 +220,7 @@ describe("Sandbox: Dispatch Ordering", () => {
 
   // Back to passing scenarios
 
-  test("S-230: multiple null priorities use date tiebreak", async () => {
+  test("multiple null priorities use date tiebreak", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "A-1", { priority: null, createdAt: "2024-06-01" }),
@@ -237,7 +236,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-231: idempotency - second poll tick dispatches same order", async () => {
+  test("idempotency - second poll tick dispatches same order", async () => {
     const issues = [
       makeIssue("a", "A-1", { priority: 3, createdAt: "2024-03-01" }),
       makeIssue("b", "B-1", { priority: 1, createdAt: "2024-06-01" }),
@@ -279,7 +278,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     expect(order1).toEqual(["b", "c", "a"]);
   });
 
-  test("S-235: large same-priority group sorted by date ascending", async () => {
+  test("large same-priority group sorted by date ascending", async () => {
     const issues = Array.from({ length: 10 }, (_, i) =>
       makeIssue(`issue-${i}`, `ISS-${i}`, {
         priority: 2,
@@ -301,7 +300,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-241: mix of null, 0, 5, and valid 1-4 priorities", async () => {
+  test("mix of null, 0, 5, and valid 1-4 priorities", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "A-1", { priority: 0, createdAt: "2024-01-01" }),
@@ -321,7 +320,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-242: large set with two priority groups maintains ordering", async () => {
+  test("large set with two priority groups maintains ordering", async () => {
     // 5 issues with priority 1, 5 issues with priority 4
     const issues = [
       ...Array.from({ length: 5 }, (_, i) =>
@@ -355,7 +354,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-243: constant priority falls through to date comparison", async () => {
+  test("constant priority falls through to date comparison", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "A-1", { priority: 2, createdAt: "2024-01-15" }),
@@ -372,7 +371,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-247: lexicographic identifier as final tiebreak (A < M < Z)", async () => {
+  test("lexicographic identifier as final tiebreak (A < M < Z)", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("z", "Z-1", { priority: 2, createdAt: "2024-01-01" }),
@@ -389,7 +388,7 @@ describe("Sandbox: Dispatch Ordering", () => {
     for (const r of assertionResults) expect(r.passed).toBe(true);
   });
 
-  test("S-248: lexicographic identifier '10' < '9'", async () => {
+  test("lexicographic identifier '10' < '9'", async () => {
     const result = await runScenario({
       issues: [
         makeIssue("a", "PROJ-9", { priority: 2, createdAt: "2024-01-01" }),

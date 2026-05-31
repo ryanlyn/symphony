@@ -1,9 +1,8 @@
 /**
  * End-to-end runtime integration tests via the sandbox's runScenario.
  *
- * Covers scenarios S-852 through S-1261 from the "Runtime Integration" category
- * in scenarios.yaml. Each test exercises full runtime lifecycle behavior including
- * dispatch, reconciliation, mutations, and chaos.
+ * Each test exercises full runtime lifecycle behavior including dispatch,
+ * reconciliation, mutations, and chaos.
  */
 
 import { describe, expect, test } from "vitest";
@@ -17,9 +16,9 @@ import {
 
 describe("Runtime Integration (sandbox scenarios)", () => {
   // ---------------------------------------------------------------------------
-  // S-852: Dynamic issue discovery dispatches new issues between ticks
+  // Dynamic issue discovery dispatches new issues between ticks
   // ---------------------------------------------------------------------------
-  describe("S-852: dynamic issue discovery", () => {
+  describe("dynamic issue discovery", () => {
     test("new issue added via mutations is dispatched on subsequent tick", async () => {
       const result = await runScenario({
         issues: [makeIssue("a", "A-1", { state: "Todo", stateType: "unstarted" })],
@@ -81,9 +80,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-855: Inactive non-terminal state stops worker but keeps workspace
+  // Inactive non-terminal state stops worker but keeps workspace
   // ---------------------------------------------------------------------------
-  describe("S-855: inactive non-terminal state", () => {
+  describe("inactive non-terminal state", () => {
     test("stops worker but does not trigger workspace_cleanup", async () => {
       const result = await runScenario({
         issues: [makeIssue("x", "X-1", { state: "In Progress", stateType: "started" })],
@@ -138,9 +137,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-857: Priority re-evaluation dispatches boosted issue on next tick
+  // Priority re-evaluation dispatches boosted issue on next tick
   // ---------------------------------------------------------------------------
-  describe("S-857: priority re-evaluation", () => {
+  describe("priority re-evaluation", () => {
     test("boosted priority causes issue to be dispatched on next tick", async () => {
       const result = await runScenario({
         issues: [
@@ -198,9 +197,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-858: Resolved blocker makes previously blocked issue eligible
+  // Resolved blocker makes previously blocked issue eligible
   // ---------------------------------------------------------------------------
-  describe("S-858: resolved blockers", () => {
+  describe("resolved blockers", () => {
     test("blocked issue dispatches after blocker resolved via mutation", async () => {
       const result = await runScenario({
         issues: [
@@ -279,9 +278,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-859: Dependency chain unblocks issues one at a time
+  // Dependency chain unblocks issues one at a time
   // ---------------------------------------------------------------------------
-  describe("S-859: dependency chain", () => {
+  describe("dependency chain", () => {
     test("only head of chain (no blockers) is dispatched on first tick", async () => {
       const chain = makeDependencyChain(3);
 
@@ -326,9 +325,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-860: High failure rate does not crash orchestrator
+  // High failure rate does not crash orchestrator
   // ---------------------------------------------------------------------------
-  describe("S-860: high failure rate", () => {
+  describe("high failure rate", () => {
     test("all-failing runner does not crash the orchestrator", async () => {
       const result = await runScenario({
         issues: [
@@ -369,9 +368,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-861 to S-870: Rapid mutations across ticks do not crash system
+  // Rapid mutations across ticks do not crash system
   // ---------------------------------------------------------------------------
-  describe("S-861 to S-870: rapid mutations", () => {
+  describe("rapid mutations", () => {
     test("add/remove/state-change mutations across ticks produce no crashes", async () => {
       const result = await runScenario({
         issues: [
@@ -432,9 +431,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-871 to S-900: Independent retry behavior per issue
+  // Independent retry behavior per issue
   // ---------------------------------------------------------------------------
-  describe("S-871 to S-900: independent retry per issue", () => {
+  describe("independent retry per issue", () => {
     test(
       "multiple failing issues maintain independent retry state",
       { timeout: 10_000 },
@@ -457,7 +456,7 @@ describe("Runtime Integration (sandbox scenarios)", () => {
           tickDelayMs: 150,
         });
 
-        // S-1 should have completed successfully
+        // issue s1 should have completed successfully
         const completedMessages = result.events
           .filter((e) => e.type === "run_completed")
           .map((e) => e.message);
@@ -500,7 +499,7 @@ describe("Runtime Integration (sandbox scenarios)", () => {
           tickDelayMs: 50,
         });
 
-        // S-1 should complete on first tick regardless of F-1 failure/retry
+        // issue s1 should complete on first tick regardless of F-1 failure/retry
         const completedMessages = result.events
           .filter((e) => e.type === "run_completed")
           .map((e) => e.message);
@@ -542,9 +541,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-901 to S-950: Concurrency cap respected across parametric sweep
+  // Concurrency cap respected across parametric sweep
   // ---------------------------------------------------------------------------
-  describe("S-901 to S-950: concurrency cap", () => {
+  describe("concurrency cap", () => {
     test.each([1, 2, 3, 5])(
       "maxConcurrentAgents=%i never exceeded with many eligible issues",
       async (cap) => {
@@ -603,9 +602,9 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // S-951 to S-1000: Full lifecycle with external state changes
+  // Full lifecycle with external state changes
   // ---------------------------------------------------------------------------
-  describe("S-951 to S-1000: full lifecycle", () => {
+  describe("full lifecycle", () => {
     test("issue dispatched, run, external state-change to Done triggers cleanup", async () => {
       const result = await runScenario({
         issues: [makeIssue("x", "X-1", { state: "In Progress", stateType: "started" })],
@@ -687,11 +686,11 @@ describe("Runtime Integration (sandbox scenarios)", () => {
   // Known bugs (test.fails)
   // ---------------------------------------------------------------------------
   describe("Known bugs", () => {
-    // S-1256: Aborting runs for issue "a" affects issue "a:0" (prefix collision)
-    // Bug #14: abortIssueRuns uses key.startsWith(`${issueId}:`) which means
+    // Aborting runs for issue "a" affects issue "a:0" (prefix collision)
+    // Bug: abortIssueRuns uses key.startsWith(`${issueId}:`) which means
     // aborting issue "a" also matches "a:0:0" (the slotKey for issue "a:0", slot 0).
     test.fails(
-      "BUG S-1256: abort for issue X does not affect issue Y with prefix-colliding ID",
+      "BUG: abort for issue X does not affect issue Y with prefix-colliding ID",
       async () => {
         const result = await runScenario({
           issues: [
@@ -740,11 +739,11 @@ describe("Runtime Integration (sandbox scenarios)", () => {
       },
     );
 
-    // S-1260: Fast-completing runs bypass global concurrency cap via microtask race
-    // Bug #20: the dispatch loop has await points where fast-completing runs (0ms latency)
+    // Fast-completing runs bypass global concurrency cap via microtask race
+    // Bug: the dispatch loop has await points where fast-completing runs (0ms latency)
     // free their slot via microtask before the next claim(), bypassing the cap.
     test.fails(
-      "BUG S-1260: global concurrency cap not bypassable by fast-completing runs",
+      "BUG: global concurrency cap not bypassable by fast-completing runs",
       async () => {
         const result = await runScenario({
           issues: [
@@ -769,11 +768,11 @@ describe("Runtime Integration (sandbox scenarios)", () => {
       },
     );
 
-    // S-1261: Per-host SSH capacity cap bypassed by fast-completing runs
-    // Bug #21: same microtask-ordering bug as S-1260 but targeting per-host capacity.
+    // Per-host SSH capacity cap bypassed by fast-completing runs
+    // Bug: same microtask-ordering issue but targeting per-host capacity.
     // Fast-completing runs reset host counts mid-dispatch loop, allowing more dispatches
     // to a single host than maxConcurrentAgentsPerHost permits.
-    test.fails("BUG S-1261: per-host SSH cap not bypassable by fast-completing runs", async () => {
+    test.fails("BUG: per-host SSH cap not bypassable by fast-completing runs", async () => {
       const result = await runScenario({
         issues: [
           makeIssue("a", "A-1", { state: "In Progress", stateType: "started", priority: 1 }),

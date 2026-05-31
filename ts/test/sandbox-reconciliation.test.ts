@@ -184,7 +184,7 @@ describe("Sandbox: Reconciliation", () => {
 
     // A started issue should NOT be affected by added blockers
     // (blockers only gate unstarted issues)
-    // NOTE: This test documents expected behavior per invariant S-1171.
+    // NOTE: This test documents expected behavior: blockers only gate unstarted issues.
     // With state="In Progress" (not "Todo"), the || bug doesn't trigger.
     const assertions = checkAssertions(result, [
       { type: "event_occurred", eventType: "run_started", messageContains: "X-1" },

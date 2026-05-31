@@ -294,10 +294,10 @@ describe("sandbox routing integration tests", () => {
 });
 
 // ---------------------------------------------------------------------------
-// S-465 to S-470: Route label change mid-run triggers worker stop via
-// reconciliation. This exercises the runtime reconciliation path where
-// routedToThisWorker() returns false after a label mutation, causing the
-// orchestrator to stop the worker for that issue.
+// Route label change mid-run triggers worker stop via reconciliation.
+// This exercises the runtime reconciliation path where routedToThisWorker()
+// returns false after a label mutation, causing the orchestrator to stop
+// the worker for that issue.
 // ---------------------------------------------------------------------------
 describe("sandbox routing: route label change mid-run triggers reconciliation stop", () => {
   test(
