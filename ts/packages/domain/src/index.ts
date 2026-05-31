@@ -125,8 +125,7 @@ export function Port(n: number): Port {
 }
 
 export function PositiveTimeoutMs(n: number): PositiveTimeoutMs {
-  if (!isValidTimeout(n))
-    throw new RangeError(`invalid timeout: ${n} (expected 1–${ONE_WEEK_MS})`);
+  if (!isValidTimeout(n)) throw new RangeError(`invalid timeout: ${n} (expected 1–${ONE_WEEK_MS})`);
   return n;
 }
 

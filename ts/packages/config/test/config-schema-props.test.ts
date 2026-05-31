@@ -123,10 +123,7 @@ test("coercedPort — accepts valid port as string", () => {
 test("coercedPort — rejects ports above 65535", () => {
   fc.assert(
     fc.property(fc.integer({ min: PORT_MAX + 1, max: 1_000_000 }), (n) => {
-      assert.throws(
-        () => parseConfig({ server: { port: n } }),
-        /server.port must be a valid port number/,
-      );
+      assert.throws(() => parseConfig({ server: { port: n } }), /server.port invalid port/);
     }),
   );
 });
@@ -134,10 +131,7 @@ test("coercedPort — rejects ports above 65535", () => {
 test("coercedPort — rejects negative ports", () => {
   fc.assert(
     fc.property(fc.integer({ min: -1_000_000, max: -1 }), (n) => {
-      assert.throws(
-        () => parseConfig({ server: { port: n } }),
-        /server.port must be a valid port number/,
-      );
+      assert.throws(() => parseConfig({ server: { port: n } }), /server.port invalid port/);
     }),
   );
 });
