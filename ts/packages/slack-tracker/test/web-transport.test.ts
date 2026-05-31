@@ -174,6 +174,76 @@ test("listMentions stops paging when next_cursor is empty", async () => {
   );
 });
 
+test("listMentions returns all pages and emits NO truncation warning when history exhausts", async () => {
+  // Three pages: the third has no next_cursor, the normal terminal condition (full exhaustion).
+  // All three pages' mentions must be returned and the scan must NOT warn about truncation.
+  let page = 0;
+  const fetchImpl = (async () => {
+    page += 1;
+    const next_cursor = page < 3 ? `CURSOR_${page + 1}` : "";
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: `${page}.0`, text: "<@U1> page mention", reactions: [] }],
+        response_metadata: { next_cursor },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const warnings: string[] = [];
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve(), {
+    warn: (m) => warnings.push(m),
+  });
+  const messages = await transport.listMentions(["C1"]);
+
+  assert.equal(page, 3);
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.0", "2.0", "3.0"],
+  );
+  assert.equal(warnings.length, 0);
+});
+
+test("listMentions warns LOUDLY (not silently) when the page cap is hit with a cursor still present", async () => {
+  // A pathological channel whose next_cursor never empties: every page returns another cursor.
+  // With a tiny injected cap, hitting the cap while a cursor is STILL present must emit exactly one
+  // truncation warning naming the channel, rather than silently returning a partial scan.
+  let pages = 0;
+  const fetchImpl = (async () => {
+    pages += 1;
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: `${pages}.0`, text: "<@U1> endless", reactions: [] }],
+        response_metadata: { next_cursor: `CURSOR_${pages + 1}` },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const warnings: string[] = [];
+  const transport = new SlackWebTransport(
+    settings(),
+    fetchImpl,
+    () => Promise.resolve(),
+    { warn: (m) => warnings.push(m) },
+    { maxHistoryPages: 3 },
+  );
+  const messages = await transport.listMentions(["C1"]);
+
+  // The cap bounds the scan to exactly maxHistoryPages requests; collected mentions still survive.
+  assert.equal(pages, 3);
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.0", "2.0", "3.0"],
+  );
+  // Exactly one loud warning, naming the channel and signaling truncation.
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /C1/);
+  assert.match(warnings[0]!, /truncat/i);
+});
+
 test("listMentions isolates a failing channel: skips it, logs, and returns the rest", async () => {
   const fetchImpl = (async (url: string | URL) => {
     const channel = new URL(String(url)).searchParams.get("channel");

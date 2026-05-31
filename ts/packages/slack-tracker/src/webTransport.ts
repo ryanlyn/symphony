@@ -9,7 +9,12 @@ interface RawSlackMessage {
   reactions?: Array<{ name?: string }>;
 }
 
-const MAX_HISTORY_PAGES = 50;
+// Generous safety cap on conversations.history pages. The normal terminal condition is Slack
+// returning no next_cursor (full history exhausted). This cap only exists to bound a pathological
+// non-terminating cursor; reaching it while a cursor is STILL present is an anomaly we surface as a
+// loud truncation warning rather than silently dropping older mentions. At limit=200 this covers
+// ~100k messages per channel per poll.
+const MAX_HISTORY_PAGES = 500;
 const MAX_RETRIES = 4;
 
 type Sleep = (delayMs: number) => Promise<void>;
@@ -22,10 +27,17 @@ export interface SlackTrackerLogger {
   warn(message: string): void;
 }
 
+/** Optional knobs for tests; production callers use the generous defaults. */
+export interface SlackWebTransportOptions {
+  /** Safety cap on conversations.history pages per channel per poll (default: MAX_HISTORY_PAGES). */
+  maxHistoryPages?: number;
+}
+
 export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
   private readonly token: string;
   private readonly botUserId: string | undefined;
+  private readonly maxHistoryPages: number;
   private warnedNoBotUserId = false;
 
   constructor(
@@ -33,10 +45,12 @@ export class SlackWebTransport implements SlackTransport {
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly sleep: Sleep = defaultSleep,
     private readonly logger: SlackTrackerLogger = { warn: (message) => console.warn(message) },
+    options: SlackWebTransportOptions = {},
   ) {
     this.endpoint = (settings.tracker.endpoint || "https://slack.com/api").replace(/\/+$/, "");
     this.token = settings.tracker.apiKey ?? "";
     this.botUserId = settings.tracker.botUserId;
+    this.maxHistoryPages = options.maxHistoryPages ?? MAX_HISTORY_PAGES;
   }
 
   async listMentions(channels: string[]): Promise<SlackMessage[]> {
@@ -65,7 +79,10 @@ export class SlackWebTransport implements SlackTransport {
       // as a runtime poll_error.
       try {
         let cursor: string | undefined;
-        for (let page = 0; page < MAX_HISTORY_PAGES; page += 1) {
+        // Page until Slack stops returning a next_cursor: full exhaustion is the normal terminal
+        // condition. The page count only guards against a pathological non-terminating cursor.
+        let page = 0;
+        for (; page < this.maxHistoryPages; page += 1) {
           const params: Record<string, string> = { channel, limit: "200" };
           if (cursor) params.cursor = cursor;
           const body = await this.get("conversations.history", params);
@@ -78,6 +95,16 @@ export class SlackWebTransport implements SlackTransport {
           }
           cursor = nextCursor(body);
           if (!cursor) break;
+        }
+        // Hitting the safety cap with a cursor STILL present means we stopped before exhausting the
+        // channel's history. Older bot mentions beyond this point are silently invisible to candidate
+        // discovery and terminal cleanup, so make the truncation loud rather than dropping them quietly.
+        if (cursor) {
+          this.logger.warn(
+            `slack tracker: channel ${channel} history scan hit the ${this.maxHistoryPages}-page ` +
+              "safety cap with more pages remaining; truncating scan. Older bot mentions in this " +
+              "channel may be missed this poll.",
+          );
         }
       } catch (error) {
         const message = (error as Error).message;
