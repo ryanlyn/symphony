@@ -3,6 +3,7 @@ import {
   isBotMention,
   SlackWebTransport,
   splitIssueId,
+  stateFromReactions,
   statusEmojiMap,
   type SlackMessage,
   type SlackTransport,
@@ -135,7 +136,35 @@ export async function executeSlackTool(
             };
           }
         }
-        return { success: true, result: { ok: true, status } };
+        // Every write resolved without error, but Slack's reactions.remove returns "no_reaction"
+        // (treated as success) when the requestor is not the reaction's author - e.g. a HUMAN added
+        // a managed emoji, so the bot cannot remove it. A "successful" remove therefore does not
+        // guarantee the stale reaction is gone. Verify the EFFECTIVE end state instead of trusting
+        // our writes: re-fetch and recompute the ranked status. Only report success if it matches
+        // the requested status; otherwise a lingering (e.g. human-authored) reaction still shadows
+        // the target and the read path would mis-report the OLD/wrong status.
+        const effective = await currentManagedReactions(transport, channel, ts, map);
+        if (effective && stateFromReactions(effective, map) === status) {
+          return { success: true, result: { ok: true, status } };
+        }
+        const observed = effective ?? [];
+        return {
+          success: false,
+          error:
+            `status update did not take effect; requested '${status}' but current managed ` +
+            `reactions resolve to '${effective ? stateFromReactions(effective, map) : "unknown"}'; ` +
+            `current managed reactions: ${observed.join(", ") || "(unknown)"}`,
+          result: {
+            error: {
+              message:
+                `status update did not take effect; requested '${status}' but current managed ` +
+                `reactions resolve to '${
+                  effective ? stateFromReactions(effective, map) : "unknown"
+                }'; current managed reactions: ${observed.join(", ") || "(unknown)"}`,
+              currentManagedReactions: observed,
+            },
+          },
+        };
       }
       case "slack_comment": {
         // Same trust-boundary check as update_status: only reply on a watched, tracked issue.

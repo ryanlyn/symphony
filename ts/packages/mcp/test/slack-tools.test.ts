@@ -98,6 +98,11 @@ class FailingSlackTransport extends InMemorySlackTransport {
   // When set, only removals of these reaction names fail. This models a real partial failure
   // where removing the stale reaction errors but the rollback removal of the target succeeds.
   failRemoveOnly: Set<string> | null = null;
+  // When set, removals of these reaction names RESOLVE SUCCESSFULLY but do NOT remove the
+  // reaction. This models Slack's reactions.remove "no_reaction" error treated as success when
+  // the requestor is not the reaction's author (a human added the managed emoji, so the bot
+  // cannot remove it): the call appears to succeed yet the stale reaction lingers.
+  removeNoOp: Set<string> | null = null;
 
   override async addReaction(channel: string, ts: string, name: string): Promise<void> {
     if (this.failAdd) throw new Error("addReaction failed");
@@ -107,6 +112,10 @@ class FailingSlackTransport extends InMemorySlackTransport {
   override async removeReaction(channel: string, ts: string, name: string): Promise<void> {
     if (this.failRemoveOnly ? this.failRemoveOnly.has(name) : this.failRemove) {
       throw new Error("removeReaction failed");
+    }
+    if (this.removeNoOp?.has(name)) {
+      // Resolve as success (mirroring no_reaction-as-success) without removing the reaction.
+      return Promise.resolve();
     }
     return super.removeReaction(channel, ts, name);
   }
@@ -245,6 +254,42 @@ test("slack_update_status preserves the old status when addReaction fails", asyn
   assert.equal(result.success, false);
   const msg = await transport.getMessage("C1", "1.1");
   assert.deepEqual(msg!.reactions, ["eyes"]);
+});
+
+test("slack_update_status fails when a 'successful' remove leaves a human-authored reaction lingering", async () => {
+  // A HUMAN added the Cancelled emoji (x), so the bot's reactions.remove returns no_reaction and
+  // resolves as success WITHOUT removing it. Updating to Done adds white_check_mark and "removes"
+  // x (a no-op). Every write resolves, but the message now has BOTH ["x", "white_check_mark"], so
+  // the read path ranks Cancelled above Done and would mis-report the OLD status. The tool must
+  // verify the effective end state, NOT claim success, and surface the actual managed reactions.
+  const transport = new FailingSlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> do the thing", reactions: ["x"] }],
+  });
+  transport.removeNoOp = new Set(["x"]);
+
+  const result = await executeTool(
+    "slack_update_status",
+    { issueId: "C1:1.1", status: "Done" },
+    settings(),
+    fetch,
+    { slackTransport: transport },
+  );
+
+  // The swap did not take effect: x lingered, so the effective status is still Cancelled, not Done.
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /did not take effect/);
+  assert.match(result.error ?? "", /x/);
+  assert.match(result.error ?? "", /white_check_mark/);
+  // The actual reactions are surfaced for programmatic callers.
+  const reported = (result.result as { error: { currentManagedReactions: string[] } }).error
+    .currentManagedReactions;
+  assert.equal(reported.includes("x"), true);
+  assert.equal(reported.includes("white_check_mark"), true);
+  // Both reactions genuinely linger on the message, so the read path still resolves to Cancelled.
+  const msg = await transport.getMessage("C1", "1.1");
+  assert.equal(msg!.reactions.includes("x"), true);
+  assert.equal(msg!.reactions.includes("white_check_mark"), true);
+  assert.equal(stateFromReactions(msg!.reactions, statusEmojiMap(settings())), "Cancelled");
 });
 
 test("slack_update_status add-before-remove happy path swaps to a single target", async () => {
