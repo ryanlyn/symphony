@@ -1,11 +1,16 @@
 # Changelog
 
+## 2026-05-31
+
+- Local/Slack trackers gain read tools (`local_read_issue`, `slack_read_thread`);
+  default local board path is now `.symphony/local`.
+
 ## 2026-05-30
 
 - Decoupled the TypeScript port's tracker abstraction so backends are pluggable
   by `tracker.kind`, and added two trackers that need no external service. The
   `local` tracker stores each issue as a `BOARD-<n>.md` file under
-  `.symphony/board/` (status front matter, optional labels, and a
+  `.symphony/local/` (status front matter, optional labels, and a
   `## Comments` workpad) with `local_update_status`, `local_comment`, and
   `local_create_issue` write tools and a demo seeder. The `slack` tracker turns
   a bot @-mention into an issue, an emoji reaction into status, and a thread

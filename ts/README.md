@@ -105,15 +105,16 @@ The workflow files in this directory are byte-identical copies of the Elixir wor
 
 A tracker is the source of issues Symphony works on. It is selected by `tracker.kind` in the
 workflow front matter. Every tracker exposes the same read surface to the runtime (poll for
-candidate issues, refresh in-flight issues by id) and one or more agent write tools. The write
-tools differ per kind; their descriptions are self-documenting and surface to the agent via the
-MCP `tools/list` call.
+candidate issues, refresh in-flight issues by id) and a set of agent tools. Those tools are now
+read+write symmetric across kinds, mirroring `linear_graphql` (which both reads and writes): each
+tracker gives the agent at least one write tool and one read tool. The tools differ per kind; their
+descriptions are self-documenting and surface to the agent via the MCP `tools/list` call.
 
 Supported kinds:
 
 - `linear` - issues live in a Linear project. Read access uses `tracker.api_key` (resolved from
-  `LINEAR_API_KEY`) and `tracker.project_slug`; the agent writes through the `linear_graphql`
-  tool. This is the original backend and is unchanged.
+  `LINEAR_API_KEY`) and `tracker.project_slug`; the agent both reads and writes through the
+  `linear_graphql` tool. This is the original backend and is unchanged.
 - `local` - issues live as Markdown files on disk. No external service required.
 - `slack` - an @-mention of the bot is an issue, an emoji reaction is the status, and a thread
   reply is a comment.
@@ -134,12 +135,12 @@ tracker:
 The local tracker runs Symphony against a directory of Markdown files, with no Linear API key or
 workspace. See `WORKFLOW.local.md` for a complete example workflow.
 
-Configure it with `kind: local` and a board `path` (default `.symphony/board`):
+Configure it with `kind: local` and a board `path` (default `.symphony/local`):
 
 ```yaml
 tracker:
   kind: local
-  path: .symphony/board
+  path: .symphony/local
   active_states:
     - Todo
     - In Progress
@@ -151,7 +152,7 @@ tracker:
 `path` is the only local-specific setting and is always defaulted, so a local workflow is valid
 with just `kind: local`.
 
-Each issue is one file named `BOARD-<n>.md` (for example `.symphony/board/BOARD-7.md`). The
+Each issue is one file named `BOARD-<n>.md` (for example `.symphony/local/BOARD-7.md`). The
 identifier is the file stem (`BOARD-7`). The format is YAML front matter followed by a `# Title`
 heading, the description, and an optional `## Comments` section:
 
@@ -182,13 +183,16 @@ The retry slot is not released when a worker fails.
   `## Comments` heading is never misparsed; treat the most recent comment block as the live
   workpad.
 
-Agent write tools for `kind: local`:
+Agent tools for `kind: local` (read and write, symmetric with `linear_graphql`):
 
 - `local_update_status` - move an issue to a new status (args: `issueId`, `status`).
 - `local_comment` - append a progress note to the issue's `## Comments` section (args: `issueId`,
   `body`).
 - `local_create_issue` - create a new board issue for out-of-scope follow-up work (args: `title`,
   optional `body`, optional `status`).
+- `local_read_issue` - read an issue's authoritative state: its current status, title, description,
+  and comments (args: `issueId`). Use it to re-read state and recover prior progress notes on a
+  continuation turn.
 
 Concurrent writes (multiple agents or ensemble slots) to the same board file are serialized
 in-process so a status change and comments are never lost. This assumes a single Symphony daemon
@@ -199,9 +203,9 @@ To seed a board so you can try `kind: local` immediately, use the demo seeder, w
 sample `BOARD-<n>.md` files through the same `BoardStore` the running tracker uses:
 
 ```sh
-npx tsx sandbox/seed-local.ts                  # seeds ./.symphony/board
+npx tsx sandbox/seed-local.ts                  # seeds ./.symphony/local
 npx tsx sandbox/seed-local.ts /tmp/demo-board  # seeds an explicit directory
-npx tsx sandbox/seed-local.ts .symphony/board 2 # seeds only the first 2 issues
+npx tsx sandbox/seed-local.ts .symphony/local 2 # seeds only the first 2 issues
 ```
 
 Point `tracker.path` at the directory you seeded and run Symphony as usual.
@@ -282,12 +286,15 @@ name to state name). The default map is:
 A message with no managed reaction is effectively new (`Todo`). Setting status swaps the
 reaction: it removes any other status emoji it manages and adds the one for the target state.
 
-Agent write tools for `kind: slack`:
+Agent tools for `kind: slack` (read and write, symmetric with `linear_graphql`):
 
 - `slack_update_status` - set the issue's status by swapping its managed emoji reaction (args:
   `issueId`, `status`).
 - `slack_comment` - post a threaded reply on the source message as a comment (args: `issueId`,
   `body`).
+- `slack_read_thread` - read the issue's authoritative state: its source message (text, derived
+  status, reactions) and its thread replies (args: `issueId`). Use it to re-read state and recover
+  prior progress notes on a continuation turn.
 
 There is no `slack_create_issue`: issues are created by humans @-mentioning the bot, not by the
 agent.
