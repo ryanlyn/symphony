@@ -201,6 +201,11 @@ export class BoardStore {
     return entries
       .filter((f) => f.endsWith(".md"))
       .map((f) => f.slice(0, -3))
+      // Keep ONLY canonical board ids (the same shape filePath/assertValidId enforce). Stray
+      // markdown files (README.md, notes.md) are not board issues, so ignoring them here keeps
+      // list()/getByIds()/byStatus() clean AND prevents nextId() from feeding a non-BOARD stem
+      // into boardNumber() (whose MAX_SAFE_INTEGER fallback would otherwise blow up id allocation).
+      .filter((id) => ID_PATTERN.test(id))
       .sort((a, b) => boardNumber(a) - boardNumber(b));
   }
 

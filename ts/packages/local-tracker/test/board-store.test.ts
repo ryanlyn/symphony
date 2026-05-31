@@ -265,6 +265,38 @@ test("create never overwrites a pre-existing higher id and stays collision-safe"
   assert.match(seeded, /Do not clobber/);
 });
 
+test("ignores stray non-BOARD markdown files for ids, listing, and allocation", async () => {
+  const dir = await tempBoard();
+  // A real board issue alongside two stray markdown files that are NOT board issues. Without
+  // filtering, nextId() would feed "README"/"notes" into boardNumber()'s MAX_SAFE_INTEGER
+  // fallback and allocate BOARD-9007199254740992; here create() must simply yield BOARD-2.
+  await writeFile(path.join(dir, "README.md"), "# Readme\n\nNot a board issue\n", "utf8");
+  await writeFile(path.join(dir, "notes.md"), "# Notes\n\nAlso not a board issue\n", "utf8");
+  await writeFile(path.join(dir, "BOARD-1.md"), "---\nstatus: Todo\n---\n# One\n\nBody\n", "utf8");
+  const readmeBefore = await readFile(path.join(dir, "README.md"), "utf8");
+  const notesBefore = await readFile(path.join(dir, "notes.md"), "utf8");
+
+  const store = new BoardStore(dir);
+
+  // Allocation skips the stray stems entirely and increments off the real board id.
+  const created = await store.create({ title: "Next", status: "Todo" });
+  assert.equal(created.identifier, "BOARD-2");
+
+  // list() returns only canonical board issues, never the stray files.
+  assert.deepEqual(
+    (await store.list()).map((i) => i.identifier).sort(),
+    ["BOARD-1", "BOARD-2"],
+  );
+
+  // Explicit lookups of a real board id still work.
+  const fetched = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(fetched.identifier, "BOARD-1");
+
+  // The stray markdown files are left byte-for-byte untouched on disk.
+  assert.equal(await readFile(path.join(dir, "README.md"), "utf8"), readmeBefore);
+  assert.equal(await readFile(path.join(dir, "notes.md"), "utf8"), notesBefore);
+});
+
 test("concurrent create calls allocate unique ids without losing writes", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);
