@@ -278,7 +278,12 @@ test("listMentions isolates a failing channel: skips it, logs, and returns the r
   assert.match(warnings[0]!, /not_in_channel/);
 });
 
-test("listMentions surfaces a partial first page from a channel that fails mid-pagination", async () => {
+test("listMentions REJECTS when a single channel fails mid-pagination (no channel completed)", async () => {
+  // Page 1 succeeds with a next_cursor; page 2 fails after the transport's retries. The first page
+  // is a PARTIAL scan, not a complete one - every mention beyond the failed page would be invisible
+  // to candidate discovery and terminal cleanup. With only one channel and that channel never
+  // completing, listMentions must REJECT so the runtime records a poll_error rather than returning a
+  // healthy-looking partial first page (this is the regression the round-9 finding caught).
   const fetchImpl = (async (url: string | URL) => {
     const parsed = new URL(String(url));
     const cursor = parsed.searchParams.get("cursor");
@@ -286,7 +291,7 @@ test("listMentions surfaces a partial first page from a channel that fails mid-p
       return new Response(
         JSON.stringify({
           ok: true,
-          messages: [{ ts: "1.1", text: "<@U1> first page survives", reactions: [] }],
+          messages: [{ ts: "1.1", text: "<@U1> first page does NOT survive", reactions: [] }],
           response_metadata: { next_cursor: "CURSOR_2" },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -302,14 +307,63 @@ test("listMentions surfaces a partial first page from a channel that fails mid-p
   const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve(), {
     warn: (m) => warnings.push(m),
   });
-  const messages = await transport.listMentions(["C1"]);
 
-  assert.deepEqual(
-    messages.map((m) => m.ts),
-    ["1.1"],
-  );
+  await assert.rejects(() => transport.listMentions(["C1"]), /C1.*fatal_error/);
+  // The per-channel discard warning still fires (the channel is logged, not silently dropped).
   assert.equal(warnings.length, 1);
   assert.match(warnings[0]!, /C1/);
+});
+
+test("listMentions returns ONLY a fully-scanned channel's mentions when a sibling fails mid-pagination", async () => {
+  // Channel A succeeds on page 1 (next_cursor present) then fails on page 2; channel B fully
+  // exhausts in a single page. A never completes, so its partial buffer is DISCARDED and contributes
+  // NOTHING; B completed, so listMentions RESOLVES with only B's mentions. A single failed channel
+  // among several is logged (naming A), not thrown - preserving per-channel isolation.
+  const fetchImpl = (async (url: string | URL) => {
+    const parsed = new URL(String(url));
+    const channel = parsed.searchParams.get("channel");
+    const cursor = parsed.searchParams.get("cursor");
+    if (channel === "C_A") {
+      if (!cursor) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            messages: [{ ts: "A1.1", text: "<@U1> A page 1 discarded", reactions: [] }],
+            response_metadata: { next_cursor: "CURSOR_A2" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: false, error: "fatal_error" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [{ ts: "B1.1", text: "<@U1> B fully exhausts", reactions: [] }],
+        response_metadata: { next_cursor: "" },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const warnings: string[] = [];
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve(), {
+    warn: (m) => warnings.push(m),
+  });
+  const messages = await transport.listMentions(["C_A", "C_B"]);
+
+  // Only B's mention is returned; A's partial first page contributes nothing.
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["B1.1"],
+  );
+  assert.equal(messages[0]!.channel, "C_B");
+  // Exactly one warning, naming the failed channel A.
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /C_A/);
 });
 
 test("addReaction posts to reactions.add", async () => {
