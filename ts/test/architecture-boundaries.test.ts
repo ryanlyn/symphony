@@ -134,6 +134,7 @@ test("ugly retry flow keeps capacity authority in the orchestrator", () => {
     identifier: issue.identifier,
     attempt: 1,
     dueAt: new Date(Date.now() - 1),
+    monotonicDeadlineMs: 0,
     slotIndex: 1,
     error: "agent_stalled",
   });

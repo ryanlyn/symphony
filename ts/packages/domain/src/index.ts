@@ -470,6 +470,8 @@ export interface RetryEntry {
   attempt: number;
   /** Absolute wall-clock time when the issue is eligible for re-dispatch; backoff comes from `maxRetryBackoffMs`. */
   dueAt: Date;
+  /** Monotonic clock deadline (ms) for timer scheduling; immune to wall-clock adjustments. */
+  monotonicDeadlineMs: number;
   /** Last error message, when the previous run failed. */
   error?: string | undefined;
   /** Slot this retry prefers to reclaim so ensemble slots stay stable across attempts. */

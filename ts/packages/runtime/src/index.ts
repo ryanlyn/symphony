@@ -128,6 +128,7 @@ export interface RuntimeRetryEntry {
   identifier: string;
   attempt: number;
   dueAt: string;
+  monotonicDeadlineMs: number;
   error?: string | undefined;
   slotIndex?: number | undefined;
   workerHost?: string | null | undefined;
@@ -743,11 +744,7 @@ export class SymphonyRuntime {
       ) {
         return;
       }
-      // Fix: when a poll is already in progress, wait for it to complete and then trigger
-      // a new poll. Previously, the timer callback returned immediately when pollInProgress
-      // was set, causing the retry to be silently dropped since the timer was already consumed.
-      // Invariant: a due retry must always result in a poll, even if it fires during an
-      // existing poll cycle.
+      this.orchestrator.markRetryDue(scheduled.issueId);
       if (this.pollInProgress) {
         void this.pollInProgress.then(() => {
           this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);
@@ -874,6 +871,7 @@ function runtimeRetryEntry(entry: {
   identifier: string;
   attempt: number;
   dueAt: Date;
+  monotonicDeadlineMs: number;
   error?: string | undefined;
   slotIndex?: number | undefined;
   workerHost?: string | null | undefined;
@@ -884,6 +882,7 @@ function runtimeRetryEntry(entry: {
     identifier: entry.identifier,
     attempt: entry.attempt,
     dueAt: entry.dueAt.toISOString(),
+    monotonicDeadlineMs: entry.monotonicDeadlineMs,
     ...(entry.error !== undefined ? { error: entry.error } : {}),
     ...(entry.slotIndex !== undefined ? { slotIndex: entry.slotIndex } : {}),
     ...(entry.workerHost !== undefined ? { workerHost: entry.workerHost } : {}),

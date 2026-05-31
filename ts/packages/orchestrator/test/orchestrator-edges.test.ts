@@ -17,6 +17,7 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
 function fakeClock(now = new Date()): ClockPort {
   return {
     now: () => now,
+    monotonicMs: () => now.getTime(),
     setTimeout: (cb, ms) => setTimeout(cb, ms),
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
   };
@@ -67,6 +68,7 @@ test("claim — preferred slot honored on retry", () => {
     identifier: issue.identifier,
     attempt: 1,
     dueAt: new Date(Date.now() - 1),
+    monotonicDeadlineMs: 0,
     slotIndex: 2,
     error: "failed",
   });

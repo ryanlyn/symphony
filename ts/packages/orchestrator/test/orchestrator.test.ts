@@ -185,6 +185,7 @@ test("orchestrator gates retry attempts until backoff is due and clears terminal
   assert.deepEqual(orchestrator.eligibleIssues([issue]), []);
 
   retry!.dueAt = new Date(Date.now() - 1);
+  retry!.monotonicDeadlineMs = 0;
   assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-RETRY");
   assert.equal(orchestrator.claim(issue)?.retryAttempt, 1);
   orchestrator.finish(issue.id, 0, true);
@@ -223,6 +224,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   assert.ok(continuationDelay >= 900 && continuationDelay <= 1_500);
 
   retry.dueAt = new Date(Date.now() - 1);
+  retry.monotonicDeadlineMs = 0;
   assert.equal(continuationOrchestrator.claim(issue)?.retryAttempt, 1);
   const beforeSecondContinuation = Date.now();
   continuationOrchestrator.finish(issue.id, 0, true, undefined, "continuation");
@@ -233,6 +235,7 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   assert.ok(secondContinuationDelay >= 900 && secondContinuationDelay <= 1_500);
 
   retry.dueAt = new Date(Date.now() - 1);
+  retry.monotonicDeadlineMs = 0;
   assert.equal(continuationOrchestrator.claim(issue)?.retryAttempt, 1);
   const beforeFailureAfterContinuations = Date.now();
   continuationOrchestrator.finish(
@@ -264,6 +267,7 @@ test("orchestrator retry dispatch reopens slots blocked only by stale claims", (
     identifier: issue.identifier,
     attempt: 1,
     dueAt: new Date(Date.now() - 1),
+    monotonicDeadlineMs: 0,
     error: "agent exited: boom",
   });
 
@@ -289,6 +293,7 @@ test("orchestrator retries an ensemble issue in its original slot", () => {
     identifier: issue.identifier,
     attempt: 1,
     dueAt: new Date(Date.now() - 1),
+    monotonicDeadlineMs: 0,
     slotIndex: 2,
     error: "agent exited",
   });
