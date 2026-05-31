@@ -106,7 +106,33 @@ export async function executeSlackTool(
             // stale reaction already removed and drop the just-added target) so the message ranks
             // to the OLD status rather than a wrong/partial one.
             await rollback();
-            return failure("status not changed");
+            // Do not assume the best-effort rollback succeeded: a rollback removeReaction/addReaction
+            // can fail during a real outage, leaving the wrong (advanced) status in place. Re-fetch
+            // the message and verify the current managed-reaction set equals the ORIGINAL one.
+            const current = await currentManagedReactions(transport, channel, ts, map);
+            if (current && sameSet(current, present)) {
+              // The original managed set is intact -> the old status is preserved.
+              return failure("status not changed");
+            }
+            // Either the re-fetch failed or the managed set drifted from the original. The message
+            // may now read as the wrong (e.g. advanced) status, so do NOT claim it is unchanged.
+            // Surface the ACTUAL managed reactions so the runtime/operator does not trust the prior
+            // status.
+            const observed = current ?? [];
+            return {
+              success: false,
+              error:
+                "status update failed and could not be fully rolled back; " +
+                `current managed reactions: ${observed.join(", ") || "(unknown)"}`,
+              result: {
+                error: {
+                  message:
+                    "status update failed and could not be fully rolled back; " +
+                    `current managed reactions: ${observed.join(", ") || "(unknown)"}`,
+                  currentManagedReactions: observed,
+                },
+              },
+            };
           }
         }
         return { success: true, result: { ok: true, status } };
@@ -165,6 +191,38 @@ async function ensureTrackedMessage(
 
 function failure(message: string): ToolResult {
   return { success: false, error: message, result: { error: { message } } };
+}
+
+/**
+ * Re-fetch the message and return its current managed-reaction set (those keyed in `map`).
+ * Returns `null` if the message can no longer be fetched, so callers can distinguish a verified
+ * empty set from an unknown one.
+ */
+async function currentManagedReactions(
+  transport: SlackTransport,
+  channel: string,
+  ts: string,
+  map: Record<string, string>,
+): Promise<string[] | null> {
+  let message: SlackMessage | null;
+  try {
+    message = await transport.getMessage(channel, ts);
+  } catch {
+    return null;
+  }
+  if (!message) return null;
+  return message.reactions.filter((r) => map[r]);
+}
+
+/** Compare two reaction lists as sets (order- and duplicate-insensitive). */
+function sameSet(a: string[], b: string[]): boolean {
+  const left = new Set(a);
+  const right = new Set(b);
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

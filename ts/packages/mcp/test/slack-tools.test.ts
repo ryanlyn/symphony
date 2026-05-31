@@ -188,6 +188,44 @@ test("slack_update_status restores the full original set when a later multi-stal
   assert.equal(stateFromReactions(msg!.reactions, statusEmojiMap(settings())), "Cancelled");
 });
 
+test("slack_update_status reports an ambiguous failure when rollback cannot restore the original set", async () => {
+  // In Progress -> Done with ALL removes failing. add white_check_mark succeeds; removing the
+  // stale eyes fails, triggering rollback. The rollback removeReaction(white_check_mark) ALSO
+  // fails (real outage), so both eyes and white_check_mark linger. The read path ranks Done above
+  // In Progress, so the message would observe as "Done" even though the swap failed: the tool must
+  // NOT claim "status not changed" and must surface the actual managed reactions.
+  const transport = new FailingSlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> do the thing", reactions: ["eyes"] }],
+  });
+  transport.failRemove = true;
+
+  const result = await executeTool(
+    "slack_update_status",
+    { issueId: "C1:1.1", status: "Done" },
+    settings(),
+    fetch,
+    { slackTransport: transport },
+  );
+
+  assert.equal(result.success, false);
+  // The error must NOT lie about the state being unchanged.
+  assert.equal(/status not changed/.test(result.error ?? ""), false);
+  // It must report that the update failed and could not be fully rolled back, and include the
+  // ACTUAL current managed reactions so the caller does not trust the prior status.
+  assert.match(result.error ?? "", /could not be fully rolled back/);
+  assert.match(result.error ?? "", /eyes/);
+  assert.match(result.error ?? "", /white_check_mark/);
+  // The actual reactions are surfaced in the result for programmatic callers.
+  const reported = (result.result as { error: { currentManagedReactions: string[] } }).error
+    .currentManagedReactions;
+  assert.equal(reported.includes("eyes"), true);
+  assert.equal(reported.includes("white_check_mark"), true);
+  // Both reactions genuinely lingered on the message.
+  const msg = await transport.getMessage("C1", "1.1");
+  assert.equal(msg!.reactions.includes("eyes"), true);
+  assert.equal(msg!.reactions.includes("white_check_mark"), true);
+});
+
 test("slack_update_status preserves the old status when addReaction fails", async () => {
   const transport = new FailingSlackTransport({
     C1: [{ ts: "1.1", text: "<@U1> do the thing", reactions: ["eyes"] }],
