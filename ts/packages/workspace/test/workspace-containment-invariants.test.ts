@@ -102,7 +102,6 @@ function effectivePrefix(root: string): string {
   return stripped || "/";
 }
 
-// INVARIANT: When a workspace path is resolved, it SHALL be a strict descendant of the workspace root.
 test("workspace path is a strict descendant of the workspace root", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
@@ -213,10 +212,9 @@ test("negative: ensureInsideRoot throws for paths outside root", () => {
   );
 });
 
-// INVARIANT: When directory names are derived from identifiers, they SHALL contain only alphanumeric characters, dots, hyphens, and underscores.
 const ALLOWED_CHARS = /^[A-Za-z0-9._-]*$/;
 
-test("safeIdentifier output contains only alphanumeric, dots, hyphens, underscores", () => {
+test("directory names contain only alphanumeric, dots, hyphens, and underscores", () => {
   fc.assert(
     fc.property(diverseString, (input) => {
       const result = safeIdentifier(input);
@@ -248,8 +246,7 @@ test("safeIdentifier produces non-empty output for non-empty string inputs", () 
   );
 });
 
-// INVARIANT: When sanitization is applied to a name, applying it again SHALL produce the same result.
-test("safeIdentifier is idempotent on arbitrary strings", () => {
+test("sanitization is idempotent", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 100 }), (input) => {
       const once = safeIdentifier(input);
@@ -273,8 +270,7 @@ test("workspacePath output segment is already fully sanitized", () => {
   );
 });
 
-// INVARIANT: When a multi-slot ensemble is resolved, each slot SHALL receive a distinct workspace path.
-test("ensemble slots produce distinct workspace paths", () => {
+test("each ensemble slot receives a distinct workspace path", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -326,7 +322,6 @@ test("ensemble paths all share the same parent directory", () => {
   );
 });
 
-// INVARIANT: When a single-slot run is resolved, the workspace path SHALL have no slot suffix.
 test("single-slot run has no slot suffix in path", () => {
   fc.assert(
     fc.property(absoluteRoot, validIdentifier, (root, identifier) => {
@@ -382,8 +377,7 @@ test("ensemble path has exactly two more segments than normalized root", () => {
   );
 });
 
-// INVARIANT: When a workspace path is produced, it SHALL be a valid absolute path.
-test("additional: workspacePath always produces an absolute path", () => {
+test("workspace path is always a valid absolute path", () => {
   fc.assert(
     fc.property(
       absoluteRoot,
@@ -405,8 +399,7 @@ test("additional: workspacePath always produces an absolute path", () => {
   );
 });
 
-// INVARIANT: When a workspace path is produced, it SHALL contain no ".." segments.
-test("additional: workspacePath output never contains parent directory traversals", () => {
+test("workspace path contains no '..' segments", () => {
   fc.assert(
     fc.property(
       absoluteRoot,

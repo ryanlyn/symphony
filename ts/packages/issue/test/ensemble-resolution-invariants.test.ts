@@ -77,8 +77,6 @@ const randomCaseEnsembleArb = fc.array(fc.boolean(), { minLength: 8, maxLength: 
     .join("");
 });
 
-// INVARIANT: When a valid label with a positive integer is present, the system SHALL use that integer as ensemble size.
-
 test("valid label with positive integer is used as ensemble size", () => {
   fc.assert(
     fc.property(
@@ -119,8 +117,6 @@ test("leading zeros in the number are accepted (parsed as decimal)", () => {
     }),
   );
 });
-
-// INVARIANT: When multiple valid labels are present, the system SHALL use the first encountered.
 
 test("first valid ensemble label wins when multiple are present", () => {
   fc.assert(
@@ -166,9 +162,7 @@ test("order matters: swapping labels changes result", () => {
   );
 });
 
-// INVARIANT: When a label specifies zero or a negative integer, the system SHALL ignore it.
-
-test("any label with numeric value <= 0 is ignored", () => {
+test("label with zero or negative integer is ignored", () => {
   fc.assert(
     fc.property(
       fc.oneof(
@@ -218,9 +212,7 @@ test("multiple non-positive labels all ignored, first valid wins", () => {
   );
 });
 
-// INVARIANT: When matching ensemble labels, matching SHALL be case-insensitive and whitespace-insensitive.
-
-test("end-to-end: mixed-case labels resolve correctly through normalizeIssue", () => {
+test("matching is case-insensitive through normalizeIssue", () => {
   fc.assert(
     fc.property(fc.integer({ min: 1, max: 100 }), randomCaseEnsembleArb, (n, cased) => {
       const rawLabel = `${cased}:${n}`;
@@ -231,7 +223,7 @@ test("end-to-end: mixed-case labels resolve correctly through normalizeIssue", (
   );
 });
 
-test("end-to-end: whitespace-padded labels resolve correctly through normalizeIssue", () => {
+test("matching is whitespace-insensitive through normalizeIssue", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -247,7 +239,7 @@ test("end-to-end: whitespace-padded labels resolve correctly through normalizeIs
   );
 });
 
-test("end-to-end: combined random case and whitespace through normalizeIssue", () => {
+test("matching is case-and-whitespace-insensitive combined through normalizeIssue", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 100 }),
@@ -284,9 +276,7 @@ test("internal whitespace within 'ensemble' keyword does NOT match", () => {
   );
 });
 
-// INVARIANT: When no valid ensemble label is present, the system SHALL return null.
-
-test("no ensemble labels at all yields null", () => {
+test("no valid ensemble label returns null", () => {
   fc.assert(
     fc.property(fc.array(nonEnsembleLabelArb, { minLength: 0, maxLength: 10 }), (labels) => {
       const issue = issueWith(labels);
@@ -391,9 +381,7 @@ test("suffix after number prevents matching", () => {
   );
 });
 
-// INVARIANT: When ensembleSize returns a value, it SHALL be a positive integer (never NaN, Infinity, fractional, or negative).
-
-test("return value is always null or positive integer (comprehensive inputs)", () => {
+test("return value is always null or a positive integer", () => {
   fc.assert(
     fc.property(
       fc.array(
