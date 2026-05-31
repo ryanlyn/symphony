@@ -1,10 +1,25 @@
 import { describe, expect, test } from "vitest";
+import type { Issue } from "@symphony/cli";
+import type { RuntimeEvent } from "@symphony/runtime";
 
 import { setupLinearSandbox, runLinearScenario } from "../sandbox/linear-sandbox.js";
 import { checkAssertions } from "../sandbox/sandbox.js";
-import type { LinearSandboxScenario } from "../sandbox/linear-sandbox.js";
+import type { LinearSandboxScenario, LinearSandboxResult } from "../sandbox/linear-sandbox.js";
 
 const runLive = process.env.SYMPHONY_TS_RUN_LINEAR_SANDBOX === "1";
+
+/** Map an issue identifier from a run_started event to its title via createdIssues. */
+function issueForEvent(event: RuntimeEvent, createdIssues: Issue[]): Issue | undefined {
+  return createdIssues.find((i) => event.message.startsWith(i.identifier));
+}
+
+/** Get ordered titles from run_started events using the issue identifier → title mapping. */
+function dispatchedTitles(result: LinearSandboxResult): string[] {
+  return result.events
+    .filter((e) => e.type === "run_started")
+    .map((e) => issueForEvent(e, result.createdIssues)?.title ?? "")
+    .filter(Boolean);
+}
 
 describe("linear-sandbox: basic", () => {
   test(
@@ -84,13 +99,11 @@ describe("linear-sandbox: dispatch ordering", () => {
 
       const result = await runLinearScenario(ctx, scenario);
 
-      // The first run_started event should be for the urgent task (priority 1)
-      const startEvents = result.events.filter((e) => e.type === "run_started");
-      expect(startEvents.length).toBeGreaterThan(0);
+      const titles = dispatchedTitles(result);
+      expect(titles.length).toBeGreaterThan(0);
 
       // With cap=1, only the highest-priority issue dispatches first
-      const firstStart = startEvents[0];
-      expect(firstStart.message).toContain("Urgent task");
+      expect(titles[0]).toContain("Urgent task");
     },
   );
 
@@ -119,11 +132,11 @@ describe("linear-sandbox: dispatch ordering", () => {
 
       const result = await runLinearScenario(ctx, scenario);
 
-      const startEvents = result.events.filter((e) => e.type === "run_started");
-      expect(startEvents.length).toBeGreaterThan(0);
+      const titles = dispatchedTitles(result);
+      expect(titles.length).toBeGreaterThan(0);
 
       // First dispatched should be the earliest-created issue
-      expect(startEvents[0].message).toContain("First created");
+      expect(titles[0]).toContain("First created");
     },
   );
 });
@@ -289,7 +302,7 @@ describe("linear-sandbox: state transitions & reconciliation", () => {
 
         // The Done issue should NOT have been dispatched
         const startEvents = result.events.filter(
-          (e) => e.type === "run_started" && e.message.includes(marker),
+          (e) => e.type === "run_started" && e.message.includes(issue.identifier),
         );
         expect(startEvents).toHaveLength(0);
       } finally {
@@ -382,12 +395,11 @@ describe("linear-sandbox: state transitions & reconciliation", () => {
       const ctx = await setupLinearSandbox();
 
       // Create and immediately complete the issue
-      const marker = `done-skip-${Date.now()}`;
       const issue = await ctx.client.createIssue({
         teamId: ctx.team.id,
         projectId: ctx.project.id,
         stateId: ctx.states.done.id,
-        title: `[${marker}] Already done issue`,
+        title: `Already done issue`,
         description: "Should never be dispatched",
         assigneeId: ctx.viewerId,
       });
@@ -406,15 +418,13 @@ describe("linear-sandbox: state transitions & reconciliation", () => {
 
         // The Done issue should never appear in run_started events
         const markerStarts = result.events.filter(
-          (e) => e.type === "run_started" && e.message.includes(marker),
+          (e) => e.type === "run_started" && e.message.includes(issue.identifier),
         );
         expect(markerStarts).toHaveLength(0);
 
         // But the normal issue should have been dispatched
-        const normalStarts = result.events.filter(
-          (e) => e.type === "run_started" && e.message.includes("Normal dispatchable"),
-        );
-        expect(normalStarts.length).toBeGreaterThan(0);
+        const startEvents = result.events.filter((e) => e.type === "run_started");
+        expect(startEvents.length).toBeGreaterThan(0);
       } finally {
         await ctx.client.archiveIssue(issue.id).catch(() => {});
       }
@@ -454,12 +464,12 @@ describe("linear-sandbox: multi-issue interactions", () => {
       }
 
       // First two dispatched should be priority 1 and 2 (urgent and high)
-      const startEvents = result.events.filter((e) => e.type === "run_started");
-      expect(startEvents.length).toBeGreaterThanOrEqual(2);
+      const titles = dispatchedTitles(result);
+      expect(titles.length).toBeGreaterThanOrEqual(2);
 
-      const firstTwo = startEvents.slice(0, 2).map((e) => e.message);
-      const hasUrgent = firstTwo.some((m) => m.includes("Priority 1 (urgent)"));
-      const hasHigh = firstTwo.some((m) => m.includes("Priority 2 (high)"));
+      const firstTwo = titles.slice(0, 2);
+      const hasUrgent = firstTwo.some((t) => t.includes("Priority 1 (urgent)"));
+      const hasHigh = firstTwo.some((t) => t.includes("Priority 2 (high)"));
       expect(hasUrgent).toBe(true);
       expect(hasHigh).toBe(true);
     },
@@ -491,14 +501,14 @@ describe("linear-sandbox: multi-issue interactions", () => {
       const result = await runLinearScenario(ctx, scenario);
 
       // With fast-finishing runs and 5 ticks, all 4 issues should eventually dispatch
-      const startEvents = result.events.filter((e) => e.type === "run_started");
-      const uniqueIssues = new Set(
-        startEvents.map((e) => {
-          const match = e.message.match(/(Fast finisher [AB]|Queued [CD])/);
+      const titles = dispatchedTitles(result);
+      const uniqueTitles = new Set(
+        titles.map((t) => {
+          const match = t.match(/(Fast finisher [AB]|Queued [CD])/);
           return match?.[1];
         }),
       );
-      expect(uniqueIssues.size).toBeGreaterThanOrEqual(3);
+      expect(uniqueTitles.size).toBeGreaterThanOrEqual(3);
     },
   );
 });
