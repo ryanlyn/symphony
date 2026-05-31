@@ -5,6 +5,7 @@ import {
   settingsForIssueState,
   parseConfig,
   normalizeStateName,
+  MAX_TURNS_MAX,
 } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
@@ -49,8 +50,8 @@ const boundaryPositiveIntArb = fc.oneof(
   fc.integer({ min: 9_999_999, max: 10_000_000 }),
 );
 
-/** Generates a maxTurns value within schema bounds (1-10000) for parseConfig tests. */
-const schemaMaxTurnsArb = fc.integer({ min: 1, max: 10_000 });
+/** Generates a maxTurns value within schema bounds for parseConfig tests. */
+const schemaMaxTurnsArb = fc.integer({ min: 1, max: MAX_TURNS_MAX });
 
 /** Generates a pair of distinct state names (normalized). */
 const distinctStateNamesArb = fc

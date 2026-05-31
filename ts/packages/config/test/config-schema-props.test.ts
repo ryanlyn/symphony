@@ -1,6 +1,6 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { parseConfig } from "@symphony/cli";
+import { parseConfig, ONE_WEEK_MS, PORT_MAX } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 
@@ -18,18 +18,15 @@ test("camelToSnake — error labels use snake_case field names for numeric field
 
   for (const { section, snake } of camelFields) {
     const input = { [section]: { [snake]: "not_valid_for_any_numeric" } };
-    assert.throws(
-      () => parseConfig(input),
-      new RegExp(snake),
-    );
+    assert.throws(() => parseConfig(input), new RegExp(snake));
   }
 });
 
-// --- coercedIntervalMs (via polling.interval_ms, min 100, max 604_800_000) ---
+// --- coercedIntervalMs (via polling.interval_ms) ---
 
 test("coercedPositiveInt — accepts any positive integer", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
+    fc.property(fc.integer({ min: 1, max: ONE_WEEK_MS }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: n } });
       assert.equal(settings.polling.intervalMs, n);
     }),
@@ -38,7 +35,7 @@ test("coercedPositiveInt — accepts any positive integer", () => {
 
 test("coercedPositiveInt — accepts positive integer as string", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
+    fc.property(fc.integer({ min: 1, max: ONE_WEEK_MS }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: String(n) } });
       assert.equal(settings.polling.intervalMs, n);
     }),
@@ -48,10 +45,7 @@ test("coercedPositiveInt — accepts positive integer as string", () => {
 test("coercedPositiveInt — rejects zero and negative integers", () => {
   fc.assert(
     fc.property(fc.integer({ min: -1_000_000, max: 0 }), (n) => {
-      assert.throws(
-        () => parseConfig({ polling: { interval_ms: n } }),
-        /polling.interval_ms/,
-      );
+      assert.throws(() => parseConfig({ polling: { interval_ms: n } }), /polling.interval_ms/);
     }),
   );
 });
@@ -61,10 +55,7 @@ test("coercedPositiveInt — rejects non-integer numbers", () => {
     fc.property(
       fc.double({ min: 0.01, max: 1_000_000, noNaN: true }).filter((n) => !Number.isInteger(n)),
       (n) => {
-        assert.throws(
-          () => parseConfig({ polling: { interval_ms: n } }),
-          /polling.interval_ms/,
-        );
+        assert.throws(() => parseConfig({ polling: { interval_ms: n } }), /polling.interval_ms/);
       },
     ),
   );
@@ -77,11 +68,11 @@ test("coercedPositiveInt — rejects NaN", () => {
   );
 });
 
-// --- coercedNonNegativeTimeoutMs (via codex.stall_timeout_ms, min 0, max 604_800_000) ---
+// --- coercedNonNegativeTimeoutMs (via codex.stall_timeout_ms) ---
 
 test("coercedNonNegativeInt — accepts zero and positive integers", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 604_800_000 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: ONE_WEEK_MS }), (n) => {
       const settings = parseConfig({ codex: { stall_timeout_ms: n } });
       assert.equal(settings.codex.stallTimeoutMs, n);
     }),
@@ -90,7 +81,7 @@ test("coercedNonNegativeInt — accepts zero and positive integers", () => {
 
 test("coercedNonNegativeInt — accepts non-negative integer as string", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 604_800_000 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: ONE_WEEK_MS }), (n) => {
       const settings = parseConfig({ codex: { stall_timeout_ms: String(n) } });
       assert.equal(settings.codex.stallTimeoutMs, n);
     }),
@@ -112,7 +103,7 @@ test("coercedNonNegativeInt — rejects negative integers", () => {
 
 test("coercedPort — accepts valid port numbers 0-65535", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 65535 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: PORT_MAX }), (n) => {
       const settings = parseConfig({ server: { port: n } });
       assert.equal(settings.server.port, n);
     }),
@@ -121,7 +112,7 @@ test("coercedPort — accepts valid port numbers 0-65535", () => {
 
 test("coercedPort — accepts valid port as string", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 0, max: 65535 }), (n) => {
+    fc.property(fc.integer({ min: 0, max: PORT_MAX }), (n) => {
       const settings = parseConfig({ server: { port: String(n) } });
       assert.equal(settings.server.port, n);
     }),
@@ -130,7 +121,7 @@ test("coercedPort — accepts valid port as string", () => {
 
 test("coercedPort — rejects ports above 65535", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 65536, max: 1_000_000 }), (n) => {
+    fc.property(fc.integer({ min: PORT_MAX + 1, max: 1_000_000 }), (n) => {
       assert.throws(
         () => parseConfig({ server: { port: n } }),
         /server.port must be a valid port number/,
@@ -199,7 +190,7 @@ test("coercedBoolean — rejects numbers", () => {
 
 test("numericInput — string-to-number coercion is exact for integers", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 604_800_000 }), (n) => {
+    fc.property(fc.integer({ min: 1, max: ONE_WEEK_MS }), (n) => {
       const settings = parseConfig({ polling: { interval_ms: String(n) } });
       assert.equal(settings.polling.intervalMs, n);
     }),
@@ -209,12 +200,11 @@ test("numericInput — string-to-number coercion is exact for integers", () => {
 test("numericInput — rejects whitespace-only strings", () => {
   fc.assert(
     fc.property(
-      fc.array(fc.constantFrom(" ", "\t", "\n"), { minLength: 1, maxLength: 5 }).map((a) => a.join("")),
+      fc
+        .array(fc.constantFrom(" ", "\t", "\n"), { minLength: 1, maxLength: 5 })
+        .map((a) => a.join("")),
       (ws) => {
-        assert.throws(
-          () => parseConfig({ polling: { interval_ms: ws } }),
-          /polling.interval_ms/,
-        );
+        assert.throws(() => parseConfig({ polling: { interval_ms: ws } }), /polling.interval_ms/);
       },
     ),
   );
@@ -223,12 +213,11 @@ test("numericInput — rejects whitespace-only strings", () => {
 test("numericInput — rejects non-numeric strings", () => {
   fc.assert(
     fc.property(
-      fc.string({ minLength: 1, maxLength: 10 }).filter((s) => s.trim() !== "" && Number.isNaN(Number(s))),
+      fc
+        .string({ minLength: 1, maxLength: 10 })
+        .filter((s) => s.trim() !== "" && Number.isNaN(Number(s))),
       (s) => {
-        assert.throws(
-          () => parseConfig({ polling: { interval_ms: s } }),
-          /polling.interval_ms/,
-        );
+        assert.throws(() => parseConfig({ polling: { interval_ms: s } }), /polling.interval_ms/);
       },
     ),
   );
