@@ -322,8 +322,20 @@ test("RuntimeRetryEntry serialization round-trip preserves numeric attempt witho
   // coerced to a string or dropped -- this matters because the runtime snapshot is
   // serialized over the wire (HTTP API / TUI refresh) and consumers rely on numeric type.
   const retries: RuntimeRetryEntry[] = [
-    { issueId: "issue-1", identifier: "MT-1", attempt: 1, dueAt: "2026-05-26T00:00:00.000Z" },
-    { issueId: "issue-2", identifier: "MT-2", attempt: 5, dueAt: "2026-05-26T01:00:00.000Z" },
+    {
+      issueId: "issue-1",
+      identifier: "MT-1",
+      attempt: 1,
+      dueAt: "2026-05-26T00:00:00.000Z",
+      monotonicDeadlineMs: 1000,
+    },
+    {
+      issueId: "issue-2",
+      identifier: "MT-2",
+      attempt: 5,
+      dueAt: "2026-05-26T01:00:00.000Z",
+      monotonicDeadlineMs: 5000,
+    },
   ];
 
   const parsed = JSON.parse(JSON.stringify(retries));
@@ -338,6 +350,12 @@ test("RuntimeRetryEntry serialization round-trip preserves numeric attempt witho
   assert.equal(typeof parsed[0].dueAt, "string");
   assert.equal(parsed[0].dueAt, "2026-05-26T00:00:00.000Z");
   assert.equal(parsed[1].dueAt, "2026-05-26T01:00:00.000Z");
+
+  // monotonicDeadlineMs must remain a number after round-trip
+  assert.equal(typeof parsed[0].monotonicDeadlineMs, "number");
+  assert.equal(typeof parsed[1].monotonicDeadlineMs, "number");
+  assert.equal(parsed[0].monotonicDeadlineMs, 1000);
+  assert.equal(parsed[1].monotonicDeadlineMs, 5000);
 });
 
 test("RuntimeRetryEntry optional fields serialize correctly across the JSON boundary", () => {
@@ -346,6 +364,7 @@ test("RuntimeRetryEntry optional fields serialize correctly across the JSON boun
     identifier: "MT-MIN",
     attempt: 1,
     dueAt: "2026-05-26T00:00:00.000Z",
+    monotonicDeadlineMs: 1000,
   };
 
   const full: RuntimeRetryEntry = {
@@ -353,6 +372,7 @@ test("RuntimeRetryEntry optional fields serialize correctly across the JSON boun
     identifier: "MT-FULL",
     attempt: 3,
     dueAt: "2026-05-26T02:00:00.000Z",
+    monotonicDeadlineMs: 3000,
     error: "OOM killed",
     slotIndex: 2,
     workerHost: "worker-3.local",
@@ -377,8 +397,10 @@ test("RuntimeRetryEntry optional fields serialize correctly across the JSON boun
   // Required fields present in both
   assert.equal(minParsed.issueId, "issue-min");
   assert.equal(minParsed.attempt, 1);
+  assert.equal(minParsed.monotonicDeadlineMs, 1000);
   assert.equal(fullParsed.issueId, "issue-full");
   assert.equal(fullParsed.attempt, 3);
+  assert.equal(fullParsed.monotonicDeadlineMs, 3000);
 });
 
 test("RuntimeRunningEntry usageTotals fields survive snapshot serialization with correct types", () => {
@@ -501,6 +523,7 @@ test("RuntimeSnapshot arrays can hold heterogeneous entries simultaneously", () 
         identifier: "MT-2",
         attempt: 2,
         dueAt: "2026-05-26T00:05:00.000Z",
+        monotonicDeadlineMs: 300000,
         error: "timeout",
       },
     ],

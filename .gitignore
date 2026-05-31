@@ -1,2 +1,4 @@
 .env
 .antigravitycli/
+log/
+node_modules/
