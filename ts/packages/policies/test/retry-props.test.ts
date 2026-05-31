@@ -43,18 +43,19 @@ test("retryBackoffMs — continuation respects cap", () => {
   );
 });
 
-// INVARIANT: result is always non-negative when maxRetryBackoffMs >= 0
-test("retryBackoffMs — result is always non-negative", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: -10, max: 100 }),
-      fc.integer({ min: 0, max: 10_000_000 }),
-      fc.constantFrom("failure" as const, "continuation" as const),
-      (attempt, max, kind) => {
-        assert.ok(retryBackoffMs(attempt, max, kind) >= 0);
-      },
-    ),
-  );
+describe("INVARIANT: result is always non-negative when maxRetryBackoffMs >= 0", () => {
+  test("retryBackoffMs — result is always non-negative", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -10, max: 100 }),
+        fc.integer({ min: 0, max: 10_000_000 }),
+        fc.constantFrom("failure" as const, "continuation" as const),
+        (attempt, max, kind) => {
+          assert.ok(retryBackoffMs(attempt, max, kind) >= 0);
+        },
+      ),
+    );
+  });
 });
 
 describe("INVARIANT: failure delay never exceeds maxRetryBackoffMs", () => {

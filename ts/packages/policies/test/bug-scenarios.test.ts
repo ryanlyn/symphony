@@ -23,7 +23,7 @@ describe("Bug 2: No minimum delay floor — cap=0 produces zero delay", () => {
   });
 });
 
-describe("Bug 3: Negative cap produces negative delay (S-106)", () => {
+describe("Bug 3: Negative cap produces negative delay", () => {
   test("retryBackoffMs(1, -1, 'failure') should be >= 0", () => {
     const result = retryBackoffMs(1, -1, "failure");
     assert.ok(result >= 0);
@@ -40,7 +40,7 @@ describe("Bug 3: Negative cap produces negative delay (S-106)", () => {
   });
 });
 
-describe("Bug 5: Continuation bypasses cap (S-185)", () => {
+describe("Bug 5: Continuation bypasses cap", () => {
   test("retryBackoffMs(1, 500, 'continuation') should be <= 500", () => {
     const result = retryBackoffMs(1, 500, "continuation");
     assert.ok(result <= 500);
