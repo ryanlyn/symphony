@@ -307,7 +307,7 @@ test("concurrent create calls allocate unique ids without losing writes", async 
   const dir = await tempBoard();
   const store = new BoardStore(dir);
 
-  // Fire many creates at once: the wx exclusive-create + retry path must keep ids unique.
+  // Fire many creates at once: the no-overwrite link + retry path must keep ids unique.
   const results = await Promise.all(
     Array.from({ length: 12 }, (_unused, i) =>
       store.create({ title: `Task ${i}`, status: "Todo" }),
@@ -346,6 +346,46 @@ test("create publishes crash-atomically: no temp scratch left, file fully-formed
   assert.equal(issue.title, "Crash safe");
   assert.equal(issue.state, "Todo");
   assert.equal(issue.description, "Body text");
+});
+
+test("create fsyncs the temp contents before publish and the dir after publish", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+
+  // Track every fsync target so we can prove the durability barriers fire in the right order:
+  // the temp file's CONTENTS must be flushed BEFORE the directory entry that exposes it, and the
+  // board directory must be flushed AFTER the link so the new name itself survives a crash.
+  const synced: string[] = [];
+  const realOpen = nodeFs.open.bind(nodeFs);
+  const openSpy = vi
+    .spyOn(nodeFs, "open")
+    .mockImplementation(async (p: Parameters<typeof nodeFs.open>[0], ...rest) => {
+      const fh = await (realOpen as typeof nodeFs.open)(p, ...rest);
+      const realSync = fh.sync.bind(fh);
+      fh.sync = async () => {
+        synced.push(String(p));
+        return realSync();
+      };
+      return fh;
+    });
+  try {
+    await store.create({ title: "Durable", body: "Body", status: "Todo" });
+  } finally {
+    openSpy.mockRestore();
+  }
+
+  // A temp file (dotted .tmp scratch) was fsynced, and the board directory was fsynced, with the
+  // temp fsync strictly before the directory fsync.
+  const tempIdx = synced.findIndex((p) => p.endsWith(".tmp"));
+  const dirIdx = synced.indexOf(path.resolve(dir));
+  assert.ok(tempIdx !== -1, `expected a temp-file fsync, saw ${JSON.stringify(synced)}`);
+  assert.ok(dirIdx !== -1, `expected a board-dir fsync, saw ${JSON.stringify(synced)}`);
+  assert.ok(tempIdx < dirIdx, "temp contents must be fsynced before the directory entry");
+
+  // The published file is fully-formed and the temp scratch is gone.
+  const issue = (await store.getByIds(["BOARD-1"]))[0]!;
+  assert.equal(issue.title, "Durable");
+  assert.deepEqual((await readdir(dir)).sort(), ["BOARD-1.md"]);
 });
 
 test("create leaves NO partial BOARD file when the publish (link) fails", async () => {

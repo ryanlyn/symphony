@@ -41,6 +41,58 @@ const ID_PATTERN = /^BOARD-\d+$/;
  */
 const pathLocks = new Map<string, Promise<unknown>>();
 
+/**
+ * Force a file's CONTENTS to durable storage. The temp/rename and temp/link publish dances are
+ * only crash-atomic if the new file's data blocks reach disk BEFORE the directory entry that
+ * exposes them: otherwise a power-loss can leave a published BOARD-<n>.md whose name is visible
+ * but whose contents are still buffered (zero-length or truncated) - the exact "empty/partial
+ * file" failure the atomic publish is meant to prevent. fsync the data first, then the dir entry.
+ */
+async function fsyncFile(filePath: string): Promise<void> {
+  const fh = await fs.open(filePath, "r");
+  try {
+    await fh.sync();
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
+ * Force a DIRECTORY entry to durable storage so a freshly-published (renamed/linked) file is
+ * guaranteed to survive a crash. Directory fsync is a best-effort durability barrier: some
+ * platforms (notably Windows) cannot fsync a directory handle and reject with EINVAL/EISDIR/
+ * EPERM/EBADF/ENOTSUP/EACCES. Those are swallowed - the data fsync above already protects the
+ * contents, and the OS will flush the entry on its own schedule - but unexpected errors propagate.
+ */
+async function fsyncDir(dirPath: string): Promise<void> {
+  let fh: Awaited<ReturnType<typeof fs.open>>;
+  try {
+    fh = await fs.open(dirPath, "r");
+  } catch (err) {
+    if (isUnsupportedDirSync((err as NodeJS.ErrnoException).code)) return;
+    throw err;
+  }
+  try {
+    await fh.sync();
+  } catch (err) {
+    if (!isUnsupportedDirSync((err as NodeJS.ErrnoException).code)) throw err;
+  } finally {
+    await fh.close();
+  }
+}
+
+/** Platforms that cannot fsync a directory handle reject with one of these; treat as a no-op. */
+function isUnsupportedDirSync(code: string | undefined): boolean {
+  return (
+    code === "EINVAL" ||
+    code === "EISDIR" ||
+    code === "EPERM" ||
+    code === "EBADF" ||
+    code === "ENOTSUP" ||
+    code === "EACCES"
+  );
+}
+
 async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prior = pathLocks.get(key) ?? Promise.resolve();
   // Run fn after the prior holder settles. Always continue (.then with both handlers) so one
@@ -177,6 +229,10 @@ export class BoardStore {
       );
       try {
         await fs.writeFile(tmp, contents, "utf8");
+        // Flush the temp's CONTENTS to disk before publishing its directory entry. Otherwise a
+        // crash after fs.link could leave a named BOARD-<n>.md whose data is still buffered (i.e.
+        // an empty/partial file) - the very failure the temp+link publish is meant to rule out.
+        await fsyncFile(tmp);
         // Allocate an id with a no-overwrite link so two racing creates can never publish over the
         // same BOARD-<n>. On collision (EEXIST) we recompute the next id and retry within a bounded
         // loop rather than blindly overwriting an existing issue file.
@@ -186,11 +242,14 @@ export class BoardStore {
           const target = this.filePath(id);
           try {
             await fs.link(tmp, target);
-            return await this.read(id);
           } catch (err) {
             if ((err as NodeJS.ErrnoException).code === "EEXIST") continue;
             throw err;
           }
+          // The new directory entry must itself be durable, or a crash could lose the just-linked
+          // name even though its (already-fsynced) contents are safe. Flush the dir, then read back.
+          await fsyncDir(this.dir);
+          return await this.read(id);
         }
         throw new Error(`failed to allocate a board id after ${attempts} attempts`);
       } finally {
@@ -290,6 +349,8 @@ export class BoardStore {
    * Atomic replace: write to a uniquely-named sibling temp file in the SAME directory and
    * fs.rename it over the target. rename is atomic within a filesystem, so a crash mid-write
    * leaves either the prior file or the fully-written new file intact - never a truncated one.
+   * The contents are fsync'd before the rename and the directory after it, so the rename cannot
+   * expose a name whose data has not yet reached disk (which would otherwise read back empty).
    */
   private async write(id: string, p: ParsedFile): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
@@ -297,7 +358,9 @@ export class BoardStore {
     const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     try {
       await fs.writeFile(tmp, this.render(p), "utf8");
+      await fsyncFile(tmp);
       await fs.rename(tmp, target);
+      await fsyncDir(this.dir);
     } catch (err) {
       await fs.rm(tmp, { force: true }).catch(() => {});
       throw err;
