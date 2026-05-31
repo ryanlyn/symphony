@@ -275,6 +275,26 @@ test("orchestrator retry dispatch reopens slots blocked only by stale claims", (
   assert.equal(orchestrator.snapshot().retrying.length, 0);
 });
 
+test("markRetryDue makes a pending retry eligible immediately and is a no-op for unknown issues", () => {
+  const settings = parseConfig({ agent: { max_retry_backoff_ms: 60_000 } });
+  const orchestrator = new Orchestrator(settings);
+  const issue = normalizeIssue({
+    id: "mark-due",
+    identifier: "MT-MARK-DUE",
+    title: "Mark due",
+    state: { name: "Todo", type: "unstarted" },
+  });
+
+  assert.ok(orchestrator.claim(issue));
+  orchestrator.finish(issue.id, 0, true);
+  assert.deepEqual(orchestrator.eligibleIssues([issue]), []);
+
+  orchestrator.markRetryDue(issue.id);
+  assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-MARK-DUE");
+
+  orchestrator.markRetryDue("nonexistent-id");
+});
+
 test("orchestrator retries an ensemble issue in its original slot", () => {
   const settings = parseConfig({ agent: { ensemble_size: 3 } });
   const orchestrator = new Orchestrator(settings);

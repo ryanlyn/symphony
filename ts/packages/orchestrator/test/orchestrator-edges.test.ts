@@ -242,6 +242,27 @@ test("eligibleIssues — inactive issue cleared from retryAttempts", () => {
   assert.equal(orchestrator.snapshot().retrying.length, 0);
 });
 
+test("eligibleIssues — retry with future monotonicDeadlineMs excluded until deadline passes", () => {
+  const settings = parseConfig();
+  const clock = fakeClock(new Date("2025-01-01T00:00:00Z"));
+  const orchestrator = new Orchestrator(settings, clock);
+  const issue = makeIssue();
+
+  orchestrator.claim(issue);
+  orchestrator.finish(issue.id, 0, true);
+  assert.equal(orchestrator.snapshot().retrying.length, 1);
+
+  const eligible1 = orchestrator.eligibleIssues([issue]);
+  assert.deepEqual(eligible1, []);
+
+  clock.advance(30_000);
+  const eligible2 = orchestrator.eligibleIssues([issue]);
+  assert.deepEqual(
+    eligible2.map((i) => i.id),
+    [issue.id],
+  );
+});
+
 test("eligibleIssues — issue with unresolved blockers excluded", () => {
   const settings = parseConfig({ tracker: { terminal_states: ["Done"] } });
   const orchestrator = new Orchestrator(settings);

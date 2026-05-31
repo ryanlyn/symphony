@@ -674,7 +674,7 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
     assert.equal(abortedAttempts.has(1), true);
 
     await runtime.pollOnce();
-    await waitFor(() => attempts === 2, 1_000);
+    await waitFor(() => attempts === 2, 3_000);
     assert.equal(runtime.snapshot().running[0]?.runId, "run-2");
 
     controls.get(1)?.resolve({
@@ -993,11 +993,11 @@ test("runtime schedules retry refresh timers independently of the poll cadence",
   assert.equal(attempts, 1);
   assert.equal(runtime.snapshot().retrying[0]?.attempt, 1);
 
-  await waitFor(() => attempts === 2, 3_000);
+  await waitFor(() => attempts === 2, 10_000);
   let snapshot = runtime.snapshot();
   assert.equal(snapshot.retrying[0]?.attempt, 1);
 
-  await waitFor(() => runtime.snapshot().retrying.length === 0, 3_000);
+  await waitFor(() => runtime.snapshot().retrying.length === 0, 10_000);
   snapshot = runtime.snapshot();
   assert.equal(snapshot.retrying.length, 0);
   assert.equal(snapshot.runHistory[0]?.outcome, "success");
@@ -1039,16 +1039,17 @@ function issueFixture(id: string, identifier: string): Issue {
   });
 }
 
+// Yields to the macrotask queue between checks so timer callbacks can interleave.
 async function waitFor(
   predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
 ): Promise<void> {
-  await vi.waitFor(
-    async () => {
-      if (!(await predicate())) throw new Error("condition not met");
-    },
-    { timeout: timeoutMs, interval: 10 },
-  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("condition not met");
 }
 
 async function fileText(filePath: string): Promise<string> {

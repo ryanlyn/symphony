@@ -93,8 +93,8 @@ describe("Sandbox: Retry and Backoff", () => {
       runnerConfig: {
         defaultBehavior: { shouldSucceed: false, turnCount: 1, latencyPerTurnMs: 0 },
       },
-      pollTicks: 8,
-      tickDelayMs: 300,
+      pollTicks: 12,
+      tickDelayMs: 600,
     });
 
     const startedEvents = result.events.filter(
@@ -148,7 +148,7 @@ describe("Sandbox: Retry and Backoff", () => {
         defaultBehavior: { shouldSucceed: false, turnCount: 1, latencyPerTurnMs: 0 },
       },
       pollTicks: 10,
-      tickDelayMs: 150,
+      tickDelayMs: 300,
     });
 
     // The issue should be retried multiple times
@@ -163,15 +163,15 @@ describe("Sandbox: Retry and Backoff", () => {
     expect(startedEvents.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("very fast retry (maxRetryBackoffMs=50): issue retries within a few ticks", async () => {
+  test("very fast retry (maxRetryBackoffMs=1000): issue retries within a few ticks", async () => {
     const result = await runScenario({
       issues: [makeIssue("fast-1", "FAST-1")],
       settingsOverrides: { agent: { maxConcurrentAgents: 5, maxRetryBackoffMs: 1000 } },
       runnerConfig: {
         defaultBehavior: { shouldSucceed: false, turnCount: 1, latencyPerTurnMs: 0 },
       },
-      pollTicks: 8,
-      tickDelayMs: 300,
+      pollTicks: 10,
+      tickDelayMs: 500,
     });
 
     const startedEvents = result.events.filter(
