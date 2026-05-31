@@ -366,7 +366,7 @@ test("issues not assigned to this worker SHALL be ineligible", () => {
   );
 });
 
-// INVARIANT: When an unstarted issue has a non-terminal blocker, it SHALL be ineligible.
+// INVARIANT: When an unstarted issue has a non-terminal blocker, it SHALL NOT be dispatched (blockers prevent starting).
 
 test("unstarted issue with a non-terminal blocker SHALL be ineligible", () => {
   fc.assert(
@@ -443,9 +443,9 @@ test("blocker terminal check is case-insensitive with whitespace trimming", () =
   );
 });
 
-// INVARIANT: When a non-unstarted issue has open blockers, it SHALL be blocked.
+// INVARIANT: When a started issue has open blockers, it SHALL be blocked (blockers on started issues abort).
 
-test("non-unstarted issue with open blockers SHALL be blocked", () => {
+test("started issue with open blockers SHALL be blocked", () => {
   fc.assert(
     fc.property(
       fc.array(
@@ -490,6 +490,63 @@ test("started issue with many open blockers SHALL be blocked", () => {
       assert.equal(issueHasOpenBlockers(issue, settings), true);
       assert.equal(shouldDispatchIssue(issue, settings, state), false);
     }),
+    { numRuns: 50 },
+  );
+});
+
+// INVARIANT: When a terminal issue has open blockers, it SHALL be a no-op (blockers on terminal issues are no-op).
+
+test("terminal issue with open blockers SHALL still be ineligible via terminal check, not blockers", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("Done", "Closed", "Cancelled", "Canceled", "Duplicate"),
+      fc.array(
+        fc.record({
+          state: fc.constantFrom("Todo", "In Progress", "Review"),
+          stateType: fc.constant(null as null),
+        }),
+        { minLength: 1, maxLength: 3 },
+      ),
+      (terminalState, blockers) => {
+        const issue = validIssue({
+          state: terminalState,
+          stateType: "completed",
+          blockers,
+          assignedToWorker: true,
+        });
+        const settings = makeSettings();
+        const state = { runningCount: 0, claimedSlots: new Set<string>() };
+        assert.equal(issueIsActive(issue, settings), false);
+        assert.equal(shouldDispatchIssue(issue, settings, state), false);
+      },
+    ),
+    { numRuns: 100 },
+  );
+});
+
+test("terminal issue with open blockers does not produce a dispatch block reason", () => {
+  fc.assert(
+    fc.property(
+      fc.constantFrom("Done", "Closed", "Cancelled"),
+      fc.array(
+        fc.record({
+          state: fc.constantFrom("Todo", "In Progress"),
+          stateType: fc.constant(null as null),
+        }),
+        { minLength: 1, maxLength: 3 },
+      ),
+      (terminalState, blockers) => {
+        const issue = validIssue({
+          state: terminalState,
+          stateType: "completed",
+          blockers,
+          assignedToWorker: true,
+        });
+        const settings = makeSettings();
+        const state = { runningCount: 0, claimedSlots: new Set<string>() };
+        assert.equal(dispatchBlockReason(issue, settings, state), null);
+      },
+    ),
     { numRuns: 50 },
   );
 });
