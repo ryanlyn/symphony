@@ -45,7 +45,12 @@ test("orchestrator claims ensemble slots independently and snapshots backend-neu
 
 test("refreshRunningIssue updates the tracker state of all slots for a running issue", () => {
   const orchestrator = new Orchestrator(parseConfig({ agent: { ensemble_size: 2 } }));
-  const issue = normalizeIssue({ id: "i1", identifier: "MT-1", title: "Title", state: { name: "Todo", type: "unstarted" } });
+  const issue = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "Title",
+    state: { name: "Todo", type: "unstarted" },
+  });
   assert.ok(orchestrator.claim(issue));
   assert.ok(orchestrator.claim(issue));
   assert.equal(orchestrator.snapshot().running[0]?.issue.state, "Todo");
@@ -97,8 +102,18 @@ test("orchestrator assigns SSH worker hosts by least loaded capacity", () => {
     agent: { max_concurrent_agents: 2 },
   });
   const orchestrator = new Orchestrator(settings);
-  const firstIssue = normalizeIssue({ id: "i1", identifier: "MT-1", title: "One", state: { name: "Todo", type: "unstarted" } });
-  const secondIssue = normalizeIssue({ id: "i2", identifier: "MT-2", title: "Two", state: { name: "Todo", type: "unstarted" } });
+  const firstIssue = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "One",
+    state: { name: "Todo", type: "unstarted" },
+  });
+  const secondIssue = normalizeIssue({
+    id: "i2",
+    identifier: "MT-2",
+    title: "Two",
+    state: { name: "Todo", type: "unstarted" },
+  });
   const thirdIssue = normalizeIssue({
     id: "i3",
     identifier: "MT-3",

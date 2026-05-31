@@ -59,7 +59,9 @@ function validIssueInput(overrides: Record<string, unknown> = {}): Record<string
 test("state resolution accepts nested object form { state: { name, type } }", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
-      const issue = normalizeIssue(validIssueInput({ state: { name: stateName, type: "unstarted" } }));
+      const issue = normalizeIssue(
+        validIssueInput({ state: { name: stateName, type: "unstarted" } }),
+      );
       assert.equal(issue.state, stateName);
     }),
     { numRuns: 200 },
@@ -69,7 +71,9 @@ test("state resolution accepts nested object form { state: { name, type } }", ()
 test("state resolution accepts snake_case state_name", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
-      const issue = normalizeIssue(validIssueInput({ state: undefined, state_name: stateName, state_type: "unstarted" }));
+      const issue = normalizeIssue(
+        validIssueInput({ state: undefined, state_name: stateName, state_type: "unstarted" }),
+      );
       assert.equal(issue.state, stateName);
     }),
     { numRuns: 200 },
@@ -80,7 +84,12 @@ test("state resolution accepts camelCase stateName", () => {
   fc.assert(
     fc.property(nonBlankString, (stateName) => {
       const issue = normalizeIssue(
-        validIssueInput({ state: undefined, state_name: undefined, stateName, stateType: "unstarted" }),
+        validIssueInput({
+          state: undefined,
+          state_name: undefined,
+          stateName,
+          stateType: "unstarted",
+        }),
       );
       assert.equal(issue.state, stateName);
     }),
@@ -136,7 +145,9 @@ test("snake_case takes priority over camelCase when no nested object", () => {
 test("state is preserved exactly (not trimmed or lowercased)", () => {
   fc.assert(
     fc.property(paddedString, (stateName) => {
-      const issue = normalizeIssue(validIssueInput({ state: { name: stateName, type: "unstarted" } }));
+      const issue = normalizeIssue(
+        validIssueInput({ state: { name: stateName, type: "unstarted" } }),
+      );
       assert.equal(issue.state, stateName);
     }),
     { numRuns: 200 },
@@ -745,7 +756,13 @@ test("normalized issue always has id, identifier, title, state, stateType, label
       nonBlankString,
       fc.constantFrom(...ISSUE_STATE_TYPES),
       (id, identifier, title, stateName, stateType) => {
-        const issue = normalizeIssue({ id, identifier, title, state: stateName, state_type: stateType });
+        const issue = normalizeIssue({
+          id,
+          identifier,
+          title,
+          state: stateName,
+          state_type: stateType,
+        });
         assert.ok(typeof issue.id === "string" && issue.id.length > 0);
         assert.ok(typeof issue.identifier === "string" && issue.identifier.length > 0);
         assert.ok(typeof issue.title === "string" && issue.title.length > 0);

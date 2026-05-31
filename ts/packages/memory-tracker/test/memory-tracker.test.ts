@@ -36,7 +36,12 @@ test("stores and retrieves issues by ID", async () => {
 
 test("filters issues by state", async () => {
   const todo = makeIssue({ id: "1", identifier: "MT-1", state: "Todo" });
-  const inProgress = makeIssue({ id: "2", identifier: "MT-2", state: "In Progress", stateType: "started" });
+  const inProgress = makeIssue({
+    id: "2",
+    identifier: "MT-2",
+    state: "In Progress",
+    stateType: "started",
+  });
   const done = makeIssue({ id: "3", identifier: "MT-3", state: "Done", stateType: "completed" });
 
   const client = new MemoryTrackerClient([todo, inProgress, done]);
@@ -51,7 +56,12 @@ test("filters issues by state", async () => {
 // --- claimIssue equivalent: state filtering transitions ---
 
 test("fetchIssuesByStates matches case-insensitively (claimed state lookup)", async () => {
-  const issue = makeIssue({ id: "1", identifier: "MT-1", state: "In Progress", stateType: "started" });
+  const issue = makeIssue({
+    id: "1",
+    identifier: "MT-1",
+    state: "In Progress",
+    stateType: "started",
+  });
 
   const client = new MemoryTrackerClient([issue]);
 
@@ -65,7 +75,12 @@ test("fetchIssuesByStates matches case-insensitively (claimed state lookup)", as
 
 test("fetchCandidateIssues returns all stored issues", async () => {
   const issueA = makeIssue({ id: "a", identifier: "MT-1", state: "Todo" });
-  const issueB = makeIssue({ id: "b", identifier: "MT-2", state: "In Progress", stateType: "started" });
+  const issueB = makeIssue({
+    id: "b",
+    identifier: "MT-2",
+    state: "In Progress",
+    stateType: "started",
+  });
 
   const client = new MemoryTrackerClient([issueA, issueB]);
 

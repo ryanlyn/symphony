@@ -8,7 +8,8 @@ import { assert } from "../../../test/assert.js";
 
 test("normalizeIssue — throws if id is missing", () => {
   assert.throws(
-    () => normalizeIssue({ identifier: "X-1", title: "T", state: { name: "Todo", type: "unstarted" } }),
+    () =>
+      normalizeIssue({ identifier: "X-1", title: "T", state: { name: "Todo", type: "unstarted" } }),
     /issue\.id is required/,
   );
 });
@@ -22,7 +23,8 @@ test("normalizeIssue — throws if identifier is missing", () => {
 
 test("normalizeIssue — throws if title is missing", () => {
   assert.throws(
-    () => normalizeIssue({ id: "1", identifier: "X-1", state: { name: "Todo", type: "unstarted" } }),
+    () =>
+      normalizeIssue({ id: "1", identifier: "X-1", state: { name: "Todo", type: "unstarted" } }),
     /issue\.title is required/,
   );
 });

@@ -163,7 +163,12 @@ test("dispatch block reasons classify capacity gates without hiding routing fail
     agent: { max_concurrent_agents: 1 },
     status_overrides: { Todo: { agent: { max_concurrent_agents: 1 } } },
   });
-  const issue = normalizeIssue({ id: "i1", identifier: "MT-1", title: "Title", state: { name: "Todo", type: "unstarted" } });
+  const issue = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "Title",
+    state: { name: "Todo", type: "unstarted" },
+  });
   const runningByState = new Map([["Todo", 1]]);
 
   assert.equal(

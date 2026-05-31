@@ -4,7 +4,6 @@ import { assert } from "../../../test/assert.js";
 
 import { safeIdentifier, workspacePath } from "@symphony/workspace";
 
-
 describe("Bug 6: Empty identifier produces root-equal workspace path (S-209)", () => {
   test("safeIdentifier of empty string returns empty string (precondition)", () => {
     assert.equal(safeIdentifier(""), "");

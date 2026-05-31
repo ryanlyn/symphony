@@ -1,57 +1,6 @@
 # Symphony Invariant Test Results
 
-**Date:** 2026-05-29  
-**Total Scenarios Tested:** 210  
-**Passed:** 208  
-**Failed:** 2
 
----
-
-## Failures Found
-
----
-
----
-
-### ~~Failure 7: S-209~~ (FIXED)
-**Invariant Violated:** Workspace path SHALL be a strict descendant of the workspace root  
-**Code Location:** `ts/packages/workspace/src/index.ts` — `workspacePath` (line ~22)  
-**Fix Applied:** `workspacePath` now throws when `safeIdentifier` produces an empty string, preventing root-equal paths.
-
----
-
-### Failure 9: S-184
-**Invariant Violated:** WHEN a non-unstarted issue has non-terminal blockers, THE SYSTEM SHALL still consider it eligible (blockers only gate unstarted issues)  
-**Code Location:** `ts/packages/dispatch/src/index.ts` — `issueHasOpenBlockers` (line ~43)  
-**Explanation:** The function determines "unstarted" via `issue.stateType === "unstarted" || issue.state.trim().toLowerCase() === "todo"`. An issue with `stateType="started"` (explicitly categorized by the tracker as started) but `state="Todo"` (state name happens to be "Todo") is treated as unstarted due to the `||`. This means a started issue is incorrectly gated by blockers because its state name matches the hardcoded string "todo".  
-**Reproduction:**
-```ts
-import { issueHasOpenBlockers } from "@symphony/dispatch";
-const issue = {
-  ...validIssue,
-  state: "Todo",
-  stateType: "started",
-  blockers: [{ state: "In Progress" }],
-};
-issueHasOpenBlockers(issue, settings); // true — WRONG, stateType says it's started
-```
-**Suggested Fix:** Prefer `stateType` when available:
-```ts
-const unstarted = issue.stateType
-  ? issue.stateType === "unstarted"
-  : issue.state.trim().toLowerCase() === "todo";
-```
-
----
-
-## Summary of Distinct Bugs
-
-| # | Module | Bug | Severity |
-|---|--------|-----|----------|
-| 1 | `workspace` | Empty identifier produces root-equal path | Medium |
-| 2 | `dispatch/issueHasOpenBlockers` | State name "Todo" overrides stateType="started" | Medium |
-
----
 
 # Symphony Invariant Test Scenarios
 
