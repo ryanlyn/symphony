@@ -6,7 +6,6 @@ import { assert } from "../../../test/assert.js";
 
 import { MIN_RETRY_DELAY_MS } from "@symphony/policies";
 
-
 test("retryBackoffMs — monotonically non-decreasing for failure kind", () => {
   fc.assert(
     fc.property(
