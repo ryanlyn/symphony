@@ -744,7 +744,6 @@ export class SymphonyRuntime {
       ) {
         return;
       }
-      this.orchestrator.markRetryDue(scheduled.issueId);
       if (this.pollInProgress) {
         void this.pollInProgress.then(() => {
           this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);

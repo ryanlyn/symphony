@@ -277,11 +277,6 @@ export class Orchestrator {
     }
   }
 
-  markRetryDue(issueId: string): void {
-    const retry = this.state.retryAttempts.get(issueId);
-    if (retry) retry.monotonicDeadlineMs = 0;
-  }
-
   private retryDeadline(delayMs: number): { dueAtIso: string; monotonicDeadlineMs: number } {
     const dueAt = this.clock.now();
     dueAt.setTime(dueAt.getTime() + delayMs);

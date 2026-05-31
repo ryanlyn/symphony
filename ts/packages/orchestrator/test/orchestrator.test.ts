@@ -1,7 +1,22 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
+import type { ClockPort } from "@symphony/ports";
 
 import { assert } from "../../../test/assert.js";
+
+function fakeClock(initial = new Date()) {
+  let tick = initial.getTime();
+  const clock: ClockPort & { advance(ms: number): void } = {
+    now: () => new Date(tick),
+    monotonicMs: () => tick,
+    setTimeout: (cb, ms) => setTimeout(cb, ms),
+    clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    advance(ms: number) {
+      tick += ms;
+    },
+  };
+  return clock;
+}
 
 test("orchestrator claims ensemble slots independently and snapshots backend-neutral fields", () => {
   const settings = parseConfig({
@@ -167,9 +182,11 @@ test("orchestrator snapshots capacity-blocked dispatch candidates", () => {
   assert.equal(workerOrchestrator.snapshot().blocked[0]?.reason, "worker_host_capacity");
 });
 
+
 test("orchestrator gates retry attempts until backoff is due and clears terminal retries", () => {
+  const clock = fakeClock();
   const settings = parseConfig({ agent: { max_retry_backoff_ms: 2_000 } });
-  const orchestrator = new Orchestrator(settings);
+  const orchestrator = new Orchestrator(settings, clock);
   const issue = normalizeIssue({
     id: "retry-1",
     identifier: "MT-RETRY",
@@ -182,9 +199,11 @@ test("orchestrator gates retry attempts until backoff is due and clears terminal
   orchestrator.finish(issue.id, 0, true);
   const retry = orchestrator.snapshot().retrying[0];
   assert.equal(retry?.attempt, 1);
+  // Issue will only be available for a retry after the retry backoff is due
   assert.deepEqual(orchestrator.eligibleIssues([issue]), []);
-
-  orchestrator.markRetryDue(issue.id);
+  // Advance the clock to make sure the retry backoff is due
+  clock.advance(100_000);
+  
   assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-RETRY");
   assert.equal(orchestrator.claim(issue)?.retryAttempt, 1);
   orchestrator.finish(issue.id, 0, true);
@@ -222,7 +241,6 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   const continuationDelay = Date.parse(retry.dueAtIso) - beforeContinuation;
   assert.ok(continuationDelay >= 900 && continuationDelay <= 1_500);
 
-  continuationOrchestrator.markRetryDue(issue.id);
   assert.equal(continuationOrchestrator.claim(issue)?.retryAttempt, 1);
   const beforeSecondContinuation = Date.now();
   continuationOrchestrator.finish(issue.id, 0, true, undefined, "continuation");
@@ -232,7 +250,6 @@ test("orchestrator uses Elixir retry delays for failures and active continuation
   const secondContinuationDelay = Date.parse(retry.dueAtIso) - beforeSecondContinuation;
   assert.ok(secondContinuationDelay >= 900 && secondContinuationDelay <= 1_500);
 
-  continuationOrchestrator.markRetryDue(issue.id);
   assert.equal(continuationOrchestrator.claim(issue)?.retryAttempt, 1);
   const beforeFailureAfterContinuations = Date.now();
   continuationOrchestrator.finish(
