@@ -55,7 +55,8 @@ You are working on a local board issue `{{ issue.identifier }}`
 Continuation context:
 
 - This is retry attempt #{{ attempt }} because the issue is still in an active state.
-- Resume from the current workspace state instead of restarting from scratch.
+- Resume from the current workspace state instead of restarting from scratch. Your resumable state is your restored git workspace (your branch, commits, and any open PR) plus the issue's current status (`Current status` above) and the issue context - reconstruct what is already done from those.
+- You CANNOT read back your earlier `local_comment` progress notes: there is no board read tool and the notes are written to a board file outside this workspace, not included in this prompt. Treat comments as write-only, human-visible progress notes; never depend on re-reading them to recover plan or validation state.
 - Do not repeat already-completed investigation or validation unless needed for new code changes.
 - Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
   {% endif %}
@@ -88,7 +89,7 @@ This workflow is backed by a **local board**, not Linear. There is **no Linear a
 - Each issue is a Markdown file named `BOARD-<n>.md` (for example `.symphony/board/BOARD-7.md`).
 - The issue's status, title, and metadata live in the file's YAML frontmatter (for example `status: Todo`).
 - The Markdown body below the frontmatter is the issue description.
-- Comments are appended to the issue file by the `local_comment` tool; treat the most recent comment block as the live workpad/progress log.
+- Comments are appended to the issue file by the `local_comment` tool. They are write-only, human-visible progress notes: the file lives outside your workspace and you cannot read your own comments back on a later turn, so do not rely on them as resumable state (use your workspace and the issue status instead).
 
 Active statuses (`Todo`, `In Progress`) mean the issue is yours to work. Terminal statuses (`Done`, `Cancelled`) mean it is finished and you must not reopen it.
 
@@ -97,7 +98,7 @@ Active statuses (`Todo`, `In Progress`) mean the issue is yours to work. Termina
 You have exactly three board write tools. Use them via their tool names:
 
 - `local_update_status` - move an issue to a new status. Args: `issueId`, `status`. Example: set `BOARD-7` to `In Progress` before you start, then to `Done` when complete.
-- `local_comment` - append a progress note / comment to an issue. Args: `issueId`, `body`. Use this as your single running workpad.
+- `local_comment` - append a progress note / comment to an issue. Args: `issueId`, `body`. Use it to post human-visible progress notes. These notes are write-only: you cannot read them back on a later turn, so do not rely on them as resumable state (use your workspace and the issue status instead).
 - `local_create_issue` - create a new board issue for genuinely out-of-scope follow-up work. Args: `title`, optional `body`, optional `status`.
 
 There is **no `linear_graphql`** tool and no Linear MCP server. Do not attempt to call Linear. Do not stop because "Linear is not configured" - this workflow never uses Linear.
@@ -105,7 +106,7 @@ There is **no `linear_graphql`** tool and no Linear MCP server. Do not attempt t
 ## Default posture
 
 - Start by reading the issue's current status, then follow the matching flow for that status.
-- Keep a single running workpad by appending updates with `local_comment`; do not scatter many short comments.
+- Post human-visible progress as comments with `local_comment`. These are write-only audit notes; for your own continuation rely on the restored workspace and the issue's current status, not on re-reading comments.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Move status only when the matching quality bar is met (use `local_update_status`).
@@ -132,13 +133,13 @@ There is **no `linear_graphql`** tool and no Linear MCP server. Do not attempt t
 1. Read the issue file (`BOARD-<n>.md`) and its frontmatter `status`.
 2. Route to the matching flow:
    - `Todo` -> call `local_update_status(issueId, "In Progress")`, then start the execution flow.
-   - `In Progress` -> continue the execution flow from the latest workpad comment.
+   - `In Progress` -> continue the execution flow using your restored workspace (branch/commits and any open PR) and the issue's current state as the source of truth for what is done; you cannot read back prior comments.
    - `Done` / `Cancelled` -> do nothing and shut down.
 3. If a PR already exists for the current branch and it is `CLOSED` or `MERGED`, treat prior branch work as non-reusable. Create a fresh branch from `origin/main` and restart the execution flow.
 
 ## Step 1: Start / continue execution
 
-1. Establish a single running workpad: append a `local_comment` with a hierarchical plan and acceptance criteria in checklist form. Reuse and update it on each milestone rather than posting new comments.
+1. Post a `local_comment` with a hierarchical plan and acceptance criteria in checklist form, plus follow-up comments on each milestone, as a human-visible progress log. These comments are NOT your resumable memory (you cannot read them back); your durable state is the git workspace, so keep the plan reflected in your commits/PR and the issue status.
 2. If arriving from `Todo`, ensure the issue is already `In Progress` (you moved it in Step 0).
 3. Add a compact environment stamp at the top of the workpad as a code fence line: `<host>:<abs-workdir>@<short-sha>`.
 4. Capture a concrete reproduction signal and record it in the workpad before implementing.
@@ -168,13 +169,13 @@ There is **no `linear_graphql`** tool and no Linear MCP server. Do not attempt t
 - Never call Linear or `linear_graphql`; this board is local-only.
 - If the branch PR is already closed/merged, create a new branch from `origin/main` and restart from reproduction/planning.
 - Do not modify terminal (`Done`/`Cancelled`) issues.
-- Use `local_comment` as the single running workpad; do not edit the issue description for progress tracking.
+- Use `local_comment` as a human-visible progress log only; comments are write-only and not readable on later turns, so never treat them as resumable agent state. Do not edit the issue description for progress tracking.
 - If out-of-scope improvements are found, create a separate board issue with `local_create_issue` rather than expanding current scope.
 - If blocked by missing required tools/auth, append one blocker comment via `local_comment` describing the blocker, its impact, and the next unblock action.
 
-## Workpad template
+## Progress-note template
 
-Use this structure for the running workpad comment and keep it updated in place:
+Use this structure for the first `local_comment` progress note and keep follow-ups consistent. These comments are human-visible notes, not resumable state:
 
 ````md
 ## Symphony Workpad

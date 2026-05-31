@@ -61,11 +61,31 @@ export async function executeSlackTool(
         const message = await ensureTrackedMessage(settings, transport, channel, ts);
         if ("error" in message) return message.error;
         const present = message.reactions.filter((r) => map[r]);
-        // Add the target first (when absent), then roll back on a cleanup failure so a partial
-        // failure preserves the OLD status: never the wrong new status, never empty. The read
-        // path ranks reactions by category, so a lingering higher-ranked stale reaction would
-        // otherwise shadow a newly added lower-ranked target and report a wrong status.
+        // Treat the swap as a transaction: add the target first (when absent), then remove every
+        // stale managed reaction. On ANY failure, restore the ORIGINAL managed-reaction set
+        // best-effort so a partial failure preserves the OLD status, never the wrong new status
+        // and never empty. The read path ranks reactions by category, so a lingering higher-ranked
+        // stale reaction (or a half-removed set) would otherwise shadow the target and mis-report.
         let added = false;
+        const removed: string[] = [];
+        // Roll back to the original managed-reaction set: re-add every stale reaction we removed
+        // and drop the target if we added it. Secondary errors are swallowed (best-effort).
+        const rollback = async (): Promise<void> => {
+          for (const reaction of removed) {
+            try {
+              await transport.addReaction(channel, ts, reaction);
+            } catch {
+              // Best-effort restore; keep the original failure as the reported outcome.
+            }
+          }
+          if (added) {
+            try {
+              await transport.removeReaction(channel, ts, target);
+            } catch {
+              // Best-effort restore; keep the original failure as the reported outcome.
+            }
+          }
+        };
         if (!present.includes(target)) {
           try {
             await transport.addReaction(channel, ts, target);
@@ -80,16 +100,12 @@ export async function executeSlackTool(
         for (const reaction of stale) {
           try {
             await transport.removeReaction(channel, ts, reaction);
+            removed.push(reaction);
           } catch {
-            // Cleanup failed. If we added the target this call, roll it back (best-effort) so
-            // the stale reactions still rank to the OLD status rather than the wrong new one.
-            if (added) {
-              try {
-                await transport.removeReaction(channel, ts, target);
-              } catch {
-                // Best-effort rollback; keep the original failure as the reported outcome.
-              }
-            }
+            // Cleanup failed mid-swap. Restore the original managed-reaction set (re-add every
+            // stale reaction already removed and drop the just-added target) so the message ranks
+            // to the OLD status rather than a wrong/partial one.
+            await rollback();
             return failure("status not changed");
           }
         }

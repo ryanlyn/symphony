@@ -1,5 +1,5 @@
 import { test } from "vitest";
-import { InMemorySlackTransport } from "@symphony/slack-tracker";
+import { InMemorySlackTransport, stateFromReactions, statusEmojiMap } from "@symphony/slack-tracker";
 import { parseConfig } from "@symphony/config";
 
 import { assert } from "../../../test/assert.js";
@@ -158,6 +158,34 @@ test("slack_update_status rolls back to the old status (Done) when removeReactio
   assert.equal(result.success, false);
   const msg = await transport.getMessage("C1", "1.1");
   assert.deepEqual(msg!.reactions, ["white_check_mark"]);
+});
+
+test("slack_update_status restores the full original set when a later multi-stale remove fails", async () => {
+  // Two stale managed reactions: x (Cancelled, the ranking winner) and eyes (In Progress).
+  // Updating to Done removes x first (succeeds) then eyes (fails). The rollback must re-add the
+  // already-removed x AND drop the just-added target, restoring the ORIGINAL set so the read
+  // path still reports the prior status (Cancelled) rather than a wrong/partial one.
+  const transport = new FailingSlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> do the thing", reactions: ["x", "eyes"] }],
+  });
+  transport.failRemoveOnly = new Set(["eyes"]);
+
+  const result = await executeTool(
+    "slack_update_status",
+    { issueId: "C1:1.1", status: "Done" },
+    settings(),
+    fetch,
+    { slackTransport: transport },
+  );
+
+  assert.equal(result.success, false);
+  const msg = await transport.getMessage("C1", "1.1");
+  // The original managed-reaction set is fully restored: both stale reactions present, target not.
+  assert.equal(msg!.reactions.includes("x"), true);
+  assert.equal(msg!.reactions.includes("eyes"), true);
+  assert.equal(msg!.reactions.includes("white_check_mark"), false);
+  // The read path still reports the OLD status (Cancelled), never the wrong new status.
+  assert.equal(stateFromReactions(msg!.reactions, statusEmojiMap(settings())), "Cancelled");
 });
 
 test("slack_update_status preserves the old status when addReaction fails", async () => {
