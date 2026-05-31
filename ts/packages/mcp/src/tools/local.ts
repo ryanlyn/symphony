@@ -3,7 +3,12 @@ import { BoardStore, resolveBoardDir } from "@symphony/local-tracker";
 
 import type { ToolResult, ToolSpec } from "../tools.js";
 
-const TOOL_NAMES = ["local_update_status", "local_comment", "local_create_issue"] as const;
+const TOOL_NAMES = [
+  "local_update_status",
+  "local_comment",
+  "local_create_issue",
+  "local_read_issue",
+] as const;
 
 export function localToolSpecs(): ToolSpec[] {
   return [
@@ -38,6 +43,16 @@ export function localToolSpecs(): ToolSpec[] {
         required: ["title"],
       },
     },
+    {
+      name: "local_read_issue",
+      description:
+        "Read a local board issue: its current status, title, description, and comments.",
+      inputSchema: {
+        type: "object",
+        properties: { issueId: { type: "string" } },
+        required: ["issueId"],
+      },
+    },
   ];
 }
 
@@ -70,6 +85,12 @@ export async function executeLocalTool(
           ...(status !== undefined ? { status } : {}),
         });
         return { success: true, result: { issue } };
+      }
+      case "local_read_issue": {
+        const { id, status, title, description, comments } = await store.readContent(
+          requireStr(args, "issueId"),
+        );
+        return { success: true, result: { issue: { id, status, title, description }, comments } };
       }
       default:
         return {

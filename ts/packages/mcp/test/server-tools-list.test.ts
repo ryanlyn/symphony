@@ -57,6 +57,7 @@ test("MCP tools/list advertises the local board tools for a local tracker", asyn
     "local_update_status",
     "local_comment",
     "local_create_issue",
+    "local_read_issue",
   ]);
 });
 

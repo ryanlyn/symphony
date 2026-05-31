@@ -112,6 +112,21 @@ async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * The agent-facing read view of a single board issue. Returned by {@link BoardStore.readContent}
+ * so a worker can read back an issue's current status, title, description, AND the comments it (or
+ * the operator) has appended - symmetric with the write tools (updateStatus/appendComment/create).
+ * `comments` is the list of individual "- ..." lines from the issue's "## Comments" section, with
+ * an empty array when the issue has no comments yet.
+ */
+export interface BoardIssueContent {
+  id: string;
+  status: string;
+  title: string;
+  description: string;
+  comments: string[];
+}
+
 /** A board file that {@link BoardStore.list} could not parse, surfaced rather than hidden. */
 export interface SkippedBoardFile {
   /** The id derived from the filename (e.g. "BOARD-2"), even if its contents are invalid. */
@@ -198,6 +213,26 @@ export class BoardStore {
     });
   }
 
+  /**
+   * Agent-facing read of a single issue's content: its current status, title, description, and the
+   * comments appended to it. Symmetric with the write methods so a worker can read back what it (or
+   * the operator) wrote. Validates the id and reads/parses the file via the same parse() the write
+   * paths use, so a missing/invalid id throws exactly as getByIds/updateStatus do. The "## Comments"
+   * block is split into individual "- ..." entries (empty array when the issue has no comments).
+   */
+  async readContent(id: string): Promise<BoardIssueContent> {
+    assertValidId(id);
+    const parsed = await this.parse(id);
+    const comments = parsed.comments.trim() === "" ? [] : parsed.comments.split("\n");
+    return {
+      id,
+      status: parsed.status,
+      title: parsed.title,
+      description: parsed.description,
+      comments,
+    };
+  }
+
   async create(input: { title: string; body?: string; status?: string }): Promise<Issue> {
     const parsed: ParsedFile = {
       status: input.status ?? "Todo",
@@ -272,7 +307,7 @@ export class BoardStore {
    * Create the board directory durably so a freshly-created board survives a crash. mkdir alone
    * is not enough: fsyncing this.dir after publishing a file persists the entries INSIDE it, but
    * NOT the directory entry in the PARENT that makes a newly-created board dir reachable. On a
-   * first-run board (the .symphony/board path did not exist) a crash right after create() could
+   * first-run board (the .symphony/local path did not exist) a crash right after create() could
    * otherwise lose the entire new directory and the acknowledged issue even though the file and
    * the board dir were synced.
    *
@@ -339,15 +374,17 @@ export class BoardStore {
         cause: err,
       });
     }
-    return entries
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => f.slice(0, -3))
-      // Keep ONLY canonical board ids (the same shape filePath/assertValidId enforce). Stray
-      // markdown files (README.md, notes.md) are not board issues, so ignoring them here keeps
-      // list()/getByIds()/byStatus() clean AND prevents nextId() from feeding a non-BOARD stem
-      // into boardNumber() (whose MAX_SAFE_INTEGER fallback would otherwise blow up id allocation).
-      .filter((id) => ID_PATTERN.test(id))
-      .sort((a, b) => boardNumber(a) - boardNumber(b));
+    return (
+      entries
+        .filter((f) => f.endsWith(".md"))
+        .map((f) => f.slice(0, -3))
+        // Keep ONLY canonical board ids (the same shape filePath/assertValidId enforce). Stray
+        // markdown files (README.md, notes.md) are not board issues, so ignoring them here keeps
+        // list()/getByIds()/byStatus() clean AND prevents nextId() from feeding a non-BOARD stem
+        // into boardNumber() (whose MAX_SAFE_INTEGER fallback would otherwise blow up id allocation).
+        .filter((id) => ID_PATTERN.test(id))
+        .sort((a, b) => boardNumber(a) - boardNumber(b))
+    );
   }
 
   private async nextId(): Promise<string> {

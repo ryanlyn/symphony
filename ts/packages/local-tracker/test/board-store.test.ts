@@ -22,7 +22,11 @@ function escapeRegExp(s: string): string {
 
 test("a custom/unknown status falls back to a valid stateType (normalizeIssue requires one)", async () => {
   const dir = await tempBoard();
-  await writeFile(path.join(dir, "BOARD-7.md"), "---\nstatus: Reviewing\n---\n# Custom status\n", "utf8");
+  await writeFile(
+    path.join(dir, "BOARD-7.md"),
+    "---\nstatus: Reviewing\n---\n# Custom status\n",
+    "utf8",
+  );
   const store = new BoardStore(dir);
   const issue = (await store.getByIds(["BOARD-7"]))[0]!;
   assert.equal(issue.state, "Reviewing");
@@ -93,6 +97,42 @@ test("appendComment adds a Comments section without touching description", async
   assert.match(file, /## Comments/);
   assert.match(file, /- 2026-05-29T10:00:00.000Z agent: opened PR #42/);
   assert.match(file, /- 2026-05-29T11:00:00.000Z agent: checks green/);
+});
+
+test("readContent returns status/title/description and each comment as its own entry", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+  await store.create({ title: "Read me", body: "Some details", status: "Todo" });
+
+  // No comments yet -> empty array, with the status/title/description read back faithfully.
+  const before = await store.readContent("BOARD-1");
+  assert.equal(before.id, "BOARD-1");
+  assert.equal(before.status, "Todo");
+  assert.equal(before.title, "Read me");
+  assert.equal(before.description, "Some details");
+  assert.deepEqual(before.comments, []);
+
+  await store.updateStatus("BOARD-1", "In Progress");
+  await store.appendComment("BOARD-1", "opened PR #42", () => new Date("2026-05-29T10:00:00Z"));
+  await store.appendComment("BOARD-1", "checks green", () => new Date("2026-05-29T11:00:00Z"));
+
+  const after = await store.readContent("BOARD-1");
+  assert.equal(after.status, "In Progress");
+  assert.equal(after.title, "Read me");
+  assert.equal(after.description, "Some details");
+  assert.deepEqual(after.comments, [
+    "- 2026-05-29T10:00:00.000Z agent: opened PR #42",
+    "- 2026-05-29T11:00:00.000Z agent: checks green",
+  ]);
+});
+
+test("readContent rejects a missing or invalid id", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir);
+  // Invalid id shape is rejected before touching the filesystem.
+  await assert.rejects(() => store.readContent("not-a-board-id"), /invalid.*id|BOARD/i);
+  // A valid-shaped id with no backing file throws on read (ENOENT), matching getByIds strictness.
+  await assert.rejects(() => store.readContent("BOARD-404"));
 });
 
 test("byStatus filters case-insensitively; getByIds preserves order and skips missing", async () => {
@@ -298,10 +338,7 @@ test("ignores stray non-BOARD markdown files for ids, listing, and allocation", 
   assert.equal(created.identifier, "BOARD-2");
 
   // list() returns only canonical board issues, never the stray files.
-  assert.deepEqual(
-    (await store.list()).map((i) => i.identifier).sort(),
-    ["BOARD-1", "BOARD-2"],
-  );
+  assert.deepEqual((await store.list()).map((i) => i.identifier).sort(), ["BOARD-1", "BOARD-2"]);
 
   // Explicit lookups of a real board id still work.
   const fetched = (await store.getByIds(["BOARD-1"]))[0]!;
@@ -502,10 +539,7 @@ test("concurrent first-run creates fsync the FULL new chain before publishing (e
 
   // Both issues are durable on disk and round-trip through a fresh store.
   const fetched = await new BoardStore(dir).getByIds(["BOARD-1", "BOARD-2"]);
-  assert.deepEqual(
-    fetched.map((i) => i.identifier).sort(),
-    ["BOARD-1", "BOARD-2"],
-  );
+  assert.deepEqual(fetched.map((i) => i.identifier).sort(), ["BOARD-1", "BOARD-2"]);
 });
 
 test("create leaves NO partial BOARD file when the publish (link) fails", async () => {

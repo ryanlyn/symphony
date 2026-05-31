@@ -16,11 +16,11 @@ async function localSettings() {
   return { dir, settings: parseConfig({ tracker: { kind: "local", path: dir } }, {}) };
 }
 
-test("local toolSpecs lists the three board tools", async () => {
+test("local toolSpecs lists the board read and write tools", async () => {
   const { settings } = await localSettings();
   assert.deepEqual(
     toolSpecs(settings).map((t) => t.name),
-    ["local_update_status", "local_comment", "local_create_issue"],
+    ["local_update_status", "local_comment", "local_create_issue", "local_read_issue"],
   );
 });
 
@@ -67,6 +67,43 @@ test("local_create_issue persists the body so it round-trips as the issue descri
   const reread = await new BoardStore(dir).getByIds(["BOARD-1"]);
   assert.equal(reread.length, 1);
   assert.equal(reread[0]!.description, body);
+});
+
+test("local_read_issue reads back the status, title, description, and both comments", async () => {
+  const { settings } = await localSettings();
+
+  const created = await executeTool(
+    "local_create_issue",
+    { title: "Read it", body: "the details", status: "Todo" },
+    settings,
+  );
+  assert.equal(created.success, true);
+
+  await executeTool("local_update_status", { issueId: "BOARD-1", status: "In Progress" }, settings);
+  await executeTool("local_comment", { issueId: "BOARD-1", body: "opened PR" }, settings);
+  await executeTool("local_comment", { issueId: "BOARD-1", body: "checks green" }, settings);
+
+  const read = await executeTool("local_read_issue", { issueId: "BOARD-1" }, settings);
+  assert.equal(read.success, true);
+  const result = read.result as {
+    issue: { id: string; status: string; title: string; description: string };
+    comments: string[];
+  };
+  assert.equal(result.issue.id, "BOARD-1");
+  assert.equal(result.issue.status, "In Progress");
+  assert.equal(result.issue.title, "Read it");
+  assert.equal(result.issue.description, "the details");
+  assert.equal(result.comments.length, 2);
+  assert.match(result.comments[0]!, /agent: opened PR/);
+  assert.match(result.comments[1]!, /agent: checks green/);
+});
+
+test("local_read_issue fails for a missing or invalid id", async () => {
+  const { settings } = await localSettings();
+  const missing = await executeTool("local_read_issue", { issueId: "BOARD-404" }, settings);
+  assert.equal(missing.success, false);
+  const invalid = await executeTool("local_read_issue", { issueId: "nope" }, settings);
+  assert.equal(invalid.success, false);
 });
 
 test("local tools reject unknown names", async () => {
