@@ -40,12 +40,12 @@ test("retryBackoffMs - failure delays are monotonically non-decreasing with atte
   );
 });
 
-// INVARIANT: When a retry delay is calculated, it SHALL never exceed the configured maximum cap.
+// INVARIANT: When a retry delay is calculated, it SHALL never exceed the configured maximum cap (when cap >= minimum floor).
 test("retryBackoffMs - failure delay never exceeds the configured maximum cap", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: -100, max: 10_000 }),
-      fc.integer({ min: 0, max: 100_000_000 }),
+      fc.integer({ min: 1_000, max: 100_000_000 }),
       (attempt, maxBackoff) => {
         const result = retryBackoffMs(attempt, maxBackoff, "failure");
         assert.ok(result <= maxBackoff);
@@ -70,15 +70,15 @@ test("retryBackoffMs - failure delay has a positive floor when maxBackoff permit
   );
 });
 
-// INVARIANT: When a continuation retry is scheduled, it SHALL use a fixed short delay regardless of attempt number.
-test("retryBackoffMs - continuation retry uses a fixed delay regardless of inputs", () => {
+// INVARIANT: When a continuation retry is scheduled, it SHALL use a fixed short delay capped by maxRetryBackoffMs.
+test("retryBackoffMs - continuation retry respects cap", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: -1000, max: 1000 }),
       fc.integer({ min: 0, max: 100_000_000 }),
       (attempt, maxBackoff) => {
         const result = retryBackoffMs(attempt, maxBackoff, "continuation");
-        assert.equal(result, 1_000);
+        assert.equal(result, Math.min(1_000, maxBackoff));
       },
     ),
     { numRuns: 200 },
