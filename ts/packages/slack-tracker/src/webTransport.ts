@@ -153,15 +153,24 @@ export class SlackWebTransport implements SlackTransport {
   }
 
   async addReaction(channel: string, ts: string, name: string): Promise<void> {
-    await this.post("reactions.add", { channel, timestamp: ts, name });
+    // reactions.add is idempotent: re-applying an already-present reaction is harmless (Slack
+    // returns already_reacted, which parse() treats as success), so retrying on an ambiguous 5xx
+    // cannot corrupt state.
+    await this.post("reactions.add", { channel, timestamp: ts, name }, { idempotent: true });
   }
 
   async removeReaction(channel: string, ts: string, name: string): Promise<void> {
-    await this.post("reactions.remove", { channel, timestamp: ts, name });
+    // reactions.remove is idempotent: removing an already-absent reaction is harmless (Slack
+    // returns no_reaction, which parse() treats as success), so retrying on a 5xx is safe.
+    await this.post("reactions.remove", { channel, timestamp: ts, name }, { idempotent: true });
   }
 
   async postReply(channel: string, threadTs: string, body: string): Promise<void> {
-    await this.post("chat.postMessage", { channel, thread_ts: threadTs, text: body });
+    // chat.postMessage is NOT idempotent: a retry posts a DUPLICATE reply. It may retry only on a
+    // 429 (rejected before processing), never on an ambiguous 5xx where the reply may have applied.
+    await this.post("chat.postMessage", { channel, thread_ts: threadTs, text: body }, {
+      idempotent: false,
+    });
   }
 
   private async get(
@@ -169,12 +178,16 @@ export class SlackWebTransport implements SlackTransport {
     params: Record<string, string>,
   ): Promise<Record<string, unknown>> {
     const url = `${this.endpoint}/${method}?${new URLSearchParams(params).toString()}`;
-    const response = await this.fetchWithRetry(method, async () =>
-      this.fetchImpl(url, {
-        method: "GET",
-        headers: { authorization: `Bearer ${this.token}` },
-        signal: AbortSignal.timeout(30_000),
-      }),
+    // GET (conversations.history) is a pure read: safe to retry on both 429 and 5xx.
+    const response = await this.fetchWithRetry(
+      method,
+      async () =>
+        this.fetchImpl(url, {
+          method: "GET",
+          headers: { authorization: `Bearer ${this.token}` },
+          signal: AbortSignal.timeout(30_000),
+        }),
+      { idempotent: true },
     );
     return this.parse(method, response);
   }
@@ -182,22 +195,30 @@ export class SlackWebTransport implements SlackTransport {
   private async post(
     method: string,
     params: Record<string, string>,
+    options: { idempotent: boolean },
   ): Promise<Record<string, unknown>> {
-    const response = await this.fetchWithRetry(method, async () =>
-      this.fetchImpl(`${this.endpoint}/${method}`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.token}`,
-          "content-type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify(params),
-        signal: AbortSignal.timeout(30_000),
-      }),
+    const response = await this.fetchWithRetry(
+      method,
+      async () =>
+        this.fetchImpl(`${this.endpoint}/${method}`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.token}`,
+            "content-type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify(params),
+          signal: AbortSignal.timeout(30_000),
+        }),
+      options,
     );
     return this.parse(method, response);
   }
 
-  private async fetchWithRetry(method: string, send: () => Promise<Response>): Promise<Response> {
+  private async fetchWithRetry(
+    method: string,
+    send: () => Promise<Response>,
+    options: { idempotent: boolean },
+  ): Promise<Response> {
     for (let retryCount = 0; ; retryCount += 1) {
       let response: Response;
       try {
@@ -207,7 +228,11 @@ export class SlackWebTransport implements SlackTransport {
           cause: error,
         });
       }
-      if (!isRetryable(response.status) || retryCount >= MAX_RETRIES) {
+      // A non-idempotent write (chat.postMessage) may retry only on a 429, which Slack rejects
+      // BEFORE processing the request - so no reply was posted and a retry cannot duplicate it.
+      // An ambiguous 5xx (the reply may have already been delivered) must NOT be retried.
+      const canRetry = options.idempotent ? isRetryable(response.status) : response.status === 429;
+      if (!canRetry || retryCount >= MAX_RETRIES) {
         if (isRetryable(response.status)) {
           throw new Error(`slack ${method} failed: status ${response.status}`);
         }
@@ -226,6 +251,14 @@ export class SlackWebTransport implements SlackTransport {
     }
     if (body.ok !== true) {
       const reason = typeof body.error === "string" ? body.error : String(response.status);
+      // Benign Slack errors that mean the write's GOAL is already satisfied are treated as success.
+      // This matters for idempotent retries: when an ambiguous 5xx actually applied the write, the
+      // retry sees these "already done" errors and must resolve cleanly rather than report a failure
+      // while the target state is in fact present (which would let the next poll observe a phantom
+      // advanced/terminal status). reactions.add: already_reacted means the reaction is present
+      // (the goal). reactions.remove: no_reaction means the reaction is already absent (the goal).
+      if (method === "reactions.add" && reason === "already_reacted") return body;
+      if (method === "reactions.remove" && reason === "no_reaction") return body;
       throw new Error(`slack ${method} failed: ${reason}`);
     }
     return body;

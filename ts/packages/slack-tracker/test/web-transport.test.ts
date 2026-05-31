@@ -424,6 +424,7 @@ test("get gives up after the retry cap on a persistent 429 with a clear error", 
 });
 
 test("post retries on HTTP 5xx with backoff then succeeds", async () => {
+  // reactions.add is idempotent, so retrying after an ambiguous 5xx is allowed.
   let calls = 0;
   const fetchImpl = (async () => {
     calls += 1;
@@ -438,6 +439,95 @@ test("post retries on HTTP 5xx with backoff then succeeds", async () => {
 
   const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
   await transport.addReaction("C1", "1.1", "eyes");
+
+  assert.equal(calls, 2);
+});
+
+test("addReaction treats already_reacted as success (idempotent re-apply resolves)", async () => {
+  // Slack returns ok:false error:"already_reacted" when the reaction is already present. The GOAL
+  // (reaction present) is satisfied, so addReaction must RESOLVE rather than throw. This is what
+  // lets an idempotent retry after an ambiguous 5xx that actually applied resolve cleanly instead
+  // of reporting a failure while the target reaction is in fact present.
+  const fetchImpl = (async () => {
+    return new Response(JSON.stringify({ ok: false, error: "already_reacted" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  // Resolves (no throw): the reaction is present, which is the goal.
+  await transport.addReaction("C1", "1.1", "eyes");
+});
+
+test("removeReaction treats no_reaction as success (already absent resolves)", async () => {
+  // Slack returns ok:false error:"no_reaction" when the reaction is already absent. The GOAL
+  // (reaction absent) is satisfied, so removeReaction must RESOLVE rather than throw.
+  const fetchImpl = (async () => {
+    return new Response(JSON.stringify({ ok: false, error: "no_reaction" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await transport.removeReaction("C1", "1.1", "eyes");
+});
+
+test("addReaction retries on a 5xx then succeeds (idempotent retry allowed)", async () => {
+  // reactions.add is idempotent: a 5xx (ambiguous - may or may not have applied) is safe to retry
+  // because re-applying is harmless. First call 5xx, second call 200 -> two fetches, resolves.
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("server error", { status: 502 });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await transport.addReaction("C1", "1.1", "eyes");
+
+  assert.equal(calls, 2);
+});
+
+test("chat.postMessage does NOT retry on a 5xx (ambiguous - reply may have posted) and surfaces failure", async () => {
+  // chat.postMessage is NON-idempotent: a retry would post a DUPLICATE reply. A 5xx is AMBIGUOUS
+  // (the reply may already have been delivered), so the transport must NOT retry - it makes exactly
+  // ONE fetch to chat.postMessage and surfaces a clear failure rather than risk a duplicate.
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    return new Response("server error", { status: 503 });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await assert.rejects(() => transport.postReply("C1", "1.1", "done!"), /chat\.postMessage.*503/);
+  // Exactly one fetch: no retry on the ambiguous 5xx, so no possibility of a duplicate reply.
+  assert.equal(calls, 1);
+});
+
+test("chat.postMessage retries on a 429 then succeeds (pre-processing rejection is safe)", async () => {
+  // A 429 means Slack rejected the request BEFORE processing - no reply was posted - so retrying
+  // cannot duplicate. chat.postMessage may retry exactly on 429: first 429, then 200 -> two fetches.
+  let calls = 0;
+  const fetchImpl = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const transport = new SlackWebTransport(settings(), fetchImpl, () => Promise.resolve());
+  await transport.postReply("C1", "1.1", "done!");
 
   assert.equal(calls, 2);
 });
