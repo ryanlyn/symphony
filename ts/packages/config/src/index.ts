@@ -13,6 +13,14 @@ import type {
   Settings,
   TrackerKind,
   TrackerSettings,
+  PositiveTimeoutMs,
+  NonNegativeTimeoutMs,
+  PositiveIntervalMs,
+  RenderIntervalMs,
+  Concurrency,
+  MaxTurns,
+  EnsembleSize,
+  Port,
 } from "@symphony/domain";
 import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
 
@@ -36,48 +44,56 @@ const coercedPort = numericInput
   .refine((n) => Number.isInteger(n) && n >= 0 && n <= PORT_MAX, {
     message: `must be a valid port number (0-${PORT_MAX})`,
   })
+  .transform((n) => n as Port)
   .describe("non-negative");
 
 const coercedTimeoutMs = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
     message: `must be a positive integer no greater than ${ONE_WEEK_MS} (1 week)`,
   })
+  .transform((n) => n as PositiveTimeoutMs)
   .describe("positive");
 
 const coercedNonNegativeTimeoutMs = numericInput
   .refine((n) => Number.isInteger(n) && n >= 0 && n <= ONE_WEEK_MS, {
     message: `must be a non-negative integer no greater than ${ONE_WEEK_MS} (1 week)`,
   })
+  .transform((n) => n as NonNegativeTimeoutMs)
   .describe("non-negative");
 
 const coercedIntervalMs = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= ONE_WEEK_MS, {
     message: `must be a positive integer no greater than ${ONE_WEEK_MS} (1 week)`,
   })
+  .transform((n) => n as PositiveIntervalMs)
   .describe("positive");
 
 const coercedRenderIntervalMs = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= RENDER_INTERVAL_MAX_MS, {
     message: `must be a positive integer no greater than ${RENDER_INTERVAL_MAX_MS}`,
   })
+  .transform((n) => n as RenderIntervalMs)
   .describe("positive");
 
 const coercedConcurrency = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= CONCURRENCY_MAX, {
     message: `must be an integer between 1 and ${CONCURRENCY_MAX}`,
   })
+  .transform((n) => n as Concurrency)
   .describe("positive");
 
 const coercedMaxTurns = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= MAX_TURNS_MAX, {
     message: `must be an integer between 1 and ${MAX_TURNS_MAX}`,
   })
+  .transform((n) => n as MaxTurns)
   .describe("positive");
 
 const coercedEnsembleSize = numericInput
   .refine((n) => Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX, {
     message: `must be an integer between 1 and ${ENSEMBLE_SIZE_MAX}`,
   })
+  .transform((n) => n as EnsembleSize)
   .describe("positive");
 
 const coercedBoolean = z.union([
@@ -326,16 +342,16 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
     },
     threadSandbox: "workspace-write",
     turnSandboxPolicy: null,
-    turnTimeoutMs: 3_600_000,
-    readTimeoutMs: 5_000,
-    stallTimeoutMs: 300_000,
+    turnTimeoutMs: 3_600_000 as PositiveTimeoutMs,
+    readTimeoutMs: 5_000 as PositiveTimeoutMs,
+    stallTimeoutMs: 300_000 as NonNegativeTimeoutMs,
   };
   const claude: ClaudeSettings = {
     command: "claude-agent-acp",
     model: "claude-opus-4-6[1m]",
     permissionMode: "dontAsk",
-    turnTimeoutMs: 3_600_000,
-    stallTimeoutMs: 300_000,
+    turnTimeoutMs: 3_600_000 as PositiveTimeoutMs,
+    stallTimeoutMs: 300_000 as NonNegativeTimeoutMs,
     strictMcpConfig: true,
   };
   return {
@@ -350,27 +366,27 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
         routeLabelPrefix: "Symphony:",
       },
     },
-    polling: { intervalMs: 30_000 },
+    polling: { intervalMs: 30_000 as PositiveIntervalMs },
     workspace: {
       root: workspaceRoot,
       rootExpression: workspaceRoot,
     },
-    worker: { sshHosts: [], sshTimeoutMs: 60_000 },
-    hooks: { timeoutMs: 60_000 },
+    worker: { sshHosts: [], sshTimeoutMs: 60_000 as PositiveTimeoutMs },
+    hooks: { timeoutMs: 60_000 as PositiveTimeoutMs },
     agent: {
       kind: "codex",
-      maxConcurrentAgents: 10,
-      maxTurns: 20,
-      maxRetryBackoffMs: 300_000,
-      ensembleSize: 1,
+      maxConcurrentAgents: 10 as Concurrency,
+      maxTurns: 20 as MaxTurns,
+      maxRetryBackoffMs: 300_000 as PositiveTimeoutMs,
+      ensembleSize: 1 as EnsembleSize,
     },
     agents: defaultAgentRecords(codex, claude),
     codex,
     claude,
     observability: {
       dashboardEnabled: true,
-      refreshMs: 1_000,
-      renderIntervalMs: 16,
+      refreshMs: 1_000 as PositiveIntervalMs,
+      renderIntervalMs: 16 as RenderIntervalMs,
     },
     server: { host: "127.0.0.1" },
     logging: { logFile: joinPath(cwd, "log/symphony.log") },

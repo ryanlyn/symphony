@@ -44,6 +44,51 @@ export const CODEX_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full
 
 export type CodexSandboxMode = (typeof CODEX_SANDBOX_MODES)[number];
 
+// ─── Branded numeric types ──────────────────────────────────────────────────
+// These enforce that only values passing through validated construction (Zod schemas in
+// @symphony/config) can satisfy the type. Downstream code gets compile-time guarantees
+// that bounds are respected.
+
+declare const PositiveTimeoutMsBrand: unique symbol;
+/** Positive integer ms in [1, ONE_WEEK_MS]. Produced exclusively by config schema validation. */
+export type PositiveTimeoutMs = number & { readonly [PositiveTimeoutMsBrand]: true };
+
+declare const NonNegativeTimeoutMsBrand: unique symbol;
+/** Non-negative integer ms in [0, ONE_WEEK_MS]. Produced exclusively by config schema validation. */
+export type NonNegativeTimeoutMs = number & { readonly [NonNegativeTimeoutMsBrand]: true };
+
+declare const PositiveIntervalMsBrand: unique symbol;
+/** Positive integer ms in [1, ONE_WEEK_MS] used for polling/refresh intervals. */
+export type PositiveIntervalMs = number & { readonly [PositiveIntervalMsBrand]: true };
+
+declare const RenderIntervalMsBrand: unique symbol;
+/** Positive integer ms in [1, RENDER_INTERVAL_MAX_MS] for UI render throttle. */
+export type RenderIntervalMs = number & { readonly [RenderIntervalMsBrand]: true };
+
+declare const ConcurrencyBrand: unique symbol;
+/** Positive integer in [1, CONCURRENCY_MAX]. */
+export type Concurrency = number & { readonly [ConcurrencyBrand]: true };
+
+declare const MaxTurnsBrand: unique symbol;
+/** Positive integer in [1, MAX_TURNS_MAX]. */
+export type MaxTurns = number & { readonly [MaxTurnsBrand]: true };
+
+declare const EnsembleSizeBrand: unique symbol;
+/** Positive integer in [1, ENSEMBLE_SIZE_MAX]. */
+export type EnsembleSize = number & { readonly [EnsembleSizeBrand]: true };
+
+declare const PortBrand: unique symbol;
+/** Non-negative integer in [0, 65535]. */
+export type Port = number & { readonly [PortBrand]: true };
+
+/**
+ * Unsafe cast — for use in test fixtures only. Bypasses brand enforcement.
+ * Production code must go through @symphony/config schema validation.
+ */
+export function unsafeBrand<T extends number>(value: number): T {
+  return value as unknown as T;
+}
+
 export const AGENT_UPDATE_TYPES = [
   "workspace_prepared",
   "session_started",
@@ -173,12 +218,12 @@ export interface WorkerSettings {
    */
   sshHosts: string[];
   /** Timeout (ms) for each individual SSH command used in worker setup, execution, and cleanup. */
-  sshTimeoutMs: number;
+  sshTimeoutMs: PositiveTimeoutMs;
   /**
    * Per-host cap on concurrent agent runs. When every host is at capacity, dispatch waits
    * instead of running locally. Undefined means the global {@link AgentSettings.maxConcurrentAgents} applies per host.
    */
-  maxConcurrentAgentsPerHost?: number | undefined;
+  maxConcurrentAgentsPerHost?: Concurrency | undefined;
 }
 
 /**
@@ -188,16 +233,16 @@ export interface AgentSettings {
   /** Default backend name to launch (e.g. `"codex"`, `"claude"`); must key into {@link Settings.agents}. */
   kind: AgentKind;
   /** Upper bound on concurrent agent runs across the whole instance. */
-  maxConcurrentAgents: number;
+  maxConcurrentAgents: Concurrency;
   /** Maximum back-to-back turns a single worker session may run before exiting and yielding. */
-  maxTurns: number;
+  maxTurns: MaxTurns;
   /** Cap (ms) on exponential retry backoff between attempts on the same issue. */
-  maxRetryBackoffMs: number;
+  maxRetryBackoffMs: PositiveTimeoutMs;
   /**
    * Default number of independent parallel slots dispatched per issue.
    * Overridden per-issue by an `ensemble:<n>` label.
    */
-  ensembleSize: number;
+  ensembleSize: EnsembleSize;
 }
 
 /**
@@ -223,9 +268,9 @@ export interface AcpAgentConfig {
   /** Informational permission-mode string for the bridge (e.g. Claude's `"dontAsk"`); not interpreted by ACP directly. */
   permissionMode?: string | undefined;
   /** Hard limit (ms) on a single ACP turn before it is force-cancelled. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) after which a session with no agent events is treated as stalled and aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
   /** When true, launch the bridge with only the MCP servers Symphony injected (no user-side MCP config). */
   strictMcpConfig?: boolean | undefined;
 }
@@ -256,11 +301,11 @@ export interface CodexSettings {
    */
   turnSandboxPolicy: Record<string, unknown> | null;
   /** Hard limit (ms) on a single Codex turn before it is treated as timed out. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Per-request JSON-RPC read timeout (ms) for app-server method calls. */
-  readTimeoutMs: number;
+  readTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) before a session with no events is force-aborted as stalled. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
 }
 
 /**
@@ -275,9 +320,9 @@ export interface ClaudeSettings {
   /** Claude Code permission mode forwarded to the bridge, e.g. `"dontAsk"`, `"acceptEdits"`, `"plan"`. */
   permissionMode: string;
   /** Hard limit (ms) on a single Claude turn before it is force-cancelled. */
-  turnTimeoutMs: number;
+  turnTimeoutMs: PositiveTimeoutMs;
   /** Inactivity window (ms) before a stalled session is aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
+  stallTimeoutMs: NonNegativeTimeoutMs;
   /** When true, launch Claude with only Symphony's injected MCP servers (ignore user MCP config). */
   strictMcpConfig: boolean;
 }
@@ -288,9 +333,9 @@ export interface ClaudeSettings {
 export interface ObservabilitySettings {
   dashboardEnabled: boolean;
   /** How often (ms) status snapshots are refreshed from the orchestrator. */
-  refreshMs: number;
+  refreshMs: PositiveIntervalMs;
   /** Minimum interval (ms) between successive UI redraws; throttles render-side work. */
-  renderIntervalMs: number;
+  renderIntervalMs: RenderIntervalMs;
 }
 
 /**
@@ -303,7 +348,7 @@ export interface ServerSettings {
    * TCP port to bind. Undefined disables the server unless the active agent backend requires it
    * (e.g. Claude, which needs the MCP endpoint). `0` requests an ephemeral local port.
    */
-  port?: number | undefined;
+  port?: Port | undefined;
 }
 
 /**
@@ -340,7 +385,7 @@ export interface HooksSettings {
    */
   beforeRemove?: string | null | undefined;
   /** Per-hook execution timeout (ms) applied to all four hooks above. */
-  timeoutMs: number;
+  timeoutMs: PositiveTimeoutMs;
 }
 
 /**
@@ -366,7 +411,7 @@ export interface WorkspaceSettings {
 export interface Settings {
   tracker: TrackerSettings;
   /** Cadence at which the tracker is polled for candidate issues, in milliseconds. */
-  polling: { intervalMs: number };
+  polling: { intervalMs: PositiveIntervalMs };
   workspace: WorkspaceSettings;
   worker: WorkerSettings;
   hooks: HooksSettings;

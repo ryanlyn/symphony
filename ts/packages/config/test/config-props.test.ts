@@ -1,14 +1,17 @@
 import { test } from "vitest";
 import fc from "fast-check";
+import { unsafeBrand } from "@symphony/domain";
+import type { Concurrency, PositiveTimeoutMs } from "@symphony/domain";
+
+import { assert } from "../../../test/assert.js";
+
 import {
   normalizeStateName,
   normalizeRouteName,
   defaultSettings,
   settingsForIssueState,
   parseConfig,
-} from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+} from "@symphony/config";
 
 // --- normalizeStateName ---
 
@@ -104,7 +107,7 @@ test("settingsForIssueState — state name lookup is case insensitive", () => {
       fc
         .array(fc.constantFrom(..."abcdefghij"), { minLength: 1, maxLength: 10 })
         .map((a) => a.join("")),
-      fc.integer({ min: 1, max: 5 }),
+      fc.integer({ min: 1, max: 5 }).map((n) => unsafeBrand<Concurrency>(n)),
       (state, cap) => {
         const settings = defaultSettings();
         settings.statusOverrides.set(state.toLowerCase(), {
@@ -121,28 +124,35 @@ test("settingsForIssueState — state name lookup is case insensitive", () => {
 
 test("settingsForIssueState — override isolation between states", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 1, max: 10 }), fc.integer({ min: 11, max: 20 }), (capA, capB) => {
-      const settings = defaultSettings();
-      settings.statusOverrides.set("todo", { agent: { maxConcurrentAgents: capA } });
-      settings.statusOverrides.set("review", { agent: { maxConcurrentAgents: capB } });
-      const todo = settingsForIssueState(settings, "Todo");
-      const review = settingsForIssueState(settings, "Review");
-      assert.equal(todo.agent.maxConcurrentAgents, capA);
-      assert.equal(review.agent.maxConcurrentAgents, capB);
-    }),
+    fc.property(
+      fc.integer({ min: 1, max: 10 }).map((n) => unsafeBrand<Concurrency>(n)),
+      fc.integer({ min: 11, max: 20 }).map((n) => unsafeBrand<Concurrency>(n)),
+      (capA, capB) => {
+        const settings = defaultSettings();
+        settings.statusOverrides.set("todo", { agent: { maxConcurrentAgents: capA } });
+        settings.statusOverrides.set("review", { agent: { maxConcurrentAgents: capB } });
+        const todo = settingsForIssueState(settings, "Todo");
+        const review = settingsForIssueState(settings, "Review");
+        assert.equal(todo.agent.maxConcurrentAgents, capA);
+        assert.equal(review.agent.maxConcurrentAgents, capB);
+      },
+    ),
   );
 });
 
 test("settingsForIssueState — partial override preserves unmentioned fields", () => {
   fc.assert(
-    fc.property(fc.integer({ min: 100_000, max: 9_000_000 }), (timeout) => {
-      const settings = defaultSettings();
-      settings.statusOverrides.set("review", { codex: { turnTimeoutMs: timeout } });
-      const result = settingsForIssueState(settings, "review");
-      assert.equal(result.codex.turnTimeoutMs, timeout);
-      assert.equal(result.codex.readTimeoutMs, settings.codex.readTimeoutMs);
-      assert.equal(result.codex.stallTimeoutMs, settings.codex.stallTimeoutMs);
-    }),
+    fc.property(
+      fc.integer({ min: 100_000, max: 9_000_000 }).map((n) => unsafeBrand<PositiveTimeoutMs>(n)),
+      (timeout) => {
+        const settings = defaultSettings();
+        settings.statusOverrides.set("review", { codex: { turnTimeoutMs: timeout } });
+        const result = settingsForIssueState(settings, "review");
+        assert.equal(result.codex.turnTimeoutMs, timeout);
+        assert.equal(result.codex.readTimeoutMs, settings.codex.readTimeoutMs);
+        assert.equal(result.codex.stallTimeoutMs, settings.codex.stallTimeoutMs);
+      },
+    ),
   );
 });
 
@@ -169,8 +179,8 @@ test("parseConfig — status_overrides deep merges codex approval_policy", () =>
       assert.ok(policy !== null && typeof policy === "object");
       const reject = (policy as { reject?: Record<string, unknown> }).reject;
       assert.ok(reject !== undefined);
-      assert.equal(reject.sandbox_approval, sandbox);
-      assert.equal(reject.rules, rules);
+      assert.equal(reject!.sandbox_approval, sandbox);
+      assert.equal(reject!.rules, rules);
     }),
   );
 });
