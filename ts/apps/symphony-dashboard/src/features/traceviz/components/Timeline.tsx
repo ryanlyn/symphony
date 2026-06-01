@@ -1,5 +1,12 @@
-import { useState, useMemo } from "react";
-import { ChevronsUpDown, ChevronsDownUp, ArrowUpDown, Loader2 } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import {
+  ChevronsUpDown,
+  ChevronsDownUp,
+  ArrowUpDown,
+  ArrowUp,
+  ChevronUp,
+  Loader2,
+} from "lucide-react";
 
 import type { DisplayEvent } from "../api/types";
 import { cn } from "../../../lib/utils";
@@ -66,12 +73,18 @@ function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
 }
 
 export function Timeline({ events, loading }: TimelineProps) {
-  const [sortNewest, setSortNewest] = useState(false);
+  const [sortNewest, setSortNewest] = useState(true);
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
 
   const grouped = useMemo(() => {
     const groups = groupByTurn(events);
-    return sortNewest ? [...groups].reverse() : groups;
+    if (sortNewest) {
+      return [...groups].reverse().map((g) => ({
+        ...g,
+        events: [...g.events].reverse(),
+      }));
+    }
+    return groups;
   }, [events, sortNewest]);
 
   const allExpanded = useMemo(
@@ -95,6 +108,10 @@ export function Timeline({ events, loading }: TimelineProps) {
       setExpandedTurns(new Set(grouped.map((g) => g.turnIndex)));
     }
   };
+
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   if (loading) {
     return (
@@ -136,6 +153,13 @@ export function Timeline({ events, loading }: TimelineProps) {
             )}
             {allExpanded ? "Collapse all" : "Expand all"}
           </button>
+          <button
+            onClick={scrollToTop}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground transition-colors"
+          >
+            <ArrowUp className="h-3 w-3" />
+            Go to top
+          </button>
         </div>
       </div>
 
@@ -172,6 +196,13 @@ export function Timeline({ events, loading }: TimelineProps) {
             >
               <div className="space-y-2 px-4 pb-3">
                 {group.events.map((event, idx) => renderEvent(event, idx))}
+                <button
+                  onClick={() => toggleTurn(group.turnIndex)}
+                  className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground transition-colors"
+                >
+                  <ChevronUp className="h-3 w-3" />
+                  Collapse turn
+                </button>
               </div>
             </div>
           </div>

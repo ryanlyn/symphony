@@ -121,6 +121,267 @@ describe("parseTraceLines with minimal fixture", () => {
   });
 });
 
+describe("parseTraceLines reasoning/thought extraction", () => {
+  it("extracts text from summary array", () => {
+    const lines = [
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "reasoning",
+              id: "rs_1",
+              summary: [{ type: "summary_text", text: "Thinking about the task" }],
+              content: [],
+            },
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const thoughts = events.filter((e) => e.kind === "thought");
+    expect(thoughts.length).toBe(1);
+    expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Thinking about the task");
+  });
+
+  it("extracts text from content array when summary is empty", () => {
+    const lines = [
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "reasoning",
+              id: "rs_1",
+              summary: [],
+              content: [{ type: "thinking", text: "Deep thought" }],
+            },
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const thoughts = events.filter((e) => e.kind === "thought");
+    expect(thoughts.length).toBe(1);
+    expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Deep thought");
+  });
+
+  it("skips empty reasoning items entirely", () => {
+    const lines = [
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          method: "item/completed",
+          params: {
+            item: { type: "reasoning", id: "rs_1", summary: [], content: [] },
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const thoughts = events.filter((e) => e.kind === "thought");
+    expect(thoughts.length).toBe(0);
+  });
+
+  it("prefers item.text over summary/content", () => {
+    const lines = [
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          method: "item/completed",
+          params: {
+            item: {
+              type: "reasoning",
+              id: "rs_1",
+              text: "Direct text",
+              summary: [{ text: "Summary text" }],
+              content: [{ text: "Content text" }],
+            },
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const thoughts = events.filter((e) => e.kind === "thought");
+    expect(thoughts.length).toBe(1);
+    expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Direct text");
+  });
+});
+
+describe("parseTraceLines turn deduplication", () => {
+  it("deduplicates raw turn_started + notification turn/started", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: null,
+        sessionId: "sess-1",
+      }),
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          method: "turn/started",
+          params: { threadId: "t1", turn: { id: "turn-1", status: "inProgress" } },
+        },
+      }),
+      JSON.stringify({
+        type: "turn_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:10Z",
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const turns = events.filter((e) => e.kind === "turn_started");
+    expect(turns.length).toBe(1);
+    expect(turns[0]!.kind === "turn_started" && turns[0]!.turnIndex).toBe(1);
+    // Should use the notification timestamp (not null)
+    expect(turns[0]!.timestamp).toBe("2026-01-01T00:00:01Z");
+  });
+
+  it("emits separate turns when notification is not immediately after raw", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+      }),
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          method: "item/completed",
+          params: { item: { type: "agentMessage", text: "Hello" } },
+        },
+      }),
+      JSON.stringify({
+        type: "notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:02Z",
+        message: {
+          method: "turn/started",
+          params: { threadId: "t1", turn: { id: "turn-2", status: "inProgress" } },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const turns = events.filter((e) => e.kind === "turn_started");
+    expect(turns.length).toBe(2);
+  });
+});
+
+describe("parseTraceLines Codex tool_call format", () => {
+  it("parses tool_call_completed with request/result structure", () => {
+    const lines = [
+      JSON.stringify({
+        type: "tool_call_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:05Z",
+        message: {
+          request: {
+            method: "item/tool/call",
+            id: 0,
+            params: {
+              threadId: "t1",
+              turnId: "turn-1",
+              callId: "call_abc",
+              tool: "linear_graphql",
+              arguments: { query: "{ viewer { id } }" },
+            },
+          },
+          result: {
+            success: true,
+            output: '{"data":{"viewer":{"id":"123"}}}',
+            contentItems: [{ type: "inputText", text: '{"data":{"viewer":{"id":"123"}}}' }],
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const tools = events.filter((e) => e.kind === "tool_call");
+    expect(tools.length).toBe(1);
+    const tool = tools[0]!;
+    expect(tool.kind === "tool_call" && tool.toolName).toBe("linear_graphql");
+    expect(tool.kind === "tool_call" && tool.isError).toBe(false);
+    expect(tool.kind === "tool_call" && tool.output).toBe('{"data":{"viewer":{"id":"123"}}}');
+    expect(tool.kind === "tool_call" && (tool.input as Record<string, unknown>).query).toBe(
+      "{ viewer { id } }",
+    );
+  });
+
+  it("parses tool_call_failed with request/result structure", () => {
+    const lines = [
+      JSON.stringify({
+        type: "tool_call_failed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:05Z",
+        message: {
+          request: {
+            method: "item/tool/call",
+            id: 1,
+            params: { threadId: "t1", turnId: "turn-1", callId: "call_def", tool: "web_search", arguments: { q: "test" } },
+          },
+          result: { success: false, output: "Rate limited" },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const tools = events.filter((e) => e.kind === "tool_call");
+    expect(tools.length).toBe(1);
+    const tool = tools[0]!;
+    expect(tool.kind === "tool_call" && tool.toolName).toBe("web_search");
+    expect(tool.kind === "tool_call" && tool.isError).toBe(true);
+  });
+});
+
+describe("parseTraceLines noise filtering", () => {
+  it("does not emit unknown events for usage/session/workspace/stderr/process_exit", () => {
+    const lines = [
+      JSON.stringify({ type: "workspace_prepared", issueId: "id", issueIdentifier: "T-1", timestamp: null }),
+      JSON.stringify({ type: "session_started", issueId: "id", issueIdentifier: "T-1", timestamp: null }),
+      JSON.stringify({ type: "stderr", issueId: "id", issueIdentifier: "T-1", timestamp: "2026-01-01T00:00:00Z", message: "warn" }),
+      JSON.stringify({ type: "usage", issueId: "id", issueIdentifier: "T-1", timestamp: "2026-01-01T00:00:01Z", usage: { inputTokens: 100, outputTokens: 50 } }),
+      JSON.stringify({ type: "process_exit", issueId: "id", issueIdentifier: "T-1", timestamp: "2026-01-01T00:00:02Z" }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(0);
+  });
+
+  it("still emits unknown for truly unrecognized event types", () => {
+    const lines = [
+      JSON.stringify({ type: "some_new_type", issueId: "id", issueIdentifier: "T-1", timestamp: "2026-01-01T00:00:00Z" }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(1);
+    expect(events[0]!.kind).toBe("unknown");
+  });
+});
+
 describe("parseTraceLines with full trace (integration)", () => {
   const shouldRun = existsSync(CAN143_PATH);
 
@@ -153,7 +414,6 @@ describe("parseTraceLines with full trace (integration)", () => {
 
     expect(kinds.has("tool_call")).toBe(true);
     expect(kinds.has("message")).toBe(true);
-    expect(kinds.has("thought")).toBe(true);
     expect(kinds.has("turn_started")).toBe(true);
 
     // No notification noise leaks through
