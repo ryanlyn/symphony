@@ -133,6 +133,12 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       server = await startObservabilityServer(runtime, {
         host: workflow.settings.server.host,
         port: workflow.settings.server.port ?? 0,
+        ...(workflow.settings.server.traceDir !== undefined && {
+          traceDir: workflow.settings.server.traceDir,
+        }),
+        ...(workflow.settings.server.staticDir !== undefined && {
+          staticDir: workflow.settings.server.staticDir,
+        }),
       });
       workflow.settings.server.port = server.port;
       boundServerPort = server.port;

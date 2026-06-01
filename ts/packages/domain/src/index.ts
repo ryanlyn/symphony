@@ -349,6 +349,10 @@ export interface ServerSettings {
    * (e.g. Claude, which needs the MCP endpoint). `0` requests an ephemeral local port.
    */
   port?: number | undefined;
+  /** Directory containing JSONL trace files (same directory TraceEmitter writes to). */
+  traceDir?: string | undefined;
+  /** Built frontend assets directory (e.g. apps/traceviz/dist/). */
+  staticDir?: string | undefined;
 }
 
 /**
