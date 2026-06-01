@@ -187,8 +187,12 @@ export interface TrackerSettings {
   kind?: TrackerKind | undefined;
   endpoint: string;
   apiKey?: string | undefined;
-  /** Linear project slug; required when `kind === "linear"`. */
+  /** @deprecated Use `projectSlugs` instead. Single Linear project slug; required when `kind === "linear"`. */
   projectSlug?: string | undefined;
+  /** Linear project slugs to monitor. Mutually exclusive with `projectLabels`. */
+  projectSlugs?: string[] | undefined;
+  /** Linear project labels for dynamic discovery. Mutually exclusive with `projectSlugs`. */
+  projectLabels?: string[] | undefined;
   /** Tracker assignee identity (or `$VAR`) used to scope candidate queries to one user. */
   assignee?: string | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */
