@@ -208,10 +208,6 @@ class ActiveRunHandle {
     return this.activeRuns.get(this.key) === this;
   }
 
-  get aborted(): boolean {
-    return this.controller.signal.aborted;
-  }
-
   abort(): void {
     this.controller.abort();
   }
@@ -319,7 +315,10 @@ export class SymphonyRuntime {
   stop(): void {
     this.stopped = true;
     this.appStatus = "stopping";
-    for (const handle of this.activeRuns.values()) handle.abort();
+    // finishExternally (abort + release) mirrors the other abort sites and clears
+    // isActive, so the resulting agent_run_aborted rejection is treated as a clean
+    // shutdown in runClaim rather than recorded as a failed run.
+    for (const handle of [...this.activeRuns.values()]) handle.finishExternally();
     this.retryScheduler.stop();
     this.emit();
   }
@@ -492,12 +491,11 @@ export class SymphonyRuntime {
       });
       this.addEvent("run_completed", `${issue.identifier} turns=${result.turnCount}`);
     } catch (error) {
-      // A graceful stop() aborts the run's signal without releasing the slot
-      // (so isActive stays true), and the runner rejects with agent_run_aborted.
-      // Treat that as a clean shutdown, not a run failure — otherwise the daemon
-      // records a failed run and emits a run_failed event, which the TUI renders
-      // as a red error banner right before it exits on Ctrl+C.
-      if (handle.aborted || !handle.isActive) return;
+      // Skip runs that are no longer active: superseded, finished externally, or
+      // released by stop() during shutdown. In the shutdown case the runner
+      // rejects with agent_run_aborted; recording it as a failure would emit a
+      // run_failed event the TUI renders as a red error banner on Ctrl+C.
+      if (!handle.isActive) return;
       const entry = this.orchestrator
         .snapshot()
         .running.find((item) => item.issue.id === issue.id && item.slotIndex === slotIndex);

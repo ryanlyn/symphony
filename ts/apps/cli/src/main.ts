@@ -185,10 +185,8 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     try {
       await runtime.start({ once: options.once, dryRun: options.dryRun });
     } finally {
-      // Keep the signal handlers attached through teardown: removing them here
-      // would leave a window where a second Ctrl+C arriving mid-shutdown hits the
-      // default disposition and kills the process with code 130. The handlers are
-      // harmless once the process is on its way out.
+      // Leave the signal handlers attached through teardown so a second Ctrl+C
+      // can't slip past them and kill the process mid-shutdown.
       instance?.unmount();
       await server?.stop();
     }
