@@ -164,7 +164,7 @@ export class Orchestrator {
   private selectWorkerHost(): string | null | undefined {
     const counts = new Map<string, number>();
     for (const entry of this.state.running.values()) {
-      if (entry.workerHost) counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+      if (entry.workerHost != null) counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
     }
     return selectLeastLoadedHost({
       hosts: this.settings.worker.sshHosts,
