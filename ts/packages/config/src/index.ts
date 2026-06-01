@@ -637,20 +637,16 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
   };
 }
 
-const workspaceHookConfigKeys: Record<string, string> = {
-  afterCreate: "after_create",
-  beforeRun: "before_run",
-  afterRun: "after_run",
-  beforeRemove: "before_remove",
-};
-
 function assertNoWorkspaceHooks(hooks: HooksSettings): void {
-  const configured = Object.keys(workspaceHookConfigKeys).filter(
-    (name) => hooks[name as keyof HooksSettings],
-  );
+  // Derive the lifecycle hook list from hooksAliases so adding a new hook there can't silently
+  // bypass this guard. timeout_ms is a knob, not a hook.
+  const configured = Object.entries(hooksAliases)
+    .filter(([snake, camel]) => snake !== "timeout_ms" && hooks[camel as keyof HooksSettings])
+    .map(([snake]) => snake);
   if (configured.length === 0) return;
-  const keys = configured.map((name) => workspaceHookConfigKeys[name]).join(", ");
-  throw new Error(`workspace.isolation = "none" does not support hooks; remove ${keys}`);
+  throw new Error(
+    `workspace.isolation = "none" does not support hooks; remove ${configured.join(", ")}`,
+  );
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {

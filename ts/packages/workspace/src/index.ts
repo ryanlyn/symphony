@@ -45,10 +45,9 @@ export async function createWorkspaceForIssue(
   await rejectFinalSymlink(rootPath);
   const canonicalRoot = await fs.realpath(rootPath);
 
-  // Shared workspaces run no lifecycle hooks (config rejects them), so creation is just the root.
-  if (sharedWorkspaceRoot(settings)) {
-    return validateWorkspaceCwd(settings, canonicalRoot);
-  }
+  // Shared workspaces run no lifecycle hooks (config rejects them); canonicalRoot is already
+  // realpath'd and symlink-checked above, so creation is done.
+  if (sharedWorkspaceRoot(settings)) return canonicalRoot;
 
   const target = workspacePath(canonicalRoot, identifier, slotIndex, ensembleSize);
   const existed = await exists(target);
