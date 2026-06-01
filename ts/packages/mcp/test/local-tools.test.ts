@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -20,7 +20,13 @@ test("local toolSpecs lists the board read and write tools", async () => {
   const { settings } = await localSettings();
   assert.deepEqual(
     toolSpecs(settings).map((t) => t.name),
-    ["local_update_status", "local_comment", "local_create_issue", "local_read_issue"],
+    [
+      "local_update_status",
+      "local_comment",
+      "local_create_issue",
+      "local_read_issue",
+      "local_query",
+    ],
   );
 });
 
@@ -104,6 +110,102 @@ test("local_read_issue fails for a missing or invalid id", async () => {
   assert.equal(missing.success, false);
   const invalid = await executeTool("local_read_issue", { issueId: "nope" }, settings);
   assert.equal(invalid.success, false);
+});
+
+test("local_query filters, projects, and orders board issues", async () => {
+  const { settings } = await localSettings();
+  await executeTool("local_create_issue", { title: "Alpha", status: "Todo" }, settings);
+  await executeTool("local_create_issue", { title: "Beta", status: "In Progress" }, settings);
+  await executeTool("local_create_issue", { title: "Gamma", status: "Todo" }, settings);
+
+  const res = await executeTool(
+    "local_query",
+    {
+      where: { field: "state", op: "eq", value: "Todo" },
+      select: ["id", "title"],
+      order_by: [{ field: "title", dir: "desc" }],
+    },
+    settings,
+  );
+  assert.equal(res.success, true);
+  const result = res.result as {
+    rows: Array<{ id: string; title: string }>;
+    total: number;
+    skipped: unknown[];
+  };
+  assert.equal(result.total, 2);
+  assert.deepEqual(
+    result.rows.map((r) => r.title),
+    ["Gamma", "Alpha"],
+  );
+  // The projection keeps only the selected fields.
+  assert.deepEqual(Object.keys(result.rows[0]!).sort(), ["id", "title"]);
+  assert.deepEqual(result.skipped, []);
+});
+
+test("local_query pages with the requested window and the pre-page total", async () => {
+  const { settings } = await localSettings();
+  for (const title of ["one", "two", "three"]) {
+    await executeTool("local_create_issue", { title, status: "Todo" }, settings);
+  }
+
+  const res = await executeTool(
+    "local_query",
+    { select: ["id"], order_by: [{ field: "id", dir: "asc" }], limit: 1, offset: 1 },
+    settings,
+  );
+  const result = res.result as { rows: Array<{ id: string }>; total: number };
+  assert.equal(result.total, 3);
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.rows[0]!.id, "BOARD-2");
+});
+
+test("local_query includes comments only when selected", async () => {
+  const { settings } = await localSettings();
+  await executeTool("local_create_issue", { title: "withcomments", status: "Todo" }, settings);
+  await executeTool("local_comment", { issueId: "BOARD-1", body: "first note" }, settings);
+
+  const without = await executeTool("local_query", { select: ["id", "title"] }, settings);
+  const w0 = (without.result as { rows: Array<Record<string, unknown>> }).rows[0]!;
+  assert.equal("comments" in w0, false);
+
+  const withComments = await executeTool("local_query", { select: ["id", "comments"] }, settings);
+  const c0 = (withComments.result as { rows: Array<{ comments: string[] }> }).rows[0]!;
+  assert.equal(c0.comments.length, 1);
+  assert.match(c0.comments[0]!, /agent: first note/);
+});
+
+test("local_query surfaces malformed board files via skipped instead of failing", async () => {
+  const { dir, settings } = await localSettings();
+  await executeTool("local_create_issue", { title: "ok", status: "Todo" }, settings);
+  // A board-id file with no status frontmatter is malformed; list() skips it via onSkip.
+  await writeFile(path.join(dir, "BOARD-9.md"), "---\nlabels: []\n---\n# broken\n", "utf8");
+
+  const res = await executeTool("local_query", { select: ["id"] }, settings);
+  assert.equal(res.success, true);
+  const result = res.result as {
+    rows: Array<{ id: string }>;
+    skipped: Array<{ id: string }>;
+  };
+  assert.deepEqual(
+    result.rows.map((r) => r.id),
+    ["BOARD-1"],
+  );
+  assert.deepEqual(
+    result.skipped.map((s) => s.id),
+    ["BOARD-9"],
+  );
+});
+
+test("local_query rejects a malformed filter", async () => {
+  const { settings } = await localSettings();
+  const res = await executeTool(
+    "local_query",
+    { where: { field: "state", op: "bogus", value: "x" } },
+    settings,
+  );
+  assert.equal(res.success, false);
+  assert.match(res.error ?? "", /unknown op/);
 });
 
 test("local tools reject unknown names", async () => {

@@ -17,11 +17,120 @@ function settings() {
   );
 }
 
-test("slack toolSpecs lists update_status, comment, and read_thread", () => {
+test("slack toolSpecs lists update_status, comment, read_thread, and query", () => {
   assert.deepEqual(
     toolSpecs(settings()).map((t) => t.name),
-    ["slack_update_status", "slack_comment", "slack_read_thread"],
+    ["slack_update_status", "slack_comment", "slack_read_thread", "slack_query"],
   );
+});
+
+test("slack_query lists bot-mention issues with derived state and labels", async () => {
+  const transport = new InMemorySlackTransport({
+    C1: [
+      { ts: "1.1", text: "<@U1> fix the build #backend", reactions: ["eyes"] },
+      { ts: "1.2", text: "<@U1> ship docs", reactions: ["white_check_mark"] },
+      { ts: "1.3", text: "just chatter, no mention", reactions: [] },
+    ],
+  });
+
+  const res = await executeTool("slack_query", {}, settings(), fetch, { slackTransport: transport });
+  assert.equal(res.success, true);
+  const result = res.result as {
+    rows: Array<{ issueId: string; title: string; state: string; labels: string[] }>;
+    total: number;
+  };
+  // The non-mention message is excluded by listMentions.
+  assert.equal(result.total, 2);
+  assert.deepEqual(
+    result.rows.map((r) => r.issueId),
+    ["C1:1.1", "C1:1.2"],
+  );
+  assert.deepEqual(
+    result.rows.map((r) => r.state),
+    ["In Progress", "Done"],
+  );
+  assert.deepEqual(result.rows[0]!.labels, ["backend"]);
+  // Default projection only: no text, reactions, or thread unless requested.
+  assert.deepEqual(Object.keys(result.rows[0]!).sort(), ["issueId", "labels", "state", "title"]);
+});
+
+test("slack_query filters by state, then expands thread and reactions", async () => {
+  const transport = new InMemorySlackTransport({
+    C1: [
+      {
+        ts: "1.1",
+        text: "<@U1> alpha",
+        reactions: ["eyes"],
+        replies: [{ ts: "1.1a", text: "working", user: "U2" }],
+      },
+      { ts: "1.2", text: "<@U1> beta", reactions: ["white_check_mark"] },
+    ],
+  });
+
+  const res = await executeTool(
+    "slack_query",
+    {
+      where: { field: "state", op: "eq", value: "In Progress" },
+      select: ["issueId", "text"],
+      expand: ["thread", "reactions"],
+    },
+    settings(),
+    fetch,
+    { slackTransport: transport },
+  );
+  assert.equal(res.success, true);
+  const result = res.result as {
+    rows: Array<{
+      issueId: string;
+      text: string;
+      reactions: string[];
+      thread: Array<{ text: string }>;
+    }>;
+    total: number;
+  };
+  assert.equal(result.total, 1);
+  const row = result.rows[0]!;
+  assert.equal(row.issueId, "C1:1.1");
+  assert.equal(row.text, "<@U1> alpha");
+  assert.deepEqual(row.reactions, ["eyes"]);
+  assert.deepEqual(
+    row.thread.map((t) => t.text),
+    ["working"],
+  );
+});
+
+test("slack_query only scans allow-listed channels (a requested channel is intersected)", async () => {
+  const transport = new InMemorySlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> allowed", reactions: [] }],
+    C9: [{ ts: "9.1", text: "<@U1> off-limits", reactions: [] }],
+  });
+
+  // Requesting C9 (not in tracker.channels=["C1"]) yields nothing - it is dropped, never fetched.
+  const offLimits = await executeTool("slack_query", { channels: ["C9"] }, settings(), fetch, {
+    slackTransport: transport,
+  });
+  assert.equal((offLimits.result as { total: number }).total, 0);
+
+  // The default (no channels arg) scans the allow-list only, never C9.
+  const def = await executeTool("slack_query", { select: ["issueId"] }, settings(), fetch, {
+    slackTransport: transport,
+  });
+  assert.deepEqual(
+    (def.result as { rows: Array<{ issueId: string }> }).rows.map((r) => r.issueId),
+    ["C1:1.1"],
+  );
+});
+
+test("slack_query rejects a malformed expand value", async () => {
+  const transport = new InMemorySlackTransport({
+    C1: [{ ts: "1.1", text: "<@U1> x", reactions: [] }],
+  });
+
+  const res = await executeTool("slack_query", { expand: ["bogus"] }, settings(), fetch, {
+    slackTransport: transport,
+  });
+  assert.equal(res.success, false);
+  assert.match(res.error ?? "", /expand items/);
 });
 
 test("slack_read_thread returns text, derived status, reactions, and the thread replies", async () => {

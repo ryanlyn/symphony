@@ -1,6 +1,7 @@
-import type { Settings } from "@symphony/domain";
-import { BoardStore, resolveBoardDir } from "@symphony/local-tracker";
+import type { Issue, Settings } from "@symphony/domain";
+import { BoardStore, resolveBoardDir, type BoardStoreOptions } from "@symphony/local-tracker";
 
+import { applyQuery, parseQuerySpec, parseSelect, pickFields } from "../filter.js";
 import type { ToolResult, ToolSpec } from "../tools.js";
 
 const TOOL_NAMES = [
@@ -8,7 +9,11 @@ const TOOL_NAMES = [
   "local_comment",
   "local_create_issue",
   "local_read_issue",
+  "local_query",
 ] as const;
+
+/** Default projection for `local_query` when `select` is omitted. */
+const DEFAULT_LOCAL_SELECT = ["id", "title", "state", "stateType", "labels"];
 
 export function localToolSpecs(): ToolSpec[] {
   return [
@@ -53,6 +58,24 @@ export function localToolSpecs(): ToolSpec[] {
         required: ["issueId"],
       },
     },
+    {
+      name: "local_query",
+      description:
+        "Query local board issues (read-only). Filter with a JSON predicate DSL, project fields, " +
+        "order, and page. Row fields: id, identifier, title, description, state, stateType, labels, " +
+        "createdAt, updatedAt; add 'comments' to select to include each issue's comment lines. " +
+        "Args: where? (filter), select? (string[]), order_by? ([{field,dir}]), limit?, offset?.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          where: { type: "object" },
+          select: { type: "array", items: { type: "string" } },
+          order_by: { type: "array", items: { type: "object" } },
+          limit: { type: "number" },
+          offset: { type: "number" },
+        },
+      },
+    },
   ];
 }
 
@@ -92,6 +115,28 @@ export async function executeLocalTool(
         );
         return { success: true, result: { issue: { id, status, title, description }, comments } };
       }
+      case "local_query": {
+        const spec = parseQuerySpec(args);
+        const select = parseSelect(args.select) ?? DEFAULT_LOCAL_SELECT;
+        // Surface malformed board files instead of hiding them; a query never throws on a bad file.
+        const skipped: Array<{ id: string; error: string }> = [];
+        const queryStore = storeFor(settings, {
+          onSkip: ({ id, error }) => skipped.push({ id, error }),
+        });
+        const records = (await queryStore.list()).map(toLocalRecord);
+        const { rows, total } = applyQuery(records, spec);
+        const includeComments = select.includes("comments");
+        const out: Array<Record<string, unknown>> = [];
+        for (const row of rows) {
+          const projected = pickFields(row, select);
+          // `comments` is not on the base record (it costs an extra read); fetch it only when asked.
+          if (includeComments) {
+            projected.comments = (await queryStore.readContent(String(row.id))).comments;
+          }
+          out.push(projected);
+        }
+        return { success: true, result: { rows: out, total, skipped } };
+      }
       default:
         return {
           success: false,
@@ -105,8 +150,26 @@ export async function executeLocalTool(
   }
 }
 
-function storeFor(settings: Settings): BoardStore {
-  return new BoardStore(resolveBoardDir(settings.tracker.path));
+function storeFor(settings: Settings, options: BoardStoreOptions = {}): BoardStore {
+  return new BoardStore(resolveBoardDir(settings.tracker.path), {
+    ...(settings.tracker.idPrefix !== undefined ? { idPrefix: settings.tracker.idPrefix } : {}),
+    ...options,
+  });
+}
+
+/** Flat, filterable view of a board issue for `local_query` (comments are fetched on demand). */
+function toLocalRecord(issue: Issue): Record<string, unknown> {
+  return {
+    id: issue.id,
+    identifier: issue.identifier,
+    title: issue.title,
+    description: issue.description ?? null,
+    state: issue.state,
+    stateType: issue.stateType,
+    labels: issue.labels,
+    createdAt: issue.createdAt ?? null,
+    updatedAt: issue.updatedAt ?? null,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

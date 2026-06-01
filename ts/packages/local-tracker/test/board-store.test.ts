@@ -135,6 +135,45 @@ test("readContent rejects a missing or invalid id", async () => {
   await assert.rejects(() => store.readContent("BOARD-404"));
 });
 
+test("a custom idPrefix mints <prefix><n>, ignores other-prefix and stray files, and round-trips", async () => {
+  const dir = await tempBoard();
+  const store = new BoardStore(dir, { idPrefix: "XXX-" });
+
+  const a = await store.create({ title: "First", status: "Todo" });
+  assert.equal(a.id, "XXX-1");
+  assert.equal(a.identifier, "XXX-1");
+  assert.match(await readFile(path.join(dir, "XXX-1.md"), "utf8"), /status: Todo/);
+
+  // A file with the DEFAULT prefix is NOT an issue on an XXX- board, and a stray .md is ignored.
+  await writeFile(path.join(dir, "BOARD-9.md"), "---\nstatus: Todo\n---\n# Foreign\n", "utf8");
+  await writeFile(path.join(dir, "README.md"), "# not an issue\n", "utf8");
+  assert.deepEqual(
+    (await store.list()).map((i) => i.identifier),
+    ["XXX-1"],
+  );
+
+  // nextId continues the XXX- sequence and never collides with the ignored BOARD-9.
+  const b = await store.create({ title: "Second", status: "Todo" });
+  assert.equal(b.id, "XXX-2");
+
+  // read / update / comment all work against the custom-prefix id.
+  await store.updateStatus("XXX-1", "Done");
+  await store.appendComment("XXX-1", "did the thing", () => new Date("2026-06-01T00:00:00Z"));
+  const read = await store.readContent("XXX-1");
+  assert.equal(read.status, "Done");
+  assert.deepEqual(read.comments, ["- 2026-06-01T00:00:00.000Z agent: did the thing"]);
+
+  // An id with the wrong prefix is rejected by the prefix-aware path-safety guard.
+  await assert.rejects(() => store.readContent("BOARD-1"), /invalid.*id|XXX-/i);
+});
+
+test("an unsafe idPrefix is rejected by the BoardStore constructor", async () => {
+  const dir = await tempBoard();
+  assert.throws(() => new BoardStore(dir, { idPrefix: "../evil" }), /id_prefix/);
+  assert.throws(() => new BoardStore(dir, { idPrefix: "a/b" }), /id_prefix/);
+  assert.throws(() => new BoardStore(dir, { idPrefix: "" }), /id_prefix/);
+});
+
 test("byStatus filters case-insensitively; getByIds preserves order and skips missing", async () => {
   const dir = await tempBoard();
   const store = new BoardStore(dir);

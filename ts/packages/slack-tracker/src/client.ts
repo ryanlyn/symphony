@@ -1,5 +1,5 @@
 import { defaultStateType, normalizeIssue } from "@symphony/issue";
-import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
+import type { Issue, IssueStateType, RuntimeTrackerClient, Settings } from "@symphony/domain";
 
 import {
   isBotMention,
@@ -37,6 +37,52 @@ export function deriveLabels(text: string): string[] {
     labels.push(label);
   }
   return labels;
+}
+
+/**
+ * A flat, agent-facing view of a Slack issue derived from its source message. Shared by the
+ * read tooling (`slack_query`) and {@link SlackTrackerClient.toIssue} so the two never drift on
+ * how a message maps to a title/state/labels.
+ */
+export interface SlackIssueRow {
+  /** `<channel>:<ts>` - the canonical Slack issue id. */
+  issueId: string;
+  channel: string;
+  ts: string;
+  /** First line of the message with the leading bot mention stripped (falls back to the ts). */
+  title: string;
+  /** Reaction-derived workflow state (e.g. "In Progress", "Done"), or "Todo" when none. */
+  state: string;
+  stateType: IssueStateType;
+  labels: string[];
+  /** Full message text. */
+  text: string;
+  reactions: string[];
+}
+
+/**
+ * Map a Slack message onto the flat {@link SlackIssueRow} view using the same status/title/label
+ * derivation the tracker uses for candidate issues. Pure; performs no IO.
+ */
+export function slackMessageToRow(message: SlackMessage, settings: Settings): SlackIssueRow {
+  const map = statusEmojiMap(settings);
+  const state = stateFromReactions(message.reactions, map);
+  const firstLine = (message.text.split("\n")[0] ?? "").trim();
+  const title = stripLeadingMention(firstLine, settings.tracker.botUserId).trim() || message.ts;
+  // normalizeIssue requires a stateType. Fall back to "backlog" for custom emoji_states mappings
+  // whose state name is not a known category, so an unknown status never crashes the read.
+  const stateType = defaultStateType(state) ?? "backlog";
+  return {
+    issueId: `${message.channel}:${message.ts}`,
+    channel: message.channel,
+    ts: message.ts,
+    title,
+    state,
+    stateType,
+    labels: deriveLabels(message.text),
+    text: message.text,
+    reactions: [...message.reactions],
+  };
 }
 
 export class SlackTrackerClient implements RuntimeTrackerClient {
@@ -82,21 +128,15 @@ export class SlackTrackerClient implements RuntimeTrackerClient {
   }
 
   private toIssue(message: SlackMessage): Issue {
-    const state = stateFromReactions(message.reactions, statusEmojiMap(this.settings));
-    const firstLine = (message.text.split("\n")[0] ?? "").trim();
-    const title =
-      stripLeadingMention(firstLine, this.settings.tracker.botUserId).trim() || message.ts;
-    // normalizeIssue requires a stateType. Fall back to "backlog" for custom emoji_states
-    // mappings whose state name is not a known category, so they never crash the read.
-    const stateType = defaultStateType(state) ?? "backlog";
+    const row = slackMessageToRow(message, this.settings);
     return normalizeIssue({
-      id: `${message.channel}:${message.ts}`,
+      id: row.issueId,
       identifier: `SLK-${message.ts.replace(/\./g, "-")}`,
-      title,
+      title: row.title,
       description: message.text,
-      state,
-      state_type: stateType,
-      labels: deriveLabels(message.text),
+      state: row.state,
+      state_type: row.stateType,
+      labels: row.labels,
       raw: message,
     });
   }

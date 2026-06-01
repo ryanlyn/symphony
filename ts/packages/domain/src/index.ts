@@ -156,6 +156,11 @@ export interface TrackerSettings {
   assignee?: string | undefined;
   /** Local tracker board directory (e.g. `.symphony/local`). Used when `kind === "local"`. */
   path?: string | undefined;
+  /**
+   * Local tracker issue-id prefix (e.g. `"BOARD-"`, `"XXX-"`). Issue files are `<prefix><n>.md`
+   * and new ids are minted with this prefix. Defaults to `"BOARD-"`. Used when `kind === "local"`.
+   */
+  idPrefix?: string | undefined;
   /** Slack channel IDs to watch for mentions. Used when `kind === "slack"`. */
   channels?: string[] | undefined;
   /**

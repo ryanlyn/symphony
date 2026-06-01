@@ -21,11 +21,35 @@ interface ParsedFile {
 const COMMENTS_MARKER = "<!-- symphony:comments -->";
 
 /**
- * The only id shape {@link BoardStore} ever mints (see {@link BoardStore.nextId}).
- * Anything else - including ids containing path separators, "..", or NUL - is rejected
- * before it can reach the filesystem, closing off path traversal via agent-supplied ids.
+ * Default issue-id prefix. {@link BoardStore} mints ids shaped `<prefix><n>` (see
+ * {@link BoardStore.nextId}); the prefix is configurable per board (tracker.id_prefix) and
+ * defaults to this. Anything not matching `^<prefix>\d+$` - including ids containing path
+ * separators, "..", or NUL - is rejected before it can reach the filesystem, closing off path
+ * traversal via agent-supplied ids.
  */
-const ID_PATTERN = /^BOARD-\d+$/;
+export const DEFAULT_ID_PREFIX = "BOARD-";
+
+/**
+ * Valid id prefixes: an alphanumeric, then alphanumerics / `_` / `-`. Disallowing `.`, `/`, `\`,
+ * whitespace and NUL keeps every minted filename inside the board dir (no traversal) and keeps
+ * `<prefix><n>` an unambiguous, safe filename stem. The trailing `-` in "BOARD-" is allowed.
+ */
+const ID_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** Escape a string for safe literal interpolation into a RegExp (the configured prefix). */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Throw if `prefix` is not a safe id prefix (letters/digits, then letters/digits/`_`/`-`). */
+function assertValidIdPrefix(prefix: string): void {
+  if (!ID_PREFIX_PATTERN.test(prefix)) {
+    throw new Error(
+      `invalid board id_prefix: ${JSON.stringify(prefix)} ` +
+        `(must start alphanumeric, then only letters, digits, "_" or "-")`,
+    );
+  }
+}
 
 /**
  * Module-level (process-wide) lock chain keyed by an absolute filesystem path. Because
@@ -144,16 +168,29 @@ export interface BoardStoreOptions {
    * stay strict and throw rather than routing through this callback.
    */
   onSkip?: (skip: SkippedBoardFile) => void;
+  /**
+   * Issue-id prefix for this board (e.g. `"BOARD-"`, `"XXX-"`). Ids are `<prefix><n>`; only
+   * `<prefix><n>.md` files are treated as issues, and new ids are minted with this prefix.
+   * Defaults to {@link DEFAULT_ID_PREFIX}. Must be filesystem-safe (see {@link assertValidIdPrefix});
+   * an invalid prefix throws from the constructor.
+   */
+  idPrefix?: string;
 }
 
 export class BoardStore {
   private readonly onSkip: ((skip: SkippedBoardFile) => void) | undefined;
+  private readonly idPrefix: string;
+  /** `^<prefix>\d+$` - the canonical id shape this board mints and accepts. */
+  private readonly idPattern: RegExp;
 
   constructor(
     private readonly dir: string,
     options: BoardStoreOptions = {},
   ) {
     this.onSkip = options.onSkip;
+    this.idPrefix = options.idPrefix ?? DEFAULT_ID_PREFIX;
+    assertValidIdPrefix(this.idPrefix);
+    this.idPattern = new RegExp(`^${escapeRegExp(this.idPrefix)}\\d+$`);
   }
 
   async list(): Promise<Issue[]> {
@@ -172,7 +209,7 @@ export class BoardStore {
   }
 
   async getByIds(ids: string[]): Promise<Issue[]> {
-    for (const id of ids) assertValidId(id);
+    for (const id of ids) this.assertValidId(id);
     const existing = new Set(await this.issueIds());
     const out: Issue[] = [];
     for (const id of ids) if (existing.has(id)) out.push(await this.read(id));
@@ -185,7 +222,7 @@ export class BoardStore {
   }
 
   async updateStatus(id: string, status: string): Promise<Issue> {
-    assertValidId(id);
+    this.assertValidId(id);
     const trimmed = status.trim();
     // Reject an empty/whitespace-only status BEFORE writing: a blank status produces a file
     // that parse() rejects as "missing required 'status'", which would silently drop the issue
@@ -202,7 +239,7 @@ export class BoardStore {
   }
 
   async appendComment(id: string, body: string, now: () => Date = () => new Date()): Promise<void> {
-    assertValidId(id);
+    this.assertValidId(id);
     // Same per-file lock as updateStatus: the parse -> append -> write cycle must be atomic with
     // respect to other mutations of this issue, otherwise concurrent comments overwrite each other.
     await withLock(this.filePath(id), async () => {
@@ -221,7 +258,7 @@ export class BoardStore {
    * block is split into individual "- ..." entries (empty array when the issue has no comments).
    */
   async readContent(id: string): Promise<BoardIssueContent> {
-    assertValidId(id);
+    this.assertValidId(id);
     const parsed = await this.parse(id);
     const comments = parsed.comments.trim() === "" ? [] : parsed.comments.split("\n");
     return {
@@ -261,14 +298,14 @@ export class BoardStore {
       // with EEXIST if the target already exists, so it is collision-safe (two racing creates can
       // never pick the same BOARD-<n>, and an external writer is still defended against) AND
       // crash-safe (a process death mid-write leaves only the ignored temp, never a truncated
-      // BOARD-<n>.md - issueIds() filters to /^BOARD-\d+$/ so the dotted temp is invisible). On
+      // <prefix><n>.md - issueIds() filters to ^<prefix>\d+$ so the dotted temp is invisible). On
       // EEXIST we recompute nextId and retry the link, reusing the same fully-written temp file.
       //
-      // The temp name is NOT a "<BOARD-n>.md" stem (it is dotted and ends in .tmp) so it is never
+      // The temp name is NOT a "<prefix><n>.md" stem (it is dotted and ends in .tmp) so it is never
       // mistaken for an issue; the id is not part of the name because one temp serves every retry.
       const tmp = path.join(
         this.dir,
-        `.BOARD-create.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
+        `.symphony-create.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`,
       );
       try {
         await fs.writeFile(tmp, contents, "utf8");
@@ -346,7 +383,7 @@ export class BoardStore {
   }
 
   private filePath(id: string): string {
-    assertValidId(id);
+    this.assertValidId(id);
     const resolved = path.resolve(this.dir, `${id}.md`);
     // Defense in depth: even with a valid-looking id, refuse any path that escapes the board dir.
     const base = path.resolve(this.dir);
@@ -379,18 +416,19 @@ export class BoardStore {
         .filter((f) => f.endsWith(".md"))
         .map((f) => f.slice(0, -3))
         // Keep ONLY canonical board ids (the same shape filePath/assertValidId enforce). Stray
-        // markdown files (README.md, notes.md) are not board issues, so ignoring them here keeps
-        // list()/getByIds()/byStatus() clean AND prevents nextId() from feeding a non-BOARD stem
-        // into boardNumber() (whose MAX_SAFE_INTEGER fallback would otherwise blow up id allocation).
-        .filter((id) => ID_PATTERN.test(id))
-        .sort((a, b) => boardNumber(a) - boardNumber(b))
+        // markdown files (README.md, notes.md) and files with a different prefix are not board
+        // issues, so ignoring them here keeps list()/getByIds()/byStatus() clean AND prevents
+        // nextId() from feeding a non-matching stem into boardNumber() (whose MAX_SAFE_INTEGER
+        // fallback would otherwise blow up id allocation).
+        .filter((id) => this.idPattern.test(id))
+        .sort((a, b) => this.boardNumber(a) - this.boardNumber(b))
     );
   }
 
   private async nextId(): Promise<string> {
     let max = 0;
-    for (const id of await this.issueIds()) max = Math.max(max, boardNumber(id));
-    return `BOARD-${max + 1}`;
+    for (const id of await this.issueIds()) max = Math.max(max, this.boardNumber(id));
+    return `${this.idPrefix}${max + 1}`;
   }
 
   private async read(id: string): Promise<Issue> {
@@ -455,17 +493,24 @@ export class BoardStore {
       throw err;
     }
   }
-}
 
-function assertValidId(id: string): void {
-  if (!ID_PATTERN.test(id)) {
-    throw new Error(`invalid board issue id: ${JSON.stringify(id)} (expected BOARD-<n>)`);
+  /** Reject any id not matching this board's `^<prefix>\d+$` (defends agent-supplied ids). */
+  private assertValidId(id: string): void {
+    if (!this.idPattern.test(id)) {
+      throw new Error(
+        `invalid board issue id: ${JSON.stringify(id)} (expected ${this.idPrefix}<n>)`,
+      );
+    }
   }
-}
 
-function boardNumber(id: string): number {
-  const m = /^BOARD-(\d+)$/.exec(id);
-  return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+  /**
+   * Numeric suffix of a canonical id (e.g. "XXX-7" -> 7). Callers pass ids that already matched
+   * idPattern, so the slice after the prefix is always digits; the fallback is belt-and-suspenders.
+   */
+  private boardNumber(id: string): number {
+    const n = Number(id.slice(this.idPrefix.length));
+    return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER;
+  }
 }
 
 function splitFrontmatter(raw: string): { frontmatter: string | null; body: string } {

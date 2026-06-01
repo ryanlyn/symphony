@@ -560,6 +560,25 @@ test("parses local tracker config with path", () => {
   assert.equal(settings.tracker.path, ".symphony/local");
 });
 
+test("local tracker id_prefix defaults to BOARD- and can be overridden", () => {
+  const def = parseConfig({ tracker: { kind: "local" } }, {});
+  assert.equal(def.tracker.idPrefix, "BOARD-");
+
+  const custom = parseConfig({ tracker: { kind: "local", id_prefix: "XXX-" } }, {});
+  assert.equal(custom.tracker.idPrefix, "XXX-");
+});
+
+test("an unsafe id_prefix is rejected at config parse", () => {
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "local", id_prefix: "../evil" } }, {}),
+    /id_prefix/,
+  );
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "local", id_prefix: "a/b" } }, {}),
+    /id_prefix/,
+  );
+});
+
 test("parses slack tracker config with channels, emoji overrides, and token env", () => {
   const settings = parseConfig(
     { tracker: { kind: "slack", channels: ["C1", "C2"], emoji_states: { rocket: "Shipped" } } },

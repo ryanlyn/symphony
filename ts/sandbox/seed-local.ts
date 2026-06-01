@@ -4,16 +4,18 @@
  * immediately, without a Linear API key or workspace.
  *
  * Usage:
- *   npx tsx sandbox/seed-local.ts [dir] [count]
+ *   npx tsx sandbox/seed-local.ts [dir] [count] [idPrefix]
  *
- * Arguments (both optional):
- *   dir    target board directory (default: .symphony/local)
- *   count  how many of the sample issues to create (default: all of them)
+ * Arguments (all optional):
+ *   dir       target board directory (default: .symphony/local)
+ *   count     how many of the sample issues to create (default: all of them)
+ *   idPrefix  issue-id prefix to mint with (default: BOARD-); match your workflow's tracker.id_prefix
  *
  * Examples:
  *   npx tsx sandbox/seed-local.ts                       # seeds ./.symphony/local
  *   npx tsx sandbox/seed-local.ts /tmp/demo-board       # seeds an explicit dir
  *   npx tsx sandbox/seed-local.ts .symphony/local 2     # seeds only the first 2 issues
+ *   npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX- # seeds XXX-1..XXX-3
  *
  * Issues are written as `BOARD-<n>.md` files via @symphony/local-tracker's BoardStore so
  * the ids and on-disk format stay correct and match what the running tracker expects.
@@ -81,8 +83,9 @@ export const SEED_ISSUES: readonly SeedIssue[] = [
 export async function seedLocalBoard(
   dir: string,
   count: number = SEED_ISSUES.length,
+  idPrefix?: string,
 ): Promise<{ id: string; title: string; state: string }[]> {
-  const store = new BoardStore(dir);
+  const store = new BoardStore(dir, idPrefix !== undefined ? { idPrefix } : {});
   const created: { id: string; title: string; state: string }[] = [];
   for (const issue of SEED_ISSUES.slice(0, count)) {
     const result = await store.create({
@@ -98,8 +101,9 @@ export async function seedLocalBoard(
 async function main(): Promise<void> {
   const dir = process.argv[2] ?? ".symphony/local";
   const count = process.argv[3] ? parseInt(process.argv[3], 10) : SEED_ISSUES.length;
+  const idPrefix = process.argv[4];
 
-  const created = await seedLocalBoard(dir, count);
+  const created = await seedLocalBoard(dir, count, idPrefix);
   for (const issue of created) {
     console.log(`Created: ${issue.id} [${issue.state}] - ${issue.title}`);
   }

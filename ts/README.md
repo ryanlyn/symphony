@@ -141,6 +141,7 @@ Configure it with `kind: local` and a board `path` (default `.symphony/local`):
 tracker:
   kind: local
   path: .symphony/local
+  id_prefix: "BOARD-" # optional, default "BOARD-"
   active_states:
     - Todo
     - In Progress
@@ -149,11 +150,16 @@ tracker:
     - Cancelled
 ```
 
-`path` is the only local-specific setting and is always defaulted, so a local workflow is valid
-with just `kind: local`.
+Both `path` and `id_prefix` are local-specific and always defaulted, so a local workflow is valid
+with just `kind: local`. `id_prefix` sets the issue-id prefix for the board: the tracker only treats
+`<prefix><n>.md` files as issues and mints new ids with it, so one board can be `BOARD-1`, `BOARD-2`
+and another `XXX-1`, `FEAT-1`, etc. It must be filesystem-safe (start alphanumeric, then only
+letters, digits, `_` or `-`); an unsafe prefix is rejected at config load. Changing the prefix of an
+existing board orphans files written under the old prefix (they stop matching), so set it up front.
 
-Each issue is one file named `BOARD-<n>.md` (for example `.symphony/local/BOARD-7.md`). The
-identifier is the file stem (`BOARD-7`). The format is YAML front matter followed by a `# Title`
+Each issue is one file named `<prefix><n>.md` (for example `.symphony/local/BOARD-7.md`, or
+`.symphony/local/XXX-7.md` with `id_prefix: "XXX-"`). The identifier is the file stem (`BOARD-7`).
+The format is YAML front matter followed by a `# Title`
 heading, the description, and an optional `## Comments` section:
 
 <!-- prettier-ignore -->
@@ -203,12 +209,14 @@ To seed a board so you can try `kind: local` immediately, use the demo seeder, w
 sample `BOARD-<n>.md` files through the same `BoardStore` the running tracker uses:
 
 ```sh
-npx tsx sandbox/seed-local.ts                  # seeds ./.symphony/local
-npx tsx sandbox/seed-local.ts /tmp/demo-board  # seeds an explicit directory
-npx tsx sandbox/seed-local.ts .symphony/local 2 # seeds only the first 2 issues
+npx tsx sandbox/seed-local.ts                    # seeds ./.symphony/local
+npx tsx sandbox/seed-local.ts /tmp/demo-board    # seeds an explicit directory
+npx tsx sandbox/seed-local.ts .symphony/local 2  # seeds only the first 2 issues
+npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX-  # seeds XXX-1..XXX-3 (match tracker.id_prefix)
 ```
 
-Point `tracker.path` at the directory you seeded and run Symphony as usual.
+Point `tracker.path` at the directory you seeded and run Symphony as usual. If you set a custom
+`id_prefix`, pass the same prefix to the seeder so the seeded ids match what the tracker expects.
 
 ### Slack tracker (mention + reaction)
 

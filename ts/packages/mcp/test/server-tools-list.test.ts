@@ -58,6 +58,7 @@ test("MCP tools/list advertises the local board tools for a local tracker", asyn
     "local_comment",
     "local_create_issue",
     "local_read_issue",
+    "local_query",
   ]);
 });
 
@@ -66,6 +67,7 @@ test("MCP tools/list advertises the slack tools for a slack tracker", async () =
     "slack_update_status",
     "slack_comment",
     "slack_read_thread",
+    "slack_query",
   ]);
 });
 

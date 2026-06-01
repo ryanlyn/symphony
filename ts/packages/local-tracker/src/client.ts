@@ -19,6 +19,7 @@ export class LocalTrackerClient implements RuntimeTrackerClient {
   ) {
     const dir = resolveBoardDir(settings.tracker.path, { cwd, env });
     this.store = new BoardStore(dir, {
+      ...(settings.tracker.idPrefix !== undefined ? { idPrefix: settings.tracker.idPrefix } : {}),
       // A malformed file in the board dir must not abort candidate discovery (and the poll);
       // skip it but log a warning so the operator can see and fix the offending file.
       onSkip: ({ id, error }) =>

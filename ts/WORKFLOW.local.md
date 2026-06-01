@@ -1,7 +1,8 @@
 ---
 tracker:
   kind: local
-  path: .symphony/local
+  path: .symphony/local/symphony
+  id_prefix: "BOARD-" # optional, default "BOARD-"; sets the <prefix><n> issue-id shape
   active_states:
     - Todo
     - In Progress

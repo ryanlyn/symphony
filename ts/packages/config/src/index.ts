@@ -129,6 +129,7 @@ const trackerRawSchema = z
     projectSlug: z.string().optional(),
     assignee: z.string().optional(),
     path: z.string().optional(),
+    idPrefix: z.string().optional(),
     channels: z.array(z.string()).optional(),
     botUserId: z.string().optional(),
     emojiStates: z.record(z.string(), z.string()).optional(),
@@ -252,6 +253,7 @@ type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;
 const trackerAliases = {
   api_key: "apiKey",
   project_slug: "projectSlug",
+  id_prefix: "idPrefix",
   bot_user_id: "botUserId",
   emoji_states: "emojiStates",
   active_states: "activeStates",
@@ -349,6 +351,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
       kind: undefined,
       endpoint: "https://api.linear.app/graphql",
       path: ".symphony/local",
+      idPrefix: "BOARD-",
       activeStates: ["Todo", "In Progress"],
       terminalStates: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
       dispatch: {
@@ -511,6 +514,21 @@ export function normalizeRouteName(value: unknown): string {
   return String(value).trim().toLowerCase();
 }
 
+/**
+ * Local-tracker issue-id prefixes must be filesystem-safe so `<prefix><n>.md` can never escape the
+ * board dir. Mirrors BoardStore's own guard (config must not import the tracker packages, so the
+ * rule is duplicated here as the user-facing validation). Default "BOARD-" satisfies it.
+ */
+const LOCAL_ID_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+function assertValidLocalIdPrefix(prefix: string): void {
+  if (!LOCAL_ID_PREFIX_PATTERN.test(prefix)) {
+    throw new Error(
+      `tracker.id_prefix ${JSON.stringify(prefix)} is invalid: ` +
+        `must start alphanumeric, then only letters, digits, "_" or "-"`,
+    );
+  }
+}
+
 function parseTracker(
   defaults: TrackerSettings,
   trackerRaw: TrackerRaw,
@@ -529,12 +547,15 @@ function parseTracker(
   const botUserId = resolveConfiguredSecret(trackerRaw.botUserId, env, "SLACK_BOT_USER_ID");
   const endpointDefault = kind === "slack" ? "https://slack.com/api" : defaults.endpoint;
   const emojiStates = parseEmojiStates(trackerRaw.emojiStates);
+  const idPrefix = trackerRaw.idPrefix ?? defaults.idPrefix ?? "BOARD-";
+  assertValidLocalIdPrefix(idPrefix);
 
   return {
     ...defaults,
     kind,
     endpoint: trackerRaw.endpoint ?? endpointDefault,
     path: trackerRaw.path ?? defaults.path ?? ".symphony/local",
+    idPrefix,
     apiKey,
     projectSlug,
     assignee,
