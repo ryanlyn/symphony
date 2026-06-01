@@ -7,14 +7,12 @@ import {
   normalizeIssue,
   Orchestrator,
   parseConfig,
-  readResumeState,
   runtimeAdapters,
-  writeResumeState,
 } from "@symphony/cli";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
-import { initGitRepo, tempDir, writeExecutable } from "../../../test/helpers.js";
+import { tempDir, writeExecutable } from "../../../test/helpers.js";
 
 import { SymphonyRuntime } from "@symphony/runtime";
 
@@ -119,7 +117,7 @@ test("runtime schedules continuation retry after normal worker exit even when is
   assert.ok(retry);
   assert.equal(retry.identifier, "MT-INACTIVE-CONTINUATION");
   assert.equal(retry.attempt, 1);
-  const delayMs = new Date(retry.dueAt).getTime() - beforeRun;
+  const delayMs = new Date(retry.dueAtIso).getTime() - beforeRun;
   assert.ok(delayMs >= 900 && delayMs <= 1_500);
 });
 
@@ -409,15 +407,7 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   const workflow = workflowFixture(root);
   workflow.settings.codex.stallTimeoutMs = 50;
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
-  await initGitRepo(workspace);
-  await writeResumeState(workspace, {
-    agentKind: "codex",
-    resumeId: "stale-stalled-resume",
-    issueId: issue.id,
-    issueIdentifier: issue.identifier,
-    issueState: issue.state,
-    workspacePath: workspace,
-  });
+  const deletedResumeStates: string[] = [];
   const orchestrator = new Orchestrator(workflow.settings);
   let aborted = false;
   const runtime = new SymphonyRuntime(
@@ -427,6 +417,9 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
       client: {
         fetchCandidateIssues: async () => [issue],
         fetchIssuesByIds: async () => [issue],
+      },
+      deleteResumeState: async (workspacePath) => {
+        deletedResumeStates.push(workspacePath);
       },
       runner: async ({ abortSignal, onUpdate }) => {
         onUpdate?.({ type: "workspace_prepared", workspacePath: workspace });
@@ -458,7 +451,7 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
     assert.equal(snapshot.running.length, 0);
     assert.equal(snapshot.runHistory[0]?.outcome, "stalled");
     assert.equal(snapshot.retrying[0]?.attempt, 1);
-    assert.equal((await readResumeState(workspace)).status, "missing");
+    assert.deepEqual(deletedResumeStates, [workspace]);
     assert.ok(snapshot.recentEvents.some((event) => event.type === "run_stalled"));
     assert.ok(snapshot.recentEvents.some((event) => event.type === "resume_state_invalidated"));
   } finally {
@@ -937,7 +930,8 @@ test("runtime records failed attempts as retryable work and keeps polling", asyn
 
   const retry = orchestrator.snapshot().retrying[0];
   assert.ok(retry);
-  retry.dueAt = new Date(Date.now() - 1);
+  retry.dueAtIso = new Date(Date.now() - 1).toISOString();
+  retry.monotonicDeadlineMs = 0;
   await runtime.pollOnce({ waitForRuns: true });
   snapshot = runtime.snapshot();
   assert.equal(attempts, 2);
@@ -954,21 +948,16 @@ test("runtime invalidates resume state before scheduling failure retry", async (
   const issue = issueFixture("issue-failure-resume", "MT-FAILURE-RESUME");
   const workflow = workflowFixture(root);
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
-  await initGitRepo(workspace);
-  await writeResumeState(workspace, {
-    agentKind: "codex",
-    resumeId: "stale-failure-resume",
-    issueId: issue.id,
-    issueIdentifier: issue.identifier,
-    issueState: issue.state,
-    workspacePath: workspace,
-  });
+  const deletedResumeStates: string[] = [];
   const runtime = new SymphonyRuntime(
     runtimeOptions({
       workflow,
       client: {
         fetchCandidateIssues: async () => [issue],
         fetchIssuesByIds: async () => [issue],
+      },
+      deleteResumeState: async (workspacePath) => {
+        deletedResumeStates.push(workspacePath);
       },
       runner: async ({ onUpdate }) => {
         onUpdate?.({ type: "workspace_prepared", workspacePath: workspace });
@@ -982,20 +971,16 @@ test("runtime invalidates resume state before scheduling failure retry", async (
   const snapshot = runtime.snapshot();
   assert.equal(snapshot.runHistory[0]?.outcome, "failed");
   assert.equal(snapshot.retrying[0]?.attempt, 1);
-  assert.equal((await readResumeState(workspace)).status, "missing");
+  assert.deepEqual(deletedResumeStates, [workspace]);
   assert.ok(snapshot.recentEvents.some((event) => event.type === "resume_state_invalidated"));
 });
 
-// NOTE: This test intentionally exercises real timers (not vi.useFakeTimers()) to
-// verify that retry scheduling fires independently of the poll cadence. The
-// maxRetryBackoffMs is set to 20ms and waitFor timeouts are generous (3s) to
-// tolerate CI load without flakiness.
 test("runtime schedules retry refresh timers independently of the poll cadence", async () => {
   const issue = issueFixture("issue-timer-retry", "MT-TIMER");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   const workflow = workflowFixture();
   workflow.settings.polling.intervalMs = 60_000;
-  workflow.settings.agent.maxRetryBackoffMs = 20;
+  workflow.settings.agent.maxRetryBackoffMs = 500;
   let attempts = 0;
   const runtime = new SymphonyRuntime(
     runtimeOptions({

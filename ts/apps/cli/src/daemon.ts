@@ -7,7 +7,7 @@ import {
   type RunAgentAttemptInput,
   type RunResult,
 } from "@symphony/agent-runner";
-import { defaultSettings, type DefaultSettingsOptions } from "@symphony/config";
+import type { DefaultSettingsOptions } from "@symphony/config";
 import { CodexAppServerExecutor } from "@symphony/codex";
 import type { RuntimeTrackerClient, Settings } from "@symphony/domain";
 import { createWorkspaceForIssue, removeIssueWorkspaces, runHook } from "@symphony/workspace";
@@ -22,10 +22,6 @@ import { LinearClient } from "@symphony/linear-tracker";
 import { LocalTrackerClient } from "@symphony/local-tracker";
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
 import { SlackTrackerClient, SlackWebTransport } from "@symphony/slack-tracker";
-
-export function runtimeDefaultSettings(): Settings {
-  return defaultSettings(runtimeDefaultSettingsOptions());
-}
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
   return { tmpdir: os.tmpdir(), cwd: process.cwd() };
@@ -44,8 +40,12 @@ export function createTrackerClient(
   switch (kind) {
     case "memory":
       return new MemoryTrackerClient(memoryIssuesFromEnv(env));
-    case "linear":
-      return new LinearClient(settings);
+    case "linear": {
+      const client = new LinearClient(settings);
+      // Resolve project slugs (e.g. from project_labels) in the background; from origin/main.
+      void client.resolveProjectSlugs();
+      return client;
+    }
     case "local":
       return new LocalTrackerClient(settings);
     case "slack":
