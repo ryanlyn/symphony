@@ -8,7 +8,7 @@ import {
   reconciliationStopReason,
   type RuntimeReconciliationReason,
 } from "@symphony/policies/reconciliation";
-import { isTerminalState } from "@symphony/issue";
+import { ensembleSize, isTerminalState } from "@symphony/issue";
 import { Orchestrator } from "@symphony/orchestrator";
 import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
@@ -579,6 +579,18 @@ export class SymphonyRuntime {
         !issueHasOpenBlockers(issue, this.workflow.settings)
       ) {
         this.orchestrator.refreshRunningIssue(issue);
+        const newSize = ensembleSize(issue) ?? this.workflow.settings.agent.ensembleSize;
+        const excessSlots = this.orchestrator
+          .snapshot()
+          .running.filter((e) => e.issue.id === issue.id && e.slotIndex >= newSize)
+          .sort((a, b) => b.slotIndex - a.slotIndex);
+        for (const excess of excessSlots) {
+          const key = slotKey(excess.issue.id, excess.slotIndex);
+          const handle = this.activeRuns.get(key);
+          this.orchestrator.finish(excess.issue.id, excess.slotIndex, false);
+          handle?.finishExternally();
+          this.addEvent("run_reconciled", `${excess.identifier} ensemble_shrink`);
+        }
         continue;
       }
       this.abortIssueRuns(issue.id);
