@@ -122,7 +122,13 @@ test("config reload that adds worker pools leaves running workspaces in place", 
       agent: { max_concurrent_agents: 4 },
     }),
   );
-  const issue = normalizeIssue({ id: "i1", identifier: "MT-1", title: "One", state: "Todo" });
+  const issue = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "One",
+    state: "Todo",
+    stateType: "unstarted",
+  });
 
   const claimed = orchestrator.claim(issue);
   assert.equal(claimed?.workerHost, "worker-a");
@@ -146,7 +152,13 @@ test("config reload that adds worker pools leaves running workspaces in place", 
   assert.equal(running[0]?.sessionId, "session-1");
 
   // The newly added pool only takes future dispatches; the existing run stays put.
-  const secondIssue = normalizeIssue({ id: "i2", identifier: "MT-2", title: "Two", state: "Todo" });
+  const secondIssue = normalizeIssue({
+    id: "i2",
+    identifier: "MT-2",
+    title: "Two",
+    state: "Todo",
+    stateType: "unstarted",
+  });
   assert.equal(orchestrator.claim(secondIssue)?.workerHost, "worker-b");
   assert.equal(orchestrator.snapshot().running[0]?.workerHost, "worker-a");
 });
@@ -158,8 +170,20 @@ test("config reload that removes a worker pool keeps its running workspace until
       agent: { max_concurrent_agents: 4 },
     }),
   );
-  const first = normalizeIssue({ id: "i1", identifier: "MT-1", title: "One", state: "Todo" });
-  const second = normalizeIssue({ id: "i2", identifier: "MT-2", title: "Two", state: "Todo" });
+  const first = normalizeIssue({
+    id: "i1",
+    identifier: "MT-1",
+    title: "One",
+    state: "Todo",
+    stateType: "unstarted",
+  });
+  const second = normalizeIssue({
+    id: "i2",
+    identifier: "MT-2",
+    title: "Two",
+    state: "Todo",
+    stateType: "unstarted",
+  });
 
   assert.equal(orchestrator.claim(first)?.workerHost, "worker-a");
   const onRemovedHost = orchestrator.claim(second);
@@ -183,7 +207,13 @@ test("config reload that removes a worker pool keeps its running workspace until
   assert.equal(stillRunning?.workspacePath, "/work/worker-b/MT-2");
 
   // New dispatches only consider the remaining pool; worker-a is at capacity so the next issue blocks.
-  const third = normalizeIssue({ id: "i3", identifier: "MT-3", title: "Three", state: "Todo" });
+  const third = normalizeIssue({
+    id: "i3",
+    identifier: "MT-3",
+    title: "Three",
+    state: "Todo",
+    stateType: "unstarted",
+  });
   assert.deepEqual(orchestrator.eligibleIssues([third]), []);
   assert.equal(orchestrator.snapshot().blocked[0]?.reason, "worker_host_capacity");
 });
