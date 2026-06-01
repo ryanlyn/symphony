@@ -30,7 +30,11 @@ export function createTrackerClient(
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimeTrackerClient {
   if (settings.tracker.kind === "memory") return new MemoryTrackerClient(memoryIssuesFromEnv(env));
-  if (settings.tracker.kind === "linear") return new LinearClient(settings);
+  if (settings.tracker.kind === "linear") {
+    const client = new LinearClient(settings);
+    void client.resolveProjectSlugs();
+    return client;
+  }
   throw new Error("tracker.kind is required");
 }
 

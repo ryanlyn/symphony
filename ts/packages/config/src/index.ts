@@ -147,6 +147,8 @@ const trackerRawSchema = z
     endpoint: z.string().optional(),
     apiKey: z.string().optional(),
     projectSlug: z.string().optional(),
+    projectSlugs: z.array(z.string()).optional(),
+    projectLabels: z.array(z.string()).optional(),
     assignee: z.string().optional(),
     activeStates: z.array(z.string()).optional(),
     terminalStates: z.array(z.string()).optional(),
@@ -268,6 +270,8 @@ type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;
 const trackerAliases = {
   api_key: "apiKey",
   project_slug: "projectSlug",
+  project_slugs: "projectSlugs",
+  project_labels: "projectLabels",
   active_states: "activeStates",
   terminal_states: "terminalStates",
 };
@@ -471,7 +475,19 @@ export function validateDispatchConfig(settings: Settings): void {
   if (!settings.tracker.kind) throw new Error("tracker.kind is required");
   if (settings.tracker.kind === "linear") {
     if (!settings.tracker.apiKey) throw new Error("tracker.api_key is required");
-    if (!settings.tracker.projectSlug) throw new Error("tracker.project_slug is required");
+    const { projectSlug, projectSlugs, projectLabels } = settings.tracker;
+    const hasSlug = !!projectSlug;
+    const hasSlugs = !!projectSlugs && projectSlugs.length > 0;
+    const hasLabels = !!projectLabels && projectLabels.length > 0;
+    const count = [hasSlug, hasSlugs, hasLabels].filter(Boolean).length;
+    if (count === 0)
+      throw new Error(
+        "tracker.project_slug, tracker.project_slugs, or tracker.project_labels is required",
+      );
+    if (count > 1)
+      throw new Error(
+        "tracker.project_slug, tracker.project_slugs, and tracker.project_labels are mutually exclusive",
+      );
   }
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
@@ -519,12 +535,17 @@ function parseTracker(
   const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
   const assignee = resolveConfiguredSecret(trackerRaw.assignee, env, "LINEAR_ASSIGNEE");
 
+  const projectSlugs = trackerRaw.projectSlugs?.length ? trackerRaw.projectSlugs : undefined;
+  const projectLabels = trackerRaw.projectLabels?.length ? trackerRaw.projectLabels : undefined;
+
   return {
     ...defaults,
     kind,
     endpoint: trackerRaw.endpoint ?? defaults.endpoint,
     apiKey,
     projectSlug,
+    projectSlugs,
+    projectLabels,
     assignee,
     activeStates: trackerRaw.activeStates ?? defaults.activeStates,
     terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
