@@ -54,9 +54,7 @@ function SessionTable({
               >
                 {session.identifier ?? session.issueId}
               </a>
-              {session.title && (
-                <span className="truncate text-muted">{session.title}</span>
-              )}
+              {session.title && <span className="truncate text-muted">{session.title}</span>}
               {session.agentKind && (
                 <span className="ml-auto rounded bg-surface px-2 py-0.5 text-xs text-muted">
                   {session.agentKind}
@@ -130,21 +128,9 @@ export function OpsOverview() {
 
       {/* Session tables */}
       <div className="grid gap-6 lg:grid-cols-3">
-        <SessionTable
-          title="Running Sessions"
-          sessions={running}
-          emptyText="No active sessions"
-        />
-        <SessionTable
-          title="Retry Queue"
-          sessions={retrying}
-          emptyText="No pending retries"
-        />
-        <SessionTable
-          title="Blocked Issues"
-          sessions={blocked}
-          emptyText="No blocked issues"
-        />
+        <SessionTable title="Running Sessions" sessions={running} emptyText="No active sessions" />
+        <SessionTable title="Retry Queue" sessions={retrying} emptyText="No pending retries" />
+        <SessionTable title="Blocked Issues" sessions={blocked} emptyText="No blocked issues" />
       </div>
     </div>
   );

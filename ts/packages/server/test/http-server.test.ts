@@ -68,7 +68,10 @@ test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, 
 
     const dashboard = await getJson(server.url("/"), 503);
     assert.deepEqual(dashboard, {
-      error: { code: "dashboard_not_built", message: "Dashboard assets not found. Run: pnpm dashboard:build" },
+      error: {
+        code: "dashboard_not_built",
+        message: "Dashboard assets not found. Run: pnpm dashboard:build",
+      },
     });
 
     const events = await getEventStream(server.url("/api/v1/events"));
@@ -166,7 +169,10 @@ test("observability HTTP API matches Elixir snapshot timeout and unavailable bra
 
     const dashboard = await getJson(unavailable.url("/"), 503);
     assert.deepEqual(dashboard, {
-      error: { code: "dashboard_not_built", message: "Dashboard assets not found. Run: pnpm dashboard:build" },
+      error: {
+        code: "dashboard_not_built",
+        message: "Dashboard assets not found. Run: pnpm dashboard:build",
+      },
     });
   } finally {
     await unavailable.stop();
@@ -350,7 +356,6 @@ async function postRawMcp(
   assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
   return response.json();
 }
-
 
 async function getEventStream(url: string): Promise<string> {
   const controller = new AbortController();

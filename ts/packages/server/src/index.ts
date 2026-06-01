@@ -14,6 +14,7 @@ import { issuePayload, runsPayload, statePayload, type PresenterParams } from "@
 import { executeTool, toolSpecs } from "@symphony/mcp";
 import type { RuntimeSnapshot } from "@symphony/runtime-events";
 import type { Settings } from "@symphony/domain";
+import type { TraceWatcher } from "@symphony/traceviz-server";
 
 import { createTraceRoutes } from "./trace-routes.js";
 import { createWsHandler } from "./ws.js";
@@ -43,11 +44,10 @@ export async function startObservabilityServer(
   runtime: RuntimeServerSource,
   options: ObservabilityServerOptions,
 ): Promise<ObservabilityServerHandle> {
-  const app = buildObservabilityApp(runtime, options);
+  const { app, watcher } = buildObservabilityApp(runtime, options);
   let internals: HonoServerInternals | undefined;
 
-  if (options.traceDir) {
-    const { watcher } = createTraceRoutes(options.traceDir);
+  if (watcher) {
     const wsSetup = createWsHandler(app, watcher);
     internals = {
       injectWebSocket: wsSetup.injectWebSocket,
@@ -105,10 +105,15 @@ async function startHonoServer(
   };
 }
 
+interface BuildResult {
+  app: Hono;
+  watcher: TraceWatcher | null;
+}
+
 function buildObservabilityApp(
   runtime: RuntimeServerSource,
   options: ObservabilityServerOptions,
-): Hono {
+): BuildResult {
   const app = new Hono();
   const settings = runtimeSettings(runtime);
   if (settings) mountClaudeMcp(app, settings);
@@ -125,7 +130,12 @@ function buildObservabilityApp(
       return htmlResponse(content);
     } catch {
       return jsonResponse(
-        { error: { code: "dashboard_not_built", message: "Dashboard assets not found. Run: pnpm dashboard:build" } },
+        {
+          error: {
+            code: "dashboard_not_built",
+            message: "Dashboard assets not found. Run: pnpm dashboard:build",
+          },
+        },
         503,
       );
     }
@@ -174,9 +184,11 @@ function buildObservabilityApp(
   app.all("/api/v1/refresh", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
 
   // Mount trace routes BEFORE the :identifier catch-all
+  let watcher: TraceWatcher | null = null;
   if (options.traceDir) {
-    const { app: traceApp } = createTraceRoutes(options.traceDir);
-    app.route("/", traceApp);
+    const traceRoutes = createTraceRoutes(options.traceDir);
+    watcher = traceRoutes.watcher;
+    app.route("/", traceRoutes.app);
   }
 
   app.get("/api/v1/:identifier", (c) => {
@@ -196,7 +208,7 @@ function buildObservabilityApp(
   );
 
   app.notFound(() => errorResponse(404, "not_found", "Route not found"));
-  return app;
+  return { app, watcher };
 }
 
 function runtimeSettings(runtime: RuntimeServerSource): Settings | null {
