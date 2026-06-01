@@ -58,10 +58,16 @@ export class Orchestrator {
   eligibleIssues(issues: Issue[]): Issue[] {
     this.cleanupRetryAttempts(issues);
     this.state.blockedDispatches = [];
-    const runningByState = new Map<string, number>();
+    const issuesByState = new Map<string, Set<string>>();
     for (const entry of this.state.running.values()) {
       const key = normalizeStateName(entry.issue.state);
-      runningByState.set(key, (runningByState.get(key) ?? 0) + 1);
+      let ids = issuesByState.get(key);
+      if (!ids) { ids = new Set(); issuesByState.set(key, ids); }
+      ids.add(entry.issue.id);
+    }
+    const runningByState = new Map<string, number>();
+    for (const [st, ids] of issuesByState) {
+      runningByState.set(st, ids.size);
     }
 
     return sortForDispatch(issues).filter((issue) => {
@@ -93,10 +99,16 @@ export class Orchestrator {
     const retry = this.state.retryAttempts.get(issue.id);
     if (retry && this.clock.monotonicMs() >= retry.monotonicDeadlineMs)
       this.releaseStaleClaimsForRetry(issue.id);
-    const runningByState = new Map<string, number>();
+    const issuesByState = new Map<string, Set<string>>();
     for (const entry of this.state.running.values()) {
       const key = normalizeStateName(entry.issue.state);
-      runningByState.set(key, (runningByState.get(key) ?? 0) + 1);
+      let ids = issuesByState.get(key);
+      if (!ids) { ids = new Set(); issuesByState.set(key, ids); }
+      ids.add(entry.issue.id);
+    }
+    const runningByState = new Map<string, number>();
+    for (const [st, ids] of issuesByState) {
+      runningByState.set(st, ids.size);
     }
     if (
       !shouldDispatchIssue(issue, this.settings, {
