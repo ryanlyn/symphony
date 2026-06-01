@@ -186,7 +186,7 @@ export function createDaemonCommand(name = "symphony-ts"): Command {
     .option("--once", "Poll once and exit.")
     .option("--dry-run", "Evaluate candidates without dispatching agents.")
     .option("--no-tui", "Disable the terminal dashboard.")
-    .option("--no-dashboard", "Disable the web dashboard and traceviz server.")
+    .option("--no-dashboard", "Disable the web dashboard server.")
     .option(
       "--logs-root <path>",
       "Root directory for Symphony logs.",

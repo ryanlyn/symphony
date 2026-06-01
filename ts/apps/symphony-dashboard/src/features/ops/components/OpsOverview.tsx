@@ -1,7 +1,7 @@
 import { Activity, RefreshCw, AlertOctagon, Coins } from "lucide-react";
 
 import { useOpsStream } from "../hooks/useOpsStream";
-import { cn, formatNumber } from "../lib/utils";
+import { cn, formatNumber } from "../../../lib/utils";
 import type { OpsSessionEntry } from "../api/types";
 
 interface MetricCardProps {
