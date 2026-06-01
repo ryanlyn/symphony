@@ -34,7 +34,7 @@ import {
 } from "../apps/cli/src/daemon.js";
 import { runAgentAttempt } from "../apps/cli/src/daemon.js";
 
-const TASK_DESCRIPTION = `Create a pyproject.toml file with httpx as a dependency, then echo the current datetime to stdout. When done, mark the linear issue as Done`;
+const TASK_DESCRIPTION = `Create a pyproject.toml file with httpx as a dependency. Then use the Skill tool to invoke the "echo-datetime" skill. Then search the web for today's weather in Sydney, Australia and save a brief summary of the result to a file called weather.txt. When done, mark the linear issue as Done`;
 
 const TRACE_DIR = "/tmp/symphony-e2e-traces";
 const WORKSPACE_ROOT = "/tmp/symphony-e2e-workspaces";
@@ -111,6 +111,8 @@ Instructions:
 2. Create the requested files in the current working directory.
 3. Do not create extra files beyond what is asked.
 4. When done, report what you created.
+5. You have a skill called 'echo-datetime' available. Invoke it using the Skill tool with args containing the skill name. The skill simply echoes the current datetime to stdout using bash.
+6. Search the web for today's weather in Sydney, Australia and save the result summary to weather.txt
 `;
 }
 
@@ -260,6 +262,65 @@ async function verifyTraces(rawLogPath: string, traceJsonlPath: string) {
   if (!kinds.has("turn_started")) {
     throw new Error("Expected at least one turn_started event");
   }
+
+  // Verify turns grow monotonically by +1
+  const turnStarts = events.filter((e) => e.kind === "turn_started");
+  for (let i = 0; i < turnStarts.length; i++) {
+    const t = turnStarts[i] as { turnIndex: number };
+    if (t.turnIndex !== i + 1) {
+      throw new Error(`Turn indices not monotonic: expected ${i + 1}, got ${t.turnIndex}`);
+    }
+  }
+  console.log(`[e2e] Turn indices are monotonic (1..${turnStarts.length})`);
+
+  // Verify no empty text events
+  const emptyEvents = events.filter(
+    (e) =>
+      (e.kind === "thought" || e.kind === "message") && !(e as { text: string }).text.trim(),
+  );
+  if (emptyEvents.length > 0) {
+    throw new Error(`Found ${emptyEvents.length} empty thought/message events`);
+  }
+  console.log(`[e2e] No empty text events found`);
+
+  // Verify messages are merged (no consecutive same-kind text events)
+  for (let i = 1; i < events.length; i++) {
+    const prev = events[i - 1];
+    const curr = events[i];
+    if (
+      (prev.kind === "thought" && curr.kind === "thought") ||
+      (prev.kind === "message" && curr.kind === "message")
+    ) {
+      throw new Error(
+        `Consecutive ${curr.kind} events at index ${i - 1}/${i} - messages should be merged`,
+      );
+    }
+  }
+  console.log(`[e2e] No consecutive same-kind text events (merging works)`);
+
+  // Verify skill tool usage (claude-only, codex doesn't have Skill tool)
+  const agentKind = process.env.SYMPHONY_E2E_AGENT_KIND ?? "codex";
+  const skillEvents = events.filter(
+    (e) => e.kind === "tool_call" && (e as any).category === "skill",
+  );
+  if (agentKind === "claude" && skillEvents.length === 0) {
+    throw new Error("Expected at least one tool_call event with category 'skill'");
+  }
+  console.log(`[e2e] Found ${skillEvents.length} skill tool_call event(s)`);
+
+  // Verify web search/fetch tool usage (claude-only, codex doesn't have WebFetch)
+  const webEvents = events.filter(
+    (e) =>
+      e.kind === "tool_call" &&
+      ((e as any).category === "web" ||
+        ((e as any).toolName && /WebSearch|WebFetch/i.test((e as any).toolName))),
+  );
+  if (agentKind === "claude" && webEvents.length === 0) {
+    throw new Error(
+      "Expected at least one tool_call event with category 'web' or toolName matching WebSearch/WebFetch",
+    );
+  }
+  console.log(`[e2e] Found ${webEvents.length} web tool_call event(s)`);
 
   return { traceLineCount: traceLines.length, eventCount: events.length, kinds: [...kinds] };
 }

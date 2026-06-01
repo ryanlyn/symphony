@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Code, ChevronDown } from "lucide-react";
+import { Code, ChevronDown, Wrench } from "lucide-react";
 
 import type { ToolCallEvent as ToolCallEventType } from "../../api/types";
 import { formatTimestamp, formatDuration, cn } from "../../../../lib/utils";
@@ -15,23 +15,43 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
     <div
       className={cn(
         "border-l-4 rounded-r-md bg-background/50 p-3",
-        event.isError ? "border-accent-red" : "border-accent-orange",
+        event.isError
+          ? "border-accent-red"
+          : event.category === "skill"
+            ? "border-accent-purple"
+            : "border-accent-orange",
       )}
     >
       <div className="flex items-start gap-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
-        <Code
-          className={cn(
-            "mt-0.5 h-4 w-4 shrink-0",
-            event.isError ? "text-accent-red" : "text-accent-orange",
-          )}
-        />
+        {event.category === "skill" ? (
+          <Wrench
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0",
+              event.isError ? "text-accent-red" : "text-accent-purple",
+            )}
+          />
+        ) : (
+          <Code
+            className={cn(
+              "mt-0.5 h-4 w-4 shrink-0",
+              event.isError ? "text-accent-red" : "text-accent-orange",
+            )}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
             <span className="font-mono text-sm font-medium">{event.toolName}</span>
-            <span className="rounded-full bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted">
-              {event.category}
-            </span>
+            {event.category === "skill" ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-accent-purple/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+                🔧{" "}
+                {(event.input?.skill as string) || (event.input?.name as string) || event.toolName}
+              </span>
+            ) : (
+              <span className="rounded-full bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted">
+                {event.category}
+              </span>
+            )}
             {event.durationMs != null && (
               <span className="text-[10px] text-muted">{formatDuration(event.durationMs)}</span>
             )}

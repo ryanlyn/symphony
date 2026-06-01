@@ -44,6 +44,7 @@ const TOOL_NAME_CATEGORIES: Record<string, ToolCategory> = {
   NotebookEdit: "file_operation",
   // web
   WebFetch: "web",
+  WebSearch: "web",
   // agent
   Agent: "agent",
   // todo
@@ -123,7 +124,13 @@ function extractAcpToolCall(
   const update = rec.update as Record<string, unknown> | undefined;
   if (!update) return null;
   if (update.sessionUpdate !== "tool_call") return null;
-  const name = (update.title as string) ?? (update.kind as string) ?? "unknown";
+  const meta = update._meta as Record<string, unknown> | undefined;
+  const claudeCode = meta?.claudeCode as Record<string, unknown> | undefined;
+  const name =
+    (claudeCode?.toolName as string) ??
+    (update.title as string) ??
+    (update.kind as string) ??
+    "unknown";
   const id = (update.toolCallId as string) ?? "";
   const input = (update.rawInput as Record<string, unknown>) ?? {};
   return { name, id, input };
@@ -277,7 +284,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               (typeof msg === "object" && msg !== null
                 ? (((msg as Record<string, unknown>).text as string) ?? "")
                 : ""));
-        if (text) events.push({ kind: "thought", text, timestamp: ts });
+        if (text && text.trim()) events.push({ kind: "thought", text, timestamp: ts });
         break;
       }
 
@@ -289,7 +296,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               (typeof msg === "object" && msg !== null
                 ? (((msg as Record<string, unknown>).text as string) ?? "")
                 : ""));
-        if (text) events.push({ kind: "message", text, timestamp: ts });
+        if (text && text.trim()) events.push({ kind: "message", text, timestamp: ts });
         break;
       }
 
@@ -616,7 +623,28 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     events.push(pending.event);
   }
 
-  return events;
+  return mergeConsecutiveTextEvents(events);
+}
+
+function mergeConsecutiveTextEvents(events: DisplayEvent[]): DisplayEvent[] {
+  if (events.length === 0) return events;
+  const merged: DisplayEvent[] = [];
+
+  for (const event of events) {
+    if (event.kind !== "thought" && event.kind !== "message") {
+      merged.push(event);
+      continue;
+    }
+    if (!event.text.trim()) continue;
+    const prev = merged[merged.length - 1];
+    if (prev && prev.kind === event.kind) {
+      (prev as { text: string }).text += event.text;
+    } else {
+      merged.push({ ...event });
+    }
+  }
+
+  return merged;
 }
 
 /**
