@@ -342,6 +342,7 @@ export class SymphonyRuntime {
       if (options.dryRun) {
         this.addEvent("dry_run", `eligible=${eligibleIssues.length} candidates=${issues.length}`);
       } else {
+        this.orchestrator.resetCycleCounters();
         for (const issue of eligibleIssues) {
           dispatched.push(...(await this.maybeDispatch(issue)));
         }

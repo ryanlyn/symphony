@@ -46,6 +46,8 @@ export function createState(): OrchestratorState {
 
 export class Orchestrator {
   readonly state: OrchestratorState;
+  private cycleRunningFloor = 0;
+  private cycleHostFloor = new Map<string, number>();
 
   constructor(
     public settings: Settings,
@@ -55,8 +57,22 @@ export class Orchestrator {
     this.state = state;
   }
 
+  resetCycleCounters(): void {
+    this.cycleRunningFloor = this.state.running.size;
+    this.cycleHostFloor.clear();
+    const counts = new Map<string, number>();
+    for (const entry of this.state.running.values()) {
+      if (entry.workerHost != null)
+        counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+    }
+    for (const [host, count] of counts) {
+      this.cycleHostFloor.set(host, count);
+    }
+  }
+
   eligibleIssues(issues: Issue[]): Issue[] {
     this.cleanupRetryAttempts(issues);
+    this.resetCycleCounters();
     this.state.blockedDispatches = [];
     const issuesByState = new Map<string, Set<string>>();
     for (const entry of this.state.running.values()) {
@@ -118,9 +134,10 @@ export class Orchestrator {
     for (const [st, ids] of issuesByState) {
       runningByState.set(st, ids.size);
     }
+    const effectiveRunning = Math.max(this.state.running.size, this.cycleRunningFloor);
     if (
       !shouldDispatchIssue(issue, this.settings, {
-        runningCount: this.state.running.size,
+        runningCount: effectiveRunning,
         runningByState,
         claimedSlots: this.state.claimed,
         workerCapacityAvailable: this.workerCapacityAvailable(),
@@ -178,6 +195,10 @@ export class Orchestrator {
     const counts = new Map<string, number>();
     for (const entry of this.state.running.values()) {
       if (entry.workerHost != null) counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+    }
+    for (const [host, floor] of this.cycleHostFloor) {
+      const live = counts.get(host) ?? 0;
+      if (live < floor) counts.set(host, floor);
     }
     return selectLeastLoadedHost({
       hosts: this.settings.worker.sshHosts,
