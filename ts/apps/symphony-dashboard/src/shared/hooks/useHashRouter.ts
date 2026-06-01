@@ -4,7 +4,7 @@ export type Route = { view: "overview" } | { view: "trace"; issueId: string };
 
 function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, "") || "/";
-  const traceMatch = path.match(/^\/trace(?:\/(.+))?$/);
+  const traceMatch = path.match(/^\/trace(?:\/(.+)?)?$/);
   if (traceMatch) {
     return { view: "trace", issueId: traceMatch[1] ? decodeURIComponent(traceMatch[1]) : "" };
   }
