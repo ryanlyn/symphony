@@ -106,7 +106,7 @@ class RunController {
     }
 
     // A shared workspace is reused by every issue, so its resume state cannot be tied to one run.
-    const resumeEnabled = settings.workspace.shared !== true;
+    const resumeEnabled = settings.workspace.isolation !== "none";
     let resumeId: string | null = null;
     if (resumeEnabled) {
       const resume = await readResumeState(

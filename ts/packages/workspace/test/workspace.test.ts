@@ -22,7 +22,7 @@ function makeSettings(
   workspace: Partial<Settings["workspace"]> = {},
 ): Settings {
   return {
-    workspace: { root, ...workspace },
+    workspace: { root, isolation: "per-agent", ...workspace },
     worker: { sshHosts: [], sshTimeoutMs: 5_000 },
     hooks: { timeoutMs: 5_000, ...hooks },
   } as unknown as Settings;
@@ -138,11 +138,11 @@ test("createWorkspaceForIssue — runs afterCreate hook on new workspace", async
   assert.ok(stat.isFile());
 });
 
-// --- shared workspace (shared: true) ---
+// --- shared workspace (isolation: "none") ---
 
 test("createWorkspaceForIssue — shared mode returns the root for every issue", async () => {
   const root = await tempDir("ws-shared");
-  const settings = makeSettings(root, {}, { shared: true });
+  const settings = makeSettings(root, {}, { isolation: "none" });
   const canonicalRoot = await fs.realpath(root);
   const first = await createWorkspaceForIssue(settings, sampleIssue);
   const second = await createWorkspaceForIssue(settings, { ...sampleIssue, identifier: "MT-2" });
@@ -152,14 +152,14 @@ test("createWorkspaceForIssue — shared mode returns the root for every issue",
 
 test("validateWorkspaceCwd — shared mode allows the root as cwd", async () => {
   const root = await tempDir("ws-shared");
-  const settings = makeSettings(root, {}, { shared: true });
+  const settings = makeSettings(root, {}, { isolation: "none" });
   const result = await validateWorkspaceCwd(settings, root);
   assert.equal(result, await fs.realpath(root));
 });
 
 test("removeIssueWorkspaces — shared mode never deletes the root", async () => {
   const root = await tempDir("ws-shared");
-  const settings = makeSettings(root, {}, { shared: true });
+  const settings = makeSettings(root, {}, { isolation: "none" });
   await createWorkspaceForIssue(settings, sampleIssue);
   await removeIssueWorkspaces(settings, sampleIssue.identifier);
   const stat = await fs.stat(root);
@@ -170,7 +170,7 @@ test("createWorkspaceForIssue — shared mode never runs the afterCreate hook", 
   const root = await tempDir("ws-shared");
   // Hooks can never reach this path through parseConfig (it rejects them); construct directly to
   // prove the shared code path itself runs no hooks, independent of config validation.
-  const settings = makeSettings(root, { afterCreate: "touch .hook-ran" }, { shared: true });
+  const settings = makeSettings(root, { afterCreate: "touch .hook-ran" }, { isolation: "none" });
   const ws = await createWorkspaceForIssue(settings, sampleIssue);
   await assert.rejects(
     () => fs.stat(path.join(ws, ".hook-ran")),
@@ -184,7 +184,7 @@ test("removeIssueWorkspaces — shared mode never runs the beforeRemove hook", a
   const settings = makeSettings(
     root,
     { beforeRemove: `touch ${JSON.stringify(marker)}` },
-    { shared: true },
+    { isolation: "none" },
   );
   await createWorkspaceForIssue(settings, sampleIssue);
   await removeIssueWorkspaces(settings, sampleIssue.identifier);

@@ -118,59 +118,69 @@ test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde path
   assert.equal(settings.workspace.rootExpression, "~/override");
 });
 
-test("workspace defaults to per-run isolation", () => {
-  assert.equal(parseConfig({}).workspace.shared, false);
+test("workspace defaults to per-agent isolation", () => {
+  assert.equal(parseConfig({}).workspace.isolation, "per-agent");
 });
 
-test("workspace.shared sets the shared root and enables shared mode", () => {
-  const settings = parseConfig({ workspace: { shared: "~/agents" } }, { HOME: os.homedir() });
-  assert.equal(settings.workspace.shared, true);
+test('workspace.isolation = "none" runs every agent in the configured root', () => {
+  const settings = parseConfig(
+    { workspace: { root: "~/agents", isolation: "none" } },
+    { HOME: os.homedir() },
+  );
+  assert.equal(settings.workspace.isolation, "none");
   assert.equal(settings.workspace.root, path.join(os.homedir(), "agents"));
   assert.equal(settings.workspace.rootExpression, "~/agents");
 });
 
-test("workspace.root and workspace.shared are mutually exclusive", () => {
-  assert.throws(
-    () => parseConfig({ workspace: { root: "/a", shared: "/b" } }),
-    /workspace.root and workspace.shared are mutually exclusive/,
-  );
+test("workspace.root accepts an explicit per-agent isolation override", () => {
+  const settings = parseConfig({ workspace: { root: "/srv/agents", isolation: "per-agent" } });
+  assert.equal(settings.workspace.isolation, "per-agent");
+  assert.equal(settings.workspace.root, "/srv/agents");
 });
 
-test("workspace.shared rejects every lifecycle hook", () => {
+test("workspace.isolation rejects unknown values", () => {
+  assert.throws(() => parseConfig({ workspace: { isolation: "per-issue" } }), /isolation/);
+});
+
+test('workspace.isolation = "none" rejects every lifecycle hook', () => {
   for (const hook of ["after_create", "before_run", "after_run", "before_remove"]) {
     assert.throws(
-      () => parseConfig({ workspace: { shared: "/srv/agents" }, hooks: { [hook]: "echo hi" } }),
-      new RegExp(`workspace.shared does not support hooks; remove ${hook}`),
+      () =>
+        parseConfig({
+          workspace: { root: "/srv/agents", isolation: "none" },
+          hooks: { [hook]: "echo hi" },
+        }),
+      new RegExp(`workspace.isolation = "none" does not support hooks; remove ${hook}`),
     );
   }
 });
 
-test("workspace.shared error lists all configured hooks", () => {
+test('workspace.isolation = "none" error lists all configured hooks', () => {
   assert.throws(
     () =>
       parseConfig({
-        workspace: { shared: "/srv/agents" },
+        workspace: { root: "/srv/agents", isolation: "none" },
         hooks: { before_run: "a", after_run: "b" },
       }),
     /remove before_run, after_run/,
   );
 });
 
-test("workspace.shared allows a hooks block with only a timeout", () => {
+test('workspace.isolation = "none" allows a hooks block with only a timeout', () => {
   const settings = parseConfig({
-    workspace: { shared: "/srv/agents" },
+    workspace: { root: "/srv/agents", isolation: "none" },
     hooks: { timeout_ms: 1_000 },
   });
-  assert.equal(settings.workspace.shared, true);
+  assert.equal(settings.workspace.isolation, "none");
   assert.equal(settings.hooks.timeoutMs, 1_000);
 });
 
-test("per-run workspaces still accept hooks", () => {
+test("per-agent workspaces still accept hooks", () => {
   const settings = parseConfig({
     workspace: { root: "/srv/agents" },
     hooks: { after_create: "echo hi" },
   });
-  assert.equal(settings.workspace.shared, false);
+  assert.equal(settings.workspace.isolation, "per-agent");
   assert.equal(settings.hooks.afterCreate, "echo hi");
 });
 

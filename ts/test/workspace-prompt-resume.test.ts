@@ -306,14 +306,18 @@ rl.on("line", (line) => {
   ]);
 });
 
-test("shared workspace rejects every hook and co-locates agents in one folder", async () => {
+test('workspace.isolation = "none" rejects every hook and co-locates agents in one folder', async () => {
   const root = await tempDir("symphony-ts-shared-ws");
 
   // A shared workspace cannot be paired with any lifecycle hook — config refuses it outright.
   for (const hook of ["after_create", "before_run", "after_run", "before_remove"]) {
     assert.throws(
-      () => parseConfig({ workspace: { shared: root }, hooks: { [hook]: "echo hi" } }),
-      /workspace.shared does not support hooks/,
+      () =>
+        parseConfig({
+          workspace: { root, isolation: "none" },
+          hooks: { [hook]: "echo hi" },
+        }),
+      /workspace.isolation = "none" does not support hooks/,
     );
   }
 
@@ -336,11 +340,11 @@ rl.on("line", (line) => {
   );
   const sharedRoot = path.join(root, "shared");
   const settings = parseConfig({
-    workspace: { shared: sharedRoot },
+    workspace: { root: sharedRoot, isolation: "none" },
     codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
     agent: { max_turns: 1 },
   });
-  assert.equal(settings.workspace.shared, true);
+  assert.equal(settings.workspace.isolation, "none");
   const workflow = {
     path: path.join(root, "WORKFLOW.md"),
     config: {},
