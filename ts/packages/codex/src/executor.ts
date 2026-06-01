@@ -206,7 +206,7 @@ export class CodexAppServerExecutor implements AgentExecutor {
           session.workspace,
         ),
         title: turnTitle(issue),
-        reasoning: session.settings.codex.reasoning ?? undefined,
+        summary: session.settings.codex.reasoning?.summary ?? undefined,
       });
       const turnId = readNestedString(turnResult, ["turn", "id"]);
       const sessionId = turnId ? `${session.threadId}-${turnId}` : (session.sessionId ?? null);
