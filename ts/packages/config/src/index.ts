@@ -175,7 +175,12 @@ const trackerRawSchema = z
   .strict();
 
 const pollingRawSchema = z.object({ intervalMs: coercedIntervalMs.optional() }).strict();
-const workspaceRawSchema = z.object({ root: z.string().optional() }).strict();
+const workspaceRawSchema = z
+  .object({
+    root: z.string().optional(),
+    isolation: z.enum(["per-agent", "none"]).optional(),
+  })
+  .strict();
 const workerRawSchema = z
   .object({
     sshHosts: z.array(z.string()).optional(),
@@ -396,6 +401,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
     workspace: {
       root: workspaceRoot,
       rootExpression: workspaceRoot,
+      isolation: "per-agent",
     },
     worker: { sshHosts: [], sshTimeoutMs: 60_000 },
     hooks: { timeoutMs: 60_000 },
@@ -443,6 +449,7 @@ export function parseConfig(
   );
   settings.workspace.rootExpression = workspaceRootExpression;
   settings.workspace.root = expandLocalPath(workspaceRootExpression, env);
+  settings.workspace.isolation = workspaceRaw.isolation ?? settings.workspace.isolation;
 
   const workerRaw = parsed.worker ?? {};
   settings.worker.sshHosts = workerRaw.sshHosts ?? settings.worker.sshHosts;
@@ -452,6 +459,7 @@ export function parseConfig(
   }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
+  if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
   settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
   settings.codex = parseCodex(settings.codex, parsed.codex ?? {});
   settings.claude = parseClaude(settings.claude, parsed.claude ?? {});
@@ -627,6 +635,18 @@ function parseDispatch(defaults: TrackerSettings["dispatch"], raw: DispatchRaw) 
     onlyRoutes,
     routeLabelPrefix: (raw.routeLabelPrefix ?? defaults.routeLabelPrefix).trim(),
   };
+}
+
+function assertNoWorkspaceHooks(hooks: HooksSettings): void {
+  // Derive the lifecycle hook list from hooksAliases so adding a new hook there can't silently
+  // bypass this guard. timeout_ms is a knob, not a hook.
+  const configured = Object.entries(hooksAliases)
+    .filter(([snake, camel]) => snake !== "timeout_ms" && hooks[camel as keyof HooksSettings])
+    .map(([snake]) => snake);
+  if (configured.length === 0) return;
+  throw new Error(
+    `workspace.isolation = "none" does not support hooks; remove ${configured.join(", ")}`,
+  );
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {

@@ -306,6 +306,67 @@ rl.on("line", (line) => {
   ]);
 });
 
+test('workspace.isolation = "none" rejects every hook and co-locates agents in one folder', async () => {
+  const root = await tempDir("symphony-ts-shared-ws");
+
+  // A shared workspace cannot be paired with any lifecycle hook — config refuses it outright.
+  for (const hook of ["after_create", "before_run", "after_run", "before_remove"]) {
+    assert.throws(
+      () =>
+        parseConfig({
+          workspace: { root, isolation: "none" },
+          hooks: { [hook]: "echo hi" },
+        }),
+      /workspace.isolation = "none" does not support hooks/,
+    );
+  }
+
+  const fakeCodex = path.join(root, "fake-codex.js");
+  await writeExecutable(
+    fakeCodex,
+    `#!/usr/bin/env node
+const readline = require("readline");
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.id && msg.method === "initialize") console.log(JSON.stringify({ id: msg.id, result: {} }));
+  if (msg.id && msg.method === "thread/start") console.log(JSON.stringify({ id: msg.id, result: { thread: { id: "thread-shared" } } }));
+  if (msg.id && msg.method === "turn/start") {
+    console.log(JSON.stringify({ id: msg.id, result: { turn: { id: "turn-shared" } } }));
+    console.log(JSON.stringify({ method: "turn/completed" }));
+  }
+});
+`,
+  );
+  const sharedRoot = path.join(root, "shared");
+  const settings = parseConfig({
+    workspace: { root: sharedRoot, isolation: "none" },
+    codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
+    agent: { max_turns: 1 },
+  });
+  assert.equal(settings.workspace.isolation, "none");
+  const workflow = {
+    path: path.join(root, "WORKFLOW.md"),
+    config: {},
+    promptTemplate: "Issue {{ issue.identifier }}",
+    settings,
+  };
+
+  const first = await runAgentAttempt({ issue: sampleIssue, workflow });
+  const second = await runAgentAttempt({
+    issue: { ...sampleIssue, identifier: "MT-77" },
+    workflow,
+  });
+
+  const canonicalRoot = await fs.realpath(sharedRoot);
+  assert.equal(first.workspace, canonicalRoot);
+  assert.equal(second.workspace, canonicalRoot);
+  // No per-issue subfolder is created in shared mode.
+  const entries = await fs.readdir(canonicalRoot);
+  assert.ok(!entries.includes(safeIdentifier(sampleIssue.identifier)));
+  assert.ok(!entries.includes("MT-77"));
+});
+
 test("agent attempts persist the latest rotated Claude session id", async () => {
   const root = await tempDir("symphony-ts-claude-rotated-session");
   const fakeClaude = path.join(root, "fake-claude-acp.mjs");

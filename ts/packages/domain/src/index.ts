@@ -414,6 +414,14 @@ export interface WorkspaceSettings {
    * where home-directory and env-var expansion must happen on the worker host, not locally.
    */
   rootExpression?: string | undefined;
+  /**
+   * Controls whether each agent run gets its own `<root>/<safe-identifier>` subfolder
+   * (`"per-agent"`, the default) or all runs share `root` directly (`"none"`). Selected via the
+   * `workspace.isolation` config key. With `"none"`, session resumption is disabled and the
+   * shared folder is never auto-removed; intended for high-touchpoint setups where co-located
+   * agents are desired.
+   */
+  isolation: "per-agent" | "none";
 }
 
 /**
