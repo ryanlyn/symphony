@@ -49,7 +49,7 @@ export function isValidEnsembleSize(n: number): boolean {
  */
 export type AgentKind = string;
 
-export const TRACKER_KINDS = ["linear", "memory", "local"] as const;
+export const TRACKER_KINDS = ["linear", "memory", "local", "slack"] as const;
 
 export type TrackerKind = (typeof TRACKER_KINDS)[number];
 
@@ -202,6 +202,16 @@ export interface TrackerSettings {
    * and new ids are minted with this prefix. Defaults to `"BOARD-"`. Used when `kind === "local"`.
    */
   idPrefix?: string | undefined;
+  /** Slack channel IDs to watch for mentions. Used when `kind === "slack"`. */
+  channels?: string[] | undefined;
+  /**
+   * Slack user id of the bot/worker identity (e.g. `"U0123ABCD"`). When set, only messages that
+   * mention this user become candidate issues. When unset, any `<@U...>` mention is treated as a
+   * candidate (back-compat). Used when `kind === "slack"`.
+   */
+  botUserId?: string | undefined;
+  /** Slack emoji-name → workflow-state overrides (merged over defaults). */
+  emojiStates?: Record<string, string> | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */
   activeStates: string[];
   /** Tracker state names that mark an issue as finished; running agents on these issues are stopped and their workspaces cleaned up. */

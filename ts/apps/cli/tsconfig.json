@@ -89,6 +89,9 @@
       "path": "../../packages/memory-tracker"
     },
     {
+      "path": "../../packages/slack-tracker"
+    },
+    {
       "path": "../../packages/tui"
     },
     {

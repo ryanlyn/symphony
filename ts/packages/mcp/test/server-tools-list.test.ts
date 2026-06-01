@@ -21,6 +21,13 @@ async function localSettings(): Promise<Settings> {
   return parseConfig({ tracker: { kind: "local", path: dir } }, {});
 }
 
+function slackSettings(): Settings {
+  return parseConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U1" } },
+    { SLACK_BOT_TOKEN: "xoxb" },
+  );
+}
+
 async function toolsListNames(settings: Settings): Promise<string[]> {
   const token = issueMcpToken();
   let handle: ObservabilityServerHandle | undefined;
@@ -52,6 +59,15 @@ test("MCP tools/list advertises the local board tools for a local tracker", asyn
     "local_create_issue",
     "local_read_issue",
     "local_query",
+  ]);
+});
+
+test("MCP tools/list advertises the slack tools for a slack tracker", async () => {
+  assert.deepEqual(await toolsListNames(slackSettings()), [
+    "slack_update_status",
+    "slack_comment",
+    "slack_read_thread",
+    "slack_query",
   ]);
 });
 

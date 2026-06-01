@@ -261,6 +261,8 @@ Supported kinds:
   `LINEAR_API_KEY`) and `tracker.project_slug`; the agent both reads and writes through the
   `linear_graphql` tool. This is the original backend and is unchanged.
 - `local` - issues live as Markdown files on disk. No external service required.
+- `slack` - an @-mention of the bot is an issue, an emoji reaction is the status, and a thread
+  reply is a comment.
 - `memory` - an in-process tracker used for tests and dry runs.
 
 All kinds share the dispatch routing block under `tracker.dispatch`:
@@ -360,6 +362,103 @@ npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX-  # seeds XXX-1..XXX-3 (matc
 
 Point `tracker.path` at the directory you seeded and run Symphony as usual. If you set a custom
 `id_prefix`, pass the same prefix to the seeder so the seeded ids match what the tracker expects.
+
+### Slack tracker (mention + reaction)
+
+The Slack tracker treats an @-mention of a bot as an issue. The mentioned message's text is the
+issue title/description, threaded replies are comments, and a status emoji reaction on the source
+message is the status. See `WORKFLOW.slack.md` for a complete example workflow.
+
+Set up a Slack app:
+
+1. Create a Slack app at <https://api.slack.com/apps> (from scratch) in your workspace.
+2. Under "OAuth & Permissions", add these **bot token scopes**:
+   - `channels:history` - read messages in public channels.
+   - `groups:history` - read messages in private channels (only if you watch private channels).
+   - `reactions:read` - read the status emoji reactions on a message.
+   - `reactions:write` - set status by adding/removing the managed reaction.
+   - `chat:write` - post threaded replies as comments.
+
+   Symphony discovers issues by paging `conversations.history` and matching the bot's @-mention
+   in message text, so it does not need `app_mentions:read`. Only add that scope if you separately
+   wire up the Events API / `app_mention` subscription, which Symphony does not use today.
+
+   `conversations.history` is rate-limited (newer non-Marketplace apps can be throttled to roughly
+   one request per minute), and each poll re-scans recent channel history. The shipped Slack
+   workflow therefore sets a conservative `polling.interval_ms` of `60000` (one minute), and you
+   should point it at dedicated, low-traffic channels so a busy channel does not trigger sustained
+   `429`s. The transport's `429`/`Retry-After` backoff and per-channel `poll_error` handling cover
+   transient limits on top of that.
+
+3. Install the app to the workspace and copy the **Bot User OAuth Token** (starts with `xoxb-`).
+   Export it as `SLACK_BOT_TOKEN`; Symphony resolves it into `tracker.api_key`.
+4. Find the app's **bot user id** (the `U...` id, shown on the app's "App Home" / via
+   `auth.test`). Export it as `SLACK_BOT_USER_ID` and reference it as `tracker.bot_user_id`.
+5. Invite the bot to each channel you want it to watch (`/invite @your-bot`). A bot only sees
+   `*:history` for channels it has joined.
+6. Collect the **channel IDs** (`C...`, from the channel's "About" panel) for those channels and
+   list them under `tracker.channels`.
+
+Configure it with `kind: slack`:
+
+```yaml
+tracker:
+  kind: slack
+  channels:
+    - C0123456789
+  bot_user_id: $SLACK_BOT_USER_ID
+  emoji_states:
+    eyes: In Progress
+    white_check_mark: Done
+    x: Cancelled
+  active_states:
+    - Todo
+    - In Progress
+  terminal_states:
+    - Done
+    - Cancelled
+```
+
+`SLACK_BOT_TOKEN` (the bot token), a non-empty `channels` list, and `tracker.bot_user_id`
+(`SLACK_BOT_USER_ID`) are all **required**. The bot user id scopes issue creation to the bot's own
+mentions: only messages that mention that exact user become issues, and only that leading mention
+is stripped from the title. It is required so that ordinary human-to-human `<@U...>` mentions in a
+watched channel never spawn agents or expose their text to workers. If it is unset or resolves
+empty, config validation fails and the production transport fails closed (it scans nothing).
+
+The issue identifier is the message reference in `<channel>:<ts>` form (for example
+`C0123456789:1717000000.000100`); that is the `issueId` passed to the write tools.
+
+Status is shown as an emoji reaction on the source message, controlled by `emoji_states` (emoji
+name to state name). The default map is:
+
+- `:eyes:` -> `In Progress`
+- `:white_check_mark:` -> `Done`
+- `:x:` -> `Cancelled`
+
+A message with no managed reaction is effectively new (`Todo`). Setting status swaps the
+reaction: it removes any other status emoji it manages and adds the one for the target state.
+
+Agent tools for `kind: slack` (read and write, symmetric with `linear_graphql`):
+
+- `slack_update_status` - set the issue's status by swapping its managed emoji reaction (args:
+  `issueId`, `status`).
+- `slack_comment` - post a threaded reply on the source message as a comment (args: `issueId`,
+  `body`).
+- `slack_read_thread` - read the issue's authoritative state: its source message (text, derived
+  status, reactions) and its thread replies (args: `issueId`). Use it to re-read state and recover
+  prior progress notes on a continuation turn.
+
+There is no `slack_create_issue`: issues are created by humans @-mentioning the bot, not by the
+agent.
+
+Routing note: Slack issues carry only hashtag-derived labels (a `#tag` in the message text
+becomes the label `tag`); they are not otherwise routed or assigned. Dispatch treats a label as a
+route only when it starts with `route_label_prefix`, so the Slack workflow sets
+`route_label_prefix: route-`. Tag a message `#route-<name>` to route it: `#route-backend` becomes
+the label `route-backend`, which dispatch resolves to the route `backend` (set `only_routes`
+accordingly). Plain hashtags such as `#backend` stay non-route labels; with the default
+`accept_unrouted: true` all Slack mentions are still picked up.
 
 ## Workflow Prompt
 

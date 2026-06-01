@@ -8,5 +8,6 @@ test("tracker MCP server name is derived per kind, default linear", () => {
   assert.equal(trackerMcpServerName("linear"), "symphony_linear");
   assert.equal(trackerMcpServerName("memory"), "symphony_memory");
   assert.equal(trackerMcpServerName("local"), "symphony_local");
+  assert.equal(trackerMcpServerName("slack"), "symphony_slack");
   assert.equal(trackerMcpServerName(undefined), "symphony_linear");
 });

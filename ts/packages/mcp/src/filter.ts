@@ -1,11 +1,11 @@
 /**
- * A small, dependency-free query DSL backing the read tools of the structured trackers
- * (`local_query` today). It is the composable, side-effect-free analog of `linear_graphql`'s
- * read power: a query can never mutate the backend, so it carries no trust-boundary or
- * atomicity risk and the agent can filter/project/sort/page freely.
+ * A small, dependency-free query DSL shared by the read tools of the structured trackers
+ * (`local_query`, `slack_query`). It is the composable, side-effect-free analog of
+ * `linear_graphql`'s read power: a query can never mutate the backend, so it carries no
+ * trust-boundary or atomicity risk and the agent can filter/project/sort/page freely.
  *
  * The DSL is intentionally total - no regex, no `eval`, no JSONPath - and is evaluated in
- * memory over already-parsed records (a board `Issue[]`).
+ * memory over already-parsed records (a board `Issue[]` or a fetched Slack message list).
  * Nesting depth and node count are bounded so a hostile or runaway filter cannot blow up.
  */
 

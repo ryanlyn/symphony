@@ -1,7 +1,9 @@
 import type { Settings, TrackerKind } from "@symphony/domain";
+import type { SlackTransport } from "@symphony/slack-tracker";
 
 import { executeLinearTool, linearToolSpecs } from "./tools/linear.js";
 import { executeLocalTool, localToolSpecs } from "./tools/local.js";
+import { executeSlackTool, slackToolSpecs, slackTransportFor } from "./tools/slack.js";
 
 export interface ToolSpec {
   name: string;
@@ -18,6 +20,7 @@ export interface ToolResult {
 /** Injectables for tests; production builds real clients from settings. */
 export interface ToolDeps {
   now?: () => Date;
+  slackTransport?: SlackTransport;
 }
 
 function trackerKind(settings: Settings): TrackerKind {
@@ -35,6 +38,8 @@ export function toolSpecs(settings: Settings): ToolSpec[] {
       return linearToolSpecs();
     case "local":
       return localToolSpecs();
+    case "slack":
+      return slackToolSpecs();
     case "memory":
       return [];
     default:
@@ -47,6 +52,7 @@ export async function executeTool(
   input: unknown,
   settings: Settings,
   fetchImpl: typeof fetch = fetch,
+  deps: ToolDeps = {},
 ): Promise<ToolResult> {
   const kind = trackerKind(settings);
   switch (kind) {
@@ -54,6 +60,13 @@ export async function executeTool(
       return executeLinearTool(name, input, settings, fetchImpl);
     case "local":
       return executeLocalTool(name, input, settings);
+    case "slack":
+      return executeSlackTool(
+        name,
+        input,
+        settings,
+        slackTransportFor(settings, fetchImpl, deps.slackTransport),
+      );
     case "memory":
       return {
         success: false,

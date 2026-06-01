@@ -21,6 +21,7 @@ import {
 import { LinearClient } from "@symphony/linear-tracker";
 import { LocalTrackerClient } from "@symphony/local-tracker";
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
+import { SlackTrackerClient, SlackWebTransport } from "@symphony/slack-tracker";
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
   return { tmpdir: os.tmpdir(), cwd: process.cwd() };
@@ -47,6 +48,8 @@ export function createTrackerClient(
     }
     case "local":
       return new LocalTrackerClient(settings);
+    case "slack":
+      return new SlackTrackerClient(settings, new SlackWebTransport(settings));
     default:
       return assertNever(kind);
   }

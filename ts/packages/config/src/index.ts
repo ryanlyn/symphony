@@ -161,6 +161,9 @@ const trackerRawSchema = z
     assignee: z.string().optional(),
     path: z.string().optional(),
     idPrefix: z.string().optional(),
+    channels: z.array(z.string()).optional(),
+    botUserId: z.string().optional(),
+    emojiStates: z.record(z.string(), z.string()).optional(),
     activeStates: z.array(z.string()).optional(),
     terminalStates: z.array(z.string()).optional(),
     dispatch: z
@@ -285,6 +288,8 @@ const trackerAliases = {
   api_key: "apiKey",
   project_slug: "projectSlug",
   id_prefix: "idPrefix",
+  bot_user_id: "botUserId",
+  emoji_states: "emojiStates",
   project_slugs: "projectSlugs",
   project_labels: "projectLabels",
   active_states: "activeStates",
@@ -514,6 +519,21 @@ export function validateDispatchConfig(settings: Settings): void {
       throw new Error("tracker.path (board directory) is required for the local tracker");
     }
   }
+  if (settings.tracker.kind === "slack") {
+    if (!settings.tracker.apiKey) {
+      throw new Error("tracker.api_key (or SLACK_BOT_TOKEN) is required for the slack tracker");
+    }
+    if (!settings.tracker.channels || settings.tracker.channels.length === 0) {
+      throw new Error("tracker.channels is required for the slack tracker");
+    }
+    if (!settings.tracker.botUserId || settings.tracker.botUserId.trim() === "") {
+      throw new Error(
+        "tracker.bot_user_id (or SLACK_BOT_USER_ID) is required for the slack tracker so issue " +
+          "creation is scoped to the bot's own mentions; without it any human-to-human mention " +
+          "in a watched channel would spawn an agent",
+      );
+    }
+  }
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
   for (const override of settings.statusOverrides.values()) {
@@ -571,9 +591,13 @@ function parseTracker(
       ? defaults.kind
       : trackerKindValue(kindRaw, "tracker.kind");
 
-  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, "LINEAR_API_KEY");
+  const secretEnvVar = kind === "slack" ? "SLACK_BOT_TOKEN" : "LINEAR_API_KEY";
+  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, secretEnvVar);
   const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
   const assignee = resolveConfiguredSecret(trackerRaw.assignee, env, "LINEAR_ASSIGNEE");
+  const botUserId = resolveConfiguredSecret(trackerRaw.botUserId, env, "SLACK_BOT_USER_ID");
+  const endpointDefault = kind === "slack" ? "https://slack.com/api" : defaults.endpoint;
+  const emojiStates = parseEmojiStates(trackerRaw.emojiStates);
   const idPrefix = trackerRaw.idPrefix ?? defaults.idPrefix ?? "BOARD-";
   assertValidLocalIdPrefix(idPrefix);
 
@@ -583,7 +607,7 @@ function parseTracker(
   return {
     ...defaults,
     kind,
-    endpoint: trackerRaw.endpoint ?? defaults.endpoint,
+    endpoint: trackerRaw.endpoint ?? endpointDefault,
     path: trackerRaw.path ?? defaults.path ?? ".symphony/local",
     idPrefix,
     apiKey,
@@ -591,10 +615,27 @@ function parseTracker(
     projectSlugs,
     projectLabels,
     assignee,
+    channels: trackerRaw.channels ?? [],
+    ...(botUserId !== undefined ? { botUserId } : {}),
+    ...(emojiStates !== undefined ? { emojiStates } : {}),
     activeStates: trackerRaw.activeStates ?? defaults.activeStates,
     terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
     dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
   };
+}
+
+function parseEmojiStates(value: unknown): Record<string, string> | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("tracker.emoji_states must be a mapping of emoji name to state name");
+  }
+  const out: Record<string, string> = {};
+  for (const [emoji, state] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof state !== "string")
+      throw new Error(`tracker.emoji_states.${emoji} must be a string`);
+    out[emoji] = state;
+  }
+  return out;
 }
 
 function expandLocalPath(value: string, env: NodeJS.ProcessEnv): string {
@@ -897,8 +938,8 @@ function cloneSettings(settings: Settings): Settings {
 }
 
 /**
- * Deep-copy mutable tracker collections (dispatch and state lists) so per-issue-state clones
- * cannot mutate the shared base config.
+ * Deep-copy mutable tracker collections (dispatch, state lists, slack channels/emoji states) so
+ * per-issue-state clones cannot mutate the shared base config.
  */
 function cloneTracker(tracker: TrackerSettings): TrackerSettings {
   return {
@@ -906,6 +947,8 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
     dispatch: { ...tracker.dispatch },
     activeStates: [...tracker.activeStates],
     terminalStates: [...tracker.terminalStates],
+    ...(tracker.channels !== undefined ? { channels: [...tracker.channels] } : {}),
+    ...(tracker.emojiStates !== undefined ? { emojiStates: { ...tracker.emojiStates } } : {}),
   };
 }
 
