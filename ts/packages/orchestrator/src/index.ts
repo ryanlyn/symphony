@@ -7,7 +7,7 @@ import {
   sortForDispatch,
 } from "@symphony/dispatch";
 import { ensembleSize } from "@symphony/issue";
-import { settingsForIssueState } from "@symphony/config";
+import { normalizeStateName, settingsForIssueState } from "@symphony/config";
 import { retryBackoffMs } from "@symphony/policies/retry";
 import { mergeMonotonicUsage } from "@symphony/policies/usage";
 import { selectLeastLoadedHost } from "@symphony/policies/workerHost";
@@ -46,6 +46,8 @@ export function createState(): OrchestratorState {
 
 export class Orchestrator {
   readonly state: OrchestratorState;
+  private cycleRunningFloor = 0;
+  private cycleHostFloor = new Map<string, number>();
 
   constructor(
     public settings: Settings,
@@ -55,17 +57,52 @@ export class Orchestrator {
     this.state = state;
   }
 
+  resetCycleCounters(): void {
+    this.cycleRunningFloor = this.state.running.size;
+    this.cycleHostFloor.clear();
+    const counts = new Map<string, number>();
+    for (const entry of this.state.running.values()) {
+      if (entry.workerHost != null)
+        counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+    }
+    for (const [host, count] of counts) {
+      this.cycleHostFloor.set(host, count);
+    }
+  }
+
   eligibleIssues(issues: Issue[]): Issue[] {
     this.cleanupRetryAttempts(issues);
+    this.resetCycleCounters();
     this.state.blockedDispatches = [];
     const runningByState = new Map<string, number>();
+    const issuesByState = new Map<string, Set<string>>();
     for (const entry of this.state.running.values()) {
-      runningByState.set(entry.issue.state, (runningByState.get(entry.issue.state) ?? 0) + 1);
+      const key = normalizeStateName(entry.issue.state);
+      let ids = issuesByState.get(key);
+      if (!ids) {
+        ids = new Set();
+        issuesByState.set(key, ids);
+      }
+      ids.add(entry.issue.id);
+    }
+    for (const [st, ids] of issuesByState) {
+      runningByState.set(st, ids.size);
     }
 
     return sortForDispatch(issues).filter((issue) => {
       const retry = this.state.retryAttempts.get(issue.id);
-      if (retry && this.clock.monotonicMs() < retry.monotonicDeadlineMs) return false;
+      if (retry && this.clock.monotonicMs() < retry.monotonicDeadlineMs) {
+        const size = ensembleSize(issue) ?? this.settings.agent.ensembleSize;
+        let hasOtherUnclaimed = false;
+        for (let slot = 0; slot < size; slot++) {
+          if (slot === retry.slotIndex) continue;
+          if (!this.state.claimed.has(slotKey(issue.id, slot))) {
+            hasOtherUnclaimed = true;
+            break;
+          }
+        }
+        if (!hasOtherUnclaimed) return false;
+      }
       if (retry) this.releaseStaleClaimsForRetry(issue.id);
       const dispatchState = {
         runningCount: this.state.running.size,
@@ -93,12 +130,23 @@ export class Orchestrator {
     if (retry && this.clock.monotonicMs() >= retry.monotonicDeadlineMs)
       this.releaseStaleClaimsForRetry(issue.id);
     const runningByState = new Map<string, number>();
+    const issuesByState = new Map<string, Set<string>>();
     for (const entry of this.state.running.values()) {
-      runningByState.set(entry.issue.state, (runningByState.get(entry.issue.state) ?? 0) + 1);
+      const key = normalizeStateName(entry.issue.state);
+      let ids = issuesByState.get(key);
+      if (!ids) {
+        ids = new Set();
+        issuesByState.set(key, ids);
+      }
+      ids.add(entry.issue.id);
     }
+    for (const [st, ids] of issuesByState) {
+      runningByState.set(st, ids.size);
+    }
+    const effectiveRunning = Math.max(this.state.running.size, this.cycleRunningFloor);
     if (
       !shouldDispatchIssue(issue, this.settings, {
-        runningCount: this.state.running.size,
+        runningCount: effectiveRunning,
         runningByState,
         claimedSlots: this.state.claimed,
         workerCapacityAvailable: this.workerCapacityAvailable(),
@@ -106,18 +154,23 @@ export class Orchestrator {
     ) {
       return null;
     }
-    const slotIndex = firstUnclaimedSlot(
-      issue,
-      this.settings,
-      this.state.claimed,
-      retry?.slotIndex,
-    );
+    let effectiveClaimed: Set<string> = this.state.claimed;
+    const size = ensembleSize(issue) ?? this.settings.agent.ensembleSize;
+    if (
+      size > 1 &&
+      retry &&
+      retry.slotIndex != null &&
+      this.clock.monotonicMs() < retry.monotonicDeadlineMs
+    ) {
+      effectiveClaimed = new Set(this.state.claimed);
+      effectiveClaimed.add(slotKey(issue.id, retry.slotIndex));
+    }
+    const slotIndex = firstUnclaimedSlot(issue, this.settings, effectiveClaimed, retry?.slotIndex);
     if (slotIndex === null) return null;
     const workerHost = this.selectWorkerHost();
     if (workerHost === undefined) return null;
 
     const effective = settingsForIssueState(this.settings, issue.state);
-    const size = ensembleSize(issue) ?? this.settings.agent.ensembleSize;
     const key = slotKey(issue.id, slotIndex);
     const entry: RunningEntry = {
       issue,
@@ -150,7 +203,12 @@ export class Orchestrator {
   private selectWorkerHost(): string | null | undefined {
     const counts = new Map<string, number>();
     for (const entry of this.state.running.values()) {
-      if (entry.workerHost) counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+      if (entry.workerHost != null)
+        counts.set(entry.workerHost, (counts.get(entry.workerHost) ?? 0) + 1);
+    }
+    for (const [host, floor] of this.cycleHostFloor) {
+      const live = counts.get(host) ?? 0;
+      if (live < floor) counts.set(host, floor);
     }
     return selectLeastLoadedHost({
       hosts: this.settings.worker.sshHosts,
@@ -224,14 +282,16 @@ export class Orchestrator {
     }
   }
 
-  cleanupIssue(issueId: string): void {
+  cleanupIssue(issueId: string, options?: { preserveRetry?: boolean }): void {
     for (const [key, entry] of this.state.running.entries()) {
       if (entry.issue.id === issueId) {
         this.state.running.delete(key);
         this.state.claimed.delete(key);
       }
     }
-    this.state.retryAttempts.delete(issueId);
+    if (!options?.preserveRetry) {
+      this.state.retryAttempts.delete(issueId);
+    }
     this.state.completed.add(issueId);
   }
 

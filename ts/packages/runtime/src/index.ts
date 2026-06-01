@@ -8,7 +8,7 @@ import {
   reconciliationStopReason,
   type RuntimeReconciliationReason,
 } from "@symphony/policies/reconciliation";
-import { isTerminalState } from "@symphony/issue";
+import { ensembleSize, isTerminalState } from "@symphony/issue";
 import { Orchestrator } from "@symphony/orchestrator";
 import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
@@ -342,6 +342,7 @@ export class SymphonyRuntime {
       if (options.dryRun) {
         this.addEvent("dry_run", `eligible=${eligibleIssues.length} candidates=${issues.length}`);
       } else {
+        this.orchestrator.resetCycleCounters();
         for (const issue of eligibleIssues) {
           dispatched.push(...(await this.maybeDispatch(issue)));
         }
@@ -374,34 +375,39 @@ export class SymphonyRuntime {
       return [];
     }
 
-    const claim = this.orchestrator.claim(refreshed);
+    const runs: Array<Promise<void>> = [];
+    let claim = this.orchestrator.claim(refreshed);
     if (!claim) {
       this.addEvent("dispatch_skipped", `${refreshed.identifier} stale_before_dispatch`);
       return [];
     }
-    const key = slotKey(refreshed.id, claim.slotIndex);
-    const runId = `run-${this.nextRunNumber}`;
-    this.nextRunNumber += 1;
-    const handle = new ActiveRunHandle(key, runId, this.activeRuns);
-    this.activeRuns.set(key, handle);
-    this.addEvent("run_started", `${refreshed.identifier} slot=${claim.slotIndex}`);
+    while (claim) {
+      const key = slotKey(refreshed.id, claim.slotIndex);
+      const runId = `run-${this.nextRunNumber}`;
+      this.nextRunNumber += 1;
+      const handle = new ActiveRunHandle(key, runId, this.activeRuns);
+      this.activeRuns.set(key, handle);
+      this.addEvent("run_started", `${refreshed.identifier} slot=${claim.slotIndex}`);
 
-    const run = this.runClaim(
-      refreshed,
-      claim.slotIndex,
-      claim.agentKind,
-      runId,
-      claim.workerHost ?? null,
-      handle,
-    );
-    this.inFlight.add(run);
-    void run.finally(() => {
-      this.inFlight.delete(run);
-      this.appStatus = this.inFlight.size > 0 ? "running" : "idle";
-      this.emit();
-    });
+      const run = this.runClaim(
+        refreshed,
+        claim.slotIndex,
+        claim.agentKind,
+        runId,
+        claim.workerHost ?? null,
+        handle,
+      );
+      this.inFlight.add(run);
+      void run.finally(() => {
+        this.inFlight.delete(run);
+        this.appStatus = this.inFlight.size > 0 ? "running" : "idle";
+        this.emit();
+      });
+      runs.push(run);
+      claim = this.orchestrator.claim(refreshed);
+    }
     this.emit();
-    return [run];
+    return runs;
   }
 
   private async fetchIssueForDispatch(issue: Issue): Promise<Issue | null> {
@@ -573,13 +579,34 @@ export class SymphonyRuntime {
         !issueHasOpenBlockers(issue, this.workflow.settings)
       ) {
         this.orchestrator.refreshRunningIssue(issue);
+        const newSize = ensembleSize(issue) ?? this.workflow.settings.agent.ensembleSize;
+        const excessSlots = this.orchestrator
+          .snapshot()
+          .running.filter((e) => e.issue.id === issue.id && e.slotIndex >= newSize)
+          .sort((a, b) => b.slotIndex - a.slotIndex);
+        for (const excess of excessSlots) {
+          const key = slotKey(excess.issue.id, excess.slotIndex);
+          const handle = this.activeRuns.get(key);
+          this.orchestrator.finish(excess.issue.id, excess.slotIndex, false);
+          handle?.finishExternally();
+          this.addEvent("run_reconciled", `${excess.identifier} ensemble_shrink`);
+        }
         continue;
       }
       this.abortIssueRuns(issue.id);
-      this.orchestrator.cleanupIssue(issue.id);
-      this.clearRetryTimer(issue.id);
       const reason = reconciliationStopReason(issue, this.workflow.settings);
-      if (isTerminalState(issue.state, this.workflow.settings.tracker.terminalStates)) {
+      const isTerminal = isTerminalState(
+        issue.state,
+        this.workflow.settings.tracker.terminalStates,
+      );
+      const isInactiveOnly =
+        !issueIsActive(issue, this.workflow.settings) &&
+        routedToThisWorker(issue, this.workflow.settings) &&
+        !issueHasOpenBlockers(issue, this.workflow.settings) &&
+        !isTerminal;
+      this.orchestrator.cleanupIssue(issue.id, { preserveRetry: isInactiveOnly });
+      this.clearRetryTimer(issue.id);
+      if (isTerminal) {
         await this.removeIssueWorkspaces(
           this.workflow.settings,
           issue.identifier || tracked.get(issue.id)?.identifier,
