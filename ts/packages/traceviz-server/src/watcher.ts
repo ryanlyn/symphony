@@ -23,7 +23,7 @@ interface FileState {
   events: DisplayEvent[];
 }
 
-export type WatcherCallback = (issueId: string, events: DisplayEvent[]) => void;
+type WatcherCallback = (issueId: string, events: DisplayEvent[]) => void;
 
 export class TraceWatcher {
   private readonly traceDir: string;
