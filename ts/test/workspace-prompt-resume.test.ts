@@ -258,6 +258,9 @@ test("remote workspace creation and removal use SSH hooks and validate remote pa
   vi.unstubAllEnvs();
 });
 
+// @deprecated The following tests use executor: "appserver" to exercise the legacy app-server
+// protocol (ndjson over stdio). They will be removed when the appserver executor is removed.
+// ACP-based integration tests for workspace/prompt/resume live in agent-runner-invariants.test.ts.
 test("agent attempts run workspace hooks at lifecycle boundaries and tolerate after_run failures", async () => {
   const root = await tempDir("symphony-ts-workspace-agent-hooks");
   const workspaceRoot = path.join(root, "workspaces");

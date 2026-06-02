@@ -23,8 +23,11 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
-// Use appserver executor to test multi-turn behavior; ACP executor breaks after turn 1
-// unless tool_use_requested is emitted (see agent-runner/src/index.ts line 182).
+/**
+ * Settings using the deprecated appserver executor for multi-turn tests that
+ * do not exercise the ACP tool_use_requested break logic.
+ * @deprecated Use fakeAcpSettings() for production-path tests.
+ */
 function fakeSettings(overrides: Partial<Settings> = {}): Settings {
   const base = defaultSettings();
   const agents = {
@@ -35,6 +38,12 @@ function fakeSettings(overrides: Partial<Settings> = {}): Settings {
     },
   };
   return { ...base, agents, ...overrides };
+}
+
+/** Settings using the default ACP executor (production path). */
+function fakeAcpSettings(overrides: Partial<Settings> = {}): Settings {
+  const base = defaultSettings();
+  return { ...base, ...overrides };
 }
 
 function fakeSession(overrides: Partial<AgentSession> = {}): AgentSession {
@@ -367,5 +376,139 @@ describe("INVARIANT: When an agent run starts, the working directory SHALL be se
     });
 
     assert.equal(result.workspace, "/srv/workspaces/my-issue");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ACP Executor: tool_use_requested break logic (production path)
+// ---------------------------------------------------------------------------
+
+describe("INVARIANT (ACP): After turn 1, the loop continues regardless of tool_use_requested.", () => {
+  test("ACP executor completes turn 1 even without tool_use_requested", async () => {
+    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 3 } });
+    const prompts: string[] = [];
+
+    const result = await runAgentAttempt({
+      issue: fakeIssue(),
+      workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+      settings,
+      fetchIssue: async (iss) => iss,
+      adapters: fakeAdapters({
+        executorFactory: () => ({
+          kind: "codex",
+          async startSession(input) {
+            input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+            return fakeSession();
+          },
+          async runTurn(_session, prompt) {
+            prompts.push(prompt);
+            // No tool_use_requested update emitted
+            return [{ type: "turn_completed" }];
+          },
+        }),
+      }),
+    });
+
+    // Turn 1 always completes; turn 2 has no tool_use_requested so ACP breaks after turn 2
+    assert.equal(result.turnCount, 2);
+    assert.equal(prompts.length, 2);
+  });
+});
+
+describe("INVARIANT (ACP): After turn 2+, the loop breaks when no tool_use_requested update is emitted.", () => {
+  test("ACP executor breaks after turn 2 when no tool_use_requested is present", async () => {
+    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    const prompts: string[] = [];
+
+    const result = await runAgentAttempt({
+      issue: fakeIssue(),
+      workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+      settings,
+      fetchIssue: async (iss) => iss,
+      adapters: fakeAdapters({
+        executorFactory: () => ({
+          kind: "codex",
+          async startSession(input) {
+            input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+            return fakeSession();
+          },
+          async runTurn(_session, prompt) {
+            prompts.push(prompt);
+            return [{ type: "turn_completed" }];
+          },
+        }),
+      }),
+    });
+
+    // Turn 1 proceeds (ACP break only applies after turn >1).
+    // Turn 2 has no tool_use_requested -> break.
+    assert.equal(result.turnCount, 2);
+    assert.equal(prompts.length, 2);
+  });
+});
+
+describe("INVARIANT (ACP): After turn 2+, the loop continues when tool_use_requested IS emitted.", () => {
+  test("ACP executor continues past turn 2 when tool_use_requested is present", async () => {
+    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 4 } });
+    const prompts: string[] = [];
+
+    const result = await runAgentAttempt({
+      issue: fakeIssue(),
+      workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+      settings,
+      fetchIssue: async (iss) => iss,
+      adapters: fakeAdapters({
+        executorFactory: () => ({
+          kind: "codex",
+          async startSession(input) {
+            input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+            return fakeSession();
+          },
+          async runTurn(_session, prompt) {
+            prompts.push(prompt);
+            // Emit tool_use_requested on every turn -> loop should not break
+            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+          },
+        }),
+      }),
+    });
+
+    // All 4 turns should run because tool_use_requested is always present
+    assert.equal(result.turnCount, 4);
+    assert.equal(prompts.length, 4);
+  });
+
+  test("ACP executor breaks at the turn where tool_use_requested stops appearing", async () => {
+    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    let turnCount = 0;
+
+    const result = await runAgentAttempt({
+      issue: fakeIssue(),
+      workflow: { path: "/workflow.md", config: {}, promptTemplate: "Fix it", settings },
+      settings,
+      fetchIssue: async (iss) => iss,
+      adapters: fakeAdapters({
+        executorFactory: () => ({
+          kind: "codex",
+          async startSession(input) {
+            input.onUpdate?.({ type: "session_started", sessionId: "s1" });
+            return fakeSession();
+          },
+          async runTurn() {
+            turnCount += 1;
+            // Emit tool_use_requested on turns 1-2, stop on turn 3
+            if (turnCount <= 2) {
+              return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            }
+            return [{ type: "turn_completed" }];
+          },
+        }),
+      }),
+    });
+
+    // Turn 1: tool_use_requested present, continues (turn >1 check not triggered)
+    // Turn 2: tool_use_requested present, continues
+    // Turn 3: no tool_use_requested, breaks (turnCount > 1)
+    assert.equal(result.turnCount, 3);
   });
 });

@@ -530,6 +530,7 @@ export function validateDispatchConfig(settings: Settings): void {
   for (const kind of requiredBackends) {
     const agent = settings.agents[kind];
     if (!agent) throw new Error(`agents.${kind} is required`);
+    // @deprecated — appserver validation; remove when appserver executor is removed.
     if (agent.executor === "appserver" && !agent.command.trim()) {
       throw new Error(`${kind}.command is required`);
     }
@@ -678,7 +679,6 @@ function parseAgents(
 ): Record<string, AgentConfig> {
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
-  const appserverDefaults: AppServerAgentConfig = { executor: "appserver", ...codex };
   const claudeAcpDefaults = baseAgents.claude as AcpAgentConfig;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
@@ -688,6 +688,11 @@ function parseAgents(
     if (executor !== "appserver" && executor !== "acp") {
       throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
     }
+    if (executor === "appserver") {
+      emitDeprecationWarning(
+        `agents.${normalized}.executor = "appserver" is deprecated; migrate to executor = "acp" (codex-acp is now the default).`,
+      );
+    }
     const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
     // Use the base agent record for this name as the ACP default when available,
     // so partial overrides (e.g. codex with only stall_timeout_ms) preserve the
@@ -696,6 +701,9 @@ function parseAgents(
       (baseAgents[normalized] as AcpAgentConfig | undefined)?.executor === "acp"
         ? (baseAgents[normalized] as AcpAgentConfig)
         : claudeAcpDefaults;
+    // Lazily construct appserver defaults only for the deprecated path
+    const appserverDefaults: AppServerAgentConfig =
+      executor === "appserver" ? { executor: "appserver", ...codex } : (undefined as never);
     agents[normalized] = parseAgentRecord(parsed, {
       codex: appserverDefaults,
       claude: acpDefaults,
@@ -782,13 +790,10 @@ function applyKnownAgentRecords(settings: Settings): void {
       stallTimeoutMs: codex.stallTimeoutMs,
       reasoning: codex.reasoning ?? settings.codex.reasoning,
     };
-  } else if (codex?.executor === "acp") {
-    settings.codex = {
-      ...settings.codex,
-      turnTimeoutMs: codex.turnTimeoutMs,
-      stallTimeoutMs: codex.stallTimeoutMs,
-    };
   }
+  // When the codex executor is ACP, the authoritative config is settings.agents.codex.
+  // Do not mutate settings.codex with stale appserver-only fields.
+
   const claude = settings.agents.claude;
   if (claude?.executor === "acp") {
     settings.claude = {
@@ -1240,4 +1245,11 @@ function isOneOf<const Values extends readonly string[]>(
   values: Values,
 ): value is Values[number] {
   return (values as readonly string[]).includes(value);
+}
+
+const emittedDeprecations = new Set<string>();
+function emitDeprecationWarning(message: string): void {
+  if (emittedDeprecations.has(message)) return;
+  emittedDeprecations.add(message);
+  process.stderr.write(`[DEPRECATED] ${message}\n`);
 }
