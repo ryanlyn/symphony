@@ -6,7 +6,6 @@ import type {
   AgentKind,
   AgentConfig,
   AgentSettings,
-  AcpAgentConfig,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
@@ -441,7 +440,7 @@ export function parseConfig(
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
-  settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
+  settings.agent = parseAgentSettings(settings.agent, parsed.agent ?? {});
   settings.codex = parseCodex(settings.codex, parsed.codex ?? {});
   settings.claude = parseClaude(settings.claude, parsed.claude ?? {});
   settings.agents = parseAgents(parsed.agents ?? {}, settings.codex, settings.claude);
@@ -637,7 +636,7 @@ function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings 
   };
 }
 
-function parseAgent(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
+function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
   const kind = agentRaw.kind ?? defaults.kind;
 
   return {
@@ -656,7 +655,7 @@ function parseAgents(
 ): Record<string, AgentConfig> {
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
-  const claudeAcpDefaults = baseAgents.claude!;
+  const claudeDefaults = baseAgents.claude!;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
@@ -669,8 +668,8 @@ function parseAgents(
       { ...recordRaw, executor: "acp" },
       `agents.${normalized}`,
     );
-    const defaults = baseAgents[normalized] ?? claudeAcpDefaults;
-    agents[normalized] = parseAcpAgent(parsed, defaults);
+    const defaults = baseAgents[normalized] ?? claudeDefaults;
+    agents[normalized] = parseAgent(parsed, defaults);
   }
   return agents;
 }
@@ -683,10 +682,7 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
   throw new Error(configErrorMessage(result.error, label));
 }
 
-function parseAcpAgent(
-  raw: z.infer<typeof acpAgentRecordSchema>,
-  defaults: AcpAgentConfig,
-): AcpAgentConfig {
+function parseAgent(raw: z.infer<typeof acpAgentRecordSchema>, defaults: AgentConfig): AgentConfig {
   return {
     executor: "acp",
     bridgeCommand: raw.bridgeCommand ?? raw.command ?? defaults.bridgeCommand,

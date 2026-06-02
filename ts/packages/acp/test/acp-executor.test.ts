@@ -3,7 +3,7 @@ import net from "node:net";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { AcpExecutor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
+import { Executor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
@@ -11,11 +11,11 @@ import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js"
 
 test("ACP executor starts a session, translates updates, approves permissions, and exposes fs", async () => {
   const root = await tempDir("symphony-ts-acp");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
   const settings = acpSettings(root, fake, trace, "new");
-  const executor = new AcpExecutor("claude");
+  const executor = new Executor("claude");
   const updates: AgentUpdate[] = [];
   const session = await executor.startSession({
     workspace: root,
@@ -67,10 +67,10 @@ test("ACP executor starts a session, translates updates, approves permissions, a
 
 test("ACP executor prefers session/resume when the agent advertises resume support", async () => {
   const root = await tempDir("symphony-ts-acp-resume");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "resume");
-  const executor = new AcpExecutor("claude");
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -94,11 +94,11 @@ test("ACP executor prefers session/resume when the agent advertises resume suppo
 
 test("ACP executor falls back to session/load and suppresses replayed updates", async () => {
   const root = await tempDir("symphony-ts-acp-load");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "load");
   const updates: AgentUpdate[] = [];
-  const executor = new AcpExecutor("claude");
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -132,11 +132,11 @@ test("ACP executor falls back to session/load and suppresses replayed updates", 
 
 test("ACP executor times out stalled bridge turns and emits a typed failure", async () => {
   const root = await tempDir("symphony-ts-acp-stall");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "stall", 50);
   const updates: AgentUpdate[] = [];
-  const executor = new AcpExecutor("claude");
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -199,11 +199,11 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
 
 test("writeProviderConfig writes .claude/settings.local.json for claude bridge", async () => {
   const root = await tempDir("symphony-ts-acp-provider-claude");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = { permission_mode: "dontAsk" };
   const settings = acpSettings(root, fake, trace, "new", 5_000, { providerConfig });
-  const executor = new AcpExecutor("claude");
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -219,14 +219,14 @@ test("writeProviderConfig writes .claude/settings.local.json for claude bridge",
 
 test("writeProviderConfig writes .codex/config.toml for codex bridge", async () => {
   const root = await tempDir("symphony-ts-acp-provider-codex");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = { model: "gpt-5.5", model_reasoning_effort: "xhigh" };
   const settings = acpSettings(root, fake, trace, "new", 5_000, {
     agentKind: "codex",
     providerConfig,
   });
-  const executor = new AcpExecutor("codex");
+  const executor = new Executor("codex");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -241,7 +241,7 @@ test("writeProviderConfig writes .codex/config.toml for codex bridge", async () 
 
 test("writeProviderConfig writes nested TOML sections", async () => {
   const root = await tempDir("symphony-ts-acp-provider-toml-nested");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = {
     model: "gpt-5.5",
@@ -251,7 +251,7 @@ test("writeProviderConfig writes nested TOML sections", async () => {
     agentKind: "codex",
     providerConfig,
   });
-  const executor = new AcpExecutor("codex");
+  const executor = new Executor("codex");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -268,11 +268,11 @@ test("writeProviderConfig writes nested TOML sections", async () => {
 
 test("writeProviderConfig is skipped when providerConfig is absent from agent config", async () => {
   const root = await tempDir("symphony-ts-acp-provider-none");
-  const fake = await writeFakeAcpBridge(root);
+  const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "new", 5_000, { agentKind: "codex" });
   delete (settings.agents.codex as Record<string, unknown>).providerConfig;
-  const executor = new AcpExecutor("codex");
+  const executor = new Executor("codex");
   const session = await executor.startSession({
     workspace: root,
     settings,
@@ -307,7 +307,7 @@ function acpSettings(
   });
 }
 
-async function writeFakeAcpBridge(root: string): Promise<string> {
+async function writeFakeBridge(root: string): Promise<string> {
   const fake = path.join(root, "fake-acp-bridge.mjs");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;

@@ -252,7 +252,7 @@ export interface AgentSettings {
  * Agent record selecting the Agent Client Protocol (ACP) executor, which drives an external
  * bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
  */
-export interface AcpAgentConfig {
+export interface AgentConfig {
   executor: "acp";
   /** Shell command launched per session (run via `bash -lc` in the workspace, or over SSH on remote workers). Also determines the provider config format: `claude-agent-acp` → `.claude/settings.local.json`, `codex-acp` → `.codex/config.toml`. */
   bridgeCommand: string;
@@ -266,12 +266,9 @@ export interface AcpAgentConfig {
   strictMcpConfig?: boolean | undefined;
 }
 
-/** Per-agent backend configuration keyed by agent kind in {@link Settings.agents}. */
-export type AgentConfig = AcpAgentConfig;
-
 /**
  * Legacy top-level codex configuration section. Fields `turnTimeoutMs` and `stallTimeoutMs`
- * feed defaults into the `agents.codex` AcpAgentConfig record. Remaining fields are retained
+ * feed defaults into the `agents.codex` AgentConfig record. Remaining fields are retained
  * for backward compatibility with existing workflow YAML files but are not consumed at runtime.
  */
 export interface CodexSettings {
@@ -306,7 +303,7 @@ export interface CodexReasoning {
 
 /**
  * Runtime knobs for the Claude Code backend, driven via an ACP bridge subprocess.
- * Mirrored into the `claude` entry of {@link Settings.agents} as an {@link AcpAgentConfig}.
+ * Mirrored into the `claude` entry of {@link Settings.agents} as an {@link AgentConfig}.
  */
 export interface ClaudeSettings {
   /** Shell command for the Claude Code ACP bridge; invoked via `bash -lc` in the workspace. */

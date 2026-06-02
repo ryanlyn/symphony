@@ -25,7 +25,7 @@ import { shellEscape, startSshProcess } from "@symphony/ssh";
 import { validateWorkspaceCwd } from "@symphony/workspace";
 import { execa } from "execa";
 import type {
-  AcpAgentConfig,
+  AgentConfig,
   AgentKind,
   AgentExecutor,
   AgentSession,
@@ -37,12 +37,12 @@ import type {
 } from "@symphony/domain";
 import type { SessionUpdateKind } from "@symphony/protocol";
 
-interface AcpSession extends AgentSession {
+interface Session extends AgentSession {
   connection: ClientSideConnection;
   process: ChildProcessWithoutNullStreams;
   settings: Settings;
   workspace: string;
-  agentConfig: AcpAgentConfig;
+  agentConfig: AgentConfig;
   init: InitializeResponse;
   mcpEndpoint: AgentMcpEndpointLease;
   workerHost?: string | null | undefined;
@@ -52,7 +52,7 @@ interface AcpSession extends AgentSession {
   pendingTurn?: { reject: (error: Error) => void } | undefined;
 }
 
-export class AcpExecutor implements AgentExecutor {
+export class Executor implements AgentExecutor {
   readonly kind: AgentKind;
 
   constructor(kind = "acp") {
@@ -66,17 +66,17 @@ export class AcpExecutor implements AgentExecutor {
     resumeId?: string | null;
     workerHost?: string | null;
     onUpdate?: (update: AgentUpdate) => void;
-  }): Promise<AcpSession> {
+  }): Promise<Session> {
     const workspace = await validateWorkspaceCwd(
       input.settings,
       input.workspace,
       input.workerHost ?? null,
     );
     const agentKind = input.settings.agent.kind;
-    const agentConfig = acpAgentConfig(input.settings, agentKind);
+    const agentConfig = resolveAgentConfig(input.settings, agentKind);
     let mcpEndpoint: AgentMcpEndpointLease | null = null;
     let child: ChildProcessWithoutNullStreams | null = null;
-    let session: AcpSession | null = null;
+    let session: Session | null = null;
     try {
       mcpEndpoint = await acquireAgentMcpEndpoint(input.settings, input.workerHost ?? null);
       await writeProviderConfig(agentConfig, agentKind, workspace, input.workerHost ?? null);
@@ -99,7 +99,7 @@ export class AcpExecutor implements AgentExecutor {
         "acp initialize timed out",
       );
 
-      const nextSession: AcpSession = {
+      const nextSession: Session = {
         agentKind,
         connection,
         process: child,
@@ -122,7 +122,7 @@ export class AcpExecutor implements AgentExecutor {
       session = nextSession;
       wireProcessEvents(session);
 
-      const sessionId = await openAcpSession(session, input.resumeId ?? null, [
+      const sessionId = await openSession(session, input.resumeId ?? null, [
         mcpEndpoint.acpServer(),
       ]);
       session.sessionId = sessionId;
@@ -145,7 +145,7 @@ export class AcpExecutor implements AgentExecutor {
     }
   }
 
-  async runTurn(session: AcpSession, prompt: string, _issue?: Issue): Promise<AgentUpdate[]> {
+  async runTurn(session: Session, prompt: string, _issue?: Issue): Promise<AgentUpdate[]> {
     if (session.pendingTurn) throw new Error("ACP turn already running");
     const previous = session.onUpdate;
     const updates: AgentUpdate[] = [];
@@ -153,7 +153,7 @@ export class AcpExecutor implements AgentExecutor {
 
     return new Promise<AgentUpdate[]>((resolve, reject) => {
       const timer = setTimeout(() => {
-        void session.connection.cancel({ sessionId: requireAcpSessionId(session) }).catch((err) => {
+        void session.connection.cancel({ sessionId: requireSessionId(session) }).catch((err) => {
           process.stderr.write(`session cancel failed: ${err}\n`);
         });
         finishReject(new Error("acp turn timed out"));
@@ -185,7 +185,7 @@ export class AcpExecutor implements AgentExecutor {
         previous?.(update);
       };
 
-      const sessionId = requireAcpSessionId(session);
+      const sessionId = requireSessionId(session);
       this.emit(session, {
         type: "turn_started",
         sessionId,
@@ -200,7 +200,7 @@ export class AcpExecutor implements AgentExecutor {
           prompt: [{ type: "text", text: prompt }],
         })
         .then((response) => {
-          const usage = extractAcpUsage(response.usage ?? undefined);
+          const usage = extractUsage(response.usage ?? undefined);
           if (usage) {
             this.emit(session, {
               type: "usage",
@@ -241,7 +241,7 @@ export class AcpExecutor implements AgentExecutor {
   }
 
   private update(
-    session: AcpSession,
+    session: Session,
     type: AgentUpdateType,
     message: unknown,
     usage?: Partial<UsageTotals>,
@@ -259,11 +259,11 @@ export class AcpExecutor implements AgentExecutor {
     return update;
   }
 
-  private emit(session: AcpSession | null, update: AgentUpdate): void {
+  private emit(session: Session | null, update: AgentUpdate): void {
     session?.onUpdate?.(update);
   }
 
-  private async stopSession(session: AcpSession): Promise<void> {
+  private async stopSession(session: Session): Promise<void> {
     const sessionId = session.sessionId;
     session.pendingTurn?.reject(new Error("acp session stopped"));
     try {
@@ -283,7 +283,7 @@ export class AcpExecutor implements AgentExecutor {
   }
 }
 
-function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotification): void {
+function handleSessionUpdate(session: Session, notification: SessionNotification): void {
   session.sessionId = notification.sessionId;
   session.resumeId = notification.sessionId;
   if (session.loadingReplay) {
@@ -291,10 +291,10 @@ function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotifi
     return;
   }
   const update: AgentUpdate = {
-    type: eventTypeForAcpUpdate(notification.update),
+    type: eventTypeForUpdate(notification.update),
     sessionUpdate: acpProtocolUpdate(
       session,
-      eventTypeForAcpUpdate(notification.update),
+      eventTypeForUpdate(notification.update),
       notification,
       extractUsageUpdate(notification.update),
     ),
@@ -309,8 +309,8 @@ function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotifi
   session.onUpdate?.(update);
 }
 
-function handleAcpPermissionRequest(
-  session: AcpSession | null,
+function handlePermissionRequest(
+  session: Session | null,
   request: RequestPermissionRequest,
   emit: (update: AgentUpdate) => void,
 ): RequestPermissionResponse {
@@ -333,10 +333,10 @@ function handleAcpPermissionRequest(
 function acpClient(input: {
   workspace: string;
   workerHost: string | null;
-  currentSession: () => AcpSession | null;
+  currentSession: () => Session | null;
   emit: (update: AgentUpdate) => void;
 }): Client {
-  const executor = new AcpClientAdapter(
+  const executor = new ClientAdapter(
     input.workspace,
     input.workerHost,
     input.currentSession,
@@ -345,11 +345,11 @@ function acpClient(input: {
   return executor.client();
 }
 
-class AcpClientAdapter {
+class ClientAdapter {
   constructor(
     private readonly workspace: string,
     private readonly workerHost: string | null,
-    private readonly currentSession: () => AcpSession | null,
+    private readonly currentSession: () => Session | null,
     private readonly emit: (update: AgentUpdate) => void,
   ) {}
 
@@ -358,12 +358,12 @@ class AcpClientAdapter {
       sessionUpdate: async (params: SessionNotification): Promise<void> => {
         const session = this.currentSession();
         if (!session) return Promise.resolve();
-        handleAcpSessionUpdate(session, params);
+        handleSessionUpdate(session, params);
         return Promise.resolve();
       },
       requestPermission: async (params: RequestPermissionRequest) => {
         const session = this.currentSession();
-        return Promise.resolve(handleAcpPermissionRequest(session, params, this.emit));
+        return Promise.resolve(handlePermissionRequest(session, params, this.emit));
       },
     };
     if (!this.workerHost) {
@@ -408,8 +408,8 @@ class AcpClientAdapter {
   }
 }
 
-async function openAcpSession(
-  session: AcpSession,
+async function openSession(
+  session: Session,
   resumeId: string | null,
   mcpServers: McpServer[],
 ): Promise<string> {
@@ -474,7 +474,7 @@ async function openAcpSession(
 }
 
 async function writeProviderConfig(
-  agentConfig: AcpAgentConfig,
+  agentConfig: AgentConfig,
   agentKind: string,
   workspace: string,
   workerHost: string | null,
@@ -532,7 +532,7 @@ function toTomlValue(value: unknown): string {
 }
 
 function startBridgeProcess(
-  agentConfig: AcpAgentConfig,
+  agentConfig: AgentConfig,
   workspace: string,
   workerHost: string | null,
 ): ChildProcessWithoutNullStreams {
@@ -549,7 +549,7 @@ function startBridgeProcess(
   }) as unknown as ChildProcessWithoutNullStreams;
 }
 
-function wireProcessEvents(session: AcpSession): void {
+function wireProcessEvents(session: Session): void {
   let stderr = "";
   session.process.stderr.setEncoding("utf8");
   session.process.stderr.on("data", (chunk: string) => {
@@ -582,7 +582,7 @@ function clientCapabilities(workerHost: string | null): ClientCapabilities {
   return capabilities;
 }
 
-function eventTypeForAcpUpdate(update: SessionNotification["update"]): AgentUpdateType {
+function eventTypeForUpdate(update: SessionNotification["update"]): AgentUpdateType {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
       return "assistant_message";
@@ -609,7 +609,7 @@ function eventTypeForAcpUpdate(update: SessionNotification["update"]): AgentUpda
 }
 
 function acpProtocolUpdate(
-  session: AcpSession,
+  session: Session,
   type: AgentUpdateType,
   message: unknown,
   usage?: Partial<UsageTotals>,
@@ -648,7 +648,7 @@ function extractUsageUpdate(
   return { totalTokens: update.used };
 }
 
-function extractAcpUsage(usage: Usage | undefined): Partial<UsageTotals> | undefined {
+function extractUsage(usage: Usage | undefined): Partial<UsageTotals> | undefined {
   if (!usage) return undefined;
   return {
     inputTokens: usage.inputTokens,
@@ -657,7 +657,7 @@ function extractAcpUsage(usage: Usage | undefined): Partial<UsageTotals> | undef
   };
 }
 
-function acpAgentConfig(settings: Settings, kind: AgentKind): AcpAgentConfig {
+function resolveAgentConfig(settings: Settings, kind: AgentKind): AgentConfig {
   const agent = settings.agents[kind];
   if (!agent) throw new Error(`agents.${kind} is required`);
   if (agent.executor !== "acp") throw new Error(`agents.${kind}.executor must be acp`);
@@ -672,7 +672,7 @@ function supportsClose(init: InitializeResponse): boolean {
   return Boolean(init.agentCapabilities?.sessionCapabilities?.close);
 }
 
-function requireAcpSessionId(session: AcpSession): string {
+function requireSessionId(session: Session): string {
   if (!session.sessionId) throw new Error("acp session not started");
   return session.sessionId;
 }
