@@ -23,6 +23,8 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
+// Use appserver executor to test multi-turn behavior; ACP executor breaks after turn 1
+// unless tool_use_requested is emitted (see agent-runner/src/index.ts line 182).
 function fakeSettings(overrides: Partial<Settings> = {}): Settings {
   const base = defaultSettings();
   const agents = {

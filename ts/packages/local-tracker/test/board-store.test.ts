@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { BoardStore } from "@symphony/local-tracker";
 
 import { assert } from "../../../test/assert.js";
+
+import { BoardStore } from "@symphony/local-tracker";
+
 
 
 async function tempBoard(): Promise<string> {

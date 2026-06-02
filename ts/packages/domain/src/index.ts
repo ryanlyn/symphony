@@ -251,6 +251,9 @@ export interface AgentSettings {
 /**
  * Agent record selecting the in-process Codex app-server executor. Inherits all Codex runtime
  * knobs since the executor speaks Codex's JSON-RPC app-server protocol directly over stdio.
+ *
+ * @deprecated Use AcpAgentConfig with the codex-acp bridge instead. The appserver executor
+ * will be removed in a future release.
  */
 export interface AppServerAgentConfig extends CodexSettings {
   executor: "appserver";
@@ -287,6 +290,9 @@ export type AgentConfig = AppServerAgentConfig | AcpAgentConfig;
 /**
  * Runtime knobs for the Codex app-server executor. Policy/sandbox fields are pass-through values
  * matching the installed Codex schema (inspect via `codex app-server generate-json-schema`).
+ *
+ * @deprecated The appserver executor path is deprecated. Prefer configuring the codex agent via
+ * the `agents.codex` AcpAgentConfig record with `bridgeCommand: "codex-acp"`.
  */
 export interface CodexSettings {
   /** Shell command launched per session; invoked via `bash -lc` in the workspace directory. */

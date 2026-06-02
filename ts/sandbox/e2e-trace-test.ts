@@ -82,17 +82,18 @@ agent:
   max_concurrent_agents: 1
   max_turns: 10
 
-codex:
-  command: codex-acp
-  turn_timeout_ms: 180000
-  stall_timeout_ms: 60000
-
-claude:
-  command: claude-agent-acp
-  model: claude-sonnet-4-6
-  permission_mode: dontAsk
-  turn_timeout_ms: 360000
-  stall_timeout_ms: 300000
+agents:
+  codex:
+    bridge_command: codex-acp
+    turn_timeout_ms: 180000
+    stall_timeout_ms: 60000
+  claude:
+    bridge_command: claude-agent-acp
+    bridge_args: ["--permission-mode", "dontAsk", "--model", "claude-sonnet-4-6"]
+    model: claude-sonnet-4-6
+    permission_mode: dontAsk
+    turn_timeout_ms: 360000
+    stall_timeout_ms: 300000
 
 server:
   port: 0

@@ -33,7 +33,25 @@ test("config resolves env-backed Linear token and assignee", () => {
   assert.equal(settings.agent.maxTurns, 20);
   assert.equal(settings.agent.ensembleSize, 1);
   assert.equal(settings.agents.codex?.executor, "acp");
+  const codexAgent = settings.agents.codex as any;
+  assert.equal(codexAgent.bridgeCommand, "codex-acp");
+  assert.deepEqual(codexAgent.bridgeArgs, []);
   assert.equal(settings.agents.claude?.executor, "acp");
+});
+
+test("partial codex agent override preserves bridgeCommand codex-acp", () => {
+  const settings = parseConfig({
+    agents: { codex: { stall_timeout_ms: 60000 } },
+  });
+
+  const codexAgent = settings.agents.codex as any;
+  assert.equal(codexAgent.executor, "acp");
+  assert.equal(codexAgent.bridgeCommand, "codex-acp");
+  assert.deepEqual(codexAgent.bridgeArgs, []);
+  assert.equal(codexAgent.stallTimeoutMs, 60000);
+  // Must NOT inherit claude-specific fields
+  assert.equal(codexAgent.model, undefined);
+  assert.equal(codexAgent.permissionMode, undefined);
 });
 
 test("config resolves op:// references via 1Password CLI", async () => {

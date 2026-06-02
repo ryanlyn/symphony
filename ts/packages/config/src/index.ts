@@ -679,7 +679,7 @@ function parseAgents(
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
   const appserverDefaults: AppServerAgentConfig = { executor: "appserver", ...codex };
-  const acpDefaults = baseAgents.claude as AcpAgentConfig;
+  const claudeAcpDefaults = baseAgents.claude as AcpAgentConfig;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
@@ -689,6 +689,13 @@ function parseAgents(
       throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
     }
     const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
+    // Use the base agent record for this name as the ACP default when available,
+    // so partial overrides (e.g. codex with only stall_timeout_ms) preserve the
+    // correct bridgeCommand instead of falling back to claude defaults.
+    const acpDefaults =
+      (baseAgents[normalized] as AcpAgentConfig | undefined)?.executor === "acp"
+        ? (baseAgents[normalized] as AcpAgentConfig)
+        : claudeAcpDefaults;
     agents[normalized] = parseAgentRecord(parsed, {
       codex: appserverDefaults,
       claude: acpDefaults,
