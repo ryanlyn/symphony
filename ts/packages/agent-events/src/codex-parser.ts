@@ -47,7 +47,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function safeParseJson(str: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(str);
+    const parsed: unknown = JSON.parse(str);
     return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
@@ -818,7 +818,7 @@ function parseRawResponseItemCompleted(p: Record<string, unknown>, ts: string): 
     case "local_shell_call": {
       const action = item.action as Record<string, unknown> | undefined;
       const command = action?.command;
-      const cmdStr = Array.isArray(command) ? command.join(" ") : String(command ?? "");
+      const cmdStr = Array.isArray(command) ? (command as string[]).join(" ") : typeof command === "string" ? command : "";
       const callId = (item.call_id as string) ?? (item.id as string) ?? `shell-${Date.now()}`;
       return {
         kind: "tool_use_requested",
