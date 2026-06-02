@@ -92,8 +92,7 @@ agents:
     turn_timeout_ms: 360000
     stall_timeout_ms: 300000
     provider_config:
-      permissions:
-        defaultMode: dontAsk
+      permission_mode: dontAsk
 
 server:
   port: 0
