@@ -6,15 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { test, vi } from "vitest";
-import {
-  CodexAppServerExecutor,
-  createWorkspaceForIssue,
-  parseConfig,
-  readResumeState,
-  runAgentAttempt,
-  runSsh,
-  shellEscape,
-} from "@symphony/cli";
+import { parseConfig, readResumeState, runAgentAttempt, runSsh, shellEscape } from "@symphony/cli";
 import type { Issue, WorkflowDefinition } from "@symphony/cli";
 
 import { assert } from "./assert.js";
@@ -305,41 +297,39 @@ async function runRemoteCodexCanary(setup: LiveWorkerSetup): Promise<void> {
     workspace: { root: setup.workspaceRoot },
     worker: { ssh_hosts: setup.hosts, ssh_timeout_ms: 60_000 },
     hooks: { after_create: initRepoHook(), timeout_ms: 60_000 },
-    codex: {
-      command: process.env.SYMPHONY_TS_CODEX_COMMAND ?? "codex app-server",
-      approval_policy: "never",
-      turn_timeout_ms: 300_000,
-      stall_timeout_ms: 300_000,
+    agents: {
+      codex: {
+        bridge_command: process.env.SYMPHONY_TS_CODEX_ACP_COMMAND ?? "codex-acp",
+        turn_timeout_ms: 300_000,
+        stall_timeout_ms: 300_000,
+      },
     },
   });
-  const workspace = await createWorkspaceForIssue(settings, issue, { workerHost: host });
-  const executor = new CodexAppServerExecutor();
-  const session = await executor.startSession({ workspace, workerHost: host, settings, issue });
-  try {
-    const updates = await executor.runTurn(
-      session,
+
+  const result = await runAgentAttempt({
+    issue,
+    workflow: workflow(
+      settings,
       [
         "This is a live TypeScript Symphony remote SSH Codex canary.",
         `Create a file named REMOTE_CODEX_E2E.txt whose only contents are ${marker} followed by a newline.`,
         "Do not create any other files.",
       ].join("\n"),
-      issue,
-    );
-    assert.ok(updates.some((update) => update.type === "turn_completed"));
-  } finally {
-    await session.stop();
-  }
+    ),
+    workerHost: host,
+  });
+  assert.equal(result.turnCount, 1);
 
-  const result = await runSsh(
+  const fileResult = await runSsh(
     host,
-    `cat ${shellEscape(path.posix.join(workspace, "REMOTE_CODEX_E2E.txt"))}`,
+    `cat ${shellEscape(path.posix.join(result.workspace, "REMOTE_CODEX_E2E.txt"))}`,
     {
       timeoutMs: settings.worker.sshTimeoutMs,
       stderrToStdout: true,
     },
   );
-  assert.equal(result.status, 0, result.stdout);
-  assert.equal(result.stdout, `${marker}\n`);
+  assert.equal(fileResult.status, 0, fileResult.stdout);
+  assert.equal(fileResult.stdout, `${marker}\n`);
 }
 
 async function runRemoteClaudeResumeCanary(setup: LiveWorkerSetup): Promise<void> {

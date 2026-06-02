@@ -7,7 +7,6 @@ import type {
   AgentConfig,
   AgentSettings,
   AcpAgentConfig,
-  AppServerAgentConfig,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
@@ -119,19 +118,6 @@ const reasoningSchema = z
   })
   .strict();
 
-const appServerAgentRecordSchema = z
-  .object({
-    executor: z.literal("appserver"),
-    command: z.string().optional(),
-    approvalPolicy: approvalPolicySchema,
-    threadSandbox: z.string().optional(),
-    turnSandboxPolicy: sandboxPolicySchema,
-    turnTimeoutMs: coercedTimeoutMs.optional(),
-    readTimeoutMs: coercedTimeoutMs.optional(),
-    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
-    reasoning: reasoningSchema.nullable().optional(),
-  })
-  .strict();
 const acpAgentRecordSchema = z
   .object({
     executor: z.literal("acp"),
@@ -145,10 +131,7 @@ const acpAgentRecordSchema = z
     strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
-const agentRecordSchema = z.discriminatedUnion("executor", [
-  appServerAgentRecordSchema,
-  acpAgentRecordSchema,
-]);
+const agentRecordSchema = acpAgentRecordSchema;
 
 const trackerRawSchema = z
   .object({
@@ -530,11 +513,7 @@ export function validateDispatchConfig(settings: Settings): void {
   for (const kind of requiredBackends) {
     const agent = settings.agents[kind];
     if (!agent) throw new Error(`agents.${kind} is required`);
-    // @deprecated — appserver validation; remove when appserver executor is removed.
-    if (agent.executor === "appserver" && !agent.command.trim()) {
-      throw new Error(`${kind}.command is required`);
-    }
-    if (agent.executor === "acp" && !agent.bridgeCommand.trim()) {
+    if (!agent.bridgeCommand.trim()) {
       throw new Error(
         kind === "claude"
           ? "claude.command is required"
@@ -679,32 +658,21 @@ function parseAgents(
 ): Record<string, AgentConfig> {
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
-  const claudeAcpDefaults = baseAgents.claude as AcpAgentConfig;
+  const claudeAcpDefaults = baseAgents.claude!;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
-    const executor = stringValue(recordRaw.executor, "acp");
-    if (executor !== "appserver" && executor !== "acp") {
-      throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
+    const executor = recordRaw.executor;
+    if (executor !== undefined && executor !== "acp") {
+      throw new Error(`unsupported agents.${normalized}.executor: ${JSON.stringify(executor)}`);
     }
-    if (executor === "appserver") {
-      emitDeprecationWarning(
-        `agents.${normalized}.executor = "appserver" is deprecated; migrate to executor = "acp" (codex-acp is now the default).`,
-      );
-    }
-    const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
-    // Use the base agent record for this name as the ACP default when available,
-    // so partial overrides (e.g. codex with only stall_timeout_ms) preserve the
-    // correct bridgeCommand instead of falling back to claude defaults.
-    const acpDefaults =
-      (baseAgents[normalized] as AcpAgentConfig | undefined)?.executor === "acp"
-        ? (baseAgents[normalized] as AcpAgentConfig)
-        : claudeAcpDefaults;
-    agents[normalized] = parseAgentRecord(parsed, {
-      codex: executor === "appserver" ? { executor: "appserver", ...codex } : undefined,
-      claude: acpDefaults,
-    });
+    const parsed = parseAgentRecordSchema(
+      { ...recordRaw, executor: "acp" },
+      `agents.${normalized}`,
+    );
+    const defaults = baseAgents[normalized] ?? claudeAcpDefaults;
+    agents[normalized] = parseAcpAgent(parsed, defaults);
   }
   return agents;
 }
@@ -715,27 +683,6 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
   const result = agentRecordSchema.safeParse(raw);
   if (result.success) return result.data;
   throw new Error(configErrorMessage(result.error, label));
-}
-
-function parseAgentRecord(
-  raw: AgentRecordRaw,
-  defaults: { codex?: AppServerAgentConfig | undefined; claude: AcpAgentConfig },
-): AgentConfig {
-  if (raw.executor === "appserver") {
-    if (!defaults.codex) {
-      throw new Error("appserver executor selected but no appserver defaults available");
-    }
-    return parseAppServerAgent(raw, defaults.codex);
-  }
-  return parseAcpAgent(raw, defaults.claude);
-}
-
-function parseAppServerAgent(
-  raw: z.infer<typeof appServerAgentRecordSchema>,
-  defaults: AppServerAgentConfig,
-): AppServerAgentConfig {
-  const codex = parseCodex(defaults, raw);
-  return { executor: "appserver", ...codex };
 }
 
 function parseAcpAgent(
@@ -780,22 +727,6 @@ function defaultAgentRecords(
 }
 
 function applyKnownAgentRecords(settings: Settings): void {
-  const codex = settings.agents.codex;
-  if (codex?.executor === "appserver") {
-    settings.codex = {
-      command: codex.command,
-      approvalPolicy: codex.approvalPolicy,
-      threadSandbox: codex.threadSandbox,
-      turnSandboxPolicy: codex.turnSandboxPolicy,
-      turnTimeoutMs: codex.turnTimeoutMs,
-      readTimeoutMs: codex.readTimeoutMs,
-      stallTimeoutMs: codex.stallTimeoutMs,
-      reasoning: codex.reasoning ?? settings.codex.reasoning,
-    };
-  }
-  // When the codex executor is ACP, the authoritative config is settings.agents.codex.
-  // Do not mutate settings.codex with stale appserver-only fields.
-
   const claude = settings.agents.claude;
   if (claude?.executor === "acp") {
     settings.claude = {
@@ -960,28 +891,9 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
 function cloneAgentRecords(records: Record<string, AgentConfig>): Record<string, AgentConfig> {
   const cloned: Record<string, AgentConfig> = {};
   for (const [name, record] of Object.entries(records)) {
-    cloned[name] =
-      record.executor === "appserver"
-        ? {
-            ...record,
-            approvalPolicy: cloneUnknownRecord(record.approvalPolicy),
-            turnSandboxPolicy: cloneNullableRecord(record.turnSandboxPolicy),
-          }
-        : { ...record, bridgeArgs: [...record.bridgeArgs] };
+    cloned[name] = { ...record, bridgeArgs: [...record.bridgeArgs] };
   }
   return cloned;
-}
-
-function cloneUnknownRecord(
-  value: CodexSettings["approvalPolicy"],
-): CodexSettings["approvalPolicy"] {
-  return isPlainRecord(value) ? deepMerge({}, value) : value;
-}
-
-function cloneNullableRecord(
-  value: Record<string, unknown> | null,
-): Record<string, unknown> | null {
-  return value === null ? null : deepMerge({}, value);
 }
 
 function deepMerge(
@@ -1128,12 +1040,6 @@ function normalizeAliases(
   return out;
 }
 
-function stringValue(value: unknown, fallback: string): string {
-  if (value === undefined || value === null) return fallback;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  return String(value);
-}
-
 function trackerKindValue(value: unknown, label: string): TrackerKind {
   if (typeof value !== "string") throw new Error(`${label} must be a string`);
   if (isOneOf(value, TRACKER_KINDS)) return value;
@@ -1247,17 +1153,4 @@ function isOneOf<const Values extends readonly string[]>(
   values: Values,
 ): value is Values[number] {
   return (values as readonly string[]).includes(value);
-}
-
-function emitDeprecationWarning(message: string): void {
-  process.emitWarning(message, {
-    type: "DeprecationWarning",
-    code: `SYMPHONY_${hashCode(message)}`,
-  });
-}
-
-function hashCode(s: string): string {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(16).toUpperCase();
 }

@@ -300,33 +300,30 @@ test("config validates literal-only backend, approval, and sandbox names", () =>
   );
 });
 
-test("agents map hoists legacy backends and can override known runtime settings", () => {
+test("agents map overrides known runtime settings via ACP records", () => {
   const settings = parseConfig({
     agent: { kind: "codex" },
-    codex: { command: "legacy-codex", read_timeout_ms: 123 },
+    codex: { turn_timeout_ms: 60_000 },
     claude: { command: "legacy-claude", model: "legacy-model", permission_mode: "acceptEdits" },
     agents: {
       codex: {
-        executor: "appserver",
-        command: "codex-from-agent-map",
-        read_timeout_ms: 456,
+        bridge_command: "codex-custom",
+        turn_timeout_ms: 120_000,
       },
       claude: {
-        executor: "acp",
         bridge_command: "claude-agent-acp",
         bridge_args: ["--permission-mode", "acceptEdits"],
         model: "opus-agent",
       },
       pi: {
-        executor: "acp",
         bridge_command: "pi-acp",
         bridge_args: ["--safe-mode"],
       },
     },
   });
 
-  assert.equal(settings.codex.command, "codex-from-agent-map");
-  assert.equal(settings.codex.readTimeoutMs, 456);
+  assert.equal(settings.agents.codex.bridgeCommand, "codex-custom");
+  assert.equal(settings.agents.codex.turnTimeoutMs, 120_000);
   assert.equal(settings.claude.command, "claude-agent-acp");
   assert.equal(settings.claude.model, "opus-agent");
   assert.deepEqual(settings.agents.pi, {
@@ -507,7 +504,7 @@ test("config reports useful errors for list fields and agent executors", () => {
   );
   assert.throws(
     () => parseConfig({ agents: { pi: { executor: "foo" } } }),
-    /unsupported agents.pi.executor: foo/,
+    /unsupported agents\.pi\.executor/,
   );
 });
 

@@ -58,16 +58,10 @@ export function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
     readResumeState,
     resumeStateMatches,
     writeResumeState,
-    executorFactory: async (settings) => {
+    executorFactory: (settings) => {
       const agent = settings.agents[settings.agent.kind];
       if (!agent) throw new Error(`agents.${settings.agent.kind} is required`);
-      // @deprecated — remove when appserver executor is fully removed.
-      if (agent.executor === "appserver") {
-        const { CodexAppServerExecutor } = await import("@symphony/codex");
-        return new CodexAppServerExecutor();
-      }
-      if (agent.executor === "acp") return new AcpExecutor(settings.agent.kind);
-      throw new Error(`unsupported agents.${settings.agent.kind}.executor`);
+      return new AcpExecutor(settings.agent.kind);
     },
   };
 }

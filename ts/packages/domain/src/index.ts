@@ -249,17 +249,6 @@ export interface AgentSettings {
 }
 
 /**
- * Agent record selecting the in-process Codex app-server executor. Inherits all Codex runtime
- * knobs since the executor speaks Codex's JSON-RPC app-server protocol directly over stdio.
- *
- * @deprecated Use AcpAgentConfig with the codex-acp bridge instead. The appserver executor
- * will be removed in a future release.
- */
-export interface AppServerAgentConfig extends CodexSettings {
-  executor: "appserver";
-}
-
-/**
  * Agent record selecting the Agent Client Protocol (ACP) executor, which drives an external
  * bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
  */
@@ -281,18 +270,13 @@ export interface AcpAgentConfig {
   strictMcpConfig?: boolean | undefined;
 }
 
-/**
- * Per-agent backend configuration keyed by agent kind in {@link Settings.agents}.
- * Discriminated by `executor`: `"appserver"` runs Codex directly, `"acp"` spawns an ACP bridge.
- */
-export type AgentConfig = AppServerAgentConfig | AcpAgentConfig;
+/** Per-agent backend configuration keyed by agent kind in {@link Settings.agents}. */
+export type AgentConfig = AcpAgentConfig;
 
 /**
- * Runtime knobs for the Codex app-server executor. Policy/sandbox fields are pass-through values
- * matching the installed Codex schema (inspect via `codex app-server generate-json-schema`).
- *
- * @deprecated The appserver executor path is deprecated. Prefer configuring the codex agent via
- * the `agents.codex` AcpAgentConfig record with `bridgeCommand: "codex-acp"`.
+ * Legacy top-level codex configuration section. Fields `turnTimeoutMs` and `stallTimeoutMs`
+ * feed defaults into the `agents.codex` AcpAgentConfig record. Remaining fields are retained
+ * for backward compatibility with existing workflow YAML files but are not consumed at runtime.
  */
 export interface CodexSettings {
   /** Shell command launched per session; invoked via `bash -lc` in the workspace directory. */
@@ -311,7 +295,7 @@ export interface CodexSettings {
   turnSandboxPolicy: Record<string, unknown> | null;
   /** Hard limit (ms) on a single Codex turn before it is treated as timed out. */
   turnTimeoutMs: number;
-  /** Per-request JSON-RPC read timeout (ms) for app-server method calls. */
+  /** Per-request read timeout (ms). Retained for config compatibility; not consumed at runtime. */
   readTimeoutMs: number;
   /** Inactivity window (ms) before a session with no events is force-aborted as stalled. `<= 0` disables stall detection. */
   stallTimeoutMs: number;
