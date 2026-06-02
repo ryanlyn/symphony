@@ -7,7 +7,6 @@ import type {
   AgentConfig,
   AgentSettings,
   AcpAgentConfig,
-  AppServerAgentConfig,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
@@ -119,19 +118,6 @@ const reasoningSchema = z
   })
   .strict();
 
-const appServerAgentRecordSchema = z
-  .object({
-    executor: z.literal("appserver"),
-    command: z.string().optional(),
-    approvalPolicy: approvalPolicySchema,
-    threadSandbox: z.string().optional(),
-    turnSandboxPolicy: sandboxPolicySchema,
-    turnTimeoutMs: coercedTimeoutMs.optional(),
-    readTimeoutMs: coercedTimeoutMs.optional(),
-    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
-    reasoning: reasoningSchema.nullable().optional(),
-  })
-  .strict();
 const acpAgentRecordSchema = z
   .object({
     executor: z.literal("acp"),
@@ -145,10 +131,7 @@ const acpAgentRecordSchema = z
     strictMcpConfig: coercedBoolean.optional(),
   })
   .strict();
-const agentRecordSchema = z.discriminatedUnion("executor", [
-  appServerAgentRecordSchema,
-  acpAgentRecordSchema,
-]);
+const agentRecordSchema = acpAgentRecordSchema;
 
 const trackerRawSchema = z
   .object({
@@ -360,7 +343,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
   const cwd = options.cwd ?? ".";
   const workspaceRoot = joinPath(tmpdir, "symphony_workspaces");
   const codex: CodexSettings = {
-    command: "codex app-server",
+    command: "codex-acp",
     approvalPolicy: {
       reject: {
         sandbox_approval: true,
@@ -530,10 +513,7 @@ export function validateDispatchConfig(settings: Settings): void {
   for (const kind of requiredBackends) {
     const agent = settings.agents[kind];
     if (!agent) throw new Error(`agents.${kind} is required`);
-    if (agent.executor === "appserver" && !agent.command.trim()) {
-      throw new Error(`${kind}.command is required`);
-    }
-    if (agent.executor === "acp" && !agent.bridgeCommand.trim()) {
+    if (!agent.bridgeCommand.trim()) {
       throw new Error(
         kind === "claude"
           ? "claude.command is required"
@@ -678,19 +658,21 @@ function parseAgents(
 ): Record<string, AgentConfig> {
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
+  const claudeAcpDefaults = baseAgents.claude!;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
-    const executor = stringValue(recordRaw.executor, normalized === "codex" ? "appserver" : "acp");
-    if (executor !== "appserver" && executor !== "acp") {
-      throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
+    const executor = recordRaw.executor;
+    if (executor !== undefined && executor !== "acp") {
+      throw new Error(`unsupported agents.${normalized}.executor: ${JSON.stringify(executor)}`);
     }
-    const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
-    agents[normalized] = parseAgentRecord(parsed, {
-      codex: baseAgents.codex as AppServerAgentConfig,
-      claude: baseAgents.claude as AcpAgentConfig,
-    });
+    const parsed = parseAgentRecordSchema(
+      { ...recordRaw, executor: "acp" },
+      `agents.${normalized}`,
+    );
+    const defaults = baseAgents[normalized] ?? claudeAcpDefaults;
+    agents[normalized] = parseAcpAgent(parsed, defaults);
   }
   return agents;
 }
@@ -701,22 +683,6 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
   const result = agentRecordSchema.safeParse(raw);
   if (result.success) return result.data;
   throw new Error(configErrorMessage(result.error, label));
-}
-
-function parseAgentRecord(
-  raw: AgentRecordRaw,
-  defaults: { codex: AppServerAgentConfig; claude: AcpAgentConfig },
-): AgentConfig {
-  if (raw.executor === "appserver") return parseAppServerAgent(raw, defaults.codex);
-  return parseAcpAgent(raw, defaults.claude);
-}
-
-function parseAppServerAgent(
-  raw: z.infer<typeof appServerAgentRecordSchema>,
-  defaults: AppServerAgentConfig,
-): AppServerAgentConfig {
-  const codex = parseCodex(defaults, raw);
-  return { executor: "appserver", ...codex };
 }
 
 function parseAcpAgent(
@@ -736,11 +702,17 @@ function parseAcpAgent(
 }
 
 function defaultAgentRecords(
-  codex: CodexSettings,
+  codex: Pick<CodexSettings, "turnTimeoutMs" | "stallTimeoutMs">,
   claude: ClaudeSettings,
 ): Record<string, AgentConfig> {
   return {
-    codex: { executor: "appserver", ...codex },
+    codex: {
+      executor: "acp",
+      bridgeCommand: "codex-acp",
+      bridgeArgs: [],
+      turnTimeoutMs: codex.turnTimeoutMs,
+      stallTimeoutMs: codex.stallTimeoutMs,
+    },
     claude: {
       executor: "acp",
       bridgeCommand: claude.command,
@@ -755,19 +727,6 @@ function defaultAgentRecords(
 }
 
 function applyKnownAgentRecords(settings: Settings): void {
-  const codex = settings.agents.codex;
-  if (codex?.executor === "appserver") {
-    settings.codex = {
-      command: codex.command,
-      approvalPolicy: codex.approvalPolicy,
-      threadSandbox: codex.threadSandbox,
-      turnSandboxPolicy: codex.turnSandboxPolicy,
-      turnTimeoutMs: codex.turnTimeoutMs,
-      readTimeoutMs: codex.readTimeoutMs,
-      stallTimeoutMs: codex.stallTimeoutMs,
-      reasoning: codex.reasoning ?? settings.codex.reasoning,
-    };
-  }
   const claude = settings.agents.claude;
   if (claude?.executor === "acp") {
     settings.claude = {
@@ -932,28 +891,9 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
 function cloneAgentRecords(records: Record<string, AgentConfig>): Record<string, AgentConfig> {
   const cloned: Record<string, AgentConfig> = {};
   for (const [name, record] of Object.entries(records)) {
-    cloned[name] =
-      record.executor === "appserver"
-        ? {
-            ...record,
-            approvalPolicy: cloneUnknownRecord(record.approvalPolicy),
-            turnSandboxPolicy: cloneNullableRecord(record.turnSandboxPolicy),
-          }
-        : { ...record, bridgeArgs: [...record.bridgeArgs] };
+    cloned[name] = { ...record, bridgeArgs: [...record.bridgeArgs] };
   }
   return cloned;
-}
-
-function cloneUnknownRecord(
-  value: CodexSettings["approvalPolicy"],
-): CodexSettings["approvalPolicy"] {
-  return isPlainRecord(value) ? deepMerge({}, value) : value;
-}
-
-function cloneNullableRecord(
-  value: Record<string, unknown> | null,
-): Record<string, unknown> | null {
-  return value === null ? null : deepMerge({}, value);
 }
 
 function deepMerge(
@@ -1098,12 +1038,6 @@ function normalizeAliases(
     }
   }
   return out;
-}
-
-function stringValue(value: unknown, fallback: string): string {
-  if (value === undefined || value === null) return fallback;
-  // eslint-disable-next-line @typescript-eslint/no-base-to-string
-  return String(value);
 }
 
 function trackerKindValue(value: unknown, label: string): TrackerKind {

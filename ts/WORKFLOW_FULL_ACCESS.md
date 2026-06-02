@@ -35,12 +35,23 @@ agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=high --config service_tier=fast --model gpt-5.4 app-server
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
     type: dangerFullAccess
     networkAccess: true
+agents:
+  codex:
+    bridge_command: codex-acp
+    bridge_args:
+      - --config
+      - shell_environment_policy.inherit=all
+      - --config
+      - model_reasoning_effort=high
+      - --config
+      - service_tier=fast
+      - --model
+      - gpt-5.4
 claude:
   command: claude
   model: claude-opus-4-6[1m]
