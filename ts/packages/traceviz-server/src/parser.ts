@@ -14,7 +14,7 @@ import type {
   TokenUsage,
 } from "./models/display-events.js";
 
-/** Tool name -> category mapping for common Claude/Codex tools. */
+/** Tool name -> category mapping for common Claude tools. */
 const TOOL_NAME_CATEGORIES: Record<string, ToolCategory> = {
   // plan_mode
   Task: "plan_mode",
@@ -67,7 +67,6 @@ interface RawTraceLine {
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
   workspacePath?: string | null;
   sessionId?: string | null;
-  executorPid?: string | null;
 }
 
 interface PendingToolCall {
@@ -171,7 +170,6 @@ function extractAcpToolResult(
 
 /**
  * Parse an `item/completed` notification params into a DisplayEvent.
- * Mirrors thib-coding-agent's CodexEventMerger.codexItemToDisplay logic.
  */
 function parseItemCompleted(params: Record<string, unknown>, ts: string): DisplayEvent | null {
   const item = params.item as Record<string, unknown> | undefined;
@@ -393,54 +391,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
           }
           break;
         }
-
-        // Handle Codex request/result format
-        const request = payload.request as Record<string, unknown> | undefined;
-        const result = payload.result as Record<string, unknown> | undefined;
-        if (request && typeof request === "object") {
-          const params = request.params as Record<string, unknown> | undefined;
-          const toolName = (params?.tool as string) ?? "unknown";
-          const callId = (params?.callId as string) ?? "";
-          const input = (params?.arguments as Record<string, unknown>) ?? {};
-          const output =
-            (result?.output as string | null) ??
-            ((result?.contentItems as Array<Record<string, unknown>> | undefined)?.[0]?.text as
-              | string
-              | null) ??
-            null;
-          const isError = raw.type === "tool_call_failed" || (result?.success as boolean) === false;
-
-          // Try to match against a pending tool call by callId
-          const pendingCodex = callId ? pendingToolCalls.get(callId) : undefined;
-          if (pendingCodex) {
-            pendingToolCalls.delete(callId);
-            const toolCall = pendingCodex.event;
-            if (output !== null) {
-              toolCall.output = output;
-            }
-            toolCall.isError = isError;
-            const startMs = new Date(pendingCodex.startTs).getTime();
-            const endMs = new Date(ts).getTime();
-            toolCall.durationMs =
-              Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
-            events.push(toolCall);
-          } else {
-            events.push({
-              kind: "tool_call",
-              category: detectToolCategory(toolName),
-              toolName,
-              input,
-              output,
-              isError,
-              durationMs: null,
-              nestedEvents: [],
-              timestamp: ts,
-            });
-          }
-          break;
-        }
-
-        // Original handling for Claude format
         const toolUseId = (payload.id as string) ?? (payload.toolUseId as string) ?? "";
         const pending = pendingToolCalls.get(toolUseId);
 
