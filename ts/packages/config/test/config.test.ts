@@ -368,7 +368,7 @@ test("undocumented top-level compatibility keys are ignored", () => {
 
   assert.equal(settings.tracker.kind, undefined);
   assert.equal(settings.agent.maxTurns, 20);
-  assert.equal(settings.codex.command, "codex app-server");
+  assert.equal(settings.codex.command, "codex-acp");
   assert.notEqual(settings.workspace.root, "/tmp/legacy-root");
   assert.equal(settings.hooks.beforeRun, null);
 });

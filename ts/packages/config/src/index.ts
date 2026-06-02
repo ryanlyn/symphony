@@ -343,7 +343,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
   const cwd = options.cwd ?? ".";
   const workspaceRoot = joinPath(tmpdir, "symphony_workspaces");
   const codex: CodexSettings = {
-    command: "codex app-server",
+    command: "codex-acp",
     approvalPolicy: {
       reject: {
         sandbox_approval: true,
