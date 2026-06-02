@@ -6,6 +6,7 @@ import type {
   CodexSettings,
   Issue,
   Settings,
+  TraceToolResult,
   UsageTotals,
 } from "@symphony/domain";
 import type { SessionUpdate, SessionUpdateKind } from "@symphony/protocol";
@@ -428,9 +429,18 @@ export class CodexAppServerExecutor implements AgentExecutor {
       contentItems: [{ type: "inputText", text: output }],
     };
 
+    const callParams = value.params as Record<string, unknown> | undefined;
+    const normalizedMessage: TraceToolResult = {
+      toolCallId: (callParams?.callId as string) ?? "",
+      toolName: toolName ?? "unknown",
+      status: wireResult.success ? "completed" : "failed",
+      output: wireResult.output,
+      isError: !wireResult.success,
+    };
+
     this.emit(session, {
       type: wireResult.success ? "tool_call_completed" : "tool_call_failed",
-      message: { request: value, result: wireResult },
+      message: normalizedMessage,
       timestamp: new Date(),
     });
     return wireResult;

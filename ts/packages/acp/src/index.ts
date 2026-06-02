@@ -35,6 +35,13 @@ import type {
   Settings,
   UsageTotals,
 } from "@symphony/domain";
+import {
+  normalizeAcpTextChunk,
+  normalizeAcpToolCall,
+  normalizeAcpToolCallUpdate,
+  normalizeAcpToolResult,
+  normalizeAcpUsage,
+} from "@symphony/domain/trace-normalize";
 import type { SessionUpdateKind } from "@symphony/protocol";
 
 interface AcpSession extends AgentSession {
@@ -289,23 +296,48 @@ function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotifi
     session.replayedUpdateCount += 1;
     return;
   }
+  const type = eventTypeForAcpUpdate(notification.update);
+  const message = normalizeAcpMessage(type, notification);
   const update: AgentUpdate = {
-    type: eventTypeForAcpUpdate(notification.update),
+    type,
     sessionUpdate: acpProtocolUpdate(
       session,
-      eventTypeForAcpUpdate(notification.update),
+      type,
       notification,
       extractUsageUpdate(notification.update),
     ),
     sessionId: session.sessionId,
     resumeId: session.resumeId,
     executorPid: session.executorPid,
-    message: notification,
+    message,
     usage: extractUsageUpdate(notification.update),
     timestamp: new Date(),
   };
   if (!update.usage) delete update.usage;
   session.onUpdate?.(update);
+}
+
+function normalizeAcpMessage(type: AgentUpdateType, notification: SessionNotification): unknown {
+  switch (type) {
+    case "assistant_message":
+    case "user_message":
+    case "agent_thought":
+      return normalizeAcpTextChunk(notification);
+    case "tool_use_requested":
+      return normalizeAcpToolCall(notification);
+    case "tool_call_update":
+      return normalizeAcpToolCallUpdate(notification);
+    case "tool_result":
+      return normalizeAcpToolResult(notification, false);
+    case "tool_call_failed":
+      return normalizeAcpToolResult(notification, true);
+    case "usage": {
+      const used = (notification.update as { used?: number }).used;
+      return typeof used === "number" ? normalizeAcpUsage(used) : notification;
+    }
+    default:
+      return notification;
+  }
 }
 
 function handleAcpPermissionRequest(
