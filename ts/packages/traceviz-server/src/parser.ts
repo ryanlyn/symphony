@@ -97,49 +97,38 @@ function parseLine(line: string): RawTraceLine | null {
 }
 
 /**
- * Extract text from an ACP SessionNotification message.
- * ACP wraps content in: {sessionId, update: {sessionUpdate, content: {type: "text", text: "..."}}}
+ * Extract the ACP `update` envelope from a SessionNotification message.
+ * All AgentUpdates from the ACP executor use this shape: {sessionId, update: {...}}
  */
-function extractAcpText(msg: unknown): string | null {
+function extractAcpUpdate(msg: unknown): Record<string, unknown> | null {
   if (typeof msg !== "object" || msg === null) return null;
   const rec = msg as Record<string, unknown>;
   const update = rec.update as Record<string, unknown> | undefined;
-  if (!update) return null;
-  const content = update.content as Record<string, unknown> | undefined;
-  if (content && typeof content.text === "string") return content.text;
-  return null;
+  return update ?? null;
 }
 
-/**
- * Extract tool call info from an ACP SessionNotification for tool_call updates.
- * ACP format: {sessionId, update: {sessionUpdate: "tool_call", title, toolCallId, rawInput, kind, ...}}
- */
-function extractAcpToolCall(
-  msg: unknown,
-): { name: string; id: string; input: Record<string, unknown> } | null {
-  if (typeof msg !== "object" || msg === null) return null;
-  const rec = msg as Record<string, unknown>;
-  const update = rec.update as Record<string, unknown> | undefined;
-  if (!update) return null;
-  if (update.sessionUpdate !== "tool_call") return null;
+function extractText(msg: unknown): string {
+  if (typeof msg === "string") return msg;
+  const update = extractAcpUpdate(msg);
+  if (update) {
+    const content = update.content as Record<string, unknown> | undefined;
+    if (content && typeof content.text === "string") return content.text;
+  }
+  return "";
+}
+
+function extractToolCall(msg: unknown): { name: string; id: string; input: Record<string, unknown> } | null {
+  const update = extractAcpUpdate(msg);
+  if (!update || update.sessionUpdate !== "tool_call") return null;
   const name = (update.title as string) ?? (update.kind as string) ?? "unknown";
   const id = (update.toolCallId as string) ?? "";
   const input = (update.rawInput as Record<string, unknown>) ?? {};
   return { name, id, input };
 }
 
-/**
- * Extract tool result info from an ACP SessionNotification for tool_call_update events.
- * ACP format: {sessionId, update: {sessionUpdate: "tool_call_update", toolCallId, rawOutput, status, content, ...}}
- */
-function extractAcpToolResult(
-  msg: unknown,
-): { id: string; output: string | unknown[] | null; isError: boolean } | null {
-  if (typeof msg !== "object" || msg === null) return null;
-  const rec = msg as Record<string, unknown>;
-  const update = rec.update as Record<string, unknown> | undefined;
-  if (!update) return null;
-  if (update.sessionUpdate !== "tool_call_update") return null;
+function extractToolResult(msg: unknown): { id: string; output: string | unknown[] | null; isError: boolean } | null {
+  const update = extractAcpUpdate(msg);
+  if (!update || update.sessionUpdate !== "tool_call_update") return null;
   const id = (update.toolCallId as string) ?? "";
   let output: string | unknown[] | null = null;
   if (typeof update.rawOutput === "string") {
@@ -268,83 +257,43 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
     switch (raw.type) {
       case "agent_thought": {
-        const text =
-          typeof msg === "string"
-            ? msg
-            : (extractAcpText(msg) ??
-              (typeof msg === "object" && msg !== null
-                ? (((msg as Record<string, unknown>).text as string) ?? "")
-                : ""));
+        const text = extractText(msg);
         if (text) events.push({ kind: "thought", text, timestamp: ts });
         break;
       }
 
-      case "assistant_message": {
-        const text =
-          typeof msg === "string"
-            ? msg
-            : (extractAcpText(msg) ??
-              (typeof msg === "object" && msg !== null
-                ? (((msg as Record<string, unknown>).text as string) ?? "")
-                : ""));
-        if (text) events.push({ kind: "message", text, timestamp: ts });
-        break;
-      }
-
+      case "assistant_message":
       case "user_message": {
-        const text =
-          typeof msg === "string"
-            ? msg
-            : (extractAcpText(msg) ??
-              (typeof msg === "object" && msg !== null
-                ? (((msg as Record<string, unknown>).text as string) ?? "")
-                : ""));
+        const text = extractText(msg);
         if (text) events.push({ kind: "message", text, timestamp: ts });
         break;
       }
 
       case "tool_use_requested": {
-        const acpTool = extractAcpToolCall(msg);
-        const payload =
-          typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
-        const toolName =
-          acpTool?.name ?? (payload.name as string) ?? (payload.toolName as string) ?? "unknown";
-        const toolUseId =
-          acpTool?.id ??
-          (payload.id as string) ??
-          (payload.toolUseId as string) ??
-          `tool-${Date.now()}-${Math.random()}`;
-        const input = acpTool?.input ?? (payload.input as Record<string, unknown>) ?? {};
+        const tool = extractToolCall(msg);
+        if (!tool) break;
 
         const toolCall: ToolCallDisplayEvent = {
           kind: "tool_call",
-          category: detectToolCategory(toolName),
-          toolName,
-          input,
+          category: detectToolCategory(tool.name),
+          toolName: tool.name,
+          input: tool.input,
           output: null,
           isError: false,
           durationMs: null,
           nestedEvents: [],
           timestamp: ts,
         };
-        pendingToolCalls.set(toolUseId, { event: toolCall, toolUseId, startTs: ts });
+        pendingToolCalls.set(tool.id, { event: toolCall, toolUseId: tool.id, startTs: ts });
         break;
       }
 
       case "tool_call_update": {
-        // Partial update for a pending tool call (e.g., streaming output).
-        // Attach partial output to the pending event; it will be finalized by tool_result/tool_call_completed.
-        const payload =
-          typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
-        const acpUpdate = (payload.update as Record<string, unknown>) ?? undefined;
-        const toolUseId =
-          (acpUpdate?.toolCallId as string) ??
-          (payload.id as string) ??
-          (payload.toolUseId as string) ??
-          "";
+        const update = extractAcpUpdate(msg);
+        const toolUseId = (update?.toolCallId as string) ?? "";
         const pending = pendingToolCalls.get(toolUseId);
         if (pending) {
-          const partialOutput = (payload.output as string | null) ?? null;
+          const partialOutput = (update?.rawOutput as string | null) ?? null;
           if (partialOutput !== null && typeof pending.event.output === "string") {
             pending.event.output = pending.event.output + partialOutput;
           } else if (partialOutput !== null) {
@@ -357,74 +306,30 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       case "tool_result":
       case "tool_call_completed":
       case "tool_call_failed": {
-        const payload =
-          typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
+        const result = extractToolResult(msg);
+        if (!result) break;
 
-        // Handle ACP tool_call_update format
-        const acpResult = extractAcpToolResult(msg);
-        if (acpResult) {
-          const pendingAcp = acpResult.id ? pendingToolCalls.get(acpResult.id) : undefined;
-          if (pendingAcp) {
-            pendingToolCalls.delete(acpResult.id);
-            const toolCall = pendingAcp.event;
-            if (acpResult.output !== null) {
-              toolCall.output = acpResult.output;
-            }
-            toolCall.isError = acpResult.isError || raw.type === "tool_call_failed";
-            const startMs = new Date(pendingAcp.startTs).getTime();
-            const endMs = new Date(ts).getTime();
-            toolCall.durationMs =
-              Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
-            events.push(toolCall);
-          } else {
-            events.push({
-              kind: "tool_call",
-              category: "unknown",
-              toolName: "unknown",
-              input: {},
-              output: acpResult.output,
-              isError: acpResult.isError || raw.type === "tool_call_failed",
-              durationMs: null,
-              nestedEvents: [],
-              timestamp: ts,
-            });
-          }
-          break;
-        }
-        const toolUseId = (payload.id as string) ?? (payload.toolUseId as string) ?? "";
-        const pending = pendingToolCalls.get(toolUseId);
-
+        const pending = result.id ? pendingToolCalls.get(result.id) : undefined;
         if (pending) {
-          pendingToolCalls.delete(toolUseId);
+          pendingToolCalls.delete(result.id);
           const toolCall = pending.event;
-          // Only overwrite accumulated partial output if the result provides explicit output
-          const resultOutput =
-            (payload.output as string | unknown[] | null) ??
-            (payload.content as string | unknown[] | null) ??
-            null;
-          if (resultOutput !== null) {
-            toolCall.output = resultOutput;
+          if (result.output !== null) {
+            toolCall.output = result.output;
           }
-          toolCall.isError =
-            raw.type === "tool_call_failed" || (payload.is_error as boolean) === true;
+          toolCall.isError = result.isError || raw.type === "tool_call_failed";
           const startMs = new Date(pending.startTs).getTime();
           const endMs = new Date(ts).getTime();
           toolCall.durationMs =
             Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
           events.push(toolCall);
         } else {
-          // No pending tool call found; emit as standalone
-          const toolName = (payload.name as string) ?? (payload.toolName as string) ?? "unknown";
           events.push({
             kind: "tool_call",
-            category: detectToolCategory(toolName),
-            toolName,
+            category: "unknown",
+            toolName: "unknown",
             input: {},
-            output:
-              (payload.output as string | unknown[] | null) ??
-              (payload.content as string | unknown[] | null) ??
-              null,
-            isError: raw.type === "tool_call_failed" || (payload.is_error as boolean) === true,
+            output: result.output,
+            isError: result.isError || raw.type === "tool_call_failed",
             durationMs: null,
             nestedEvents: [],
             timestamp: ts,
