@@ -100,7 +100,7 @@ function parseLine(line: string): RawTraceLine | null {
  * Extract the ACP `update` envelope from a SessionNotification message.
  * All AgentUpdates from the ACP executor use this shape: {sessionId, update: {...}}
  */
-function extractAcpUpdate(msg: unknown): Record<string, unknown> | null {
+function extractUpdate(msg: unknown): Record<string, unknown> | null {
   if (typeof msg !== "object" || msg === null) return null;
   const rec = msg as Record<string, unknown>;
   const update = rec.update as Record<string, unknown> | undefined;
@@ -109,7 +109,7 @@ function extractAcpUpdate(msg: unknown): Record<string, unknown> | null {
 
 function extractText(msg: unknown): string {
   if (typeof msg === "string") return msg;
-  const update = extractAcpUpdate(msg);
+  const update = extractUpdate(msg);
   if (update) {
     const content = update.content as Record<string, unknown> | undefined;
     if (content && typeof content.text === "string") return content.text;
@@ -120,7 +120,7 @@ function extractText(msg: unknown): string {
 function extractToolCall(
   msg: unknown,
 ): { name: string; id: string; input: Record<string, unknown> } | null {
-  const update = extractAcpUpdate(msg);
+  const update = extractUpdate(msg);
   if (!update || update.sessionUpdate !== "tool_call") return null;
   const name = (update.title as string) ?? (update.kind as string) ?? "unknown";
   const id = (update.toolCallId as string) ?? "";
@@ -131,7 +131,7 @@ function extractToolCall(
 function extractToolResult(
   msg: unknown,
 ): { id: string; output: string | unknown[] | null; isError: boolean } | null {
-  const update = extractAcpUpdate(msg);
+  const update = extractUpdate(msg);
   if (!update || update.sessionUpdate !== "tool_call_update") return null;
   const id = (update.toolCallId as string) ?? "";
   let output: string | unknown[] | null = null;
@@ -293,7 +293,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "tool_call_update": {
-        const update = extractAcpUpdate(msg);
+        const update = extractUpdate(msg);
         const toolUseId = (update?.toolCallId as string) ?? "";
         const pending = pendingToolCalls.get(toolUseId);
         if (pending) {

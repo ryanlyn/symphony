@@ -15,7 +15,7 @@ import { sampleIssue, tempDir } from "./helpers.js";
 const execFileAsync = promisify(execFile);
 const runLiveSsh = process.env.SYMPHONY_TS_RUN_LIVE_SSH_E2E === "1";
 const requireRemoteClaude = process.env.SYMPHONY_TS_REQUIRE_REMOTE_CLAUDE === "1";
-const remoteClaudeAcpBridge = process.env.SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND;
+const remoteClaudeBridge = process.env.SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND;
 
 test(
   "live SSH worker runs remote Codex and remote Claude MCP resume",
@@ -35,7 +35,7 @@ test(
         console.warn("remote Claude canary skipped because no Claude OAuth token was supplied");
         return;
       }
-      if (!remoteClaudeAcpBridge) {
+      if (!remoteClaudeBridge) {
         if (requireRemoteClaude)
           throw new Error("remote Claude canary requires SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND");
         console.warn("remote Claude canary skipped because no Claude ACP bridge was supplied");
@@ -357,7 +357,7 @@ async function runRemoteClaudeResumeCanary(setup: LiveWorkerSetup): Promise<void
     agents: {
       claude: {
         executor: "acp",
-        bridge_command: remoteClaudeAcpBridgeCommand(),
+        bridge_command: remoteClaudeBridgeCommand(),
         turn_timeout_ms: 300_000,
         stall_timeout_ms: 300_000,
       },
@@ -525,8 +525,8 @@ function dockerProjectName(runId: string): string {
   return runId.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
 }
 
-function remoteClaudeAcpBridgeCommand(): string {
-  const base = remoteClaudeAcpBridge ?? "claude-agent-acp";
+function remoteClaudeBridgeCommand(): string {
+  const base = remoteClaudeBridge ?? "claude-agent-acp";
   const raw = process.env.SYMPHONY_TS_CLAUDE_ACP_BRIDGE_ARGS;
   if (!raw) return base;
   const parsed = JSON.parse(raw) as unknown;

@@ -261,12 +261,12 @@ test("remote workspace creation and removal use SSH hooks and validate remote pa
 test("agent attempts run workspace hooks at lifecycle boundaries and tolerate after_run failures", async () => {
   const root = await tempDir("symphony-ts-workspace-agent-hooks");
   const workspaceRoot = path.join(root, "workspaces");
-  const fakeAcp = path.join(root, "fake-acp.mjs");
+  const fakeBridge = path.join(root, "fake-acp.mjs");
   const hookLog = path.join(root, "hooks.log");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;
   await writeExecutable(
-    fakeAcp,
+    fakeBridge,
     `#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import * as acp from ${JSON.stringify(acpModule)};
@@ -295,7 +295,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     },
     agents: {
       codex: {
-        bridge_command: `${process.execPath} ${fakeAcp}`,
+        bridge_command: `${process.execPath} ${fakeBridge}`,
         turn_timeout_ms: 5_000,
         stall_timeout_ms: 0,
       },
@@ -333,11 +333,11 @@ test('workspace.isolation = "none" rejects every hook and co-locates agents in o
     );
   }
 
-  const fakeAcp = path.join(root, "fake-acp.mjs");
+  const fakeBridge = path.join(root, "fake-acp.mjs");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;
   await writeExecutable(
-    fakeAcp,
+    fakeBridge,
     `#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import * as acp from ${JSON.stringify(acpModule)};
@@ -362,7 +362,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     workspace: { root: sharedRoot, isolation: "none" },
     agents: {
       codex: {
-        bridge_command: `${process.execPath} ${fakeAcp}`,
+        bridge_command: `${process.execPath} ${fakeBridge}`,
         turn_timeout_ms: 5_000,
         stall_timeout_ms: 0,
       },
@@ -487,13 +487,13 @@ test("remote agent attempts run hooks and persist resume state over SSH", async 
   const root = await tempDir("symphony-ts-remote-agent-hooks");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
-  const fakeAcp = path.join(root, "fake-acp.mjs");
+  const fakeBridge = path.join(root, "fake-acp.mjs");
   const hookLog = path.join(root, "remote-hooks.log");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;
 
   await writeExecutable(
-    fakeAcp,
+    fakeBridge,
     `#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import * as acp from ${JSON.stringify(acpModule)};
@@ -527,7 +527,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     },
     agents: {
       codex: {
-        bridge_command: `${process.execPath} ${fakeAcp}`,
+        bridge_command: `${process.execPath} ${fakeBridge}`,
         turn_timeout_ms: 5_000,
         stall_timeout_ms: 0,
       },
@@ -608,11 +608,11 @@ sleep 1
 test("agent attempts warn and skip invalid resume state files", async () => {
   const root = await tempDir("symphony-ts-invalid-resume-warning");
   const workspaceRoot = path.join(root, "workspaces");
-  const fakeAcp = path.join(root, "fake-acp.mjs");
+  const fakeBridge = path.join(root, "fake-acp.mjs");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;
   await writeExecutable(
-    fakeAcp,
+    fakeBridge,
     `#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import * as acp from ${JSON.stringify(acpModule)};
@@ -636,7 +636,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     workspace: { root: workspaceRoot },
     agents: {
       codex: {
-        bridge_command: `${process.execPath} ${fakeAcp}`,
+        bridge_command: `${process.execPath} ${fakeBridge}`,
         turn_timeout_ms: 5_000,
         stall_timeout_ms: 0,
       },
@@ -672,11 +672,11 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 test("agent attempts leave stall reconciliation to runtime and preserve resume state on turn failure", async () => {
   const root = await tempDir("symphony-ts-stall-retry");
   const workspaceRoot = path.join(root, "workspaces");
-  const fakeAcp = path.join(root, "fake-stall-acp.mjs");
+  const fakeBridge = path.join(root, "fake-stall-acp.mjs");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)
     .href;
   await writeExecutable(
-    fakeAcp,
+    fakeBridge,
     `#!/usr/bin/env node
 import { Readable, Writable } from "node:stream";
 import * as acp from ${JSON.stringify(acpModule)};
@@ -698,7 +698,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     workspace: { root: workspaceRoot },
     agents: {
       codex: {
-        bridge_command: `${process.execPath} ${fakeAcp}`,
+        bridge_command: `${process.execPath} ${fakeBridge}`,
         turn_timeout_ms: 50,
         stall_timeout_ms: 0,
       },

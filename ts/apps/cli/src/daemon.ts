@@ -1,6 +1,6 @@
 import os from "node:os";
 
-import { AcpExecutor } from "@symphony/acp";
+import { Executor } from "@symphony/acp";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
@@ -61,7 +61,7 @@ export function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
     executorFactory: (settings) => {
       const agent = settings.agents[settings.agent.kind];
       if (!agent) throw new Error(`agents.${settings.agent.kind} is required`);
-      return new AcpExecutor(settings.agent.kind);
+      return new Executor(settings.agent.kind);
     },
   };
 }

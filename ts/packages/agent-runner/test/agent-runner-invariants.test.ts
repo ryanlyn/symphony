@@ -24,7 +24,7 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 /** Settings using the default ACP executor (production path). */
-function fakeAcpSettings(overrides: Partial<Settings> = {}): Settings {
+function fakeSettings(overrides: Partial<Settings> = {}): Settings {
   const base = defaultSettings();
   return { ...base, ...overrides };
 }
@@ -68,7 +68,7 @@ function fakeAdapters(overrides: Partial<RunAgentAttemptAdapters> = {}): RunAgen
 describe("INVARIANT: When the first turn begins, the system SHALL send the full rendered prompt.", () => {
   test("first turn receives the full rendered prompt from the template", async () => {
     const issue = fakeIssue({ title: "Fix the widget" });
-    const settings = fakeAcpSettings();
+    const settings = fakeSettings();
     const prompts: string[] = [];
 
     await runAgentAttempt({
@@ -109,7 +109,7 @@ describe("INVARIANT: When the first turn begins, the system SHALL send the full 
       title: "Broken search",
       state: "Todo",
     });
-    const settings = fakeAcpSettings();
+    const settings = fakeSettings();
     const promptTemplate = "Issue {{issue.identifier}}: {{issue.title}} (state: {{issue.state}})";
     let capturedPrompt: string | null = null;
 
@@ -140,7 +140,7 @@ describe("INVARIANT: When the first turn begins, the system SHALL send the full 
 describe("INVARIANT: When a continuation turn begins, the system SHALL send only the continuation guidance.", () => {
   test("continuation turns receive continuation guidance, not the full prompt (ACP)", async () => {
     const issue = fakeIssue({ title: "Fix the widget" });
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 3 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 3 } });
     const prompts: string[] = [];
 
     await runAgentAttempt({
@@ -188,7 +188,7 @@ describe("INVARIANT: When a continuation turn begins, the system SHALL send only
   });
 
   test("single turn run without fetchIssue never sends continuation guidance", async () => {
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
     const prompts: string[] = [];
 
     const result = await runAgentAttempt({
@@ -224,7 +224,7 @@ describe("INVARIANT: When the backend profile changes between turns, the system 
     overrides.set("in progress", {
       agent: { kind: "claude" },
     });
-    const settings = fakeAcpSettings({
+    const settings = fakeSettings({
       agent: { ...defaultSettings().agent, maxTurns: 10, kind: "codex" },
       statusOverrides: overrides as Settings["statusOverrides"],
     });
@@ -254,7 +254,7 @@ describe("INVARIANT: When the backend profile changes between turns, the system 
 
   test("session continues when profile stays the same across turns (ACP)", async () => {
     // No statusOverrides, issue stays in same state -> profile unchanged -> all turns run
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 3 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 3 } });
 
     const result = await runAgentAttempt({
       issue: fakeIssue({ state: "Todo" }),
@@ -283,7 +283,7 @@ describe("INVARIANT: When the backend profile changes between turns, the system 
 describe("INVARIANT: When the turn count reaches the maximum, the system SHALL end the session.", () => {
   test("session ends when turn count reaches maxTurns (ACP)", async () => {
     const issue = fakeIssue();
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 2 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 2 } });
     const prompts: string[] = [];
 
     const result = await runAgentAttempt({
@@ -314,7 +314,7 @@ describe("INVARIANT: When the turn count reaches the maximum, the system SHALL e
   test("session terminates at exactly maxTurns for arbitrary positive values (ACP)", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 50 }), async (maxTurns) => {
-        const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns } });
+        const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns } });
 
         const result = await runAgentAttempt({
           issue: fakeIssue(),
@@ -346,7 +346,7 @@ describe("INVARIANT: When the turn count reaches the maximum, the system SHALL e
 describe("INVARIANT: When an agent run starts, the working directory SHALL be set to the validated workspace path.", () => {
   test("workspace path is passed to the executor session (ACP)", async () => {
     const issue = fakeIssue();
-    const settings = fakeAcpSettings();
+    const settings = fakeSettings();
     let sessionWorkspace: string | null = null;
 
     await runAgentAttempt({
@@ -374,7 +374,7 @@ describe("INVARIANT: When an agent run starts, the working directory SHALL be se
 
   test("result workspace matches the path from createWorkspaceForIssue (ACP)", async () => {
     const issue = fakeIssue();
-    const settings = fakeAcpSettings();
+    const settings = fakeSettings();
 
     const result = await runAgentAttempt({
       issue,
@@ -395,7 +395,7 @@ describe("INVARIANT: When an agent run starts, the working directory SHALL be se
 
 describe("INVARIANT (ACP): The tool_use_requested check only gates continuation after turn 1 (turnCount > 1).", () => {
   test("ACP executor always completes turn 1 and breaks at turn 2 without tool_use_requested", async () => {
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
     const prompts: string[] = [];
 
     const result = await runAgentAttempt({
@@ -426,7 +426,7 @@ describe("INVARIANT (ACP): The tool_use_requested check only gates continuation 
   });
 
   test("without fetchIssue, ACP loop breaks after turn 1 regardless of tool_use_requested", async () => {
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
 
     const result = await runAgentAttempt({
       issue: fakeIssue(),
@@ -454,7 +454,7 @@ describe("INVARIANT (ACP): The tool_use_requested check only gates continuation 
 
 describe("INVARIANT (ACP): After turn 2+, the loop continues when tool_use_requested IS emitted.", () => {
   test("ACP executor continues past turn 2 when tool_use_requested is present", async () => {
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 4 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 4 } });
     const prompts: string[] = [];
 
     const result = await runAgentAttempt({
@@ -484,7 +484,7 @@ describe("INVARIANT (ACP): After turn 2+, the loop continues when tool_use_reque
   });
 
   test("ACP executor breaks at the turn where tool_use_requested stops appearing", async () => {
-    const settings = fakeAcpSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
+    const settings = fakeSettings({ agent: { ...defaultSettings().agent, maxTurns: 5 } });
     let turnCount = 0;
 
     const result = await runAgentAttempt({

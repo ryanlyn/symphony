@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseConfig, AcpExecutor } from "@symphony/cli";
+import { parseConfig, Executor } from "@symphony/cli";
 import type { AgentUpdate, Settings } from "@symphony/cli";
 
 // const PROMPT = "What is the weather in Australia today (do a web search). Create a new file called weather.txt with the weather report.";
@@ -77,7 +77,7 @@ async function captureSession(kind: "claude" | "codex"): Promise<void> {
   const workspace = path.join(workspaceRoot, "workspace");
   const outFile = path.resolve(`acp-messages-${kind}.ndjson`);
   const settings = settingsForAgent(kind, workspaceRoot);
-  const executor = new AcpExecutor(kind);
+  const executor = new Executor(kind);
   const updates: AgentUpdate[] = [];
   const stream = fs.createWriteStream(outFile);
 
