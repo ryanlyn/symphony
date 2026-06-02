@@ -881,7 +881,10 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
 function cloneAgentRecords(records: Record<string, AgentConfig>): Record<string, AgentConfig> {
   const cloned: Record<string, AgentConfig> = {};
   for (const [name, record] of Object.entries(records)) {
-    cloned[name] = { ...record };
+    cloned[name] = {
+      ...record,
+      providerConfig: record.providerConfig ? structuredClone(record.providerConfig) : undefined,
+    };
   }
   return cloned;
 }

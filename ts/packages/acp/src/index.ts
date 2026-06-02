@@ -510,7 +510,8 @@ function toToml(obj: Record<string, unknown>, prefix = ""): string {
   const lines: string[] = [];
   const sections: [string, Record<string, unknown>][] = [];
   for (const [key, value] of Object.entries(obj)) {
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "object" && !Array.isArray(value)) {
       sections.push([prefix ? `${prefix}.${key}` : key, value as Record<string, unknown>]);
     } else {
       lines.push(`${key} = ${toTomlValue(value)}`);
