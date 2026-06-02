@@ -5,7 +5,16 @@
  *   { type, issueId, issueIdentifier, timestamp, message, usage, ... }
  *
  * This module maps raw AgentUpdate types to DisplayEvent types for the frontend.
+ * It delegates individual line parsing to the canonical @symphony/agent-events parsers
+ * and converts the resulting AgentEvent types back to DisplayEvent for the frontend.
  */
+
+import type { AgentEvent } from "@symphony/agent-events";
+import {
+  detectToolCategory as canonicalDetectToolCategory,
+  parseCodexNotification,
+  parseAcpSessionUpdate,
+} from "@symphony/agent-events";
 
 import type {
   DisplayEvent,
@@ -14,46 +23,9 @@ import type {
   TokenUsage,
 } from "./models/display-events.js";
 
-/** Tool name -> category mapping for common Claude/Codex tools. */
-const TOOL_NAME_CATEGORIES: Record<string, ToolCategory> = {
-  // plan_mode
-  Task: "plan_mode",
-  TaskOutput: "plan_mode",
-  TaskStop: "plan_mode",
-  TaskCreate: "plan_mode",
-  TaskUpdate: "plan_mode",
-  TaskGet: "plan_mode",
-  TaskList: "plan_mode",
-  EnterPlanMode: "plan_mode",
-  ExitPlanMode: "plan_mode",
-  AskUserQuestion: "plan_mode",
-  EnterWorktree: "plan_mode",
-  ExitWorktree: "plan_mode",
-  // skill
-  Skill: "skill",
-  // search
-  ToolSearch: "search",
-  Glob: "search",
-  Grep: "search",
-  // bash_command
-  Bash: "bash_command",
-  // file_operation
-  Read: "file_operation",
-  Write: "file_operation",
-  Edit: "file_operation",
-  NotebookEdit: "file_operation",
-  // web
-  WebFetch: "web",
-  WebSearch: "web",
-  // agent
-  Agent: "agent",
-  // todo
-  TodoWrite: "todo",
-  TodoRead: "todo",
-};
-
+// Re-export detectToolCategory delegating to canonical implementation
 export function detectToolCategory(toolName: string): ToolCategory {
-  return TOOL_NAME_CATEGORIES[toolName] ?? "unknown";
+  return canonicalDetectToolCategory(toolName);
 }
 
 /**
@@ -69,6 +41,7 @@ interface RawTraceLine {
   workspacePath?: string | null;
   sessionId?: string | null;
   executorPid?: string | null;
+  canonicalEvent?: unknown;
 }
 
 interface PendingToolCall {
@@ -98,6 +71,187 @@ function parseLine(line: string): RawTraceLine | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Canonical AgentEvent -> DisplayEvent converter
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a canonical AgentEvent to a DisplayEvent for the frontend.
+ * Returns null if the event type does not have a DisplayEvent representation.
+ */
+export function canonicalEventToDisplay(event: AgentEvent): DisplayEvent | null {
+  switch (event.kind) {
+    case "thought":
+      return {
+        kind: "thought",
+        text: event.text,
+        timestamp: event.timestamp,
+        durationMs: event.durationMs,
+      };
+
+    case "thought_chunk":
+      return {
+        kind: "thought",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "assistant_message":
+      return {
+        kind: "message",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "assistant_message_chunk":
+      return {
+        kind: "message",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "user_message":
+      return {
+        kind: "message",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "user_message_chunk":
+      return {
+        kind: "message",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "tool_use_requested":
+      return {
+        kind: "tool_call",
+        category: event.category,
+        toolName: event.toolName,
+        input: event.input,
+        output: null,
+        isError: false,
+        durationMs: null,
+        nestedEvents: [],
+        timestamp: event.timestamp,
+      };
+
+    case "tool_result":
+      return {
+        kind: "tool_call",
+        category: event.category,
+        toolName: event.toolName,
+        input: event.input,
+        output: event.output,
+        isError: event.isError,
+        durationMs: event.durationMs,
+        nestedEvents: [],
+        timestamp: event.timestamp,
+      };
+
+    case "tool_call_failed":
+      return {
+        kind: "tool_call",
+        category: event.category,
+        toolName: event.toolName,
+        input: event.input,
+        output: event.error,
+        isError: true,
+        durationMs: event.durationMs,
+        nestedEvents: [],
+        timestamp: event.timestamp,
+      };
+
+    case "tool_call_update":
+      // tool_call_update is a partial update; return null and let the orchestration handle it
+      return null;
+
+    case "turn_started":
+      return {
+        kind: "turn_started",
+        turnIndex: event.turnIndex ?? 0,
+        timestamp: event.timestamp,
+      };
+
+    case "turn_completed":
+      return {
+        kind: "turn_completed",
+        usage: event.usage
+          ? {
+              inputTokens: event.usage.inputTokens,
+              outputTokens: event.usage.outputTokens,
+              totalTokens: event.usage.totalTokens,
+            }
+          : null,
+        durationMs: event.durationMs ?? null,
+        timestamp: event.timestamp,
+      };
+
+    case "turn_failed":
+      return {
+        kind: "turn_failed",
+        text: `Turn failed: ${event.error}`,
+        timestamp: event.timestamp,
+      };
+
+    case "turn_cancelled":
+      return {
+        kind: "turn_failed",
+        text: `Turn cancelled: ${event.reason ?? "unknown"}`,
+        timestamp: event.timestamp,
+      };
+
+    case "notification":
+      return {
+        kind: "notification",
+        text: event.text,
+        timestamp: event.timestamp,
+      };
+
+    case "plan":
+    case "mode_update":
+    case "config_update":
+    case "session_info_update":
+      return {
+        kind: "notification",
+        text:
+          event.kind === "plan"
+            ? `Plan: ${event.entries.map((e) => e.title).join(", ")}`
+            : event.kind === "mode_update"
+              ? `Mode: ${event.mode}`
+              : event.kind === "session_info_update"
+                ? `Session info updated${event.title ? `: ${event.title}` : ""}`
+                : `Config updated: ${(event as { configId: string }).configId}`,
+        timestamp: event.timestamp,
+      };
+
+    // Events without a useful display representation
+    case "session_started":
+    case "session_ended":
+    case "turn_input_required":
+    case "usage":
+    case "rate_limit":
+    case "approval_required":
+    case "approval_auto_approved":
+    case "tool_input_auto_answered":
+    case "workspace_prepared":
+    case "fs_write":
+    case "process_exit":
+    case "stderr":
+    case "malformed":
+    case "unknown":
+      return null;
+
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for extracting data from trace line messages
+// ---------------------------------------------------------------------------
+
 /**
  * Extract text from an ACP SessionNotification message.
  * ACP wraps content in: {sessionId, update: {sessionUpdate, content: {type: "text", text: "..."}}}
@@ -113,151 +267,244 @@ function extractAcpText(msg: unknown): string | null {
 }
 
 /**
- * Extract tool call info from an ACP SessionNotification for tool_call updates.
- * ACP format: {sessionId, update: {sessionUpdate: "tool_call", title, toolCallId, rawInput, kind, ...}}
+ * Determine if a message payload is in ACP format (has sessionId + update.sessionUpdate).
  */
-function extractAcpToolCall(
-  msg: unknown,
-): { name: string; id: string; input: Record<string, unknown> } | null {
-  if (typeof msg !== "object" || msg === null) return null;
+function isAcpMessage(msg: unknown): boolean {
+  if (typeof msg !== "object" || msg === null) return false;
   const rec = msg as Record<string, unknown>;
-  const update = rec.update as Record<string, unknown> | undefined;
-  if (!update) return null;
-  if (update.sessionUpdate !== "tool_call") return null;
-  const meta = update._meta as Record<string, unknown> | undefined;
-  const claudeCode = meta?.claudeCode as Record<string, unknown> | undefined;
-  const name =
-    (claudeCode?.toolName as string) ??
-    (update.title as string) ??
-    (update.kind as string) ??
-    "unknown";
-  const id = (update.toolCallId as string) ?? "";
-  const input = (update.rawInput as Record<string, unknown>) ?? {};
-  return { name, id, input };
+  if (!rec.update || typeof rec.update !== "object") return false;
+  const update = rec.update as Record<string, unknown>;
+  return typeof update.sessionUpdate === "string";
 }
 
 /**
- * Extract tool result info from an ACP SessionNotification for tool_call_update events.
- * ACP format: {sessionId, update: {sessionUpdate: "tool_call_update", toolCallId, rawOutput, status, content, ...}}
+ * Determine if a message payload is in Codex notification format (has method + params).
  */
-function extractAcpToolResult(
-  msg: unknown,
-): { id: string; output: string | unknown[] | null; isError: boolean } | null {
-  if (typeof msg !== "object" || msg === null) return null;
+function isCodexNotification(msg: unknown): boolean {
+  if (typeof msg !== "object" || msg === null) return false;
   const rec = msg as Record<string, unknown>;
-  const update = rec.update as Record<string, unknown> | undefined;
-  if (!update) return null;
-  if (update.sessionUpdate !== "tool_call_update") return null;
-  const id = (update.toolCallId as string) ?? "";
-  let output: string | unknown[] | null = null;
-  if (typeof update.rawOutput === "string") {
-    output = update.rawOutput;
-  } else if (update.rawOutput != null) {
-    output = JSON.stringify(update.rawOutput);
-  } else {
-    const content = update.content as Array<Record<string, unknown>> | undefined;
-    if (content && content.length > 0) {
-      const texts = content
-        .map((c) => {
-          if (c.type === "content") {
-            const block = c.content as Record<string, unknown> | undefined;
-            return (block?.text as string) ?? "";
-          }
-          if (c.type === "terminal") {
-            return (c.output as string) ?? "";
-          }
-          return "";
-        })
-        .filter(Boolean);
-      output = texts.join("\n") || null;
-    }
+  return typeof rec.method === "string" && rec.params !== undefined;
+}
+
+/**
+ * Try to parse a trace line message using canonical parsers.
+ * Returns the canonical AgentEvent if successful, null otherwise.
+ */
+function tryCanonicalParse(msg: unknown, ts: string): AgentEvent | null {
+  if (typeof msg !== "object" || msg === null) return null;
+
+  // Try ACP format first
+  if (isAcpMessage(msg)) {
+    return parseAcpSessionUpdate(msg, ts);
   }
-  const isError = update.status === "failed";
-  return { id, output, isError };
+
+  // Try Codex notification format
+  if (isCodexNotification(msg)) {
+    const rec = msg as Record<string, unknown>;
+    const method = rec.method as string;
+    const params = rec.params;
+    return parseCodexNotification(method, params, ts);
+  }
+
+  return null;
 }
 
+// ---------------------------------------------------------------------------
+// Canonical event fast path
+// ---------------------------------------------------------------------------
+
 /**
- * Parse an `item/completed` notification params into a DisplayEvent.
- * Mirrors thib-coding-agent's CodexEventMerger.codexItemToDisplay logic.
+ * Attempt to handle a pre-parsed canonical AgentEvent, maintaining orchestration
+ * state (turn tracking, pending tool calls). Returns true if the event was handled.
  */
-function parseItemCompleted(params: Record<string, unknown>, ts: string): DisplayEvent | null {
-  const item = params.item as Record<string, unknown> | undefined;
-  if (!item) return null;
-  const itemType = item.type as string | undefined;
-
-  switch (itemType) {
-    case "reasoning": {
-      let text = typeof item.text === "string" ? item.text : "";
-      if (!text) {
-        const summary = item.summary as Array<Record<string, unknown>> | undefined;
-        if (summary && summary.length > 0) {
-          text = summary
-            .map((s) => (s.text as string) ?? "")
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-      if (!text) {
-        const content = item.content as Array<Record<string, unknown>> | undefined;
-        if (content && content.length > 0) {
-          text = content
-            .map((c) => (c.text as string) ?? "")
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-      if (!text) return null;
-      return { kind: "thought", text, timestamp: ts };
+function handleCanonicalEvent(
+  ce: AgentEvent,
+  ts: string,
+  events: DisplayEvent[],
+  pendingToolCalls: Map<string, PendingToolCall>,
+  turnStartedRecords: TurnStartedRecord[],
+  turnIndex: number,
+): boolean {
+  switch (ce.kind) {
+    case "turn_started": {
+      turnStartedRecords.push({ timestamp: ts, consumed: false });
+      events.push({ kind: "turn_started", turnIndex: turnIndex + 1, timestamp: ts });
+      return true;
     }
 
-    case "agentMessage":
-      return {
-        kind: "message",
-        text: typeof item.text === "string" ? item.text : "",
-        timestamp: ts,
-      };
-
-    case "userMessage": {
-      const content = item.content as Array<Record<string, unknown>> | undefined;
-      const text = content?.[0]?.text as string | undefined;
-      return { kind: "message", text: text ?? "", timestamp: ts };
+    case "turn_completed": {
+      let durationMs: number | null = null;
+      for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+        const record = turnStartedRecords[i];
+        if (record !== undefined && !record.consumed) {
+          record.consumed = true;
+          const startMs = new Date(record.timestamp).getTime();
+          const endMs = new Date(ts).getTime();
+          if (!Number.isNaN(startMs) && !Number.isNaN(endMs)) durationMs = endMs - startMs;
+          break;
+        }
+      }
+      let usage: TokenUsage | null = null;
+      if (ce.usage) {
+        usage = {
+          inputTokens: ce.usage.inputTokens,
+          outputTokens: ce.usage.outputTokens,
+          totalTokens: ce.usage.totalTokens,
+        };
+      }
+      events.push({ kind: "turn_completed", usage, durationMs, timestamp: ts });
+      return true;
     }
 
-    case "commandExecution":
-      return {
+    case "turn_failed":
+    case "turn_cancelled": {
+      for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+        const record = turnStartedRecords[i];
+        if (record !== undefined && !record.consumed) {
+          record.consumed = true;
+          break;
+        }
+      }
+      const text =
+        ce.kind === "turn_failed"
+          ? `Turn failed: ${ce.error}`
+          : `Turn cancelled: ${ce.reason ?? "unknown"}`;
+      events.push({ kind: "turn_failed", text, timestamp: ts });
+      return true;
+    }
+
+    case "tool_use_requested": {
+      const toolCall: ToolCallDisplayEvent = {
         kind: "tool_call",
-        category: "bash_command",
-        toolName: "command_execution",
-        input: { command: item.command },
-        output: (item.aggregatedOutput as string) ?? null,
-        isError: (item.exitCode as number) !== 0,
-        durationMs: (item.durationMs as number) ?? null,
+        category: ce.category,
+        toolName: ce.toolName,
+        input: ce.input,
+        output: null,
+        isError: false,
+        durationMs: null,
         nestedEvents: [],
         timestamp: ts,
       };
-
-    case "dynamicToolCall": {
-      const toolName = (item.tool as string) ?? "unknown";
-      const args = (item.arguments as Record<string, unknown>) ?? {};
-      const contentItems = item.contentItems as Array<Record<string, unknown>> | undefined;
-      const output = (contentItems?.[0]?.text as string | null) ?? null;
-      return {
-        kind: "tool_call",
-        category: detectToolCategory(toolName),
-        toolName,
-        input: args,
-        output,
-        isError: (item.success as boolean) === false,
-        durationMs: (item.durationMs as number) ?? null,
-        nestedEvents: [],
-        timestamp: ts,
-      };
+      pendingToolCalls.set(ce.toolCallId, {
+        event: toolCall,
+        toolUseId: ce.toolCallId,
+        startTs: ts,
+      });
+      return true;
     }
+
+    case "tool_result": {
+      const pending = pendingToolCalls.get(ce.toolCallId);
+      if (pending) {
+        pendingToolCalls.delete(ce.toolCallId);
+        const toolCall = pending.event;
+        if (ce.output !== null) toolCall.output = ce.output;
+        toolCall.isError = ce.isError;
+        const startMs = new Date(pending.startTs).getTime();
+        const endMs = new Date(ts).getTime();
+        toolCall.durationMs = Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+        events.push(toolCall);
+      } else {
+        events.push({
+          kind: "tool_call",
+          category: ce.category,
+          toolName: ce.toolName,
+          input: ce.input,
+          output: ce.output,
+          isError: ce.isError,
+          durationMs: ce.durationMs,
+          nestedEvents: [],
+          timestamp: ts,
+        });
+      }
+      return true;
+    }
+
+    case "tool_call_failed": {
+      const pending = pendingToolCalls.get(ce.toolCallId);
+      if (pending) {
+        pendingToolCalls.delete(ce.toolCallId);
+        const toolCall = pending.event;
+        toolCall.output = ce.error;
+        toolCall.isError = true;
+        const startMs = new Date(pending.startTs).getTime();
+        const endMs = new Date(ts).getTime();
+        toolCall.durationMs = Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+        events.push(toolCall);
+      } else {
+        events.push({
+          kind: "tool_call",
+          category: ce.category,
+          toolName: ce.toolName,
+          input: ce.input,
+          output: ce.error,
+          isError: true,
+          durationMs: ce.durationMs,
+          nestedEvents: [],
+          timestamp: ts,
+        });
+      }
+      return true;
+    }
+
+    case "tool_call_update": {
+      const pending = ce.toolCallId ? pendingToolCalls.get(ce.toolCallId) : undefined;
+      if (pending && ce.partialOutput != null) {
+        if (typeof pending.event.output === "string") {
+          pending.event.output += ce.partialOutput;
+        } else {
+          pending.event.output = ce.partialOutput;
+        }
+      }
+      return true;
+    }
+
+    case "thought":
+    case "thought_chunk":
+    case "assistant_message":
+    case "assistant_message_chunk":
+    case "user_message":
+    case "user_message_chunk": {
+      const display = canonicalEventToDisplay(ce);
+      if (display) events.push(display);
+      return true;
+    }
+
+    case "plan":
+    case "mode_update":
+    case "config_update":
+    case "session_info_update":
+    case "notification": {
+      const display = canonicalEventToDisplay(ce);
+      if (display) events.push(display);
+      return true;
+    }
+
+    // Events without display representation — handled (skipped) by the fast path
+    case "session_started":
+    case "session_ended":
+    case "turn_input_required":
+    case "usage":
+    case "rate_limit":
+    case "approval_required":
+    case "approval_auto_approved":
+    case "tool_input_auto_answered":
+    case "workspace_prepared":
+    case "fs_write":
+    case "process_exit":
+    case "stderr":
+    case "malformed":
+    case "unknown":
+      return true;
 
     default:
-      return null;
+      return false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Main trace file parser
+// ---------------------------------------------------------------------------
 
 /**
  * Parse all lines from a JSONL trace file content into DisplayEvents.
@@ -275,8 +522,31 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     const ts = raw.timestamp ?? new Date().toISOString();
     const msg = raw.message;
 
+    // Fast path: use pre-parsed canonical event when available
+    if (
+      raw.canonicalEvent &&
+      typeof raw.canonicalEvent === "object" &&
+      "kind" in raw.canonicalEvent
+    ) {
+      const ce = raw.canonicalEvent as AgentEvent;
+      if (handleCanonicalEvent(ce, ts, events, pendingToolCalls, turnStartedRecords, turnIndex)) {
+        if (ce.kind === "turn_started") turnIndex++;
+        continue;
+      }
+    }
+
     switch (raw.type) {
       case "agent_thought": {
+        // Try canonical parse for ACP messages
+        const canonical = tryCanonicalParse(msg, ts);
+        if (canonical) {
+          const display = canonicalEventToDisplay(canonical);
+          if (display && display.kind === "thought" && display.text.trim()) {
+            events.push(display);
+            break;
+          }
+        }
+        // Fallback: extract text directly
         const text =
           typeof msg === "string"
             ? msg
@@ -289,6 +559,14 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "assistant_message": {
+        const canonical = tryCanonicalParse(msg, ts);
+        if (canonical) {
+          const display = canonicalEventToDisplay(canonical);
+          if (display && display.kind === "message" && display.text.trim()) {
+            events.push(display);
+            break;
+          }
+        }
         const text =
           typeof msg === "string"
             ? msg
@@ -301,6 +579,14 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "user_message": {
+        const canonical = tryCanonicalParse(msg, ts);
+        if (canonical) {
+          const display = canonicalEventToDisplay(canonical);
+          if (display && display.kind === "message" && display.text) {
+            events.push(display);
+            break;
+          }
+        }
         const text =
           typeof msg === "string"
             ? msg
@@ -313,17 +599,60 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "tool_use_requested": {
-        const acpTool = extractAcpToolCall(msg);
+        // Try canonical ACP parse
+        const canonical = tryCanonicalParse(msg, ts);
+        if (canonical && canonical.kind === "tool_use_requested") {
+          const toolCall: ToolCallDisplayEvent = {
+            kind: "tool_call",
+            category: canonical.category,
+            toolName: canonical.toolName,
+            input: canonical.input,
+            output: null,
+            isError: false,
+            durationMs: null,
+            nestedEvents: [],
+            timestamp: ts,
+          };
+          pendingToolCalls.set(canonical.toolCallId, {
+            event: toolCall,
+            toolUseId: canonical.toolCallId,
+            startTs: ts,
+          });
+          break;
+        }
+
+        // Fallback: direct extraction from message payload
         const payload =
           typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
-        const toolName =
-          acpTool?.name ?? (payload.name as string) ?? (payload.toolName as string) ?? "unknown";
+
+        // Try extracting ACP tool call info via canonical parser
+        const acpCanonical = isAcpMessage(msg) ? parseAcpSessionUpdate(msg, ts) : null;
+        if (acpCanonical && acpCanonical.kind === "tool_use_requested") {
+          const toolCall: ToolCallDisplayEvent = {
+            kind: "tool_call",
+            category: acpCanonical.category,
+            toolName: acpCanonical.toolName,
+            input: acpCanonical.input,
+            output: null,
+            isError: false,
+            durationMs: null,
+            nestedEvents: [],
+            timestamp: ts,
+          };
+          pendingToolCalls.set(acpCanonical.toolCallId, {
+            event: toolCall,
+            toolUseId: acpCanonical.toolCallId,
+            startTs: ts,
+          });
+          break;
+        }
+
+        const toolName = (payload.name as string) ?? (payload.toolName as string) ?? "unknown";
         const toolUseId =
-          acpTool?.id ??
           (payload.id as string) ??
           (payload.toolUseId as string) ??
           `tool-${Date.now()}-${Math.random()}`;
-        const input = acpTool?.input ?? (payload.input as Record<string, unknown>) ?? {};
+        const input = (payload.input as Record<string, unknown>) ?? {};
 
         const toolCall: ToolCallDisplayEvent = {
           kind: "tool_call",
@@ -341,8 +670,25 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "tool_call_update": {
-        // Partial update for a pending tool call (e.g., streaming output).
-        // Attach partial output to the pending event; it will be finalized by tool_result/tool_call_completed.
+        // Try canonical parse for ACP tool_call_update
+        const canonical = tryCanonicalParse(msg, ts);
+        if (canonical && canonical.kind === "tool_call_update") {
+          const pending = pendingToolCalls.get(canonical.toolCallId);
+          if (
+            pending &&
+            canonical.partialOutput !== null &&
+            canonical.partialOutput !== undefined
+          ) {
+            if (typeof pending.event.output === "string") {
+              pending.event.output = pending.event.output + canonical.partialOutput;
+            } else {
+              pending.event.output = canonical.partialOutput;
+            }
+          }
+          break;
+        }
+
+        // Fallback: direct extraction
         const payload =
           typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
         const acpUpdate = (payload.update as Record<string, unknown>) ?? undefined;
@@ -369,34 +715,35 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         const payload =
           typeof msg === "object" && msg !== null ? (msg as Record<string, unknown>) : {};
 
-        // Handle ACP tool_call_update format
-        const acpResult = extractAcpToolResult(msg);
-        if (acpResult) {
-          const pendingAcp = acpResult.id ? pendingToolCalls.get(acpResult.id) : undefined;
+        // Try canonical ACP parse for tool_call_update with completed/failed status
+        const canonical = tryCanonicalParse(msg, ts);
+        if (
+          canonical &&
+          (canonical.kind === "tool_result" || canonical.kind === "tool_call_failed")
+        ) {
+          const toolCallId = canonical.toolCallId;
+          const pendingAcp = toolCallId ? pendingToolCalls.get(toolCallId) : undefined;
           if (pendingAcp) {
-            pendingToolCalls.delete(acpResult.id);
+            pendingToolCalls.delete(toolCallId);
             const toolCall = pendingAcp.event;
-            if (acpResult.output !== null) {
-              toolCall.output = acpResult.output;
+            if (canonical.kind === "tool_result" && canonical.output !== null) {
+              toolCall.output = canonical.output;
+            } else if (canonical.kind === "tool_call_failed") {
+              toolCall.output = canonical.error;
             }
-            toolCall.isError = acpResult.isError || raw.type === "tool_call_failed";
+            toolCall.isError =
+              canonical.kind === "tool_call_failed" || raw.type === "tool_call_failed";
             const startMs = new Date(pendingAcp.startTs).getTime();
             const endMs = new Date(ts).getTime();
             toolCall.durationMs =
               Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
             events.push(toolCall);
           } else {
-            events.push({
-              kind: "tool_call",
-              category: "unknown",
-              toolName: "unknown",
-              input: {},
-              output: acpResult.output,
-              isError: acpResult.isError || raw.type === "tool_call_failed",
-              durationMs: null,
-              nestedEvents: [],
-              timestamp: ts,
-            });
+            // No pending tool call; emit from canonical event directly
+            const display = canonicalEventToDisplay(canonical);
+            if (display) {
+              events.push(display);
+            }
           }
           break;
         }
@@ -551,43 +898,141 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
           | undefined;
         if (!method || !params) break;
 
-        if (method === "item/completed") {
-          const displayEvent = parseItemCompleted(params, ts);
-          if (displayEvent) events.push(displayEvent);
-        } else if (method === "turn/started") {
-          // Deduplicate: if the last event is already a turn_started (from raw event), update it
-          const lastEvent = events[events.length - 1];
-          if (lastEvent && lastEvent.kind === "turn_started") {
-            // Update timestamp if the raw one had null/fallback
-            if (ts && new Date(ts).getTime() > 0) {
-              lastEvent.timestamp = ts;
-              // Also update the corresponding turnStartedRecord timestamp
-              const lastRecord = turnStartedRecords[turnStartedRecords.length - 1];
-              if (lastRecord) {
-                lastRecord.timestamp = ts;
+        // Delegate to canonical Codex notification parser
+        const canonical = parseCodexNotification(method, params, ts);
+        if (canonical) {
+          // Handle turn lifecycle from notification - needs orchestration state
+          if (canonical.kind === "turn_started") {
+            const lastEvent = events[events.length - 1];
+            if (lastEvent && lastEvent.kind === "turn_started") {
+              if (ts && new Date(ts).getTime() > 0) {
+                lastEvent.timestamp = ts;
+                const lastRecord = turnStartedRecords[turnStartedRecords.length - 1];
+                if (lastRecord) {
+                  lastRecord.timestamp = ts;
+                }
+              }
+            } else {
+              turnIndex++;
+              turnStartedRecords.push({ timestamp: ts, consumed: false });
+              events.push({ kind: "turn_started", turnIndex, timestamp: ts });
+            }
+            break;
+          }
+
+          if (canonical.kind === "turn_completed") {
+            let durationMs: number | null = null;
+            for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+              const record = turnStartedRecords[i];
+              if (record !== undefined && !record.consumed) {
+                record.consumed = true;
+                const startMs = new Date(record.timestamp).getTime();
+                const endMs = new Date(ts).getTime();
+                if (!Number.isNaN(startMs) && !Number.isNaN(endMs)) {
+                  durationMs = endMs - startMs;
+                }
+                break;
               }
             }
-          } else {
-            turnIndex++;
-            turnStartedRecords.push({ timestamp: ts, consumed: false });
-            events.push({ kind: "turn_started", turnIndex, timestamp: ts });
+            const display = canonicalEventToDisplay(canonical);
+            if (display && display.kind === "turn_completed") {
+              display.durationMs = durationMs;
+              events.push(display);
+            } else {
+              events.push({ kind: "turn_completed", usage: null, durationMs, timestamp: ts });
+            }
+            break;
           }
-        } else if (method === "turn/completed") {
-          // turn/completed from notification form (usage extracted from params if available)
-          let durationMs: number | null = null;
-          for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
-            const record = turnStartedRecords[i];
-            if (record !== undefined && !record.consumed) {
-              record.consumed = true;
-              const startMs = new Date(record.timestamp).getTime();
-              const endMs = new Date(ts).getTime();
-              if (!Number.isNaN(startMs) && !Number.isNaN(endMs)) {
-                durationMs = endMs - startMs;
+
+          if (canonical.kind === "turn_failed") {
+            for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+              const record = turnStartedRecords[i];
+              if (record !== undefined && !record.consumed) {
+                record.consumed = true;
+                break;
               }
+            }
+          }
+
+          // For tool results from item/completed, handle pending tool call resolution
+          if (canonical.kind === "tool_result" || canonical.kind === "tool_call_failed") {
+            const toolCallId = canonical.toolCallId;
+            const pendingTool = toolCallId ? pendingToolCalls.get(toolCallId) : undefined;
+            if (pendingTool) {
+              pendingToolCalls.delete(toolCallId);
+              const toolCall = pendingTool.event;
+              if (canonical.kind === "tool_result" && canonical.output !== null) {
+                toolCall.output = canonical.output;
+              } else if (canonical.kind === "tool_call_failed") {
+                toolCall.output = canonical.error;
+              }
+              toolCall.isError = canonical.kind === "tool_call_failed";
+              const startMs = new Date(pendingTool.startTs).getTime();
+              const endMs = new Date(ts).getTime();
+              toolCall.durationMs =
+                Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+              events.push(toolCall);
               break;
             }
           }
-          events.push({ kind: "turn_completed", usage: null, durationMs, timestamp: ts });
+
+          // For tool_use_requested from item/started, add to pending
+          if (canonical.kind === "tool_use_requested") {
+            const toolCall: ToolCallDisplayEvent = {
+              kind: "tool_call",
+              category: canonical.category,
+              toolName: canonical.toolName,
+              input: canonical.input,
+              output: null,
+              isError: false,
+              durationMs: null,
+              nestedEvents: [],
+              timestamp: ts,
+            };
+            pendingToolCalls.set(canonical.toolCallId, {
+              event: toolCall,
+              toolUseId: canonical.toolCallId,
+              startTs: ts,
+            });
+            break;
+          }
+
+          // For thought/message events, validate the canonical output does not contain
+          // serialization artifacts (the canonical parser may not handle all
+          // summary/content array-of-objects variants).
+          if (canonical.kind === "thought" || canonical.kind === "assistant_message") {
+            const text = canonical.text;
+            if (text && !text.includes("[object Object]")) {
+              const display = canonicalEventToDisplay(canonical);
+              if (display) {
+                events.push(display);
+                break;
+              }
+            }
+            // Fallback to local item/completed parsing for reasoning
+            if (method === "item/completed") {
+              const fallbackDisplay = parseItemCompletedLocal(params, ts);
+              if (fallbackDisplay) {
+                events.push(fallbackDisplay);
+              }
+            }
+            break;
+          }
+
+          // For all other canonical events, convert directly
+          const display = canonicalEventToDisplay(canonical);
+          if (display) {
+            events.push(display);
+          }
+          break;
+        }
+
+        // Fallback: try local item/completed parser for unhandled notification methods
+        if (method === "item/completed") {
+          const fallbackDisplay = parseItemCompletedLocal(params, ts);
+          if (fallbackDisplay) {
+            events.push(fallbackDisplay);
+          }
         }
         break;
       }
@@ -624,6 +1069,91 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
   }
 
   return mergeConsecutiveTextEvents(events);
+}
+
+/**
+ * Local fallback parser for item/completed notifications.
+ * Handles the array-of-objects format for summary/content fields where each
+ * element is an object with a `.text` property (e.g., {type: "summary_text", text: "..."}).
+ * This covers cases where the canonical parser may not handle all variants.
+ */
+function parseItemCompletedLocal(params: Record<string, unknown>, ts: string): DisplayEvent | null {
+  const item = params.item as Record<string, unknown> | undefined;
+  if (!item) return null;
+  const itemType = item.type as string | undefined;
+
+  switch (itemType) {
+    case "reasoning": {
+      let text = typeof item.text === "string" ? item.text : "";
+      if (!text) {
+        const summary = item.summary as Array<Record<string, unknown>> | undefined;
+        if (summary && summary.length > 0) {
+          text = summary
+            .map((s) => (s.text as string) ?? "")
+            .filter(Boolean)
+            .join("\n");
+        }
+      }
+      if (!text) {
+        const content = item.content as Array<Record<string, unknown>> | undefined;
+        if (content && content.length > 0) {
+          text = content
+            .map((c) => (c.text as string) ?? "")
+            .filter(Boolean)
+            .join("\n");
+        }
+      }
+      if (!text) return null;
+      return { kind: "thought", text, timestamp: ts };
+    }
+
+    case "agentMessage":
+      return {
+        kind: "message",
+        text: typeof item.text === "string" ? item.text : "",
+        timestamp: ts,
+      };
+
+    case "userMessage": {
+      const content = item.content as Array<Record<string, unknown>> | undefined;
+      const text = content?.[0]?.text as string | undefined;
+      return { kind: "message", text: text ?? "", timestamp: ts };
+    }
+
+    case "commandExecution":
+      return {
+        kind: "tool_call",
+        category: "bash_command",
+        toolName: "command_execution",
+        input: { command: item.command },
+        output: (item.aggregatedOutput as string) ?? null,
+        isError: (item.exitCode as number) !== 0,
+        durationMs: (item.durationMs as number) ?? null,
+        nestedEvents: [],
+        timestamp: ts,
+      };
+
+    case "dynamicToolCall": {
+      const toolName = (item.tool as string) ?? "unknown";
+      const args = (item.arguments as Record<string, unknown>) ?? {};
+      const contentItems = item.contentItems as Array<Record<string, unknown>> | undefined;
+      const output = (contentItems?.[0]?.text as string | null) ?? null;
+      return {
+        kind: "tool_call",
+        category: detectToolCategory(toolName),
+        toolName,
+        input: args,
+        output,
+        isError: (item.success as boolean) === false,
+        durationMs: (item.durationMs as number) ?? null,
+        nestedEvents: [],
+        timestamp: ts,
+      };
+    }
+
+    default:
+      return null;
+  }
 }
 
 function mergeConsecutiveTextEvents(events: DisplayEvent[]): DisplayEvent[] {

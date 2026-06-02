@@ -643,6 +643,8 @@ export interface AgentUpdate {
   rateLimits?: unknown;
   /** When the executor observed the event; defaults to `new Date()` if omitted. */
   timestamp?: Date | undefined;
+  /** Pre-parsed canonical event; consumers cast to AgentEvent from @symphony/agent-events. */
+  canonicalEvent?: unknown;
 }
 
 /**

@@ -29,6 +29,7 @@
     "@symphony/policies": "workspace:*",
     "@symphony/ssh": "workspace:*",
     "@symphony/workspace": "workspace:*",
+    "@symphony/agent-events": "workspace:*",
     "@symphony/domain": "workspace:*",
     "@symphony/protocol": "workspace:*"
   }

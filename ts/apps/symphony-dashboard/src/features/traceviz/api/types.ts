@@ -1,3 +1,9 @@
+/**
+ * Display event types for the traceviz frontend.
+ * These are wire-stable types matching the REST/WebSocket protocol served by @symphony/traceviz-server.
+ * Canonical event parsing and conversion happens server-side; the dashboard consumes the result.
+ */
+
 export interface TicketInfo {
   issueId: string;
   identifier: string;

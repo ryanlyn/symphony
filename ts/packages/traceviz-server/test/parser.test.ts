@@ -458,3 +458,283 @@ describe("parseTraceLines with full trace (integration)", () => {
     expect(events.filter((e) => e.kind === "notification").length).toBe(0);
   });
 });
+
+describe("parseTraceLines canonical fast path", () => {
+  it("uses canonicalEvent when present for turn lifecycle", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        canonicalEvent: {
+          kind: "turn_started",
+          source: "codex",
+          timestamp: "2026-01-01T00:00:00Z",
+          sessionId: "s1",
+        },
+      }),
+      JSON.stringify({
+        type: "turn_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:10Z",
+        canonicalEvent: {
+          kind: "turn_completed",
+          source: "codex",
+          timestamp: "2026-01-01T00:00:10Z",
+          sessionId: "s1",
+          usage: { inputTokens: 200, outputTokens: 100, totalTokens: 300 },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(2);
+    expect(events[0]!.kind).toBe("turn_started");
+    if (events[0]!.kind === "turn_started") {
+      expect(events[0]!.turnIndex).toBe(1);
+    }
+    expect(events[1]!.kind).toBe("turn_completed");
+    if (events[1]!.kind === "turn_completed") {
+      expect(events[1]!.durationMs).toBe(10000);
+      expect(events[1]!.usage).toEqual({ inputTokens: 200, outputTokens: 100, totalTokens: 300 });
+    }
+  });
+
+  it("uses canonicalEvent for thought and message content", () => {
+    const lines = [
+      JSON.stringify({
+        type: "agent_thought",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        canonicalEvent: {
+          kind: "thought",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:01Z",
+          text: "Thinking...",
+        },
+      }),
+      JSON.stringify({
+        type: "assistant_message",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:02Z",
+        canonicalEvent: {
+          kind: "assistant_message",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:02Z",
+          text: "Hello world",
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(2);
+    expect(events[0]!.kind).toBe("thought");
+    if (events[0]!.kind === "thought") expect(events[0]!.text).toBe("Thinking...");
+    expect(events[1]!.kind).toBe("message");
+    if (events[1]!.kind === "message") expect(events[1]!.text).toBe("Hello world");
+  });
+
+  it("uses canonicalEvent for tool_use_requested + tool_result matching", () => {
+    const lines = [
+      JSON.stringify({
+        type: "tool_use_requested",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        canonicalEvent: {
+          kind: "tool_use_requested",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:01Z",
+          toolCallId: "tc_1",
+          toolName: "Bash",
+          category: "bash_command",
+          input: { command: "ls" },
+        },
+      }),
+      JSON.stringify({
+        type: "tool_result",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        canonicalEvent: {
+          kind: "tool_result",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:03Z",
+          toolCallId: "tc_1",
+          toolName: "Bash",
+          category: "bash_command",
+          input: { command: "ls" },
+          output: "file1.txt\nfile2.txt",
+          isError: false,
+          durationMs: 2000,
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(1);
+    const tool = events[0]!;
+    expect(tool.kind).toBe("tool_call");
+    if (tool.kind === "tool_call") {
+      expect(tool.toolName).toBe("Bash");
+      expect(tool.category).toBe("bash_command");
+      expect(tool.output).toBe("file1.txt\nfile2.txt");
+      expect(tool.isError).toBe(false);
+      expect(tool.durationMs).toBe(2000);
+    }
+  });
+
+  it("skips canonicalEvent for session lifecycle events silently", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        canonicalEvent: {
+          kind: "session_started",
+          source: "codex",
+          timestamp: "2026-01-01T00:00:00Z",
+          sessionId: "s1",
+        },
+      }),
+      JSON.stringify({
+        type: "stderr",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        canonicalEvent: {
+          kind: "stderr",
+          source: "codex",
+          timestamp: "2026-01-01T00:00:00Z",
+          text: "warning",
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(0);
+  });
+
+  it("falls back to legacy path when canonicalEvent is absent", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+      }),
+      JSON.stringify({
+        type: "turn_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:05Z",
+        usage: { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(2);
+    expect(events[0]!.kind).toBe("turn_started");
+    expect(events[1]!.kind).toBe("turn_completed");
+    if (events[1]!.kind === "turn_completed") {
+      expect(events[1]!.usage).toEqual({ inputTokens: 50, outputTokens: 25, totalTokens: 75 });
+      expect(events[1]!.durationMs).toBe(5000);
+    }
+  });
+
+  it("handles turn_failed via canonicalEvent", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_started",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        canonicalEvent: {
+          kind: "turn_started",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:00Z",
+          sessionId: "s1",
+        },
+      }),
+      JSON.stringify({
+        type: "turn_failed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:05Z",
+        canonicalEvent: {
+          kind: "turn_failed",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:05Z",
+          error: "timeout exceeded",
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(2);
+    expect(events[0]!.kind).toBe("turn_started");
+    expect(events[1]!.kind).toBe("turn_failed");
+    if (events[1]!.kind === "turn_failed") {
+      expect(events[1]!.text).toBe("Turn failed: timeout exceeded");
+    }
+  });
+
+  it("handles tool_call_update accumulation via canonicalEvent", () => {
+    const lines = [
+      JSON.stringify({
+        type: "tool_use_requested",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        canonicalEvent: {
+          kind: "tool_use_requested",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:01Z",
+          toolCallId: "tc_2",
+          toolName: "Read",
+          category: "file_operation",
+          input: { file_path: "/tmp/x.txt" },
+        },
+      }),
+      JSON.stringify({
+        type: "tool_call_update",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:02Z",
+        canonicalEvent: {
+          kind: "tool_call_update",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:02Z",
+          toolCallId: "tc_2",
+          partialOutput: "partial content",
+        },
+      }),
+      JSON.stringify({
+        type: "tool_result",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        canonicalEvent: {
+          kind: "tool_result",
+          source: "claude",
+          timestamp: "2026-01-01T00:00:03Z",
+          toolCallId: "tc_2",
+          toolName: "Read",
+          category: "file_operation",
+          input: { file_path: "/tmp/x.txt" },
+          output: "full content",
+          isError: false,
+          durationMs: 2000,
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    expect(events.length).toBe(1);
+    const tool = events[0]!;
+    expect(tool.kind).toBe("tool_call");
+    if (tool.kind === "tool_call") {
+      expect(tool.toolName).toBe("Read");
+      expect(tool.output).toBe("full content");
+      expect(tool.durationMs).toBe(2000);
+    }
+  });
+});

@@ -8,6 +8,8 @@ import type {
   Settings,
   UsageTotals,
 } from "@symphony/domain";
+import { parseCodexNotification } from "@symphony/agent-events";
+import type { AgentEvent } from "@symphony/agent-events";
 import type { SessionUpdate, SessionUpdateKind } from "@symphony/protocol";
 import { executeTool, toolSpecs } from "@symphony/mcp";
 import { shellEscape, startSshProcess } from "@symphony/ssh";
@@ -145,6 +147,14 @@ export class CodexAppServerExecutor implements AgentExecutor {
       sessionId: null,
       resumeId: threadId,
       executorPid: session.executorPid,
+      canonicalEvent: {
+        kind: "session_started",
+        source: "codex",
+        timestamp: new Date().toISOString(),
+        sessionId: null,
+        resumeId: threadId,
+        executorPid: session.executorPid,
+      },
     });
     return session;
   }
@@ -211,7 +221,19 @@ export class CodexAppServerExecutor implements AgentExecutor {
       const turnId = readNestedString(turnResult, ["turn", "id"]);
       const sessionId = turnId ? `${session.threadId}-${turnId}` : (session.sessionId ?? null);
       session.sessionId = sessionId;
-      this.emit(session, { type: "turn_started", sessionId, resumeId: session.resumeId });
+      const turnTs = new Date();
+      this.emit(session, {
+        type: "turn_started",
+        sessionId,
+        resumeId: session.resumeId,
+        timestamp: turnTs,
+        canonicalEvent: {
+          kind: "turn_started",
+          source: "codex",
+          timestamp: turnTs.toISOString(),
+          sessionId,
+        },
+      });
       await completion;
     } finally {
       if (completionTimer) clearTimeout(completionTimer);
@@ -313,23 +335,47 @@ export class CodexAppServerExecutor implements AgentExecutor {
       return;
     }
 
+    const ts = new Date();
+    const canonical = parseCodexNotification(
+      parsed.data.method,
+      parsed.data.params,
+      ts.toISOString(),
+    );
+    const strippedCanonical = canonical ? stripRawFromEvent(canonical) : undefined;
+
     void Promise.resolve(
       match(parsed.data)
         .with({ method: "turn/completed" }, (message) =>
-          this.emit(session, { type: "turn_completed", message, timestamp: new Date() }),
+          this.emit(session, {
+            type: "turn_completed",
+            message,
+            timestamp: ts,
+            canonicalEvent: strippedCanonical,
+          }),
         )
         .with({ method: "turn/failed" }, (message) =>
-          this.emit(session, { type: "turn_failed", message, timestamp: new Date() }),
+          this.emit(session, {
+            type: "turn_failed",
+            message,
+            timestamp: ts,
+            canonicalEvent: strippedCanonical,
+          }),
         )
         .with({ method: "turn/cancelled" }, (message) =>
-          this.emit(session, { type: "turn_cancelled", message, timestamp: new Date() }),
+          this.emit(session, {
+            type: "turn_cancelled",
+            message,
+            timestamp: ts,
+            canonicalEvent: strippedCanonical,
+          }),
         )
         .with({ method: "thread/tokenUsage/updated" }, (message) =>
           this.emit(session, {
             type: "usage",
             usage: extractUsage(message),
             message,
-            timestamp: new Date(),
+            timestamp: ts,
+            canonicalEvent: strippedCanonical,
           }),
         )
         .with({ method: "rateLimits/updated" }, (message) =>
@@ -337,7 +383,8 @@ export class CodexAppServerExecutor implements AgentExecutor {
             type: "rate_limit",
             rateLimits: message.params,
             message,
-            timestamp: new Date(),
+            timestamp: ts,
+            canonicalEvent: strippedCanonical,
           }),
         )
         .with({ method: "item/tool/call" }, (message) => {
@@ -428,10 +475,37 @@ export class CodexAppServerExecutor implements AgentExecutor {
       contentItems: [{ type: "inputText", text: output }],
     };
 
+    const toolTs = new Date();
     this.emit(session, {
       type: wireResult.success ? "tool_call_completed" : "tool_call_failed",
       message: { request: value, result: wireResult },
-      timestamp: new Date(),
+      timestamp: toolTs,
+      canonicalEvent: wireResult.success
+        ? {
+            kind: "tool_result" as const,
+            source: "codex" as const,
+            timestamp: toolTs.toISOString(),
+            sessionId: session.sessionId,
+            toolCallId: (params as { callId?: string }).callId ?? "",
+            toolName: toolName ?? "unknown",
+            category: "unknown" as const,
+            input: args ?? {},
+            output,
+            isError: false,
+            durationMs: null,
+          }
+        : {
+            kind: "tool_call_failed" as const,
+            source: "codex" as const,
+            timestamp: toolTs.toISOString(),
+            sessionId: session.sessionId,
+            toolCallId: (params as { callId?: string }).callId ?? "",
+            toolName: toolName ?? "unknown",
+            category: "unknown" as const,
+            input: args ?? {},
+            error: output,
+            durationMs: null,
+          },
     });
     return wireResult;
   }
@@ -706,4 +780,12 @@ function sandboxPolicyForWire(
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false,
   };
+}
+
+function stripRawFromEvent(event: AgentEvent): AgentEvent {
+  if ("raw" in event && event.raw !== undefined) {
+    const { raw: _, ...rest } = event;
+    return rest;
+  }
+  return event;
 }

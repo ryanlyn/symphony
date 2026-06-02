@@ -11,6 +11,9 @@
   "scripts": {
     "build": "tsc"
   },
+  "dependencies": {
+    "@symphony/agent-events": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^22.15.3",
     "@types/ws": "^8.18.1",

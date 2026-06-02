@@ -75,7 +75,17 @@ workspace:
 hooks:
   after_create: |
     git init .
-    git commit --allow-empty -m "initial"
+    mkdir -p .claude/skills .codex/skills/echo-datetime
+    cat > .claude/skills/echo-datetime.md << 'SKILL'
+    ---
+    name: echo-datetime
+    description: Echo the current datetime to stdout
+    ---
+    Run the date command in bash to echo the current datetime.
+    SKILL
+    ln -s ../../.claude/skills/echo-datetime.md .codex/skills/echo-datetime/SKILL.md
+    git add -A
+    git commit -m "initial"
 
 agent:
   kind: ${agentKind}

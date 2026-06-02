@@ -1,2 +1,4 @@
 .env
 .antigravitycli/
+ts/codex-app-server-schemas
+ts/claude-agent-acp-schema.json

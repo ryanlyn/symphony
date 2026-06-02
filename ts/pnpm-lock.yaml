@@ -138,7 +138,7 @@ importers:
         version: 10.4.1(jiti@2.7.0)
       eslint-plugin-import-x:
         specifier: ^4.12.2
-        version: 4.16.2(eslint@10.4.1(jiti@2.7.0))
+        version: 4.16.2(@typescript-eslint/utils@8.60.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3))(eslint@10.4.1(jiti@2.7.0))
       execa:
         specifier: ^9.6.1
         version: 9.6.1
@@ -383,6 +383,9 @@ importers:
       "@hono/node-server":
         specifier: ^1.19.14
         version: 1.19.14(hono@4.12.23)
+      "@symphony/agent-events":
+        specifier: workspace:*
+        version: link:../agent-events
       "@symphony/child-process":
         specifier: workspace:*
         version: link:../child-process
@@ -443,6 +446,8 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/agent-events: {}
 
   packages/agent-runner:
     dependencies:
@@ -611,6 +616,9 @@ importers:
       "@hono/node-server":
         specifier: ^1.19.14
         version: 1.19.14(hono@4.12.23)
+      "@symphony/agent-events":
+        specifier: workspace:*
+        version: link:../agent-events
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
@@ -1850,6 +1858,10 @@ importers:
         version: link:../domain
 
   packages/traceviz-server:
+    dependencies:
+      "@symphony/agent-events":
+        specifier: workspace:*
+        version: link:../agent-events
     devDependencies:
       "@types/node":
         specifier: ^22.15.3
@@ -6969,7 +6981,7 @@ snapshots:
     optionalDependencies:
       unrs-resolver: 1.12.2
 
-  eslint-plugin-import-x@4.16.2(eslint@10.4.1(jiti@2.7.0)):
+  eslint-plugin-import-x@4.16.2(@typescript-eslint/utils@8.60.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3))(eslint@10.4.1(jiti@2.7.0)):
     dependencies:
       "@package-json/types": 0.0.12
       "@typescript-eslint/types": 8.60.0
@@ -6982,6 +6994,8 @@ snapshots:
       semver: 7.8.1
       stable-hash-x: 0.2.0
       unrs-resolver: 1.12.2
+    optionalDependencies:
+      "@typescript-eslint/utils": 8.60.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)
     transitivePeerDependencies:
       - supports-color
 

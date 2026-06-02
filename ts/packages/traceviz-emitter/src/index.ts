@@ -49,6 +49,7 @@ export class TraceEmitter {
       workspacePath: update.workspacePath ?? null,
       sessionId: update.sessionId ?? null,
       executorPid: update.executorPid ?? null,
+      ...(update.canonicalEvent != null ? { canonicalEvent: update.canonicalEvent } : {}),
     });
     const filePath = path.join(dirPath, "trace.jsonl");
 

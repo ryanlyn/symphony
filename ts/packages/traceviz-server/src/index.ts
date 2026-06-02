@@ -8,7 +8,12 @@
 export { TraceWatcher } from "./watcher.js";
 export type { WatcherCallback } from "./watcher.js";
 
-export { parseTraceLines, extractTicketMetadata, detectToolCategory } from "./parser.js";
+export {
+  parseTraceLines,
+  extractTicketMetadata,
+  detectToolCategory,
+  canonicalEventToDisplay,
+} from "./parser.js";
 
 export { computeStats } from "./stats.js";
 

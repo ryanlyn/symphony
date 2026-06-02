@@ -35,6 +35,8 @@ import type {
   Settings,
   UsageTotals,
 } from "@symphony/domain";
+import { parseAcpSessionUpdate } from "@symphony/agent-events";
+import type { AgentEvent } from "@symphony/agent-events";
 import type { SessionUpdateKind } from "@symphony/protocol";
 
 interface AcpSession extends AgentSession {
@@ -126,12 +128,21 @@ export class AcpExecutor implements AgentExecutor {
       ]);
       session.sessionId = sessionId;
       session.resumeId = sessionId;
+      const startTs = new Date();
       this.emit(session, {
         type: "session_started",
         sessionId,
         resumeId: sessionId,
         executorPid,
-        timestamp: new Date(),
+        timestamp: startTs,
+        canonicalEvent: {
+          kind: "session_started",
+          source: "claude",
+          timestamp: startTs.toISOString(),
+          sessionId,
+          resumeId: session.resumeId,
+          executorPid,
+        },
       });
       return session;
     } catch (error) {
@@ -185,12 +196,19 @@ export class AcpExecutor implements AgentExecutor {
       };
 
       const sessionId = requireAcpSessionId(session);
+      const turnTs = new Date();
       this.emit(session, {
         type: "turn_started",
         sessionId,
         resumeId: session.resumeId,
         message: { prompt: [{ type: "text", text: prompt }] },
-        timestamp: new Date(),
+        timestamp: turnTs,
+        canonicalEvent: {
+          kind: "turn_started",
+          source: "claude",
+          timestamp: turnTs.toISOString(),
+          sessionId,
+        },
       });
 
       session.connection
@@ -245,6 +263,7 @@ export class AcpExecutor implements AgentExecutor {
     message: unknown,
     usage?: Partial<UsageTotals>,
   ): AgentUpdate {
+    const ts = new Date();
     const update: AgentUpdate = {
       type,
       sessionUpdate: acpProtocolUpdate(session, type, message, usage),
@@ -252,9 +271,10 @@ export class AcpExecutor implements AgentExecutor {
       resumeId: session.resumeId,
       executorPid: session.executorPid,
       message,
-      timestamp: new Date(),
+      timestamp: ts,
     };
     if (usage) update.usage = usage;
+    update.canonicalEvent = buildLifecycleCanonical(type, ts, session.sessionId, usage);
     return update;
   }
 
@@ -289,6 +309,7 @@ function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotifi
     session.replayedUpdateCount += 1;
     return;
   }
+  const ts = new Date();
   const update: AgentUpdate = {
     type: eventTypeForAcpUpdate(notification.update),
     sessionUpdate: acpProtocolUpdate(
@@ -302,9 +323,11 @@ function handleAcpSessionUpdate(session: AcpSession, notification: SessionNotifi
     executorPid: session.executorPid,
     message: notification,
     usage: extractUsageUpdate(notification.update),
-    timestamp: new Date(),
+    timestamp: ts,
   };
   if (!update.usage) delete update.usage;
+  const canonical = parseAcpSessionUpdate(notification, ts.toISOString());
+  if (canonical) update.canonicalEvent = stripRaw(canonical);
   session.onUpdate?.(update);
 }
 
@@ -317,13 +340,22 @@ function handleAcpPermissionRequest(
     request.options.find((option) => option.kind.startsWith("allow")) ??
     request.options.find((option) => option.optionId.toLowerCase().includes("allow")) ??
     null;
+  const ts = new Date();
+  const kind = selected ? "approval_auto_approved" : "approval_required";
   emit({
-    type: selected ? "approval_auto_approved" : "approval_required",
+    type: kind,
     sessionId: request.sessionId,
     resumeId: session?.resumeId,
     executorPid: session?.executorPid,
     message: { request, selected },
-    timestamp: new Date(),
+    timestamp: ts,
+    canonicalEvent: {
+      kind,
+      source: "claude",
+      timestamp: ts.toISOString(),
+      sessionId: request.sessionId,
+      ...(selected ? { selectedOption: selected.optionId } : {}),
+    },
   });
   if (!selected) return { outcome: { outcome: "cancelled" } };
   return { outcome: { outcome: "selected", optionId: selected.optionId } };
@@ -386,11 +418,19 @@ class AcpClientAdapter {
     const filePath = this.workspacePath(params.path);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, params.content);
+    const ts = new Date();
     this.emit({
       type: "fs_write",
       sessionId: params.sessionId,
       message: { path: params.path },
-      timestamp: new Date(),
+      timestamp: ts,
+      canonicalEvent: {
+        kind: "fs_write",
+        source: "claude",
+        timestamp: ts.toISOString(),
+        sessionId: params.sessionId,
+        path: params.path,
+      },
     });
     return {};
   }
@@ -500,16 +540,50 @@ function wireProcessEvents(session: AcpSession): void {
     const lines = stderr.split(/\r?\n/);
     stderr = lines.pop() ?? "";
     for (const line of lines) {
-      session.onUpdate?.({ type: "stderr", message: line, timestamp: new Date() });
+      const ts = new Date();
+      session.onUpdate?.({
+        type: "stderr",
+        message: line,
+        timestamp: ts,
+        canonicalEvent: {
+          kind: "stderr",
+          source: "claude",
+          timestamp: ts.toISOString(),
+          text: line,
+        },
+      });
     }
   });
   session.process.on("close", (code, signal) => {
     if (stderr) {
-      session.onUpdate?.({ type: "stderr", message: stderr, timestamp: new Date() });
+      const ts = new Date();
+      session.onUpdate?.({
+        type: "stderr",
+        message: stderr,
+        timestamp: ts,
+        canonicalEvent: {
+          kind: "stderr",
+          source: "claude",
+          timestamp: ts.toISOString(),
+          text: stderr,
+        },
+      });
       stderr = "";
     }
+    const ts = new Date();
     const message = `acp bridge exited${code === null ? "" : ` with status ${code}`}${signal ? ` signal ${signal}` : ""}`;
-    session.onUpdate?.({ type: "process_exit", message, timestamp: new Date() });
+    session.onUpdate?.({
+      type: "process_exit",
+      message,
+      timestamp: ts,
+      canonicalEvent: {
+        kind: "process_exit",
+        source: "claude",
+        timestamp: ts.toISOString(),
+        exitCode: code,
+        signal: signal ?? undefined,
+      },
+    });
     session.pendingTurn?.reject(new Error(message));
   });
 }
@@ -618,4 +692,41 @@ function supportsClose(init: InitializeResponse): boolean {
 function requireAcpSessionId(session: AcpSession): string {
   if (!session.sessionId) throw new Error("acp session not started");
   return session.sessionId;
+}
+
+function stripRaw(event: AgentEvent): AgentEvent {
+  if ("raw" in event && event.raw !== undefined) {
+    const { raw: _, ...rest } = event;
+    return rest;
+  }
+  return event;
+}
+
+function buildLifecycleCanonical(
+  type: AgentUpdateType,
+  ts: Date,
+  sessionId: string | null | undefined,
+  usage?: Partial<UsageTotals>,
+): AgentEvent | undefined {
+  const base = { source: "claude" as const, timestamp: ts.toISOString(), sessionId };
+  switch (type) {
+    case "turn_completed":
+      return {
+        ...base,
+        kind: "turn_completed",
+        usage: usage
+          ? {
+              inputTokens: usage.inputTokens ?? 0,
+              outputTokens: usage.outputTokens ?? 0,
+              totalTokens: usage.totalTokens ?? 0,
+            }
+          : undefined,
+      };
+    case "turn_failed":
+      return { ...base, kind: "turn_failed", error: "turn failed" };
+    case "turn_cancelled":
+      return { ...base, kind: "turn_cancelled" };
+    default:
+      return undefined;
+  }
 }
