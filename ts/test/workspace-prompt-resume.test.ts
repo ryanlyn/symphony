@@ -287,6 +287,7 @@ rl.on("line", (line) => {
       after_run: `echo after_run >> ${JSON.stringify(hookLog)}; exit 17`,
     },
     codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
+    agents: { codex: { executor: "appserver" } },
     agent: { max_turns: 1 },
   });
   const workflow = {
@@ -342,6 +343,7 @@ rl.on("line", (line) => {
   const settings = parseConfig({
     workspace: { root: sharedRoot, isolation: "none" },
     codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
+    agents: { codex: { executor: "appserver" } },
     agent: { max_turns: 1 },
   });
   assert.equal(settings.workspace.isolation, "none");
@@ -496,6 +498,7 @@ rl.on("line", (line) => {
       after_run: `echo after_run >> ${shellEscape(hookLog)}`,
     },
     codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
+    agents: { codex: { executor: "appserver" } },
     agent: { max_turns: 1 },
   });
   const workflow = {
@@ -593,6 +596,7 @@ rl.on("line", (line) => {
   const settings = parseConfig({
     workspace: { root: workspaceRoot },
     codex: { command: `${fakeCodex} app-server`, turn_timeout_ms: 5_000 },
+    agents: { codex: { executor: "appserver" } },
     agent: { max_turns: 1 },
   });
   const workflow = {
@@ -646,6 +650,7 @@ rl.on("line", (line) => {
   const settings = parseConfig({
     workspace: { root: workspaceRoot },
     codex: { command: `${fakeCodex} app-server`, stall_timeout_ms: 30, turn_timeout_ms: 50 },
+    agents: { codex: { executor: "appserver" } },
     agent: { max_turns: 1 },
   });
   const workflow = {

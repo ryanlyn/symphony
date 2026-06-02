@@ -678,18 +678,20 @@ function parseAgents(
 ): Record<string, AgentConfig> {
   const baseAgents = defaultAgentRecords(codex, claude);
   const agents = cloneAgentRecords(baseAgents);
+  const appserverDefaults: AppServerAgentConfig = { executor: "appserver", ...codex };
+  const acpDefaults = baseAgents.claude as AcpAgentConfig;
   for (const [name, value] of Object.entries(raw)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
-    const executor = stringValue(recordRaw.executor, normalized === "codex" ? "appserver" : "acp");
+    const executor = stringValue(recordRaw.executor, "acp");
     if (executor !== "appserver" && executor !== "acp") {
       throw new Error(`unsupported agents.${normalized}.executor: ${executor}`);
     }
     const parsed = parseAgentRecordSchema({ ...recordRaw, executor }, `agents.${normalized}`);
     agents[normalized] = parseAgentRecord(parsed, {
-      codex: baseAgents.codex as AppServerAgentConfig,
-      claude: baseAgents.claude as AcpAgentConfig,
+      codex: appserverDefaults,
+      claude: acpDefaults,
     });
   }
   return agents;
@@ -740,7 +742,13 @@ function defaultAgentRecords(
   claude: ClaudeSettings,
 ): Record<string, AgentConfig> {
   return {
-    codex: { executor: "appserver", ...codex },
+    codex: {
+      executor: "acp",
+      bridgeCommand: "codex-acp",
+      bridgeArgs: [],
+      turnTimeoutMs: codex.turnTimeoutMs,
+      stallTimeoutMs: codex.stallTimeoutMs,
+    },
     claude: {
       executor: "acp",
       bridgeCommand: claude.command,
@@ -766,6 +774,12 @@ function applyKnownAgentRecords(settings: Settings): void {
       readTimeoutMs: codex.readTimeoutMs,
       stallTimeoutMs: codex.stallTimeoutMs,
       reasoning: codex.reasoning ?? settings.codex.reasoning,
+    };
+  } else if (codex?.executor === "acp") {
+    settings.codex = {
+      ...settings.codex,
+      turnTimeoutMs: codex.turnTimeoutMs,
+      stallTimeoutMs: codex.stallTimeoutMs,
     };
   }
   const claude = settings.agents.claude;

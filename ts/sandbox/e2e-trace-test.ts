@@ -83,9 +83,7 @@ agent:
   max_turns: 10
 
 codex:
-  command: codex app-server
-  approval_policy: never
-  thread_sandbox: workspace-write
+  command: codex-acp
   turn_timeout_ms: 180000
   stall_timeout_ms: 60000
 

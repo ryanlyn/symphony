@@ -24,7 +24,15 @@ function fakeIssue(overrides: Partial<Issue> = {}): Issue {
 }
 
 function fakeSettings(overrides: Partial<Settings> = {}): Settings {
-  return { ...defaultSettings(), ...overrides };
+  const base = defaultSettings();
+  const agents = {
+    ...base.agents,
+    codex: {
+      executor: "appserver" as const,
+      ...base.codex,
+    },
+  };
+  return { ...base, agents, ...overrides };
 }
 
 function fakeSession(overrides: Partial<AgentSession> = {}): AgentSession {

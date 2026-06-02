@@ -32,7 +32,7 @@ test("config resolves env-backed Linear token and assignee", () => {
   assert.equal(settings.agent.kind, "codex");
   assert.equal(settings.agent.maxTurns, 20);
   assert.equal(settings.agent.ensembleSize, 1);
-  assert.equal(settings.agents.codex?.executor, "appserver");
+  assert.equal(settings.agents.codex?.executor, "acp");
   assert.equal(settings.agents.claude?.executor, "acp");
 });
 
