@@ -701,11 +701,8 @@ function parseAgents(
       (baseAgents[normalized] as AcpAgentConfig | undefined)?.executor === "acp"
         ? (baseAgents[normalized] as AcpAgentConfig)
         : claudeAcpDefaults;
-    // Lazily construct appserver defaults only for the deprecated path
-    const appserverDefaults: AppServerAgentConfig =
-      executor === "appserver" ? { executor: "appserver", ...codex } : (undefined as never);
     agents[normalized] = parseAgentRecord(parsed, {
-      codex: appserverDefaults,
+      codex: executor === "appserver" ? { executor: "appserver", ...codex } : undefined,
       claude: acpDefaults,
     });
   }
@@ -722,9 +719,14 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
 
 function parseAgentRecord(
   raw: AgentRecordRaw,
-  defaults: { codex: AppServerAgentConfig; claude: AcpAgentConfig },
+  defaults: { codex?: AppServerAgentConfig | undefined; claude: AcpAgentConfig },
 ): AgentConfig {
-  if (raw.executor === "appserver") return parseAppServerAgent(raw, defaults.codex);
+  if (raw.executor === "appserver") {
+    if (!defaults.codex) {
+      throw new Error("appserver executor selected but no appserver defaults available");
+    }
+    return parseAppServerAgent(raw, defaults.codex);
+  }
   return parseAcpAgent(raw, defaults.claude);
 }
 
@@ -753,7 +755,7 @@ function parseAcpAgent(
 }
 
 function defaultAgentRecords(
-  codex: CodexSettings,
+  codex: Pick<CodexSettings, "turnTimeoutMs" | "stallTimeoutMs">,
   claude: ClaudeSettings,
 ): Record<string, AgentConfig> {
   return {
@@ -1247,9 +1249,15 @@ function isOneOf<const Values extends readonly string[]>(
   return (values as readonly string[]).includes(value);
 }
 
-const emittedDeprecations = new Set<string>();
 function emitDeprecationWarning(message: string): void {
-  if (emittedDeprecations.has(message)) return;
-  emittedDeprecations.add(message);
-  process.stderr.write(`[DEPRECATED] ${message}\n`);
+  process.emitWarning(message, {
+    type: "DeprecationWarning",
+    code: `SYMPHONY_${hashCode(message)}`,
+  });
+}
+
+function hashCode(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(16).toUpperCase();
 }
