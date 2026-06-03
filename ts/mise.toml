@@ -30,6 +30,9 @@ depends = ["build"]
 [tasks.tidy]
 depends = ["format", "lint-fix"]
 
+[tasks.knip]
+run = "pnpm exec knip"
+
 [tasks.check]
 depends = ["typecheck", "test", "lint"]
 

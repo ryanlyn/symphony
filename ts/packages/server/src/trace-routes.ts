@@ -6,7 +6,6 @@
 
 import { Hono } from "hono";
 import { TraceWatcher, computeStats } from "@symphony/traceviz-server";
-import type { WatcherCallback } from "@symphony/traceviz-server";
 
 export interface TraceRoutesResult {
   app: Hono;
@@ -47,10 +46,3 @@ export function createTraceRoutes(traceDir: string): TraceRoutesResult {
   return { app, watcher };
 }
 
-/**
- * Start the watcher with a given callback. Returns a stop function.
- */
-export function startTraceWatcher(watcher: TraceWatcher, callback: WatcherCallback): () => void {
-  watcher.start(callback);
-  return () => watcher.stop();
-}
