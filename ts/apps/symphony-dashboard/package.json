@@ -12,6 +12,7 @@
     "@symphony/traceviz-server": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "catalog:",
     "lucide-react": "catalog:",
     "clsx": "catalog:",
     "tailwind-merge": "catalog:"

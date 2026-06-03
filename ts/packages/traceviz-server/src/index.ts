@@ -8,7 +8,7 @@
 export { TraceWatcher } from "./watcher.js";
 export type { WatcherCallback } from "./watcher.js";
 
-export { parseTraceLines, extractTicketMetadata, detectToolCategory } from "./parser.js";
+export { parseTraceLines, extractTicketMetadata } from "./parser.js";
 
 export { computeStats } from "./stats.js";
 
@@ -31,8 +31,5 @@ export type {
   TurnFailedDisplayEvent,
   NotificationDisplayEvent,
   UnknownDisplayEvent,
-  ToolCategory,
   TokenUsage,
 } from "./models/display-events.js";
-
-export { TOOL_CATEGORIES } from "./models/display-events.js";

@@ -1,8 +1,8 @@
 /**
- * Capture all AgentUpdate messages from a real ACP session to NDJSON files.
+ * Capture TraceEmitter-compatible events from a real ACP session to NDJSON files.
  *
  * Runs both Claude and Codex backends against the prompt "what is the weather
- * in Australia today" and writes the raw AgentUpdate objects to:
+ * in Australia today" and writes TraceEvent objects to:
  *   ./acp-messages-claude.ndjson
  *   ./acp-messages-codex.ndjson
  *
@@ -17,14 +17,37 @@ import os from "node:os";
 import path from "node:path";
 import { parseConfig, Executor } from "@symphony/cli";
 import type { AgentUpdate, Settings } from "@symphony/cli";
+import { TraceEmitter } from "@symphony/traceviz-emitter";
 
-// const PROMPT = "What is the weather in Australia today (do a web search). Create a new file called weather.txt with the weather report.";
-const PROMPT = "Which model are we on?";
+const PROMPT =
+  "What is the weather in Australia today (do a web search). Create a new file called weather.txt with the weather report. " +
+  "Also use the datetime skill to tell me the current date and time.";
+
+const SKILL_CONTENT = `---
+name: datetime
+description: Print the current date and time using bash
+---
+
+Run the following bash command and report the output to the user:
+
+\\\`\\\`\\\`bash
+date
+\\\`\\\`\\\`
+`;
 
 function createWorkspace(): string {
   const root = path.join(os.tmpdir(), "acp-capture");
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
+
+  const skillDir = path.join(workspace, ".agents", "skills", "datetime");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "SKILL.md"), SKILL_CONTENT);
+
+  const claudeDir = path.join(workspace, ".claude", "skills", "datetime");
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(path.join(claudeDir, "SKILL.md"), SKILL_CONTENT);
+
   return root;
 }
 
@@ -65,21 +88,17 @@ function settingsForAgent(kind: "claude" | "codex", workspaceRoot: string): Sett
   });
 }
 
-function serialize(update: AgentUpdate): string {
-  return JSON.stringify(update, (_key, value) => {
-    if (value instanceof Date) return value.toISOString();
-    return value;
-  });
-}
-
 async function captureSession(kind: "claude" | "codex"): Promise<void> {
   const workspaceRoot = createWorkspace();
   const workspace = path.join(workspaceRoot, "workspace");
   const outFile = path.resolve(`acp-messages-${kind}.ndjson`);
+  const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), `acp-capture-trace-${kind}-`));
+  const issueId = `acp-${kind}`;
+  const issueIdentifier = `ACP-${kind.toUpperCase()}`;
   const settings = settingsForAgent(kind, workspaceRoot);
   const executor = new Executor(kind);
   const updates: AgentUpdate[] = [];
-  const stream = fs.createWriteStream(outFile);
+  const traceEmitter = new TraceEmitter(traceDir);
 
   console.log(`[${kind}] Starting ACP session...`);
   console.log(`[${kind}] Workspace: ${workspace}`);
@@ -88,7 +107,7 @@ async function captureSession(kind: "claude" | "codex"): Promise<void> {
     settings,
     onUpdate: (update) => {
       updates.push(update);
-      stream.write(serialize(update) + "\n");
+      traceEmitter.emit(issueId, issueIdentifier, update);
     },
   });
 
@@ -100,7 +119,9 @@ async function captureSession(kind: "claude" | "codex"): Promise<void> {
     console.error(`[${kind}] Turn error:`, err instanceof Error ? err.message : err);
   } finally {
     await session.stop();
-    stream.end();
+    await traceEmitter.drain();
+    fs.copyFileSync(TraceEmitter.tracePathForIssue(traceDir, issueIdentifier), outFile);
+    fs.rmSync(traceDir, { recursive: true, force: true });
     console.log(`[${kind}] Wrote ${updates.length} updates to ${outFile}`);
   }
 }
@@ -108,9 +129,7 @@ async function captureSession(kind: "claude" | "codex"): Promise<void> {
 async function main(): Promise<void> {
   const agentArg = process.argv.find((_, i) => process.argv[i - 1] === "--agent");
   const agents: Array<"claude" | "codex"> =
-    agentArg === "claude" ? ["claude"] :
-    agentArg === "codex" ? ["codex"] :
-    ["claude", "codex"];
+    agentArg === "claude" ? ["claude"] : agentArg === "codex" ? ["codex"] : ["claude", "codex"];
 
   for (const kind of agents) {
     await captureSession(kind);

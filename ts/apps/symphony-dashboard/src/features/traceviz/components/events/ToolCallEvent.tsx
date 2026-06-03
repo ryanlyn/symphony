@@ -29,9 +29,6 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
             <span className="font-mono text-sm font-medium">{event.toolName}</span>
-            <span className="rounded-full bg-muted/30 px-1.5 py-0.5 text-[10px] text-muted">
-              {event.category}
-            </span>
             {event.durationMs != null && (
               <span className="text-[10px] text-muted">{formatDuration(event.durationMs)}</span>
             )}
