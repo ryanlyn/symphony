@@ -18,13 +18,39 @@ import path from "node:path";
 import { parseConfig, Executor } from "@symphony/cli";
 import type { AgentUpdate, Settings } from "@symphony/cli";
 
-// const PROMPT = "What is the weather in Australia today (do a web search). Create a new file called weather.txt with the weather report.";
-const PROMPT = "Which model are we on?";
+const PROMPT =
+  "What is the weather in Australia today (do a web search). Create a new file called weather.txt with the weather report. " +
+  "Also use the datetime skill to tell me the current date and time.";
+
+const SKILL_CONTENT = `---
+name: datetime
+description: Print the current date and time using bash
+---
+
+Run the following bash command and report the output to the user:
+
+\\\`\\\`\\\`bash
+date
+\\\`\\\`\\\`
+`;
 
 function createWorkspace(): string {
   const root = path.join(os.tmpdir(), "acp-capture");
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
+
+  const skillDir = path.join(workspace, ".agents", "skills");
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "datetime.md"), SKILL_CONTENT);
+
+  const claudeDir = path.join(workspace, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true });
+  const target = path.join("..", ".agents", "skills");
+  const link = path.join(claudeDir, "skills");
+  if (!fs.existsSync(link)) {
+    fs.symlinkSync(target, link);
+  }
+
   return root;
 }
 
