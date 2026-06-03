@@ -40,17 +40,13 @@ function createWorkspace(): string {
   const workspace = path.join(root, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
 
-  const skillDir = path.join(workspace, ".agents", "skills");
+  const skillDir = path.join(workspace, ".agents", "skills", "datetime");
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(path.join(skillDir, "SKILL.md"), SKILL_CONTENT);
 
-  const claudeDir = path.join(workspace, ".claude");
+  const claudeDir = path.join(workspace, ".claude", "skills", "datetime");
   fs.mkdirSync(claudeDir, { recursive: true });
-  const target = path.join("..", ".agents", "skills");
-  const link = path.join(claudeDir, "skills");
-  if (!fs.existsSync(link)) {
-    fs.symlinkSync(target, link);
-  }
+  fs.writeFileSync(path.join(claudeDir, "SKILL.md"), SKILL_CONTENT);
 
   return root;
 }
