@@ -32,12 +32,9 @@ import type {
   AgentUpdate,
   AgentUpdateType,
   Issue,
-  NotificationAgentUpdate,
   Settings,
-  UsageUpdateEvent,
   UsageTotals,
 } from "@symphony/domain";
-import type { SessionUpdateKind } from "@symphony/protocol";
 
 interface Session extends AgentSession {
   connection: ClientSideConnection;
@@ -205,7 +202,7 @@ export class Executor implements AgentExecutor {
           const usage = extractUsage(response.usage ?? undefined);
           if (usage) {
             this.emit(session, {
-              type: "usage",
+              type: "usage_update",
               sessionId,
               resumeId: session.resumeId,
               usage,
@@ -272,8 +269,6 @@ export class Executor implements AgentExecutor {
   }
 }
 
-type SessionUpdate = NotificationAgentUpdate | UsageUpdateEvent;
-
 function handleSessionUpdate(session: Session, notification: SessionNotification): void {
   session.sessionId = notification.sessionId;
   session.resumeId = notification.sessionId;
@@ -281,7 +276,7 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     session.replayedUpdateCount += 1;
     return;
   }
-  const type = eventTypeForUpdate(notification.update);
+  const type = notification.update.sessionUpdate;
   const usage = extractUsageUpdate(notification.update);
   const base = {
     sessionUpdate: acpProtocolUpdate(session, type, notification, usage),
@@ -292,9 +287,9 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     timestamp: new Date(),
     ...(usage && { usage }),
   };
-  if (type === "usage" && usage) {
-    session.onUpdate?.({ ...base, type: "usage", usage });
-  } else if (type !== "usage") {
+  if (type === "usage_update" && usage) {
+    session.onUpdate?.({ ...base, type: "usage_update", usage });
+  } else if (type !== "usage_update") {
     session.onUpdate?.({ ...base, type });
   }
 }
@@ -582,34 +577,6 @@ function clientCapabilities(workerHost: string | null): ClientCapabilities {
   return capabilities;
 }
 
-type SessionUpdateType = SessionUpdate["type"];
-
-function eventTypeForUpdate(update: SessionNotification["update"]): SessionUpdateType {
-  switch (update.sessionUpdate) {
-    case "agent_message_chunk":
-      return "assistant_message";
-    case "user_message_chunk":
-      return "user_message";
-    case "agent_thought_chunk":
-      return "agent_thought";
-    case "tool_call":
-      return "tool_use_requested";
-    case "tool_call_update":
-      if (update.status === "completed") return "tool_result";
-      if (update.status === "failed") return "tool_call_failed";
-      return "tool_call_update";
-    case "usage_update":
-      return "usage";
-    case "plan":
-      return "plan";
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
-    case "session_info_update":
-      return "notification";
-  }
-}
-
 function acpProtocolUpdate(
   session: Session,
   type: AgentUpdateType,
@@ -617,7 +584,7 @@ function acpProtocolUpdate(
   usage?: Partial<UsageTotals>,
 ): NonNullable<AgentUpdate["sessionUpdate"]> {
   const base = {
-    kind: acpProtocolKind(type),
+    kind: type,
     sessionId: session.sessionId,
     agentKind: session.agentKind,
     message,
@@ -627,19 +594,8 @@ function acpProtocolUpdate(
       usage,
     },
   };
-  if (type === "usage" && usage) return { ...base, kind: "usage_update", usage };
+  if (type === "usage_update" && usage) return { ...base, kind: "usage_update", usage };
   return base;
-}
-
-function acpProtocolKind(type: AgentUpdateType): SessionUpdateKind {
-  if (type === "tool_use_requested") return "tool_call";
-  if (type === "tool_result" || type === "tool_call_failed") return "tool_result";
-  if (type === "turn_cancelled") return "turn_cancelled";
-  if (type === "turn_completed") return "turn_completed";
-  if (type === "turn_failed") return "turn_failed";
-  if (type === "turn_started") return "turn_started";
-  if (type === "session_started") return "session_started";
-  return "notification";
 }
 
 function extractUsageUpdate(

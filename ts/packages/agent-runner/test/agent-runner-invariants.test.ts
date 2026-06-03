@@ -163,7 +163,7 @@ describe("INVARIANT: When a continuation turn begins, the system SHALL send only
           async runTurn(_session, prompt) {
             prompts.push(prompt);
             // Emit tool_use_requested so ACP loop continues
-            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            return [{ type: "tool_call" }, { type: "turn_completed" }];
           },
         }),
       }),
@@ -242,7 +242,7 @@ describe("INVARIANT: When the backend profile changes between turns, the system 
           },
           async runTurn() {
             // Emit tool_use_requested so ACP check does not interfere
-            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            return [{ type: "tool_call" }, { type: "turn_completed" }];
           },
         }),
       }),
@@ -270,7 +270,7 @@ describe("INVARIANT: When the backend profile changes between turns, the system 
           },
           async runTurn() {
             // Emit tool_use_requested so ACP loop continues
-            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            return [{ type: "tool_call" }, { type: "turn_completed" }];
           },
         }),
       }),
@@ -301,7 +301,7 @@ describe("INVARIANT: When the turn count reaches the maximum, the system SHALL e
           async runTurn(_session, prompt) {
             prompts.push(prompt);
             // Emit tool_use_requested so ACP loop continues
-            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            return [{ type: "tool_call" }, { type: "turn_completed" }];
           },
         }),
       }),
@@ -330,7 +330,7 @@ describe("INVARIANT: When the turn count reaches the maximum, the system SHALL e
               },
               async runTurn() {
                 // Emit tool_use_requested so ACP loop continues
-                return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+                return [{ type: "tool_call" }, { type: "turn_completed" }];
               },
             }),
           }),
@@ -472,7 +472,7 @@ describe("INVARIANT (ACP): After turn 2+, the loop continues when tool_use_reque
           async runTurn(_session, prompt) {
             prompts.push(prompt);
             // Emit tool_use_requested on every turn -> loop should not break
-            return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+            return [{ type: "tool_call" }, { type: "turn_completed" }];
           },
         }),
       }),
@@ -503,7 +503,7 @@ describe("INVARIANT (ACP): After turn 2+, the loop continues when tool_use_reque
             turnCount += 1;
             // Emit tool_use_requested on turns 1-2, stop on turn 3
             if (turnCount <= 2) {
-              return [{ type: "tool_use_requested" }, { type: "turn_completed" }];
+              return [{ type: "tool_call" }, { type: "turn_completed" }];
             }
             return [{ type: "turn_completed" }];
           },

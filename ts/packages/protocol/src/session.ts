@@ -8,8 +8,15 @@ export const SESSION_UPDATE_KINDS = [
   "turn_failed",
   "turn_cancelled",
   "tool_call",
-  "tool_result",
-  "notification",
+  "tool_call_update",
+  "plan",
+  "agent_message_chunk",
+  "user_message_chunk",
+  "agent_thought_chunk",
+  "available_commands_update",
+  "current_mode_update",
+  "config_option_update",
+  "session_info_update",
 ] as const;
 
 export type SessionUpdateKind = (typeof SESSION_UPDATE_KINDS)[number];
@@ -44,15 +51,7 @@ export interface UsageUpdate extends SessionUpdateBase {
 }
 
 export interface TurnUpdate extends SessionUpdateBase {
-  kind:
-    | "session_started"
-    | "turn_started"
-    | "turn_completed"
-    | "turn_failed"
-    | "turn_cancelled"
-    | "tool_call"
-    | "tool_result"
-    | "notification";
+  kind: Exclude<SessionUpdateKind, "usage_update">;
   message?: unknown;
 }
 

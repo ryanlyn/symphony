@@ -180,7 +180,7 @@ class RunController {
         if (
           turnCount > 1 &&
           runtime.agents[runtime.agent.kind]?.executor === "acp" &&
-          !turnUpdates.some((u) => u.type === "tool_use_requested")
+          !turnUpdates.some((u) => u.type === "tool_call")
         ) {
           break;
         }

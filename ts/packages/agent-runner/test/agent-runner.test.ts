@@ -550,7 +550,7 @@ test("RunController accumulates usage totals across turns", async () => {
         async runTurn() {
           turnNumber += 1;
           const usageUpdate: AgentUpdate = {
-            type: "usage",
+            type: "usage_update",
             usage: {
               inputTokens: 10 * turnNumber,
               outputTokens: 5 * turnNumber,
@@ -567,7 +567,7 @@ test("RunController accumulates usage totals across turns", async () => {
 
   // The controller runs at least one turn and accumulates updates from onUpdate callback
   assert.ok(result.turnCount >= 1);
-  const usageUpdates = result.updates.filter((u) => u.type === "usage");
+  const usageUpdates = result.updates.filter((u) => u.type === "usage_update");
   assert.ok(usageUpdates.length >= 1);
   // Verify usage fields are passed through
   assert.ok(usageUpdates[0]!.usage);

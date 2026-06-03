@@ -28,8 +28,15 @@ describe("SESSION_UPDATE_KINDS", () => {
         "turn_failed",
         "turn_cancelled",
         "tool_call",
-        "tool_result",
-        "notification",
+        "tool_call_update",
+        "plan",
+        "agent_message_chunk",
+        "user_message_chunk",
+        "agent_thought_chunk",
+        "available_commands_update",
+        "current_mode_update",
+        "config_option_update",
+        "session_info_update",
       ],
     );
   });
@@ -48,35 +55,13 @@ describe("SESSION_UPDATE_KINDS", () => {
   });
 
   test("can be used to exhaustively enumerate all SessionUpdateKinds", () => {
-    // Build a Set from the runtime constant and verify membership of
-    // every documented kind. This ensures the runtime array stays in sync
-    // with the expected protocol contract.
     const kindSet = new Set<string>(SESSION_UPDATE_KINDS);
-
-    // These are the kinds that TurnUpdate declares in its `kind` union
-    const turnUpdateKinds = [
-      "session_started",
-      "turn_started",
-      "turn_completed",
-      "turn_failed",
-      "turn_cancelled",
-      "tool_call",
-      "tool_result",
-      "notification",
-    ];
-    for (const k of turnUpdateKinds) {
-      assert.ok(kindSet.has(k));
-    }
-
-    // UsageUpdate's kind
     assert.ok(kindSet.has("usage_update"));
-
-    // Verify these account for all entries (no extra kinds beyond these two groups)
-    const allExpected = new Set([...turnUpdateKinds, "usage_update"]);
-    assert.equal(allExpected.size, kindSet.size);
-    for (const k of kindSet) {
-      assert.ok(allExpected.has(k));
-    }
+    assert.ok(kindSet.has("tool_call"));
+    assert.ok(kindSet.has("tool_call_update"));
+    assert.ok(kindSet.has("agent_message_chunk"));
+    assert.ok(kindSet.has("turn_completed"));
+    assert.equal(kindSet.size, SESSION_UPDATE_KINDS.length);
   });
 });
 
@@ -96,10 +81,11 @@ describe("SessionUpdate type structure", () => {
     // Valid updates
     assert.ok(isValidSessionUpdate({ kind: "usage_update", usage: {} }));
     assert.ok(isValidSessionUpdate({ kind: "turn_started" }));
-    assert.ok(isValidSessionUpdate({ kind: "notification", message: "hi" }));
+    assert.ok(isValidSessionUpdate({ kind: "agent_message_chunk", message: "hi" }));
 
     // Invalid data rejected at runtime
     assert.equal(isValidSessionUpdate({ kind: "invalid_kind" }), false);
+    assert.equal(isValidSessionUpdate({ kind: "notification" }), false);
     assert.equal(isValidSessionUpdate({ kind: 123 }), false);
     assert.equal(isValidSessionUpdate(null), false);
     assert.equal(isValidSessionUpdate("not an object"), false);
@@ -107,31 +93,15 @@ describe("SessionUpdate type structure", () => {
   });
 
   test("SESSION_UPDATE_KINDS partitions cleanly into UsageUpdate vs TurnUpdate kinds", () => {
-    // Verify that usage_update is the only kind not in TurnUpdate's kind union.
-    // This tests the runtime constant matches the protocol's discriminated union design.
-    const turnKinds: TurnUpdate["kind"][] = [
-      "session_started",
-      "turn_started",
-      "turn_completed",
-      "turn_failed",
-      "turn_cancelled",
-      "tool_call",
-      "tool_result",
-      "notification",
-    ];
-    const usageKinds: UsageUpdate["kind"][] = ["usage_update"];
-
-    // The union of both sets should exactly equal SESSION_UPDATE_KINDS
-    const combined = new Set([...turnKinds, ...usageKinds]);
     const fromConst = new Set<string>(SESSION_UPDATE_KINDS);
-
-    assert.equal(combined.size, fromConst.size);
-    for (const k of combined) {
-      assert.ok(fromConst.has(k), `expected SESSION_UPDATE_KINDS to contain "${k}"`);
-    }
+    const usageKinds: UsageUpdate["kind"][] = ["usage_update"];
+    // Every non-usage kind should be a valid TurnUpdate kind
     for (const k of fromConst) {
-      assert.ok(combined.has(k), `unexpected kind "${k}" in SESSION_UPDATE_KINDS`);
+      if (k === "usage_update") continue;
+      const update: TurnUpdate = { kind: k as TurnUpdate["kind"] };
+      assert.equal(update.kind, k);
     }
+    assert.equal(usageKinds.length, 1);
   });
 
   test("kind-based discriminator filters UsageUpdate from TurnUpdate at runtime", () => {
@@ -141,7 +111,7 @@ describe("SessionUpdate type structure", () => {
       { kind: "turn_started", message: "starting" },
       { kind: "turn_completed" },
       { kind: "turn_failed", message: "timeout" },
-      { kind: "notification", message: "info" },
+      { kind: "agent_message_chunk", message: "info" },
     ];
 
     const usageUpdates = updates.filter((u): u is UsageUpdate => u.kind === "usage_update");

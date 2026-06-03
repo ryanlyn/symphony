@@ -83,7 +83,7 @@ test("projection actor owns bounded read models and snapshots defensively", () =
   const projection = new ProjectionActor();
   for (let index = 0; index < 25; index += 1) {
     projection.recordEvent({
-      type: "notification",
+      type: "agent_message_chunk",
       message: `event-${index}`,
       at: new Date(index).toISOString(),
     });

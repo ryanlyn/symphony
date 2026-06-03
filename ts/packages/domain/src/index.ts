@@ -99,24 +99,24 @@ export const AGENT_UPDATE_TYPES = [
   "approval_required",
   "approval_auto_approved",
   "tool_input_auto_answered",
-  "usage",
+  "usage_update",
   "rate_limit",
-  "notification",
   "stderr",
   "malformed",
   "process_exit",
   "resume_state_warning",
   "session_replay_suppressed",
   "fs_write",
-  "assistant_message",
-  "user_message",
-  "agent_thought",
-  "tool_use_requested",
-  "tool_result",
-  "tool_call_failed",
+  "agent_message_chunk",
+  "user_message_chunk",
+  "agent_thought_chunk",
+  "tool_call",
   "tool_call_update",
-  "tool_call_completed",
   "plan",
+  "available_commands_update",
+  "current_mode_update",
+  "config_option_update",
+  "session_info_update",
 ] as const;
 
 export type AgentUpdateType = (typeof AGENT_UPDATE_TYPES)[number];
@@ -630,16 +630,16 @@ export interface AgentUpdateBase {
 // --- Typed message variants per AgentUpdate.type ---
 
 export type NotificationUpdateType =
-  | "assistant_message"
-  | "user_message"
-  | "agent_thought"
-  | "tool_use_requested"
+  | "agent_message_chunk"
+  | "user_message_chunk"
+  | "agent_thought_chunk"
+  | "tool_call"
   | "tool_call_update"
-  | "tool_result"
-  | "tool_call_failed"
-  | "tool_call_completed"
-  | "notification"
-  | "plan";
+  | "plan"
+  | "available_commands_update"
+  | "current_mode_update"
+  | "config_option_update"
+  | "session_info_update";
 
 export interface NotificationAgentUpdate extends AgentUpdateBase {
   type: NotificationUpdateType;
@@ -691,7 +691,7 @@ export interface TurnFailedUpdate extends AgentUpdateBase {
 }
 
 export interface UsageUpdateEvent extends AgentUpdateBase {
-  type: "usage";
+  type: "usage_update";
   message: { response: PromptResponse } | SessionNotification;
   usage: Partial<UsageTotals>;
 }
@@ -736,9 +736,11 @@ type AgentUpdateMessage<K extends AgentUpdateType> = K extends NotificationUpdat
     ? string
     : K extends BareUpdateType
       ? undefined
-      : Extract<AgentUpdate, { type: K }> extends { message: infer M }
-        ? M
-        : undefined;
+      : K extends "usage_update"
+        ? { response: PromptResponse } | SessionNotification
+        : Extract<AgentUpdate, { type: K }> extends { message: infer M }
+          ? M
+          : undefined;
 
 /**
  * Wire format of a single JSONL trace line as written by TraceEmitter.

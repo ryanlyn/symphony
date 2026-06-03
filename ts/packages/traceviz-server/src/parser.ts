@@ -94,87 +94,6 @@ function extractTextFromNotification(msg: SessionNotification): string {
   return "";
 }
 
-/**
- * Parse an `item/completed` notification params into a DisplayEvent.
- */
-function parseItemCompleted(params: Record<string, unknown>, ts: string): DisplayEvent | null {
-  const item = params.item as Record<string, unknown> | undefined;
-  if (!item) return null;
-  const itemType = item.type as string | undefined;
-
-  switch (itemType) {
-    case "reasoning": {
-      let text = typeof item.text === "string" ? item.text : "";
-      if (!text) {
-        const summary = item.summary as Array<Record<string, unknown>> | undefined;
-        if (summary && summary.length > 0) {
-          text = summary
-            .map((s) => (s.text as string) ?? "")
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-      if (!text) {
-        const content = item.content as Array<Record<string, unknown>> | undefined;
-        if (content && content.length > 0) {
-          text = content
-            .map((c) => (c.text as string) ?? "")
-            .filter(Boolean)
-            .join("\n");
-        }
-      }
-      if (!text) return null;
-      return { kind: "thought", text, timestamp: ts };
-    }
-
-    case "agentMessage":
-      return {
-        kind: "message",
-        text: typeof item.text === "string" ? item.text : "",
-        timestamp: ts,
-      };
-
-    case "userMessage": {
-      const content = item.content as Array<Record<string, unknown>> | undefined;
-      const text = content?.[0]?.text as string | undefined;
-      return { kind: "message", text: text ?? "", timestamp: ts };
-    }
-
-    case "commandExecution":
-      return {
-        kind: "tool_call",
-        category: "bash_command",
-        toolName: "command_execution",
-        input: { command: item.command },
-        output: (item.aggregatedOutput as string) ?? null,
-        isError: (item.exitCode as number) !== 0,
-        durationMs: (item.durationMs as number) ?? null,
-        nestedEvents: [],
-        timestamp: ts,
-      };
-
-    case "dynamicToolCall": {
-      const toolName = (item.tool as string) ?? "unknown";
-      const args = (item.arguments as Record<string, unknown>) ?? {};
-      const contentItems = item.contentItems as Array<Record<string, unknown>> | undefined;
-      const output = (contentItems?.[0]?.text as string | null) ?? null;
-      return {
-        kind: "tool_call",
-        category: detectToolCategory(toolName),
-        toolName,
-        input: args,
-        output,
-        isError: (item.success as boolean) === false,
-        durationMs: (item.durationMs as number) ?? null,
-        nestedEvents: [],
-        timestamp: ts,
-      };
-    }
-
-    default:
-      return null;
-  }
-}
 
 /**
  * Parse all lines from a JSONL trace file content into DisplayEvents.
@@ -192,7 +111,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     const ts = raw.timestamp ?? new Date().toISOString();
 
     switch (raw.type) {
-      case "agent_thought": {
+      case "agent_thought_chunk": {
         const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
@@ -200,8 +119,8 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
-      case "assistant_message":
-      case "user_message": {
+      case "agent_message_chunk":
+      case "user_message_chunk": {
         const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
@@ -209,7 +128,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
-      case "tool_use_requested": {
+      case "tool_call": {
         const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const update = msg.update;
@@ -239,77 +158,69 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call_update") break;
         const toolUseId = update.toolCallId ?? "";
-        const pending = pendingToolCalls.get(toolUseId);
-        if (pending) {
-          const partialOutput = typeof update.rawOutput === "string" ? update.rawOutput : null;
-          if (partialOutput !== null && typeof pending.event.output === "string") {
-            pending.event.output = pending.event.output + partialOutput;
-          } else if (partialOutput !== null) {
-            pending.event.output = partialOutput;
+        const status = update.status;
+
+        if (status === "completed" || status === "failed") {
+          let output: string | unknown[] | null = null;
+          if (typeof update.rawOutput === "string") {
+            output = update.rawOutput;
+          } else if (update.rawOutput != null) {
+            output = JSON.stringify(update.rawOutput);
+          } else {
+            const content = update.content as Array<ToolCallContent> | undefined;
+            if (content && content.length > 0) {
+              const texts = content
+                .map((c) => {
+                  if (c.type === "content") {
+                    const block = c.content;
+                    return block.type === "text" ? block.text : "";
+                  }
+                  if (c.type === "terminal") {
+                    return ((c as Record<string, unknown>).output as string) ?? "";
+                  }
+                  return "";
+                })
+                .filter(Boolean);
+              output = texts.join("\n") || null;
+            }
           }
-        }
-        break;
-      }
-
-      case "tool_result":
-      case "tool_call_completed":
-      case "tool_call_failed": {
-        const msg = raw.message;
-        if (!msg || !("update" in msg)) break;
-        const update = msg.update;
-        if (update.sessionUpdate !== "tool_call_update") break;
-        const id = update.toolCallId ?? "";
-
-        let output: string | unknown[] | null = null;
-        if (typeof update.rawOutput === "string") {
-          output = update.rawOutput;
-        } else if (update.rawOutput != null) {
-          output = JSON.stringify(update.rawOutput);
+          const isError = status === "failed";
+          const pending = toolUseId ? pendingToolCalls.get(toolUseId) : undefined;
+          if (pending) {
+            pendingToolCalls.delete(toolUseId);
+            const toolCallEvent = pending.event;
+            if (output !== null) {
+              toolCallEvent.output = output;
+            }
+            toolCallEvent.isError = isError;
+            const startMs = new Date(pending.startTs).getTime();
+            const endMs = new Date(ts).getTime();
+            toolCallEvent.durationMs =
+              Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+            events.push(toolCallEvent);
+          } else {
+            events.push({
+              kind: "tool_call",
+              category: "unknown",
+              toolName: "unknown",
+              input: {},
+              output,
+              isError,
+              durationMs: null,
+              nestedEvents: [],
+              timestamp: ts,
+            });
+          }
         } else {
-          const content = update.content as Array<ToolCallContent> | undefined;
-          if (content && content.length > 0) {
-            const texts = content
-              .map((c) => {
-                if (c.type === "content") {
-                  const block = c.content;
-                  return block.type === "text" ? block.text : "";
-                }
-                if (c.type === "terminal") {
-                  return ((c as Record<string, unknown>).output as string) ?? "";
-                }
-                return "";
-              })
-              .filter(Boolean);
-            output = texts.join("\n") || null;
+          const pending = pendingToolCalls.get(toolUseId);
+          if (pending) {
+            const partialOutput = typeof update.rawOutput === "string" ? update.rawOutput : null;
+            if (partialOutput !== null && typeof pending.event.output === "string") {
+              pending.event.output = pending.event.output + partialOutput;
+            } else if (partialOutput !== null) {
+              pending.event.output = partialOutput;
+            }
           }
-        }
-        const isError = update.status === "failed";
-
-        const pending = id ? pendingToolCalls.get(id) : undefined;
-        if (pending) {
-          pendingToolCalls.delete(id);
-          const toolCall = pending.event;
-          if (output !== null) {
-            toolCall.output = output;
-          }
-          toolCall.isError = isError || raw.type === "tool_call_failed";
-          const startMs = new Date(pending.startTs).getTime();
-          const endMs = new Date(ts).getTime();
-          toolCall.durationMs =
-            Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
-          events.push(toolCall);
-        } else {
-          events.push({
-            kind: "tool_call",
-            category: "unknown",
-            toolName: "unknown",
-            input: {},
-            output,
-            isError: isError || raw.type === "tool_call_failed",
-            durationMs: null,
-            nestedEvents: [],
-            timestamp: ts,
-          });
         }
         break;
       }
@@ -366,53 +277,11 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
-      case "notification": {
-        const msg = raw.message;
-        if (!msg || typeof msg !== "object") break;
-        const method = (msg as Record<string, unknown>).method as string | undefined;
-        const params = (msg as Record<string, unknown>).params as
-          | Record<string, unknown>
-          | undefined;
-        if (!method || !params) break;
-
-        if (method === "item/completed") {
-          const displayEvent = parseItemCompleted(params, ts);
-          if (displayEvent) events.push(displayEvent);
-        } else if (method === "turn/started") {
-          const lastEvent = events[events.length - 1];
-          if (lastEvent && lastEvent.kind === "turn_started") {
-            if (ts && new Date(ts).getTime() > 0) {
-              lastEvent.timestamp = ts;
-              const lastRecord = turnStartedRecords[turnStartedRecords.length - 1];
-              if (lastRecord) {
-                lastRecord.timestamp = ts;
-              }
-            }
-          } else {
-            turnIndex++;
-            turnStartedRecords.push({ timestamp: ts, consumed: false });
-            events.push({ kind: "turn_started", turnIndex, timestamp: ts });
-          }
-        } else if (method === "turn/completed") {
-          let durationMs: number | null = null;
-          for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
-            const record = turnStartedRecords[i];
-            if (record !== undefined && !record.consumed) {
-              record.consumed = true;
-              const startMs = new Date(record.timestamp).getTime();
-              const endMs = new Date(ts).getTime();
-              if (!Number.isNaN(startMs) && !Number.isNaN(endMs)) {
-                durationMs = endMs - startMs;
-              }
-              break;
-            }
-          }
-          events.push({ kind: "turn_completed", usage: null, durationMs, timestamp: ts });
-        }
-        break;
-      }
-
-      case "usage":
+      case "available_commands_update":
+      case "current_mode_update":
+      case "config_option_update":
+      case "session_info_update":
+      case "usage_update":
       case "rate_limit":
       case "workspace_prepared":
       case "session_started":

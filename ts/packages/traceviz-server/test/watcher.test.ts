@@ -46,11 +46,11 @@ describe("TraceWatcher", () => {
       timestamp: "2026-01-01T00:00:00Z",
     });
     writeTraceLine(traceDir, "TEST-1", {
-      type: "notification",
+      type: "agent_message_chunk",
       issueId: "id-1",
       issueIdentifier: "TEST-1",
       timestamp: "2026-01-01T00:00:01Z",
-      message: { method: "item/completed", params: { item: { type: "agentMessage", text: "Hi" } } },
+      message: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hi" } } },
     });
 
     watcher.start((issueId, events) => {
@@ -89,14 +89,11 @@ describe("TraceWatcher", () => {
 
     // Now append a new line
     writeTraceLine(traceDir, "TEST-2", {
-      type: "notification",
+      type: "agent_message_chunk",
       issueId: "id-2",
       issueIdentifier: "TEST-2",
       timestamp: "2026-01-01T00:00:05Z",
-      message: {
-        method: "item/completed",
-        params: { item: { type: "agentMessage", text: "Update" } },
-      },
+      message: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Update" } } },
     });
 
     await new Promise((r) => setTimeout(r, 150));
@@ -124,14 +121,11 @@ describe("TraceWatcher", () => {
     await new Promise((r) => setTimeout(r, 150));
 
     writeTraceLine(traceDir, "TEST-3", {
-      type: "notification",
+      type: "agent_message_chunk",
       issueId: "id-3",
       issueIdentifier: "TEST-3",
       timestamp: "2026-01-01T00:00:05Z",
-      message: {
-        method: "item/completed",
-        params: { item: { type: "agentMessage", text: "Msg" } },
-      },
+      message: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Msg" } } },
     });
 
     await new Promise((r) => setTimeout(r, 150));
@@ -151,14 +145,11 @@ describe("TraceWatcher", () => {
       timestamp: "2026-01-01T00:00:00Z",
     });
     writeTraceLine(traceDir, "TEST-4", {
-      type: "notification",
+      type: "agent_message_chunk",
       issueId: "id-4",
       issueIdentifier: "TEST-4",
       timestamp: "2026-01-01T00:00:01Z",
-      message: {
-        method: "item/completed",
-        params: { item: { type: "agentMessage", text: "Test" } },
-      },
+      message: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Test" } } },
     });
 
     watcher.start(() => {});

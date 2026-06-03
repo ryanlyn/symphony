@@ -136,7 +136,7 @@ test("typed fixture values are accepted by their respective runtime arrays", () 
   // the length assertion fails, catching drift that single-value includes checks miss.
   assert.equal(AGENT_UPDATE_TYPES.length, 28, "AGENT_UPDATE_TYPES length mismatch");
   assert.equal(CODEX_SANDBOX_MODES.length, 3, "CODEX_SANDBOX_MODES length mismatch");
-  assert.equal(SESSION_UPDATE_KINDS.length, 9, "SESSION_UPDATE_KINDS length mismatch");
+  assert.equal(SESSION_UPDATE_KINDS.length, 16, "SESSION_UPDATE_KINDS length mismatch");
   assert.equal(ISSUE_STATE_TYPES.length, 6, "ISSUE_STATE_TYPES length mismatch");
   // RUNTIME_EVENT_TYPES = AGENT_UPDATE_TYPES + runtime-only entries
   assert.equal(
