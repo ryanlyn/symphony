@@ -1,7 +1,6 @@
-import { z } from "zod";
 import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
-
-import { AGENT_UPDATE_TYPES, type SerializedTraceLine } from "@symphony/domain";
+import type { SerializedTraceLine } from "@symphony/domain";
+import { z } from "zod";
 
 import type {
   DisplayEvent,
@@ -53,24 +52,26 @@ export function detectToolCategory(toolName: string): ToolCategory {
 
 // --- Zod envelope schema (validates structure at parse boundary) ---
 
-const TraceLineSchema = z.object({
-  type: z.string(),
-  issueId: z.string().optional(),
-  issueIdentifier: z.string().optional(),
-  timestamp: z.string().nullable().optional(),
-  message: z.unknown().optional(),
-  usage: z
-    .object({
-      inputTokens: z.number().optional(),
-      outputTokens: z.number().optional(),
-      totalTokens: z.number().optional(),
-    })
-    .nullable()
-    .optional(),
-  workspacePath: z.string().nullable().optional(),
-  sessionId: z.string().nullable().optional(),
-  executorPid: z.string().nullable().optional(),
-}).refine((d) => d.issueId || d.issueIdentifier);
+const TraceLineSchema = z
+  .object({
+    type: z.string(),
+    issueId: z.string().optional(),
+    issueIdentifier: z.string().optional(),
+    timestamp: z.string().nullable().optional(),
+    message: z.unknown().optional(),
+    usage: z
+      .object({
+        inputTokens: z.number().optional(),
+        outputTokens: z.number().optional(),
+        totalTokens: z.number().optional(),
+      })
+      .nullable()
+      .optional(),
+    workspacePath: z.string().nullable().optional(),
+    sessionId: z.string().nullable().optional(),
+    executorPid: z.string().nullable().optional(),
+  })
+  .refine((d) => d.issueId || d.issueIdentifier);
 
 interface PendingToolCall {
   event: ToolCallDisplayEvent;
@@ -83,7 +84,18 @@ interface TurnStartedRecord {
   consumed: boolean;
 }
 
-type ParsedLine = SerializedTraceLine | { type: string; issueId?: string; issueIdentifier?: string; timestamp?: string | null; message?: unknown; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null; workspacePath?: string | null; sessionId?: string | null };
+type ParsedLine =
+  | SerializedTraceLine
+  | {
+      type: string;
+      issueId?: string;
+      issueIdentifier?: string;
+      timestamp?: string | null;
+      message?: unknown;
+      usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+      workspacePath?: string | null;
+      sessionId?: string | null;
+    };
 
 /**
  * Parse a single JSONL line. Known types narrow to SerializedTraceLine;
@@ -213,7 +225,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     switch (raw.type) {
       case "agent_thought": {
         const msg = raw.message as SessionNotification | null;
-        if (!msg) break;
+        if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "thought", text, timestamp: ts });
         break;
@@ -222,7 +234,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       case "assistant_message":
       case "user_message": {
         const msg = raw.message as SessionNotification | null;
-        if (!msg) break;
+        if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "message", text, timestamp: ts });
         break;
@@ -230,7 +242,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
       case "tool_use_requested": {
         const msg = raw.message as SessionNotification | null;
-        if (!msg) break;
+        if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call") break;
         const name = update.title ?? (update.kind as string) ?? "unknown";
@@ -254,14 +266,13 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
       case "tool_call_update": {
         const msg = raw.message as SessionNotification | null;
-        if (!msg) break;
+        if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call_update") break;
         const toolUseId = update.toolCallId ?? "";
         const pending = pendingToolCalls.get(toolUseId);
         if (pending) {
-          const partialOutput =
-            typeof update.rawOutput === "string" ? update.rawOutput : null;
+          const partialOutput = typeof update.rawOutput === "string" ? update.rawOutput : null;
           if (partialOutput !== null && typeof pending.event.output === "string") {
             pending.event.output = pending.event.output + partialOutput;
           } else if (partialOutput !== null) {
@@ -275,7 +286,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       case "tool_call_completed":
       case "tool_call_failed": {
         const msg = raw.message as SessionNotification | null;
-        if (!msg) break;
+        if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call_update") break;
         const id = update.toolCallId ?? "";
