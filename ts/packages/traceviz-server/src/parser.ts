@@ -1,6 +1,5 @@
 import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
 import type { TraceEvent } from "@symphony/domain";
-import { z } from "zod";
 
 import type {
   DisplayEvent,
@@ -50,29 +49,6 @@ export function detectToolCategory(toolName: string): ToolCategory {
   return TOOL_NAME_CATEGORIES[toolName] ?? "unknown";
 }
 
-// --- Zod envelope schema (validates structure at parse boundary) ---
-
-const TraceLineSchema = z
-  .object({
-    type: z.string(),
-    issueId: z.string().optional(),
-    issueIdentifier: z.string().optional(),
-    timestamp: z.string().nullable().optional(),
-    message: z.unknown().optional(),
-    usage: z
-      .object({
-        inputTokens: z.number().optional(),
-        outputTokens: z.number().optional(),
-        totalTokens: z.number().optional(),
-      })
-      .nullable()
-      .optional(),
-    workspacePath: z.string().nullable().optional(),
-    sessionId: z.string().nullable().optional(),
-    executorPid: z.string().nullable().optional(),
-  })
-  .refine((d) => d.issueId || d.issueIdentifier);
-
 interface PendingToolCall {
   event: ToolCallDisplayEvent;
   toolUseId: string;
@@ -85,15 +61,21 @@ interface TurnStartedRecord {
 }
 
 /**
- * Parse a single JSONL line into a typed TraceEvent, or null if invalid.
- * Zod validates the envelope; the cast to TraceEvent enables discriminated narrowing in the switch.
+ * Parse a single JSONL line into a TraceEvent, or null if invalid.
+ * Validates the envelope (type + identifier); the cast to TraceEvent enables
+ * discriminated narrowing in the switch. Per-branch guards protect against
+ * message shape mismatches.
  */
 function parseLine(line: string): TraceEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    const result = TraceLineSchema.safeParse(JSON.parse(trimmed));
-    return result.success ? (result.data as unknown as TraceEvent) : null;
+    const obj: unknown = JSON.parse(trimmed);
+    if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return null;
+    const rec = obj as Record<string, unknown>;
+    if (typeof rec.type !== "string") return null;
+    if (!rec.issueId && !rec.issueIdentifier) return null;
+    return rec as unknown as TraceEvent;
   } catch {
     return null;
   }

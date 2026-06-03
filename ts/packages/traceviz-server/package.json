@@ -13,8 +13,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.21.0",
-    "@symphony/domain": "workspace:*",
-    "zod": "^4.4.3"
+    "@symphony/domain": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
