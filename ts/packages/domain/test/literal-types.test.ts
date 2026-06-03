@@ -5,9 +5,8 @@ import {
   CODEX_SANDBOX_MODES,
   ISSUE_STATE_TYPES,
   RUNTIME_EVENT_TYPES,
-  SESSION_UPDATE_KINDS,
 } from "@symphony/cli";
-import type { AgentUpdate, CodexSettings, Issue, RuntimeEvent, SessionUpdate } from "@symphony/cli";
+import type { AgentUpdate, CodexSettings, Issue, RuntimeEvent } from "@symphony/cli";
 
 import { assert } from "../../../test/assert.js";
 
@@ -38,7 +37,6 @@ const validRuntimeEvent: RuntimeEvent = {
   message: "completed",
   at: "2026-05-13T00:00:00.000Z",
 };
-const validSessionUpdate: SessionUpdate = { kind: "turn_completed", message: "completed" };
 
 // Compile-time type checks: @ts-expect-error proves that invalid literals are
 // rejected by tsc. Wrapping them in a test avoids unused-variable warnings.
@@ -51,8 +49,6 @@ test("literal types reject invalid values at compile time", () => {
     message: "event",
     at: "2026-05-13T00:00:00.000Z",
   };
-  // @ts-expect-error Session updates must use the canonical protocol update vocabulary.
-  const _sessionUpdate: SessionUpdate = { kind: "event" };
   // @ts-expect-error Issue state type is normalized to known tracker buckets.
   const _issue: Issue = { ...issueFixture, stateType: "needs-review" };
   // @ts-expect-error Codex thread sandbox accepts only canonical sandbox mode names.
@@ -80,11 +76,6 @@ test("CODEX_SANDBOX_MODES contains no duplicate entries", () => {
 test("ISSUE_STATE_TYPES contains no duplicate entries", () => {
   const unique = new Set(ISSUE_STATE_TYPES);
   assert.equal(unique.size, ISSUE_STATE_TYPES.length);
-});
-
-test("SESSION_UPDATE_KINDS contains no duplicate entries", () => {
-  const unique = new Set(SESSION_UPDATE_KINDS);
-  assert.equal(unique.size, SESSION_UPDATE_KINDS.length);
 });
 
 test("RUNTIME_EVENT_TYPES contains no duplicate entries", () => {
@@ -123,9 +114,6 @@ test("typed fixture values are accepted by their respective runtime arrays", () 
   const runtimeEventTypes = RUNTIME_EVENT_TYPES as readonly string[];
   assert.ok(runtimeEventTypes.includes(validRuntimeEvent.type));
 
-  const sessionKinds = SESSION_UPDATE_KINDS as readonly string[];
-  assert.ok(sessionKinds.includes(validSessionUpdate.kind));
-
   const issueStateTypes = ISSUE_STATE_TYPES as readonly string[];
   assert.ok(
     issueFixture.stateType !== undefined && issueStateTypes.includes(issueFixture.stateType),
@@ -136,7 +124,6 @@ test("typed fixture values are accepted by their respective runtime arrays", () 
   // the length assertion fails, catching drift that single-value includes checks miss.
   assert.equal(AGENT_UPDATE_TYPES.length, 18, "AGENT_UPDATE_TYPES length mismatch");
   assert.equal(CODEX_SANDBOX_MODES.length, 3, "CODEX_SANDBOX_MODES length mismatch");
-  assert.equal(SESSION_UPDATE_KINDS.length, 7, "SESSION_UPDATE_KINDS length mismatch");
   assert.equal(ISSUE_STATE_TYPES.length, 6, "ISSUE_STATE_TYPES length mismatch");
   // RUNTIME_EVENT_TYPES = AGENT_UPDATE_TYPES + runtime-only entries
   assert.equal(
@@ -191,9 +178,6 @@ test("runtime arrays reject values outside the canonical vocabulary", () => {
     !runtimeEventTypes.includes("event"),
     "bogus 'event' should not be in RUNTIME_EVENT_TYPES",
   );
-
-  const sessionKinds = SESSION_UPDATE_KINDS as readonly string[];
-  assert.ok(!sessionKinds.includes("event"), "bogus 'event' should not be in SESSION_UPDATE_KINDS");
 
   const issueStateTypes = ISSUE_STATE_TYPES as readonly string[];
   assert.ok(

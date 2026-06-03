@@ -203,7 +203,7 @@ export class Executor implements AgentExecutor {
           const usage = extractUsage(response.usage ?? undefined);
           const action = actionForStopReason(response.stopReason);
           const base = {
-            sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }, usage),
+            sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }),
             sessionId: session.sessionId,
             resumeId: session.resumeId,
             executorPid: session.executorPid,
@@ -267,16 +267,17 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     session.replayedUpdateCount += 1;
     return;
   }
-  const usage = extractUsageUpdate(notification.update);
   session.onUpdate?.({
     type: "session_notification",
-    sessionUpdate: acpProtocolUpdate(session, "session_notification", notification, usage),
+    sessionUpdate: acpProtocolUpdate(session, "session_notification", notification),
     sessionId: session.sessionId,
     resumeId: session.resumeId,
     executorPid: session.executorPid,
     message: notification,
     timestamp: new Date(),
-    ...(usage && { usage }),
+    ...(notification.update.sessionUpdate === "usage_update" && {
+      usage: extractUsageUpdate(notification.update),
+    }),
   });
 }
 
@@ -567,7 +568,6 @@ function acpProtocolUpdate(
   session: Session,
   type: AgentUpdateType,
   message: unknown,
-  usage?: Partial<UsageTotals>,
 ): NonNullable<AgentUpdate["sessionUpdate"]> {
   return {
     kind: type,
@@ -577,7 +577,6 @@ function acpProtocolUpdate(
     at: new Date(),
     _meta: {
       executorPid: session.executorPid,
-      usage,
     },
   };
 }
