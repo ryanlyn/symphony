@@ -6,12 +6,8 @@ export type {
   MessageDisplayEvent as MessageEvent,
   ToolCallDisplayEvent as ToolCallEvent,
   TurnCompletedDisplayEvent as TurnCompletedEvent,
-  TurnStartedDisplayEvent as TurnStartedEvent,
   TurnFailedDisplayEvent as TurnFailedEvent,
   NotificationDisplayEvent as NotificationEvent,
-  UnknownDisplayEvent as UnknownEvent,
-  ToolCategory,
-  TokenUsage,
 } from "@symphony/traceviz-server";
 
 export type {

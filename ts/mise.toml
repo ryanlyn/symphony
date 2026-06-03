@@ -30,8 +30,11 @@ depends = ["build"]
 [tasks.tidy]
 depends = ["format", "lint-fix"]
 
+[tasks.knip]
+run = "pnpm exec knip"
+
 [tasks.check]
-depends = ["typecheck", "test", "lint"]
+depends = ["typecheck", "test", "lint", "knip"]
 
 [tasks."e2e:setup"]
 run = "pnpm exec playwright install chromium"
