@@ -18,8 +18,15 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
         event.isError ? "border-accent-red" : "border-accent-orange",
       )}
     >
-      <div className="flex items-start gap-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 text-left bg-transparent border-none p-0 cursor-pointer"
+        aria-expanded={expanded}
+        aria-label={`Toggle ${event.toolName} details`}
+        onClick={() => setExpanded(!expanded)}
+      >
         <Code
+          aria-hidden="true"
           className={cn(
             "mt-0.5 h-4 w-4 shrink-0",
             event.isError ? "text-accent-red" : "text-accent-orange",
@@ -30,10 +37,10 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
             <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
             <span className="font-mono text-sm font-medium">{event.toolName}</span>
             {event.durationMs != null && (
-              <span className="text-[10px] text-muted">{formatDuration(event.durationMs)}</span>
+              <span className="text-xs text-muted">{formatDuration(event.durationMs)}</span>
             )}
             {event.isError && (
-              <span className="rounded-full bg-accent-red/20 px-1.5 py-0.5 text-[10px] text-accent-red">
+              <span className="rounded-full bg-accent-red/20 px-1.5 py-0.5 text-xs text-accent-red">
                 error
               </span>
             )}
@@ -45,7 +52,7 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
             />
           </div>
         </div>
-      </div>
+      </button>
 
       <div
         className={cn(

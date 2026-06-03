@@ -33,6 +33,7 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
       <div className="flex items-center gap-4">
         <button
           onClick={onBack}
+          aria-label="Go back to overview"
           className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm text-muted transition-colors hover:border-muted hover:text-foreground"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
@@ -61,14 +62,16 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
       </div>
 
       {/* Trace content */}
-      {selectedTicketId ? (
-        <div className="space-y-6">
-          {stats && <TraceSummary stats={stats} />}
-          <Timeline key={selectedTicketId} events={events} loading={loading} />
-        </div>
-      ) : (
-        <TraceList tickets={tickets} onSelect={navigateToTrace} />
-      )}
+      <div aria-live="polite" aria-atomic="true">
+        {selectedTicketId ? (
+          <div className="space-y-6">
+            {stats && <TraceSummary stats={stats} />}
+            <Timeline key={selectedTicketId} events={events} loading={loading} />
+          </div>
+        ) : (
+          <TraceList tickets={tickets} onSelect={navigateToTrace} />
+        )}
+      </div>
     </div>
   );
 }
