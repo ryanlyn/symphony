@@ -106,7 +106,11 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
   function flushPendingText(): void {
     if (pendingText) {
-      events.push({ kind: pendingText.kind, text: pendingText.text, timestamp: pendingText.timestamp });
+      events.push({
+        kind: pendingText.kind,
+        text: pendingText.text,
+        timestamp: pendingText.timestamp,
+      });
       pendingText = null;
     }
   }
