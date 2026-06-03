@@ -62,9 +62,6 @@
       "path": "../../packages/prompt"
     },
     {
-      "path": "../../packages/protocol"
-    },
-    {
       "path": "../../packages/resume-state"
     },
     {

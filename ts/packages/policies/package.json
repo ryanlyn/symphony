@@ -31,7 +31,6 @@
     "yaml": "^2.8.0",
     "zod": "^4.4.3",
     "@symphony/dispatch": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/protocol": "workspace:*"
+    "@symphony/domain": "workspace:*"
   }
 }

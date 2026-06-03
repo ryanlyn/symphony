@@ -48,6 +48,55 @@ export function isValidEnsembleSize(n: number): boolean {
   return Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
 }
 
+// --- Session protocol types ---
+
+export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
+
+export const SESSION_UPDATE_KINDS = [
+  "usage_update",
+  "session_started",
+  "turn_started",
+  "turn_completed",
+  "turn_failed",
+  "turn_cancelled",
+  "session_notification",
+] as const;
+
+export type SessionUpdateKind = (typeof SESSION_UPDATE_KINDS)[number];
+
+export interface SymphonyMeta {
+  executorPid?: string | null | undefined;
+  rateLimits?: unknown;
+  usage?: Partial<UsageTotals> | undefined;
+}
+
+interface SessionUpdateBase {
+  kind: SessionUpdateKind;
+  sessionId?: string | null | undefined;
+  agentKind?: AgentKind | undefined;
+  message?: unknown;
+  at?: Date | undefined;
+  _meta?: SymphonyMeta | undefined;
+}
+
+export interface UsageUpdate extends SessionUpdateBase {
+  kind: "usage_update";
+  usage: Partial<UsageTotals>;
+}
+
+export interface TurnUpdate extends SessionUpdateBase {
+  kind: Exclude<SessionUpdateKind, "usage_update">;
+  message?: unknown;
+}
+
+export type SessionUpdate = UsageUpdate | TurnUpdate | SessionUpdateBase;
+
+export interface TurnResult {
+  stopReason: StopReason;
+  sessionId: string;
+  _meta?: SymphonyMeta | undefined;
+}
+
 // --- Domain types ---
 
 /**
@@ -619,7 +668,7 @@ export interface AgentUpdateBase {
 
 // --- Typed message variants per AgentUpdate.type ---
 
-export interface NotificationAgentUpdate extends AgentUpdateBase {
+export interface AgentSessionNotificationUpdate extends AgentUpdateBase {
   type: "session_notification";
   message: SessionNotification;
 }
@@ -686,7 +735,7 @@ export interface FsWriteUpdate extends AgentUpdateBase {
  * Discriminated on `type`.
  */
 export type AgentUpdate =
-  | NotificationAgentUpdate
+  | AgentSessionNotificationUpdate
   | StringMessageUpdate
   | SessionReplaySuppressedUpdate
   | TurnStartedUpdate

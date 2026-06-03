@@ -122,8 +122,8 @@ export type { PresenterParams } from "@symphony/presenter";
 export { startObservabilityServer, startClaudeMcpServer } from "@symphony/server";
 export type { ObservabilityServerHandle, ObservabilityServerOptions } from "@symphony/server";
 export { RuntimeApp } from "@symphony/tui";
-export { SESSION_UPDATE_KINDS } from "@symphony/protocol";
-export type { SessionUpdate, SessionUpdateKind, StopReason, TurnResult } from "@symphony/protocol";
+export { SESSION_UPDATE_KINDS } from "@symphony/domain";
+export type { SessionUpdate, SessionUpdateKind, StopReason, TurnResult } from "@symphony/domain";
 export {
   retryBackoffMs,
   actionForStopReason,
