@@ -102,6 +102,14 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
   const pendingToolCalls = new Map<string, PendingToolCall>();
   const turnStartedRecords: TurnStartedRecord[] = [];
   let turnIndex = 0;
+  let pendingText: { kind: "thought" | "message"; text: string; timestamp: string } | null = null;
+
+  function flushPendingText(): void {
+    if (pendingText) {
+      events.push({ kind: pendingText.kind, text: pendingText.text, timestamp: pendingText.timestamp });
+      pendingText = null;
+    }
+  }
 
   for (const line of lines) {
     const raw = parseLine(line);
@@ -117,11 +125,26 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         const sessionUpdate = update.sessionUpdate;
         if (sessionUpdate === "agent_message_chunk" || sessionUpdate === "user_message_chunk") {
           const text = extractTextFromNotification(msg);
-          if (text) events.push({ kind: "message", text, timestamp: ts });
+          if (text) {
+            if (pendingText && pendingText.kind === "message") {
+              pendingText.text += text;
+            } else {
+              flushPendingText();
+              pendingText = { kind: "message", text, timestamp: ts };
+            }
+          }
         } else if (sessionUpdate === "agent_thought_chunk") {
           const text = extractTextFromNotification(msg);
-          if (text) events.push({ kind: "thought", text, timestamp: ts });
+          if (text) {
+            if (pendingText && pendingText.kind === "thought") {
+              pendingText.text += text;
+            } else {
+              flushPendingText();
+              pendingText = { kind: "thought", text, timestamp: ts };
+            }
+          }
         } else if (sessionUpdate === "tool_call") {
+          flushPendingText();
           const name = update.title ?? (update.kind as string) ?? "unknown";
           const id = update.toolCallId ?? "";
           const input = (update.rawInput as Record<string, unknown>) ?? {};
@@ -209,6 +232,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "turn_started": {
+        flushPendingText();
         turnIndex++;
         turnStartedRecords.push({ timestamp: ts, consumed: false });
         events.push({ kind: "turn_started", turnIndex, timestamp: ts });
@@ -216,6 +240,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "turn_completed": {
+        flushPendingText();
         let usage: TokenUsage | null = null;
         if (raw.usage) {
           usage = {
@@ -244,6 +269,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
       case "turn_failed":
       case "turn_cancelled": {
+        flushPendingText();
         for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
           const record = turnStartedRecords[i];
           if (record !== undefined && !record.consumed) {
@@ -283,6 +309,8 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
     }
   }
+
+  flushPendingText();
 
   // Flush any remaining pending tool calls that never got a result
   for (const [, pending] of pendingToolCalls) {
