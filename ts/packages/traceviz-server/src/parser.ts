@@ -1,11 +1,7 @@
-/**
- * JSONL trace parser for Symphony AgentUpdate events.
- *
- * Each line in a trace file is a JSON object with at minimum:
- *   { type, issueId, issueIdentifier, timestamp, message, usage, ... }
- *
- * This module maps raw AgentUpdate types to DisplayEvent types for the frontend.
- */
+import { z } from "zod";
+import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
+
+import { AGENT_UPDATE_TYPES, type SerializedTraceLine } from "@symphony/domain";
 
 import type {
   DisplayEvent,
@@ -55,19 +51,26 @@ export function detectToolCategory(toolName: string): ToolCategory {
   return TOOL_NAME_CATEGORIES[toolName] ?? "unknown";
 }
 
-/**
- * Represents a raw trace line as emitted by TraceEmitter.
- */
-interface RawTraceLine {
-  type: string;
-  issueId: string;
-  issueIdentifier: string;
-  timestamp: string | null;
-  message?: unknown;
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
-  workspacePath?: string | null;
-  sessionId?: string | null;
-}
+// --- Zod envelope schema (validates structure at parse boundary) ---
+
+const TraceLineSchema = z.object({
+  type: z.string(),
+  issueId: z.string().optional(),
+  issueIdentifier: z.string().optional(),
+  timestamp: z.string().nullable().optional(),
+  message: z.unknown().optional(),
+  usage: z
+    .object({
+      inputTokens: z.number().optional(),
+      outputTokens: z.number().optional(),
+      totalTokens: z.number().optional(),
+    })
+    .nullable()
+    .optional(),
+  workspacePath: z.string().nullable().optional(),
+  sessionId: z.string().nullable().optional(),
+  executorPid: z.string().nullable().optional(),
+}).refine((d) => d.issueId || d.issueIdentifier);
 
 interface PendingToolCall {
   event: ToolCallDisplayEvent;
@@ -75,93 +78,39 @@ interface PendingToolCall {
   startTs: string;
 }
 
-/** Tracks a turn_started event and whether it has been consumed by a completion/failure/cancellation. */
 interface TurnStartedRecord {
   timestamp: string;
   consumed: boolean;
 }
 
+type ParsedLine = SerializedTraceLine | { type: string; issueId?: string; issueIdentifier?: string; timestamp?: string | null; message?: unknown; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null; workspacePath?: string | null; sessionId?: string | null };
+
 /**
- * Parse a single JSONL line into a RawTraceLine, or null if invalid.
+ * Parse a single JSONL line. Known types narrow to SerializedTraceLine;
+ * unknown types still pass through for the `default` branch.
  */
-function parseLine(line: string): RawTraceLine | null {
+function parseLine(line: string): ParsedLine | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
-    const obj = JSON.parse(trimmed) as unknown;
-    if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return null;
-    const rec = obj as Record<string, unknown>;
-    if (typeof rec.type !== "string") return null;
-    if (typeof rec.issueId !== "string" && typeof rec.issueIdentifier !== "string") return null;
-    return rec as unknown as RawTraceLine;
+    const result = TraceLineSchema.safeParse(JSON.parse(trimmed));
+    return result.success ? (result.data as unknown as ParsedLine) : null;
   } catch {
     return null;
   }
 }
 
-/**
- * Extract the ACP `update` envelope from a SessionNotification message.
- * All AgentUpdates from the ACP executor use this shape: {sessionId, update: {...}}
- */
-function extractUpdate(msg: unknown): Record<string, unknown> | null {
-  if (typeof msg !== "object" || msg === null) return null;
-  const rec = msg as Record<string, unknown>;
-  const update = rec.update as Record<string, unknown> | undefined;
-  return update ?? null;
-}
-
-function extractText(msg: unknown): string {
-  if (typeof msg === "string") return msg;
-  const update = extractUpdate(msg);
-  if (update) {
-    const content = update.content as Record<string, unknown> | undefined;
-    if (content && typeof content.text === "string") return content.text;
+function extractTextFromNotification(msg: SessionNotification): string {
+  const update = msg.update;
+  if (
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk"
+  ) {
+    const block = update.content;
+    if (block.type === "text") return block.text;
   }
   return "";
-}
-
-function extractToolCall(
-  msg: unknown,
-): { name: string; id: string; input: Record<string, unknown> } | null {
-  const update = extractUpdate(msg);
-  if (!update || update.sessionUpdate !== "tool_call") return null;
-  const name = (update.title as string) ?? (update.kind as string) ?? "unknown";
-  const id = (update.toolCallId as string) ?? "";
-  const input = (update.rawInput as Record<string, unknown>) ?? {};
-  return { name, id, input };
-}
-
-function extractToolResult(
-  msg: unknown,
-): { id: string; output: string | unknown[] | null; isError: boolean } | null {
-  const update = extractUpdate(msg);
-  if (!update || update.sessionUpdate !== "tool_call_update") return null;
-  const id = (update.toolCallId as string) ?? "";
-  let output: string | unknown[] | null = null;
-  if (typeof update.rawOutput === "string") {
-    output = update.rawOutput;
-  } else if (update.rawOutput != null) {
-    output = JSON.stringify(update.rawOutput);
-  } else {
-    const content = update.content as Array<Record<string, unknown>> | undefined;
-    if (content && content.length > 0) {
-      const texts = content
-        .map((c) => {
-          if (c.type === "content") {
-            const block = c.content as Record<string, unknown> | undefined;
-            return (block?.text as string) ?? "";
-          }
-          if (c.type === "terminal") {
-            return (c.output as string) ?? "";
-          }
-          return "";
-        })
-        .filter(Boolean);
-      output = texts.join("\n") || null;
-    }
-  }
-  const isError = update.status === "failed";
-  return { id, output, isError };
 }
 
 /**
@@ -260,47 +209,59 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     if (!raw) continue;
 
     const ts = raw.timestamp ?? new Date().toISOString();
-    const msg = raw.message;
 
     switch (raw.type) {
       case "agent_thought": {
-        const text = extractText(msg);
+        const msg = raw.message as SessionNotification | null;
+        if (!msg) break;
+        const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "thought", text, timestamp: ts });
         break;
       }
 
       case "assistant_message":
       case "user_message": {
-        const text = extractText(msg);
+        const msg = raw.message as SessionNotification | null;
+        if (!msg) break;
+        const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "message", text, timestamp: ts });
         break;
       }
 
       case "tool_use_requested": {
-        const tool = extractToolCall(msg);
-        if (!tool) break;
+        const msg = raw.message as SessionNotification | null;
+        if (!msg) break;
+        const update = msg.update;
+        if (update.sessionUpdate !== "tool_call") break;
+        const name = update.title ?? (update.kind as string) ?? "unknown";
+        const id = update.toolCallId ?? "";
+        const input = (update.rawInput as Record<string, unknown>) ?? {};
 
         const toolCall: ToolCallDisplayEvent = {
           kind: "tool_call",
-          category: detectToolCategory(tool.name),
-          toolName: tool.name,
-          input: tool.input,
+          category: detectToolCategory(name),
+          toolName: name,
+          input,
           output: null,
           isError: false,
           durationMs: null,
           nestedEvents: [],
           timestamp: ts,
         };
-        pendingToolCalls.set(tool.id, { event: toolCall, toolUseId: tool.id, startTs: ts });
+        pendingToolCalls.set(id, { event: toolCall, toolUseId: id, startTs: ts });
         break;
       }
 
       case "tool_call_update": {
-        const update = extractUpdate(msg);
-        const toolUseId = (update?.toolCallId as string) ?? "";
+        const msg = raw.message as SessionNotification | null;
+        if (!msg) break;
+        const update = msg.update;
+        if (update.sessionUpdate !== "tool_call_update") break;
+        const toolUseId = update.toolCallId ?? "";
         const pending = pendingToolCalls.get(toolUseId);
         if (pending) {
-          const partialOutput = (update?.rawOutput as string | null) ?? null;
+          const partialOutput =
+            typeof update.rawOutput === "string" ? update.rawOutput : null;
           if (partialOutput !== null && typeof pending.event.output === "string") {
             pending.event.output = pending.event.output + partialOutput;
           } else if (partialOutput !== null) {
@@ -313,17 +274,45 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       case "tool_result":
       case "tool_call_completed":
       case "tool_call_failed": {
-        const result = extractToolResult(msg);
-        if (!result) break;
+        const msg = raw.message as SessionNotification | null;
+        if (!msg) break;
+        const update = msg.update;
+        if (update.sessionUpdate !== "tool_call_update") break;
+        const id = update.toolCallId ?? "";
 
-        const pending = result.id ? pendingToolCalls.get(result.id) : undefined;
-        if (pending) {
-          pendingToolCalls.delete(result.id);
-          const toolCall = pending.event;
-          if (result.output !== null) {
-            toolCall.output = result.output;
+        let output: string | unknown[] | null = null;
+        if (typeof update.rawOutput === "string") {
+          output = update.rawOutput;
+        } else if (update.rawOutput != null) {
+          output = JSON.stringify(update.rawOutput);
+        } else {
+          const content = update.content as Array<ToolCallContent> | undefined;
+          if (content && content.length > 0) {
+            const texts = content
+              .map((c) => {
+                if (c.type === "content") {
+                  const block = c.content;
+                  return block.type === "text" ? block.text : "";
+                }
+                if (c.type === "terminal") {
+                  return ((c as Record<string, unknown>).output as string) ?? "";
+                }
+                return "";
+              })
+              .filter(Boolean);
+            output = texts.join("\n") || null;
           }
-          toolCall.isError = result.isError || raw.type === "tool_call_failed";
+        }
+        const isError = update.status === "failed";
+
+        const pending = id ? pendingToolCalls.get(id) : undefined;
+        if (pending) {
+          pendingToolCalls.delete(id);
+          const toolCall = pending.event;
+          if (output !== null) {
+            toolCall.output = output;
+          }
+          toolCall.isError = isError || raw.type === "tool_call_failed";
           const startMs = new Date(pending.startTs).getTime();
           const endMs = new Date(ts).getTime();
           toolCall.durationMs =
@@ -335,8 +324,8 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             category: "unknown",
             toolName: "unknown",
             input: {},
-            output: result.output,
-            isError: result.isError || raw.type === "tool_call_failed",
+            output,
+            isError: isError || raw.type === "tool_call_failed",
             durationMs: null,
             nestedEvents: [],
             timestamp: ts,
@@ -362,7 +351,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               raw.usage.totalTokens ?? (raw.usage.inputTokens ?? 0) + (raw.usage.outputTokens ?? 0),
           };
         }
-        // Try to compute duration from the most recent unconsumed turn_started
         let durationMs: number | null = null;
         for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
           const record = turnStartedRecords[i];
@@ -382,7 +370,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
       case "turn_failed":
       case "turn_cancelled": {
-        // Mark the most recent unconsumed turn_started as consumed
         for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
           const record = turnStartedRecords[i];
           if (record !== undefined && !record.consumed) {
@@ -390,6 +377,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             break;
           }
         }
+        const msg = raw.message;
         events.push({
           kind: "turn_failed",
           text: `Turn ${raw.type}: ${typeof msg === "string" ? msg : JSON.stringify(msg ?? "")}`,
@@ -399,7 +387,8 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "notification": {
-        if (typeof msg !== "object" || msg === null) break;
+        const msg = raw.message;
+        if (!msg || typeof msg !== "object") break;
         const method = (msg as Record<string, unknown>).method as string | undefined;
         const params = (msg as Record<string, unknown>).params as
           | Record<string, unknown>
@@ -410,13 +399,10 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
           const displayEvent = parseItemCompleted(params, ts);
           if (displayEvent) events.push(displayEvent);
         } else if (method === "turn/started") {
-          // Deduplicate: if the last event is already a turn_started (from raw event), update it
           const lastEvent = events[events.length - 1];
           if (lastEvent && lastEvent.kind === "turn_started") {
-            // Update timestamp if the raw one had null/fallback
             if (ts && new Date(ts).getTime() > 0) {
               lastEvent.timestamp = ts;
-              // Also update the corresponding turnStartedRecord timestamp
               const lastRecord = turnStartedRecords[turnStartedRecords.length - 1];
               if (lastRecord) {
                 lastRecord.timestamp = ts;
@@ -428,7 +414,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             events.push({ kind: "turn_started", turnIndex, timestamp: ts });
           }
         } else if (method === "turn/completed") {
-          // turn/completed from notification form (usage extracted from params if available)
           let durationMs: number | null = null;
           for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
             const record = turnStartedRecords[i];

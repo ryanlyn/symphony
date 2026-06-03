@@ -784,6 +784,24 @@ export type AgentUpdate =
   | MalformedUpdate;
 
 /**
+ * Wire format of a single JSONL trace line as written by TraceEmitter.
+ * Mapped union: switching on `type` narrows `message` to the variant's specific shape.
+ */
+export type SerializedTraceLine = {
+  [K in AgentUpdate["type"]]: {
+    type: K;
+    issueId: string;
+    issueIdentifier: string;
+    timestamp: string | null;
+    message: Extract<AgentUpdate, { type: K }>["message"] | null;
+    usage: Partial<UsageTotals> | null;
+    workspacePath: string | null;
+    sessionId: string | null;
+    executorPid: string | null;
+  };
+}[AgentUpdate["type"]];
+
+/**
  * Handle to a started agent process, returned by {@link AgentExecutor.startSession}.
  * The same instance is passed back into `runTurn` for each prompt and closed via `stop`.
  */
