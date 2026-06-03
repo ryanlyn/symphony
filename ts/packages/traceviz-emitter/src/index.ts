@@ -2,7 +2,7 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { AgentUpdate, SerializedTraceLine } from "@symphony/domain";
+import type { AgentUpdate, TraceEvent } from "@symphony/domain";
 
 /**
  * Notification methods that carry meaningful trace information.
@@ -37,7 +37,7 @@ export class TraceEmitter {
       mkdirSync(dirPath, { recursive: true });
       this.initialized.add(dirPath);
     }
-    const payload: SerializedTraceLine = {
+    const payload: TraceEvent = {
       type: update.type,
       issueId,
       issueIdentifier,
@@ -47,7 +47,7 @@ export class TraceEmitter {
       workspacePath: update.workspacePath ?? null,
       sessionId: update.sessionId ?? null,
       executorPid: update.executorPid ?? null,
-    } as SerializedTraceLine;
+    } as TraceEvent;
     const line = JSON.stringify(payload);
     const filePath = path.join(dirPath, "trace.jsonl");
 

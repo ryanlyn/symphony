@@ -1,5 +1,5 @@
 import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
-import type { SerializedTraceLine } from "@symphony/domain";
+import type { TraceEvent } from "@symphony/domain";
 import { z } from "zod";
 
 import type {
@@ -85,7 +85,7 @@ interface TurnStartedRecord {
 }
 
 type ParsedLine =
-  | SerializedTraceLine
+  | TraceEvent
   | {
       type: string;
       issueId?: string;
@@ -98,7 +98,7 @@ type ParsedLine =
     };
 
 /**
- * Parse a single JSONL line. Known types narrow to SerializedTraceLine;
+ * Parse a single JSONL line. Known types narrow to TraceEvent;
  * unknown types still pass through for the `default` branch.
  */
 function parseLine(line: string): ParsedLine | null {

@@ -787,7 +787,7 @@ export type AgentUpdate =
  * Wire format of a single JSONL trace line as written by TraceEmitter.
  * Mapped union: switching on `type` narrows `message` to the variant's specific shape.
  */
-export type SerializedTraceLine = {
+export type TraceEvent = {
   [K in AgentUpdate["type"]]: {
     type: K;
     issueId: string;
