@@ -386,4 +386,3 @@ describe("parseTraceLines with full trace (integration)", () => {
     expect(events.filter((e) => e.kind === "notification").length).toBe(0);
   });
 });
-

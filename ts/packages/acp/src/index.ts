@@ -11,6 +11,7 @@ import {
   type ClientCapabilities,
   type InitializeResponse,
   type McpServer,
+  type PromptResponse,
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -242,11 +243,11 @@ export class Executor implements AgentExecutor {
 
   private update(
     session: Session,
-    type: AgentUpdateType,
-    message: unknown,
+    type: "turn_completed" | "turn_cancelled" | "turn_failed",
+    message: { response: PromptResponse },
     usage?: Partial<UsageTotals>,
   ): AgentUpdate {
-    const update: AgentUpdate = {
+    return {
       type,
       sessionUpdate: acpProtocolUpdate(session, type, message, usage),
       sessionId: session.sessionId,
@@ -254,9 +255,8 @@ export class Executor implements AgentExecutor {
       executorPid: session.executorPid,
       message,
       timestamp: new Date(),
-    };
-    if (usage) update.usage = usage;
-    return update;
+      usage,
+    } as AgentUpdate;
   }
 
   private emit(session: Session | null, update: AgentUpdate): void {
@@ -291,22 +291,17 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     return;
   }
   const type = eventTypeForUpdate(notification.update);
-  const update: AgentUpdate = {
+  const usage = extractUsageUpdate(notification.update);
+  const update = {
     type,
-    sessionUpdate: acpProtocolUpdate(
-      session,
-      type,
-      notification,
-      extractUsageUpdate(notification.update),
-    ),
+    sessionUpdate: acpProtocolUpdate(session, type, notification, usage),
     sessionId: session.sessionId,
     resumeId: session.resumeId,
     executorPid: session.executorPid,
     message: notification,
-    usage: extractUsageUpdate(notification.update),
+    usage,
     timestamp: new Date(),
-  };
-  if (!update.usage) delete update.usage;
+  } as AgentUpdate;
   session.onUpdate?.(update);
 }
 
@@ -319,16 +314,26 @@ function handlePermissionRequest(
     request.options.find((option) => option.kind.startsWith("allow")) ??
     request.options.find((option) => option.optionId.toLowerCase().includes("allow")) ??
     null;
+  if (selected) {
+    emit({
+      type: "approval_auto_approved",
+      sessionId: request.sessionId,
+      resumeId: session?.resumeId,
+      executorPid: session?.executorPid,
+      message: { request, selected },
+      timestamp: new Date(),
+    });
+    return { outcome: { outcome: "selected", optionId: selected.optionId } };
+  }
   emit({
-    type: selected ? "approval_auto_approved" : "approval_required",
+    type: "approval_required",
     sessionId: request.sessionId,
     resumeId: session?.resumeId,
     executorPid: session?.executorPid,
     message: { request, selected },
     timestamp: new Date(),
   });
-  if (!selected) return { outcome: { outcome: "cancelled" } };
-  return { outcome: { outcome: "selected", optionId: selected.optionId } };
+  return { outcome: { outcome: "cancelled" } };
 }
 
 function acpClient(input: {
@@ -583,7 +588,19 @@ function clientCapabilities(workerHost: string | null): ClientCapabilities {
   return capabilities;
 }
 
-function eventTypeForUpdate(update: SessionNotification["update"]): AgentUpdateType {
+type SessionUpdateType =
+  | "assistant_message"
+  | "user_message"
+  | "agent_thought"
+  | "tool_use_requested"
+  | "tool_result"
+  | "tool_call_failed"
+  | "tool_call_update"
+  | "usage"
+  | "plan"
+  | "notification";
+
+function eventTypeForUpdate(update: SessionNotification["update"]): SessionUpdateType {
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
       return "assistant_message";

@@ -120,7 +120,6 @@ function extractText(msg: unknown): string {
   return "";
 }
 
-
 function extractToolCall(
   msg: unknown,
 ): { name: string; id: string; input: Record<string, unknown> } | null {
