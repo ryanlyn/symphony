@@ -84,29 +84,16 @@ interface TurnStartedRecord {
   consumed: boolean;
 }
 
-type ParsedLine =
-  | TraceEvent
-  | {
-      type: string;
-      issueId?: string;
-      issueIdentifier?: string;
-      timestamp?: string | null;
-      message?: unknown;
-      usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
-      workspacePath?: string | null;
-      sessionId?: string | null;
-    };
-
 /**
- * Parse a single JSONL line. Known types narrow to TraceEvent;
- * unknown types still pass through for the `default` branch.
+ * Parse a single JSONL line into a typed TraceEvent, or null if invalid.
+ * Zod validates the envelope; the cast to TraceEvent enables discriminated narrowing in the switch.
  */
-function parseLine(line: string): ParsedLine | null {
+function parseLine(line: string): TraceEvent | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
   try {
     const result = TraceLineSchema.safeParse(JSON.parse(trimmed));
-    return result.success ? (result.data as unknown as ParsedLine) : null;
+    return result.success ? (result.data as unknown as TraceEvent) : null;
   } catch {
     return null;
   }
@@ -224,7 +211,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
     switch (raw.type) {
       case "agent_thought": {
-        const msg = raw.message as SessionNotification | null;
+        const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "thought", text, timestamp: ts });
@@ -233,7 +220,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
       case "assistant_message":
       case "user_message": {
-        const msg = raw.message as SessionNotification | null;
+        const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const text = extractTextFromNotification(msg);
         if (text) events.push({ kind: "message", text, timestamp: ts });
@@ -241,7 +228,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "tool_use_requested": {
-        const msg = raw.message as SessionNotification | null;
+        const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call") break;
@@ -265,7 +252,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       }
 
       case "tool_call_update": {
-        const msg = raw.message as SessionNotification | null;
+        const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call_update") break;
@@ -285,7 +272,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
       case "tool_result":
       case "tool_call_completed":
       case "tool_call_failed": {
-        const msg = raw.message as SessionNotification | null;
+        const msg = raw.message;
         if (!msg || !("update" in msg)) break;
         const update = msg.update;
         if (update.sessionUpdate !== "tool_call_update") break;
