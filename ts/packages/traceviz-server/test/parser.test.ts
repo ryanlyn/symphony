@@ -38,7 +38,7 @@ describe("parseTraceLines with minimal fixture", () => {
 
   it("extracts bash tool_calls with expected shape", () => {
     const events = parseTraceLines(lines);
-    const bashCalls = events.filter((e) => e.kind === "tool_call" && e.category === "bash_command");
+    const bashCalls = events.filter((e) => e.kind === "tool_call" && e.toolName === "Bash");
     expect(bashCalls.length).toBeGreaterThan(0);
 
     for (const call of bashCalls) {
@@ -52,7 +52,7 @@ describe("parseTraceLines with minimal fixture", () => {
 
   it("marks non-zero exit codes as errors", () => {
     const events = parseTraceLines(lines);
-    const bashCalls = events.filter((e) => e.kind === "tool_call" && e.category === "bash_command");
+    const bashCalls = events.filter((e) => e.kind === "tool_call" && e.toolName === "Bash");
     const errors = bashCalls.filter((e) => e.kind === "tool_call" && e.isError);
     expect(errors.length).toBeGreaterThan(0);
   });

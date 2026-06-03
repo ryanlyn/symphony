@@ -1,53 +1,7 @@
 import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
 import type { TraceEvent } from "@symphony/domain";
 
-import type {
-  DisplayEvent,
-  ToolCallDisplayEvent,
-  ToolCategory,
-  TokenUsage,
-} from "./models/display-events.js";
-
-/** Tool name -> category mapping for common Claude tools. */
-const TOOL_NAME_CATEGORIES: Record<string, ToolCategory> = {
-  // plan_mode
-  Task: "plan_mode",
-  TaskOutput: "plan_mode",
-  TaskStop: "plan_mode",
-  TaskCreate: "plan_mode",
-  TaskUpdate: "plan_mode",
-  TaskGet: "plan_mode",
-  TaskList: "plan_mode",
-  EnterPlanMode: "plan_mode",
-  ExitPlanMode: "plan_mode",
-  AskUserQuestion: "plan_mode",
-  EnterWorktree: "plan_mode",
-  ExitWorktree: "plan_mode",
-  // skill
-  Skill: "skill",
-  // search
-  ToolSearch: "search",
-  Glob: "search",
-  Grep: "search",
-  // bash_command
-  Bash: "bash_command",
-  // file_operation
-  Read: "file_operation",
-  Write: "file_operation",
-  Edit: "file_operation",
-  NotebookEdit: "file_operation",
-  // web
-  WebFetch: "web",
-  // agent
-  Agent: "agent",
-  // todo
-  TodoWrite: "todo",
-  TodoRead: "todo",
-};
-
-export function detectToolCategory(toolName: string): ToolCategory {
-  return TOOL_NAME_CATEGORIES[toolName] ?? "unknown";
-}
+import type { DisplayEvent, ToolCallDisplayEvent, TokenUsage } from "./models/display-events.js";
 
 interface PendingToolCall {
   event: ToolCallDisplayEvent;
@@ -155,7 +109,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
           const toolCall: ToolCallDisplayEvent = {
             kind: "tool_call",
-            category: detectToolCategory(name),
             toolName: name,
             input,
             output: null,
@@ -210,7 +163,6 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             } else {
               events.push({
                 kind: "tool_call",
-                category: "unknown",
                 toolName: "unknown",
                 input: {},
                 output,

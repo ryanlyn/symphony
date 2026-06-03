@@ -64,8 +64,10 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 const API_PORT = 4040;
 
 serve({ fetch: app.fetch, port: API_PORT }, () => {
-  console.log(`API server: http://localhost:${API_PORT}`);
   console.log(`Trace: ${resolved} (${events.length} events)`);
+  console.log();
+  console.log(`  UI:  http://localhost:5173/#/trace/${encodeURIComponent(issueId)}`);
+  console.log(`  API: http://localhost:${API_PORT}`);
   console.log();
 });
 

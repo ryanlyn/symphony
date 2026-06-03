@@ -33,6 +33,10 @@ depends = ["format", "lint-fix"]
 [tasks.check]
 depends = ["typecheck", "test", "lint"]
 
+[tasks.traceviz]
+run = "pnpm traceviz {{arg(name='file')}}"
+description = "Open standalone trace viewer for a JSONL trace file"
+
 [tasks."e2e:setup"]
 run = "pnpm exec playwright install chromium"
 description = "Install Playwright browsers for E2E tests"

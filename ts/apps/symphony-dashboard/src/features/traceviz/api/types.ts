@@ -10,7 +10,6 @@ export type {
   TurnFailedDisplayEvent as TurnFailedEvent,
   NotificationDisplayEvent as NotificationEvent,
   UnknownDisplayEvent as UnknownEvent,
-  ToolCategory,
   TokenUsage,
 } from "@symphony/traceviz-server";
 
