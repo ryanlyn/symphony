@@ -12,6 +12,7 @@ export function useTraceData() {
   const [events, setEvents] = useState<DisplayEvent[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const { status: wsStatus, lastMessage } = useWebSocket();
 
@@ -23,6 +24,7 @@ export function useTraceData() {
   const loadTicketData = useCallback(async (issueId: string) => {
     setLoading(true);
     try {
+      setError(null);
       const [eventsData, statsData] = await Promise.all([
         fetchEvents(issueId),
         fetchStats(issueId),
@@ -30,6 +32,7 @@ export function useTraceData() {
       setEvents(eventsData);
       setStats(statsData);
     } catch {
+      setError("Failed to load trace data");
       setEvents([]);
       setStats(null);
     } finally {
@@ -75,6 +78,7 @@ export function useTraceData() {
     events,
     stats,
     loading,
+    error,
     wsStatus,
   };
 }

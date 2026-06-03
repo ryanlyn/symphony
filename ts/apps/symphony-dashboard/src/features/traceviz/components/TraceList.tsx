@@ -11,13 +11,13 @@ interface TraceListProps {
 function statusIcon(status: TicketInfo["status"]) {
   switch (status) {
     case "running":
-      return <Play className="h-3.5 w-3.5 text-accent-blue" />;
+      return <Play aria-hidden="true" className="h-3.5 w-3.5 text-accent-blue" />;
     case "completed":
-      return <CheckCircle className="h-3.5 w-3.5 text-accent-green" />;
+      return <CheckCircle aria-hidden="true" className="h-3.5 w-3.5 text-accent-green" />;
     case "failed":
-      return <XCircle className="h-3.5 w-3.5 text-accent-red" />;
+      return <XCircle aria-hidden="true" className="h-3.5 w-3.5 text-accent-red" />;
     default:
-      return <Circle className="h-3.5 w-3.5 text-muted" />;
+      return <Circle aria-hidden="true" className="h-3.5 w-3.5 text-muted" />;
   }
 }
 
@@ -97,16 +97,16 @@ export function TraceList({ tickets, onSelect }: TraceListProps) {
             </div>
             <div className="mt-3 flex items-center gap-3 text-xs text-muted">
               <span className="flex items-center gap-1">
-                <RotateCcw className="h-3 w-3" />
+                <RotateCcw aria-hidden="true" className="h-3 w-3" />
                 {ticket.turnCount} turn{ticket.turnCount !== 1 ? "s" : ""}
               </span>
               <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
+                <Clock aria-hidden="true" className="h-3 w-3" />
                 {formatStartedAt(ticket.startedAt)}
               </span>
               <span
                 className={cn(
-                  "ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+                  "ml-auto rounded-full px-1.5 py-0.5 text-xs font-medium",
                   ticket.status === "running" && "bg-accent-blue/10 text-accent-blue",
                   ticket.status === "completed" && "bg-accent-green/10 text-accent-green",
                   ticket.status === "failed" && "bg-accent-red/10 text-accent-red",
