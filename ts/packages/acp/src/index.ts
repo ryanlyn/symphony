@@ -11,7 +11,6 @@ import {
   type ClientCapabilities,
   type InitializeResponse,
   type McpServer,
-  type PromptResponse,
   type ReadTextFileRequest,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -32,9 +31,19 @@ import type {
   AgentSession,
   AgentUpdate,
   AgentUpdateType,
+  AssistantMessageUpdate,
+  AgentThoughtUpdate,
   Issue,
+  NotificationUpdate,
+  PlanUpdate,
   Settings,
+  ToolCallFailedUpdate,
+  ToolCallUpdateEvent,
+  ToolResultUpdate,
+  ToolUseRequestedUpdate,
+  UsageUpdateEvent,
   UsageTotals,
+  UserMessageUpdate,
 } from "@symphony/domain";
 import type { SessionUpdateKind } from "@symphony/protocol";
 
@@ -213,17 +222,23 @@ export class Executor implements AgentExecutor {
             });
           }
           const action = actionForStopReason(response.stopReason);
+          const base = {
+            sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }, usage),
+            sessionId: session.sessionId,
+            resumeId: session.resumeId,
+            executorPid: session.executorPid,
+            message: { response },
+            timestamp: new Date(),
+            ...(usage && { usage }),
+          };
           if (action === "continue") {
-            const completion = this.update(session, "turn_completed", { response }, usage);
-            this.emit(session, completion);
+            this.emit(session, { ...base, type: "turn_completed" });
             finishResolve([...updates]);
           } else if (action === "cancel") {
-            const cancellation = this.update(session, "turn_cancelled", { response }, usage);
-            this.emit(session, cancellation);
+            this.emit(session, { ...base, type: "turn_cancelled" });
             finishReject(new Error("acp_turn_cancelled"));
           } else {
-            const failure = this.update(session, "turn_failed", { response }, usage);
-            this.emit(session, failure);
+            this.emit(session, { ...base, type: "turn_failed" });
             finishReject(new Error(`acp_turn_failed: ${response.stopReason}`));
           }
         })
@@ -239,24 +254,6 @@ export class Executor implements AgentExecutor {
           finishReject(error instanceof Error ? error : new Error(message));
         });
     });
-  }
-
-  private update(
-    session: Session,
-    type: "turn_completed" | "turn_cancelled" | "turn_failed",
-    message: { response: PromptResponse },
-    usage?: Partial<UsageTotals>,
-  ): AgentUpdate {
-    return {
-      type,
-      sessionUpdate: acpProtocolUpdate(session, type, message, usage),
-      sessionId: session.sessionId,
-      resumeId: session.resumeId,
-      executorPid: session.executorPid,
-      message,
-      timestamp: new Date(),
-      usage,
-    } as AgentUpdate;
   }
 
   private emit(session: Session | null, update: AgentUpdate): void {
@@ -283,6 +280,18 @@ export class Executor implements AgentExecutor {
   }
 }
 
+type SessionUpdate =
+  | AssistantMessageUpdate
+  | UserMessageUpdate
+  | AgentThoughtUpdate
+  | ToolUseRequestedUpdate
+  | ToolResultUpdate
+  | ToolCallFailedUpdate
+  | ToolCallUpdateEvent
+  | UsageUpdateEvent
+  | PlanUpdate
+  | NotificationUpdate;
+
 function handleSessionUpdate(session: Session, notification: SessionNotification): void {
   session.sessionId = notification.sessionId;
   session.resumeId = notification.sessionId;
@@ -292,17 +301,20 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
   }
   const type = eventTypeForUpdate(notification.update);
   const usage = extractUsageUpdate(notification.update);
-  const update = {
-    type,
+  const base = {
     sessionUpdate: acpProtocolUpdate(session, type, notification, usage),
     sessionId: session.sessionId,
     resumeId: session.resumeId,
     executorPid: session.executorPid,
     message: notification,
-    usage,
     timestamp: new Date(),
-  } as AgentUpdate;
-  session.onUpdate?.(update);
+    ...(usage && { usage }),
+  };
+  if (type === "usage" && usage) {
+    session.onUpdate?.({ ...base, type: "usage", usage });
+  } else if (type !== "usage") {
+    session.onUpdate?.({ ...base, type });
+  }
 }
 
 function handlePermissionRequest(
@@ -588,17 +600,7 @@ function clientCapabilities(workerHost: string | null): ClientCapabilities {
   return capabilities;
 }
 
-type SessionUpdateType =
-  | "assistant_message"
-  | "user_message"
-  | "agent_thought"
-  | "tool_use_requested"
-  | "tool_result"
-  | "tool_call_failed"
-  | "tool_call_update"
-  | "usage"
-  | "plan"
-  | "notification";
+type SessionUpdateType = SessionUpdate["type"];
 
 function eventTypeForUpdate(update: SessionNotification["update"]): SessionUpdateType {
   switch (update.sessionUpdate) {
