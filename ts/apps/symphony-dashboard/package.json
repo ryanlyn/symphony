@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@symphony/traceviz-server": "workspace:*",
     "react": "^19.1",
     "react-dom": "^19.1",
     "lucide-react": "^0.500",

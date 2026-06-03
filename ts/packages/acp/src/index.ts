@@ -35,7 +35,6 @@ import type {
   Settings,
   UsageTotals,
 } from "@symphony/domain";
-import type { SessionUpdateKind } from "@symphony/protocol";
 
 interface Session extends AgentSession {
   connection: ClientSideConnection;
@@ -129,6 +128,7 @@ export class Executor implements AgentExecutor {
       session.resumeId = sessionId;
       this.emit(session, {
         type: "session_started",
+        message: `session started (${sessionId})`,
         sessionId,
         resumeId: sessionId,
         executorPid,
@@ -201,28 +201,24 @@ export class Executor implements AgentExecutor {
         })
         .then((response) => {
           const usage = extractUsage(response.usage ?? undefined);
-          if (usage) {
-            this.emit(session, {
-              type: "usage",
-              sessionId,
-              resumeId: session.resumeId,
-              usage,
-              message: { response },
-              timestamp: new Date(),
-            });
-          }
           const action = actionForStopReason(response.stopReason);
+          const base = {
+            sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }),
+            sessionId: session.sessionId,
+            resumeId: session.resumeId,
+            executorPid: session.executorPid,
+            message: { response },
+            timestamp: new Date(),
+            ...(usage && { usage }),
+          };
           if (action === "continue") {
-            const completion = this.update(session, "turn_completed", { response }, usage);
-            this.emit(session, completion);
+            this.emit(session, { ...base, type: "turn_completed" });
             finishResolve([...updates]);
           } else if (action === "cancel") {
-            const cancellation = this.update(session, "turn_cancelled", { response }, usage);
-            this.emit(session, cancellation);
+            this.emit(session, { ...base, type: "turn_cancelled" });
             finishReject(new Error("acp_turn_cancelled"));
           } else {
-            const failure = this.update(session, "turn_failed", { response }, usage);
-            this.emit(session, failure);
+            this.emit(session, { ...base, type: "turn_failed" });
             finishReject(new Error(`acp_turn_failed: ${response.stopReason}`));
           }
         })
@@ -238,25 +234,6 @@ export class Executor implements AgentExecutor {
           finishReject(error instanceof Error ? error : new Error(message));
         });
     });
-  }
-
-  private update(
-    session: Session,
-    type: AgentUpdateType,
-    message: unknown,
-    usage?: Partial<UsageTotals>,
-  ): AgentUpdate {
-    const update: AgentUpdate = {
-      type,
-      sessionUpdate: acpProtocolUpdate(session, type, message, usage),
-      sessionId: session.sessionId,
-      resumeId: session.resumeId,
-      executorPid: session.executorPid,
-      message,
-      timestamp: new Date(),
-    };
-    if (usage) update.usage = usage;
-    return update;
   }
 
   private emit(session: Session | null, update: AgentUpdate): void {
@@ -290,23 +267,18 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     session.replayedUpdateCount += 1;
     return;
   }
-  const update: AgentUpdate = {
-    type: eventTypeForUpdate(notification.update),
-    sessionUpdate: acpProtocolUpdate(
-      session,
-      eventTypeForUpdate(notification.update),
-      notification,
-      extractUsageUpdate(notification.update),
-    ),
+  session.onUpdate?.({
+    type: "session_notification",
+    sessionUpdate: acpProtocolUpdate(session, "session_notification", notification),
     sessionId: session.sessionId,
     resumeId: session.resumeId,
     executorPid: session.executorPid,
     message: notification,
-    usage: extractUsageUpdate(notification.update),
     timestamp: new Date(),
-  };
-  if (!update.usage) delete update.usage;
-  session.onUpdate?.(update);
+    ...(notification.update.sessionUpdate === "usage_update" && {
+      usage: extractUsageUpdate(notification.update),
+    }),
+  });
 }
 
 function handlePermissionRequest(
@@ -318,16 +290,26 @@ function handlePermissionRequest(
     request.options.find((option) => option.kind.startsWith("allow")) ??
     request.options.find((option) => option.optionId.toLowerCase().includes("allow")) ??
     null;
+  if (selected) {
+    emit({
+      type: "approval_auto_approved",
+      sessionId: request.sessionId,
+      resumeId: session?.resumeId,
+      executorPid: session?.executorPid,
+      message: { request, selected },
+      timestamp: new Date(),
+    });
+    return { outcome: { outcome: "selected", optionId: selected.optionId } };
+  }
   emit({
-    type: selected ? "approval_auto_approved" : "approval_required",
+    type: "approval_required",
     sessionId: request.sessionId,
     resumeId: session?.resumeId,
     executorPid: session?.executorPid,
     message: { request, selected },
     timestamp: new Date(),
   });
-  if (!selected) return { outcome: { outcome: "cancelled" } };
-  return { outcome: { outcome: "selected", optionId: selected.optionId } };
+  return { outcome: { outcome: "cancelled" } };
 }
 
 function acpClient(input: {
@@ -582,62 +564,21 @@ function clientCapabilities(workerHost: string | null): ClientCapabilities {
   return capabilities;
 }
 
-function eventTypeForUpdate(update: SessionNotification["update"]): AgentUpdateType {
-  switch (update.sessionUpdate) {
-    case "agent_message_chunk":
-      return "assistant_message";
-    case "user_message_chunk":
-      return "user_message";
-    case "agent_thought_chunk":
-      return "agent_thought";
-    case "tool_call":
-      return "tool_use_requested";
-    case "tool_call_update":
-      if (update.status === "completed") return "tool_result";
-      if (update.status === "failed") return "tool_call_failed";
-      return "tool_call_update";
-    case "usage_update":
-      return "usage";
-    case "plan":
-      return "plan";
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
-    case "session_info_update":
-      return "notification";
-  }
-}
-
 function acpProtocolUpdate(
   session: Session,
   type: AgentUpdateType,
   message: unknown,
-  usage?: Partial<UsageTotals>,
 ): NonNullable<AgentUpdate["sessionUpdate"]> {
-  const base = {
-    kind: acpProtocolKind(type),
+  return {
+    kind: type,
     sessionId: session.sessionId,
     agentKind: session.agentKind,
     message,
     at: new Date(),
     _meta: {
       executorPid: session.executorPid,
-      usage,
     },
   };
-  if (type === "usage" && usage) return { ...base, kind: "usage_update", usage };
-  return base;
-}
-
-function acpProtocolKind(type: AgentUpdateType): SessionUpdateKind {
-  if (type === "tool_use_requested") return "tool_call";
-  if (type === "tool_result" || type === "tool_call_failed") return "tool_result";
-  if (type === "turn_cancelled") return "turn_cancelled";
-  if (type === "turn_completed") return "turn_completed";
-  if (type === "turn_failed") return "turn_failed";
-  if (type === "turn_started") return "turn_started";
-  if (type === "session_started") return "session_started";
-  return "notification";
 }
 
 function extractUsageUpdate(

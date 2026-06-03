@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, it, expect } from "vitest";
@@ -6,7 +6,6 @@ import { describe, it, expect } from "vitest";
 import { parseTraceLines } from "../src/parser.js";
 
 const FIXTURE_PATH = path.join(import.meta.dirname, "fixtures/minimal-trace.jsonl");
-const CAN143_PATH = `${process.env.HOME}/.symphony/traces/CAN-143/trace.jsonl`;
 
 describe("parseTraceLines with minimal fixture", () => {
   const lines = readFileSync(FIXTURE_PATH, "utf-8").split("\n");
@@ -44,7 +43,7 @@ describe("parseTraceLines with minimal fixture", () => {
 
     for (const call of bashCalls) {
       if (call.kind !== "tool_call") continue;
-      expect(call.toolName).toBe("command_execution");
+      expect(call.toolName).toBe("Bash");
       expect(typeof (call.input as Record<string, unknown>).command).toBe("string");
       expect(typeof call.isError).toBe("boolean");
       expect(call.durationMs === null || typeof call.durationMs === "number").toBe(true);
@@ -60,9 +59,7 @@ describe("parseTraceLines with minimal fixture", () => {
 
   it("extracts MCP/dynamic tool calls", () => {
     const events = parseTraceLines(lines);
-    const mcpCalls = events.filter(
-      (e) => e.kind === "tool_call" && e.toolName !== "command_execution",
-    );
+    const mcpCalls = events.filter((e) => e.kind === "tool_call" && e.toolName !== "Bash");
     expect(mcpCalls.length).toBeGreaterThan(0);
 
     for (const call of mcpCalls) {
@@ -122,22 +119,18 @@ describe("parseTraceLines with minimal fixture", () => {
 });
 
 describe("parseTraceLines reasoning/thought extraction", () => {
-  it("extracts text from summary array", () => {
+  it("extracts thought text from agent_thought_chunk", () => {
     const lines = [
       JSON.stringify({
-        type: "notification",
+        type: "session_notification",
         issueId: "id",
         issueIdentifier: "T-1",
         timestamp: "2026-01-01T00:00:00Z",
         message: {
-          method: "item/completed",
-          params: {
-            item: {
-              type: "reasoning",
-              id: "rs_1",
-              summary: [{ type: "summary_text", text: "Thinking about the task" }],
-              content: [],
-            },
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "Thinking about the task" },
           },
         },
       }),
@@ -148,44 +141,16 @@ describe("parseTraceLines reasoning/thought extraction", () => {
     expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Thinking about the task");
   });
 
-  it("extracts text from content array when summary is empty", () => {
+  it("skips thought events with empty text", () => {
     const lines = [
       JSON.stringify({
-        type: "notification",
+        type: "session_notification",
         issueId: "id",
         issueIdentifier: "T-1",
         timestamp: "2026-01-01T00:00:00Z",
         message: {
-          method: "item/completed",
-          params: {
-            item: {
-              type: "reasoning",
-              id: "rs_1",
-              summary: [],
-              content: [{ type: "thinking", text: "Deep thought" }],
-            },
-          },
-        },
-      }),
-    ];
-    const events = parseTraceLines(lines);
-    const thoughts = events.filter((e) => e.kind === "thought");
-    expect(thoughts.length).toBe(1);
-    expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Deep thought");
-  });
-
-  it("skips empty reasoning items entirely", () => {
-    const lines = [
-      JSON.stringify({
-        type: "notification",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:00Z",
-        message: {
-          method: "item/completed",
-          params: {
-            item: { type: "reasoning", id: "rs_1", summary: [], content: [] },
-          },
+          sessionId: "s1",
+          update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "" } },
         },
       }),
     ];
@@ -193,54 +158,17 @@ describe("parseTraceLines reasoning/thought extraction", () => {
     const thoughts = events.filter((e) => e.kind === "thought");
     expect(thoughts.length).toBe(0);
   });
-
-  it("prefers item.text over summary/content", () => {
-    const lines = [
-      JSON.stringify({
-        type: "notification",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:00Z",
-        message: {
-          method: "item/completed",
-          params: {
-            item: {
-              type: "reasoning",
-              id: "rs_1",
-              text: "Direct text",
-              summary: [{ text: "Summary text" }],
-              content: [{ text: "Content text" }],
-            },
-          },
-        },
-      }),
-    ];
-    const events = parseTraceLines(lines);
-    const thoughts = events.filter((e) => e.kind === "thought");
-    expect(thoughts.length).toBe(1);
-    expect(thoughts[0]!.kind === "thought" && thoughts[0]!.text).toBe("Direct text");
-  });
 });
 
-describe("parseTraceLines turn deduplication", () => {
-  it("deduplicates raw turn_started + notification turn/started", () => {
+describe("parseTraceLines turn handling", () => {
+  it("emits turn_started with sequential indices", () => {
     const lines = [
       JSON.stringify({
         type: "turn_started",
         issueId: "id",
         issueIdentifier: "T-1",
-        timestamp: null,
+        timestamp: "2026-01-01T00:00:00Z",
         sessionId: "sess-1",
-      }),
-      JSON.stringify({
-        type: "notification",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:01Z",
-        message: {
-          method: "turn/started",
-          params: { threadId: "t1", turn: { id: "turn-1", status: "inProgress" } },
-        },
       }),
       JSON.stringify({
         type: "turn_completed",
@@ -254,42 +182,6 @@ describe("parseTraceLines turn deduplication", () => {
     const turns = events.filter((e) => e.kind === "turn_started");
     expect(turns.length).toBe(1);
     expect(turns[0]!.kind === "turn_started" && turns[0]!.turnIndex).toBe(1);
-    // Should use the notification timestamp (not null)
-    expect(turns[0]!.timestamp).toBe("2026-01-01T00:00:01Z");
-  });
-
-  it("emits separate turns when notification is not immediately after raw", () => {
-    const lines = [
-      JSON.stringify({
-        type: "turn_started",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:00Z",
-      }),
-      JSON.stringify({
-        type: "notification",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:01Z",
-        message: {
-          method: "item/completed",
-          params: { item: { type: "agentMessage", text: "Hello" } },
-        },
-      }),
-      JSON.stringify({
-        type: "notification",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:02Z",
-        message: {
-          method: "turn/started",
-          params: { threadId: "t1", turn: { id: "turn-2", status: "inProgress" } },
-        },
-      }),
-    ];
-    const events = parseTraceLines(lines);
-    const turns = events.filter((e) => e.kind === "turn_started");
-    expect(turns.length).toBe(2);
   });
 });
 
@@ -298,12 +190,14 @@ describe("parseTraceLines noise filtering", () => {
     const lines = [
       JSON.stringify({
         type: "workspace_prepared",
+        message: "workspace prepared at /tmp/ws",
         issueId: "id",
         issueIdentifier: "T-1",
         timestamp: null,
       }),
       JSON.stringify({
         type: "session_started",
+        message: "session started",
         issueId: "id",
         issueIdentifier: "T-1",
         timestamp: null,
@@ -314,13 +208,6 @@ describe("parseTraceLines noise filtering", () => {
         issueIdentifier: "T-1",
         timestamp: "2026-01-01T00:00:00Z",
         message: "warn",
-      }),
-      JSON.stringify({
-        type: "usage",
-        issueId: "id",
-        issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:01Z",
-        usage: { inputTokens: 100, outputTokens: 50 },
       }),
       JSON.stringify({
         type: "process_exit",
@@ -345,44 +232,5 @@ describe("parseTraceLines noise filtering", () => {
     const events = parseTraceLines(lines);
     expect(events.length).toBe(1);
     expect(events[0]!.kind).toBe("unknown");
-  });
-});
-
-describe("parseTraceLines with full trace (integration)", () => {
-  const shouldRun = existsSync(CAN143_PATH);
-
-  it.skipIf(!shouldRun)("filters noise and produces only meaningful events", () => {
-    const raw = readFileSync(CAN143_PATH, "utf-8");
-    const allLines = raw.split("\n");
-    const totalRawLines = allLines.filter((l) => l.trim()).length;
-
-    const ALLOWLIST = new Set(["item/completed", "turn/started", "turn/completed"]);
-    const filteredLines = allLines.filter((l) => {
-      const trimmed = l.trim();
-      if (!trimmed) return false;
-      try {
-        const obj = JSON.parse(trimmed) as Record<string, unknown>;
-        if (obj.type !== "notification") return true;
-        const msg = obj.message as Record<string, unknown> | null;
-        if (!msg || typeof msg.method !== "string") return false;
-        return ALLOWLIST.has(msg.method);
-      } catch {
-        return false;
-      }
-    });
-
-    // Should dramatically reduce line count
-    expect(filteredLines.length).toBeLessThan(totalRawLines / 10);
-    expect(filteredLines.length).toBeGreaterThan(0);
-
-    const events = parseTraceLines(filteredLines);
-    const kinds = new Set(events.map((e) => e.kind));
-
-    expect(kinds.has("tool_call")).toBe(true);
-    expect(kinds.has("message")).toBe(true);
-    expect(kinds.has("turn_started")).toBe(true);
-
-    // No notification noise leaks through
-    expect(events.filter((e) => e.kind === "notification").length).toBe(0);
   });
 });

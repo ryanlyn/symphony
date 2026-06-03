@@ -1,3 +1,10 @@
+import type {
+  PermissionOption,
+  PromptResponse,
+  RequestPermissionRequest,
+  SessionNotification,
+} from "@agentclientprotocol/sdk";
+
 // --- Bounds constants ---
 
 export const PORT_MAX = 65535;
@@ -41,6 +48,10 @@ export function isValidEnsembleSize(n: number): boolean {
   return Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
 }
 
+// --- Session protocol types ---
+
+export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
+
 // --- Domain types ---
 
 /**
@@ -80,39 +91,6 @@ export type CodexApprovalPolicyName = (typeof CODEX_APPROVAL_POLICY_NAMES)[numbe
 export const CODEX_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"] as const;
 
 export type CodexSandboxMode = (typeof CODEX_SANDBOX_MODES)[number];
-
-export const AGENT_UPDATE_TYPES = [
-  "workspace_prepared",
-  "session_started",
-  "turn_started",
-  "turn_completed",
-  "turn_failed",
-  "turn_cancelled",
-  "turn_input_required",
-  "approval_required",
-  "approval_auto_approved",
-  "tool_input_auto_answered",
-  "usage",
-  "rate_limit",
-  "notification",
-  "stderr",
-  "malformed",
-  "process_exit",
-  "resume_state_warning",
-  "session_replay_suppressed",
-  "fs_write",
-  "assistant_message",
-  "user_message",
-  "agent_thought",
-  "tool_use_requested",
-  "tool_result",
-  "tool_call_failed",
-  "tool_call_update",
-  "tool_call_completed",
-  "plan",
-] as const;
-
-export type AgentUpdateType = (typeof AGENT_UPDATE_TYPES)[number];
 
 /**
  * Minimal reference to a related issue - just enough to identify it and check its state.
@@ -606,33 +584,158 @@ export interface RunningEntry {
 }
 
 /**
- * Single event from an agent executor: session lifecycle, turn progress, usage, errors, or raw notifications.
- * Streamed via the `onUpdate` callback and also returned in batches from {@link AgentExecutor.runTurn}.
+ * Common fields present on every agent update.
  */
-export interface AgentUpdate {
-  /**
-   * Event discriminator. Known values include `workspace_prepared`, `session_started`,
-   * `turn_started`, `turn_completed`, `turn_failed`, `turn_cancelled`, `turn_input_required`,
-   * `approval_required`, `approval_auto_approved`, `tool_input_auto_answered`, `usage`,
-   * `rate_limit`, `notification`, `stderr`, `malformed`, `process_exit`,
-   * `resume_state_warning`, `session_replay_suppressed`, `fs_write`.
-   */
-  type: AgentUpdateType;
-  /** Structured update conforming to the cross-language session protocol; populated for events that map cleanly to it. */
+export interface AgentUpdateBase {
   sessionUpdate?: unknown;
   workspacePath?: string | null | undefined;
   sessionId?: string | null | undefined;
   resumeId?: string | null | undefined;
   executorPid?: string | null | undefined;
-  /** Free-form payload; string for stderr/process_exit, structured object for protocol events. */
-  message?: unknown;
-  /** Partial usage snapshot from the provider; merged monotonically into the run's totals. */
-  usage?: Partial<UsageTotals> | undefined;
-  /** Provider-specific rate-limit payload (e.g. Codex `rate_limit` notification); stored on orchestrator state as-is. */
-  rateLimits?: unknown;
-  /** When the executor observed the event; defaults to `new Date()` if omitted. */
   timestamp?: Date | undefined;
+  message?: unknown;
+  usage?: Partial<UsageTotals> | undefined;
+  rateLimits?: unknown;
 }
+
+// --- Typed message variants per AgentUpdate.type ---
+
+export interface AgentSessionNotificationUpdate extends AgentUpdateBase {
+  type: "session_notification";
+  message: SessionNotification;
+}
+
+export type StringMessageUpdateType =
+  | "stderr"
+  | "process_exit"
+  | "resume_state_warning"
+  | "session_started"
+  | "workspace_prepared"
+  | "rate_limit"
+  | "turn_input_required"
+  | "tool_input_auto_answered"
+  | "malformed";
+
+export interface StringMessageUpdate extends AgentUpdateBase {
+  type: StringMessageUpdateType;
+  message: string;
+}
+
+export interface SessionReplaySuppressedUpdate extends AgentUpdateBase {
+  type: "session_replay_suppressed";
+  message: { replayedUpdateCount: number };
+}
+
+export interface TurnStartedUpdate extends AgentUpdateBase {
+  type: "turn_started";
+  message: { prompt: Array<{ type: string; text: string }> };
+}
+export interface TurnCompletedUpdate extends AgentUpdateBase {
+  type: "turn_completed";
+  message: { response: PromptResponse };
+  usage?: Partial<UsageTotals>;
+}
+export interface TurnCancelledUpdate extends AgentUpdateBase {
+  type: "turn_cancelled";
+  message: { response: PromptResponse };
+  usage?: Partial<UsageTotals>;
+}
+export interface TurnFailedUpdate extends AgentUpdateBase {
+  type: "turn_failed";
+  message: string | { response: PromptResponse };
+  usage?: Partial<UsageTotals>;
+}
+
+export interface ApprovalRequiredUpdate extends AgentUpdateBase {
+  type: "approval_required";
+  message: { request: RequestPermissionRequest; selected: PermissionOption | null };
+}
+export interface ApprovalAutoApprovedUpdate extends AgentUpdateBase {
+  type: "approval_auto_approved";
+  message: { request: RequestPermissionRequest; selected: PermissionOption };
+}
+
+export interface FsWriteUpdate extends AgentUpdateBase {
+  type: "fs_write";
+  message: { path: string };
+}
+
+/**
+ * Single event from an agent executor: session lifecycle, turn progress, usage, errors, or raw notifications.
+ * Streamed via the `onUpdate` callback and also returned in batches from {@link AgentExecutor.runTurn}.
+ *
+ * Discriminated on `type`.
+ */
+export type AgentUpdate =
+  | AgentSessionNotificationUpdate
+  | StringMessageUpdate
+  | SessionReplaySuppressedUpdate
+  | TurnStartedUpdate
+  | TurnCompletedUpdate
+  | TurnCancelledUpdate
+  | TurnFailedUpdate
+  | ApprovalRequiredUpdate
+  | ApprovalAutoApprovedUpdate
+  | FsWriteUpdate;
+
+// Derived from the AgentUpdate discriminated union — no separate source of truth.
+export type AgentUpdateType = AgentUpdate["type"];
+
+// `satisfies` rejects any array entry that isn't in AgentUpdateType (catches typos/stale entries).
+export const AGENT_UPDATE_TYPES = [
+  "workspace_prepared",
+  "session_started",
+  "turn_started",
+  "turn_completed",
+  "turn_failed",
+  "turn_cancelled",
+  "turn_input_required",
+  "approval_required",
+  "approval_auto_approved",
+  "tool_input_auto_answered",
+  "rate_limit",
+  "stderr",
+  "malformed",
+  "process_exit",
+  "resume_state_warning",
+  "session_replay_suppressed",
+  "fs_write",
+  "session_notification",
+] as const satisfies readonly AgentUpdateType[];
+
+// Fails to compile if a union member is missing from the array (catches forgotten entries).
+type _AllAgentTypesPresent = [
+  Exclude<AgentUpdateType, (typeof AGENT_UPDATE_TYPES)[number]>,
+] extends [never]
+  ? true
+  : never;
+const _allAgentTypesPresent: _AllAgentTypesPresent = true;
+
+type AgentUpdateMessage<K extends AgentUpdateType> = K extends "session_notification"
+  ? SessionNotification
+  : K extends StringMessageUpdateType
+    ? string
+    : Extract<AgentUpdate, { type: K }> extends { message: infer M }
+      ? M
+      : undefined;
+
+/**
+ * Wire format of a single JSONL trace line as written by TraceEmitter.
+ * Mapped union: switching on `type` narrows `message` to the variant's specific shape.
+ */
+export type TraceEvent = {
+  [K in AgentUpdateType]: {
+    type: K;
+    issueId: string;
+    issueIdentifier: string;
+    timestamp: string | null;
+    message: AgentUpdateMessage<K> | null;
+    usage: Partial<UsageTotals> | null;
+    workspacePath: string | null;
+    sessionId: string | null;
+    executorPid: string | null;
+  };
+}[AgentUpdateType];
 
 /**
  * Handle to a started agent process, returned by {@link AgentExecutor.startSession}.

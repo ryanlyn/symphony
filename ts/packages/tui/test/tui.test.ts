@@ -149,8 +149,10 @@ test("TUI humanizes Codex and Claude event variants like the Elixir dashboard", 
   );
   assert.equal(
     humanizeCodexMessage({
-      event: "tool_call_failed",
-      message: { payload: { method: "item/tool/call", params: { name: "linear_graphql" } } },
+      event: "tool_call_update",
+      message: {
+        payload: { method: "item/tool/call", params: { name: "linear_graphql", status: "failed" } },
+      },
     }),
     "dynamic tool call failed (linear_graphql)",
   );
@@ -179,7 +181,7 @@ test("TUI humanizes Codex and Claude event variants like the Elixir dashboard", 
   assert.equal(
     humanizeAgentMessage({
       agent_kind: "claude",
-      event: "assistant_message",
+      event: "agent_message_chunk",
       message: { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash" }] } },
     }),
     "tool requested (Bash)",
@@ -320,7 +322,7 @@ function dashboardScenarios(): Array<{
             3_200,
             "thread token usage up...",
             "2026-05-05T00:01:15.000Z",
-            "usage",
+            "session_notification",
           ),
         ],
       }),
@@ -422,7 +424,7 @@ function runningFixture(
   totalTokens: number,
   lastMessage: string,
   now: string,
-  lastEvent: RuntimeSnapshot["running"][number]["lastEvent"] = "notification",
+  lastEvent: RuntimeSnapshot["running"][number]["lastEvent"] = "session_notification",
 ): RuntimeSnapshot["running"][number] {
   return {
     issueId: identifier,

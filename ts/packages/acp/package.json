@@ -29,7 +29,6 @@
     "@symphony/policies": "workspace:*",
     "@symphony/ssh": "workspace:*",
     "@symphony/workspace": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/protocol": "workspace:*"
+    "@symphony/domain": "workspace:*"
   }
 }

@@ -54,7 +54,6 @@
     "@symphony/presenter": "workspace:*",
     "@symphony/server": "workspace:*",
     "@symphony/tui": "workspace:*",
-    "@symphony/protocol": "workspace:*",
     "@symphony/policies": "workspace:*",
     "@symphony/dispatch": "workspace:*",
     "@symphony/projections": "workspace:*",
