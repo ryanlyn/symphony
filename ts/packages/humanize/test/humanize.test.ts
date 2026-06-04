@@ -8,8 +8,6 @@ import {
   humanizeClaudeMessage,
 } from "@symphony/humanize";
 
-
-
 // --- humanizeAgentMessage ---
 
 test("humanizeAgentMessage — dispatches to Claude humanizer for claude messages", () => {

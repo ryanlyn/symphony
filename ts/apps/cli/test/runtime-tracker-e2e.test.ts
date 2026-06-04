@@ -16,7 +16,6 @@ import {
   type WorkflowDefinition,
 } from "@symphony/cli";
 
-
 function runtimeOptions(options: SymphonyRuntimeOptions): SymphonyRuntimeOptions {
   return { ...runtimeAdapters, ...options };
 }

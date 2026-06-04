@@ -8,8 +8,6 @@ import { assert } from "../../../test/assert.js";
 
 import { Orchestrator } from "@symphony/orchestrator";
 
-
-
 // --- Helpers ---
 
 function makeClock(baseMs: number) {

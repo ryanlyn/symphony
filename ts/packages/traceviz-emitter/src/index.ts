@@ -19,7 +19,12 @@ export class TraceEmitter {
     this.traceDir = traceDir;
   }
 
-  emit(issueId: string, issueIdentifier: string, update: AgentUpdate, options?: TraceEmitOptions): void {
+  emit(
+    issueId: string,
+    issueIdentifier: string,
+    update: AgentUpdate,
+    options?: TraceEmitOptions,
+  ): void {
     const dirPath = this.issueDirPath(issueIdentifier);
     if (!this.initialized.has(dirPath)) {
       mkdirSync(dirPath, { recursive: true });

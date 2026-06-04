@@ -5,7 +5,6 @@ import { assert } from "../../../test/assert.js";
 
 import { parseWorkflowContent } from "@symphony/workflow";
 
-
 // --- Helpers ---
 
 /**

@@ -10,8 +10,6 @@ import { assert } from "../../../test/assert.js";
 
 import { executeTool, toolSpecs } from "@symphony/mcp";
 
-
-
 async function localSettings() {
   const dir = await mkdtemp(path.join(tmpdir(), "board-tools-"));
   await mkdir(dir, { recursive: true });

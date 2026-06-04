@@ -5,8 +5,6 @@ import { assert } from "../../../test/assert.js";
 
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
 
-
-
 function makeIssue(overrides: Partial<Issue> & { id: string; identifier: string }): Issue {
   return {
     title: "Default title",
