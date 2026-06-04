@@ -2,50 +2,44 @@ import Database from "better-sqlite3";
 
 export interface IssueRecord {
   issueId: string;
+  /** Human-readable ticket key (e.g. "ENG-123") — distinct from issueId which is the tracker's opaque UUID. */
   issueIdentifier: string;
   title: string | null;
   url: string | null;
 }
 
 export class IssueStore {
-  private db: Database.Database;
-  private insertStmt: Database.Statement;
-  private updateStmt: Database.Statement;
-  private getStmt: Database.Statement;
+  private readonly db: Database.Database;
+  private readonly upsertStmt: Database.Statement;
+  private readonly getStmt: Database.Statement;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("busy_timeout = 5000");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS issues (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        issueId TEXT NOT NULL,
+        id INTEGER PRIMARY KEY,
+        issueId TEXT NOT NULL UNIQUE,
         issueIdentifier TEXT NOT NULL,
         title TEXT,
         url TEXT
       )
     `);
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_issues_issueId ON issues(issueId)
+    this.upsertStmt = this.db.prepare(`
+      INSERT INTO issues (issueId, issueIdentifier, title, url) VALUES (?, ?, ?, ?)
+      ON CONFLICT(issueId) DO UPDATE SET
+        issueIdentifier = excluded.issueIdentifier,
+        title = excluded.title,
+        url = excluded.url
     `);
-    this.insertStmt = this.db.prepare(
-      "INSERT INTO issues (issueId, issueIdentifier, title, url) VALUES (?, ?, ?, ?)",
-    );
-    this.updateStmt = this.db.prepare(
-      "UPDATE issues SET issueIdentifier = ?, title = ?, url = ? WHERE issueId = ?",
-    );
     this.getStmt = this.db.prepare(
       "SELECT issueId, issueIdentifier, title, url FROM issues WHERE issueId = ?",
     );
   }
 
   upsert(record: IssueRecord): void {
-    const existing = this.getStmt.get(record.issueId);
-    if (existing) {
-      this.updateStmt.run(record.issueIdentifier, record.title, record.url, record.issueId);
-    } else {
-      this.insertStmt.run(record.issueId, record.issueIdentifier, record.title, record.url);
-    }
+    this.upsertStmt.run(record.issueId, record.issueIdentifier, record.title, record.url);
   }
 
   get(issueId: string): IssueRecord | undefined {
