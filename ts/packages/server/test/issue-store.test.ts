@@ -101,28 +101,50 @@ describe("IssueStore", () => {
     store2.close();
   });
 
-  it("uses auto-incrementing id primary key, not issueId", () => {
+  it("getRecent returns records ordered by most recent first", async () => {
     store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "First", url: null });
+    await new Promise((r) => setTimeout(r, 10));
     store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "Second", url: null });
 
-    const db = (store as any).db;
-    const rows = db.prepare("SELECT id, issueId FROM issues ORDER BY id").all() as Array<{
-      id: number;
-      issueId: string;
-    }>;
-    expect(rows).toHaveLength(2);
-    expect(rows[0]!.id).toBe(1);
-    expect(rows[1]!.id).toBe(2);
-    expect(rows[0]!.issueId).toBe("id-1");
-    expect(rows[1]!.issueId).toBe("id-2");
+    const recent = store.getRecent(10);
+    expect(recent).toHaveLength(2);
+    expect(recent[0]!.issueId).toBe("id-2");
+    expect(recent[0]!.updatedAt).toBeGreaterThan(recent[1]!.updatedAt);
   });
 
-  it("updates existing record on repeated upsert", () => {
-    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Old", url: null });
-    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "New", url: "https://x.com" });
+  it("getRecent respects limit", () => {
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "First", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "Second", url: null });
+    store.upsert({ issueId: "id-3", issueIdentifier: "ENG-3", title: "Third", url: null });
 
-    const record = store.get("id-1");
-    expect(record?.title).toBe("New");
-    expect(record?.url).toBe("https://x.com");
+    const recent = store.getRecent(2);
+    expect(recent).toHaveLength(2);
+  });
+
+  it("search matches by issueIdentifier", () => {
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-123", title: "Unrelated", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "PROJ-456", title: "Other", url: null });
+
+    const results = store.search("ENG");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.issueId).toBe("id-1");
+  });
+
+  it("search matches by title", () => {
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Fix login bug", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "Add signup", url: null });
+
+    const results = store.search("login");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.issueId).toBe("id-1");
+  });
+
+  it("search escapes SQL wildcards in query", () => {
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "100% complete", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "Something else", url: null });
+
+    const results = store.search("100%");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.issueId).toBe("id-1");
   });
 });

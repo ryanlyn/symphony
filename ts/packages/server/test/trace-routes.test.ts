@@ -121,4 +121,70 @@ describe("trace routes with IssueStore enrichment", () => {
     const data = (await getJson("/api/v1/tickets/id-1/events")) as Record<string, unknown>;
     expect(data.identifier).toBe("TEST-1");
   });
+
+  it("GET /api/v1/tickets/:id/exists returns true for known ticket", async () => {
+    watcher.start(() => {});
+    await new Promise((r) => setTimeout(r, 150));
+
+    const data = (await getJson("/api/v1/tickets/id-1/exists")) as { exists: boolean };
+    expect(data.exists).toBe(true);
+  });
+
+  it("GET /api/v1/tickets/:id/exists returns false for unknown ticket", async () => {
+    watcher.start(() => {});
+    await new Promise((r) => setTimeout(r, 150));
+
+    const data = (await getJson("/api/v1/tickets/no-such-id/exists")) as { exists: boolean };
+    expect(data.exists).toBe(false);
+  });
+
+  it("GET /api/v1/issues/recent returns records from issue store", async () => {
+    issueStore.upsert({
+      issueId: "id-1",
+      issueIdentifier: "TEST-1",
+      title: "First issue",
+      url: null,
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    issueStore.upsert({
+      issueId: "id-2",
+      issueIdentifier: "TEST-2",
+      title: "Second issue",
+      url: "https://linear.app/2",
+    });
+
+    const data = (await getJson("/api/v1/issues/recent?limit=5")) as {
+      issues: Array<Record<string, unknown>>;
+    };
+    expect(data.issues).toHaveLength(2);
+    expect(data.issues[0]!.issueId).toBe("id-2");
+  });
+
+  it("GET /api/v1/issues/search filters by query", async () => {
+    issueStore.upsert({
+      issueId: "id-1",
+      issueIdentifier: "TEST-1",
+      title: "Fix login",
+      url: null,
+    });
+    issueStore.upsert({
+      issueId: "id-2",
+      issueIdentifier: "TEST-2",
+      title: "Add signup",
+      url: null,
+    });
+
+    const data = (await getJson("/api/v1/issues/search?q=login")) as {
+      issues: Array<Record<string, unknown>>;
+    };
+    expect(data.issues).toHaveLength(1);
+    expect(data.issues[0]!.issueId).toBe("id-1");
+  });
+
+  it("GET /api/v1/issues/search returns empty array for no matches", async () => {
+    const data = (await getJson("/api/v1/issues/search?q=nonexistent")) as {
+      issues: Array<Record<string, unknown>>;
+    };
+    expect(data.issues).toHaveLength(0);
+  });
 });
