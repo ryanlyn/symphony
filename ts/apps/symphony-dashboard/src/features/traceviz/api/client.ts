@@ -33,4 +33,3 @@ export async function searchIssues(query: string, limit = 20): Promise<IssueReco
   const data = (await res.json()) as { issues: IssueRecord[] };
   return data.issues;
 }
-

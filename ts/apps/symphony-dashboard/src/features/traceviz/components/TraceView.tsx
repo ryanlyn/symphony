@@ -87,7 +87,14 @@ interface TraceContentProps {
   onSelect: (id: string) => void;
 }
 
-function TraceContent({ selectedTicketId, traceExists, events, stats, loading, onSelect }: TraceContentProps) {
+function TraceContent({
+  selectedTicketId,
+  traceExists,
+  events,
+  stats,
+  loading,
+  onSelect,
+}: TraceContentProps) {
   if (!selectedTicketId) {
     return <TraceList onSelect={onSelect} />;
   }
@@ -98,8 +105,8 @@ function TraceContent({ selectedTicketId, traceExists, events, stats, loading, o
         <Archive aria-hidden="true" className="h-10 w-10 text-muted" />
         <p className="mt-4 text-sm font-medium text-foreground">{selectedTicketId}</p>
         <p className="mt-2 max-w-md text-sm text-muted">
-          Trace data has been cleaned up for this issue. This is normal — traces are
-          periodically removed to save disk space.
+          Trace data has been cleaned up for this issue. This is normal — traces are periodically
+          removed to save disk space.
         </p>
       </div>
     );
