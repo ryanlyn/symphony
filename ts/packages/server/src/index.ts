@@ -133,7 +133,7 @@ function buildObservabilityApp(
         {
           error: {
             code: "dashboard_not_built",
-            message: "Dashboard assets not found. Run: pnpm dashboard:build",
+            message: "Dashboard assets not found. Run: pnpm build",
           },
         },
         503,

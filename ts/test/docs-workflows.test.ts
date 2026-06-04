@@ -53,6 +53,16 @@ test("TS package docs describe the durable workspace contracts", async () => {
   }
 });
 
+test("workspace build script includes the dashboard build", async () => {
+  const packageJson = JSON.parse(
+    await fs.readFile(path.join(repoRoot, "ts", "package.json"), "utf8"),
+  ) as {
+    scripts?: Record<string, string>;
+  };
+
+  assert.match(packageJson.scripts?.build, /\bpnpm dashboard:build\b/);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
