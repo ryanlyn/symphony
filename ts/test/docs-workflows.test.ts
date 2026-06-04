@@ -6,13 +6,19 @@ import { test } from "vitest";
 import { assert } from "./assert.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
-const workflowFiles = ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"];
+const linearWorkflowFiles = ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"];
+const workflowFiles = [...linearWorkflowFiles, "WORKFLOW.local.md"];
 
-test("packaged workflow files remain aligned with canonical workflow fixtures", async () => {
+test("packaged workflow files use TypeScript workspace bootstrap hooks", async () => {
   for (const filename of workflowFiles) {
-    const canonical = await fs.readFile(path.join(repoRoot, "elixir", filename), "utf8");
-    const ts = await fs.readFile(path.join(repoRoot, "ts", filename), "utf8");
-    assert.equal(ts, canonical, filename);
+    const workflow = await fs.readFile(path.join(repoRoot, "ts", filename), "utf8");
+    assert.match(
+      workflow,
+      /mise trust\s+cd ts && mise trust && mise exec -- pnpm install --frozen-lockfile/,
+    );
+    assert.notMatch(workflow, /cd elixir/);
+    assert.notMatch(workflow, /mix deps\.get/);
+    assert.notMatch(workflow, /workspace\.before_remove/);
   }
 });
 

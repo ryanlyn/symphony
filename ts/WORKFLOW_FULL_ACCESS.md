@@ -26,10 +26,9 @@ hooks:
   after_create: |
     git clone --depth 1 https://github.com/ryanlyn/symphony .
     if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
+      mise trust
+      cd ts && mise trust && mise exec -- pnpm install --frozen-lockfile
     fi
-  before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
 agent:
   kind: codex
   max_concurrent_agents: 10
