@@ -279,12 +279,10 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 export interface TicketMetadata {
   issueId: string;
   issueIdentifier: string;
-  issueTitle?: string | undefined;
-  issueUrl?: string | undefined;
 }
 
 /**
- * Extract the issueId, issueIdentifier, title, and url from the first valid line of a trace file.
+ * Extract the issueId and issueIdentifier from the first valid line of a trace file.
  */
 export function extractTicketMetadata(lines: string[]): TicketMetadata | null {
   for (const line of lines) {
@@ -293,8 +291,6 @@ export function extractTicketMetadata(lines: string[]): TicketMetadata | null {
       return {
         issueId: raw.issueId,
         issueIdentifier: raw.issueIdentifier,
-        issueTitle: raw.issueTitle ?? undefined,
-        issueUrl: raw.issueUrl ?? undefined,
       };
     }
   }

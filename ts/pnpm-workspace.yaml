@@ -2,6 +2,7 @@ packages:
   - "packages/*"
   - "apps/*"
 allowBuilds:
+  better-sqlite3: true
   esbuild: true
   msw: true
   # Required by eslint's import resolver; without this pnpm prompts interactively during install.
@@ -10,6 +11,8 @@ allowBuilds:
 catalog:
   "@eslint/js": "^10.0.1"
   "@agentclientprotocol/sdk": "^0.21.0"
+  "@types/better-sqlite3": "^7.6.13"
+  better-sqlite3: "^12.10.0"
   "@hono/node-server": "^1.19.14"
   "@hono/node-ws": "^1.1.1"
   "@linear/sdk": "^84.0.0"

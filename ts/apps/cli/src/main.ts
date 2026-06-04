@@ -20,6 +20,7 @@ import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
 import { TraceEmitter } from "@symphony/traceviz-emitter";
+import { IssueStore } from "@symphony/server";
 import type { Settings, WorkflowDefinition } from "@symphony/domain";
 
 import {
@@ -114,17 +115,22 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     const workflow = await loadRuntimeWorkflow();
     await configureLogFile(workflow.settings.logging.logFile);
 
-    const traceEmitter = new TraceEmitter(workflow.settings.server.traceDir!);
+    const traceDir = workflow.settings.server.traceDir!;
+    const traceEmitter = new TraceEmitter(traceDir);
+    const issueStore = new IssueStore(path.join(traceDir, "issues.db"));
     const runtime = new SymphonyRuntime({
       workflow,
       clientFactory: createTrackerClient,
       reloadWorkflow: loadRuntimeWorkflow,
       runner: runAgentAttempt,
       onAgentUpdate: (issue, update) => {
-        traceEmitter.emit(issue.id, issue.identifier, update, {
+        issueStore.upsert({
+          id: issue.id,
+          identifier: issue.identifier,
           title: issue.title,
-          url: issue.url,
+          url: issue.url ?? null,
         });
+        traceEmitter.emit(issue.id, issue.identifier, update);
       },
       ...runtimeAdapters,
     });
@@ -190,6 +196,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       // can't slip past them and kill the process mid-shutdown.
       instance?.unmount();
       await server?.stop();
+      issueStore.close();
     }
     return 0;
   } catch (error) {

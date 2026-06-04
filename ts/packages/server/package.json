@@ -11,13 +11,17 @@
   "dependencies": {
     "@hono/node-server": "catalog:",
     "@hono/node-ws": "catalog:",
-    "hono": "catalog:",
-    "ts-pattern": "catalog:",
-    "zod": "catalog:",
     "@symphony/domain": "workspace:*",
     "@symphony/mcp": "workspace:*",
     "@symphony/presenter": "workspace:*",
     "@symphony/runtime-events": "workspace:*",
-    "@symphony/traceviz-server": "workspace:*"
+    "@symphony/traceviz-server": "workspace:*",
+    "better-sqlite3": "catalog:",
+    "hono": "catalog:",
+    "ts-pattern": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "catalog:"
   }
 }

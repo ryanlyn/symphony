@@ -18,6 +18,10 @@ import type { TraceWatcher } from "@symphony/traceviz-server";
 
 import { createTraceRoutes } from "./trace-routes.js";
 import { createWsHandler } from "./ws.js";
+import { IssueStore } from "./issue-store.js";
+
+export { IssueStore };
+export type { IssueRecord } from "./issue-store.js";
 
 export interface RuntimeServerSource {
   workflow?: { settings?: Settings } | undefined;
@@ -44,14 +48,17 @@ export async function startObservabilityServer(
   runtime: RuntimeServerSource,
   options: ObservabilityServerOptions,
 ): Promise<ObservabilityServerHandle> {
-  const { app, watcher } = buildObservabilityApp(runtime, options);
+  const { app, watcher, issueStore } = buildObservabilityApp(runtime, options);
   let internals: HonoServerInternals | undefined;
 
   if (watcher) {
     const wsSetup = createWsHandler(app, watcher);
     internals = {
       injectWebSocket: wsSetup.injectWebSocket,
-      stopWatcher: () => watcher.stop(),
+      stopWatcher: () => {
+        watcher.stop();
+        issueStore?.close();
+      },
     };
   }
 
@@ -108,6 +115,7 @@ async function startHonoServer(
 interface BuildResult {
   app: Hono;
   watcher: TraceWatcher | null;
+  issueStore: IssueStore | null;
 }
 
 function buildObservabilityApp(
@@ -185,8 +193,10 @@ function buildObservabilityApp(
 
   // Mount trace routes BEFORE the :identifier catch-all
   let watcher: TraceWatcher | null = null;
+  let issueStore: IssueStore | null = null;
   if (options.traceDir) {
-    const traceRoutes = createTraceRoutes(options.traceDir);
+    issueStore = new IssueStore(path.join(options.traceDir, "issues.db"));
+    const traceRoutes = createTraceRoutes(options.traceDir, issueStore);
     watcher = traceRoutes.watcher;
     app.route("/", traceRoutes.app);
   }
@@ -208,7 +218,7 @@ function buildObservabilityApp(
   );
 
   app.notFound(() => errorResponse(404, "not_found", "Route not found"));
-  return { app, watcher };
+  return { app, watcher, issueStore };
 }
 
 function runtimeSettings(runtime: RuntimeServerSource): Settings | null {

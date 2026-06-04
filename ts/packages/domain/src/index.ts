@@ -728,8 +728,6 @@ export type TraceEvent = {
     type: K;
     issueId: string;
     issueIdentifier: string;
-    issueTitle?: string | null | undefined;
-    issueUrl?: string | null | undefined;
     timestamp: string | null;
     message: AgentUpdateMessage<K> | null;
     usage: Partial<UsageTotals> | null;
