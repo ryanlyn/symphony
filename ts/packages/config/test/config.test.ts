@@ -334,6 +334,50 @@ test("agents map overrides known runtime settings via ACP records", () => {
   });
 });
 
+test("agents map accepts shared timeout defaults with legacy per-agent overrides", () => {
+  const settings = parseConfig({
+    agents: {
+      turn_timeout_ms: 90_000,
+      stall_timeout_ms: 0,
+      claude: {
+        turn_timeout_ms: 120_000,
+        stall_timeout_ms: 5_000,
+      },
+      pi: {
+        bridge_command: "pi-acp",
+      },
+    },
+  });
+
+  assert.equal(settings.agents.codex.turnTimeoutMs, 90_000);
+  assert.equal(settings.agents.codex.stallTimeoutMs, 0);
+  assert.equal(settings.agents.claude.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 5_000);
+  assert.equal(settings.claude.turnTimeoutMs, 120_000);
+  assert.equal(settings.claude.stallTimeoutMs, 5_000);
+  assert.equal(settings.agents.pi.turnTimeoutMs, 90_000);
+  assert.equal(settings.agents.pi.stallTimeoutMs, 0);
+});
+
+test("legacy top-level claude timeouts remain fallback when agents defaults are omitted", () => {
+  const settings = parseConfig({
+    claude: {
+      turn_timeout_ms: 130_000,
+      stall_timeout_ms: 7_000,
+    },
+    agents: {
+      pi: {
+        bridge_command: "pi-acp",
+      },
+    },
+  });
+
+  assert.equal(settings.agents.claude.turnTimeoutMs, 130_000);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 7_000);
+  assert.equal(settings.agents.pi.turnTimeoutMs, 130_000);
+  assert.equal(settings.agents.pi.stallTimeoutMs, 7_000);
+});
+
 test("dispatch validation requires configured agents for active and override states", () => {
   const missing = parseConfig({
     tracker: { kind: "memory" },
