@@ -406,6 +406,7 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   const root = await tempDir("symphony-ts-runtime-stall-resume");
   const workflow = workflowFixture(root);
   workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.agents.codex.stallTimeoutMs = 50;
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
   const deletedResumeStates: string[] = [];
   const orchestrator = new Orchestrator(workflow.settings);
@@ -463,6 +464,78 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   }
 });
 
+test("runtime stall reconciliation uses agents-level stall timeout defaults", async () => {
+  const issue = issueFixture("issue-agents-stall", "MT-AGENTS-STALL");
+  const root = await tempDir("symphony-ts-runtime-agents-stall");
+  const settings = parseConfig({
+    tracker: {
+      kind: "linear",
+      api_key: "linear-token",
+      project_slug: "mono",
+      active_states: ["Todo", "In Progress"],
+      terminal_states: ["Done"],
+    },
+    polling: { interval_ms: 5 },
+    workspace: { root },
+    agents: { stall_timeout_ms: 50 },
+  });
+  assert.equal(settings.codex.stallTimeoutMs, 300_000);
+  assert.equal(settings.agents.codex.stallTimeoutMs, 50);
+  const workflow: WorkflowDefinition = {
+    path: "/tmp/WORKFLOW.md",
+    config: {},
+    promptTemplate: "Issue {{ issue.identifier }}",
+    settings,
+  };
+  const workspace = await createWorkspaceForIssue(workflow.settings, issue);
+  const orchestrator = new Orchestrator(workflow.settings);
+  let aborted = false;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      orchestrator,
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async ({ abortSignal, onUpdate }) => {
+        onUpdate?.({
+          type: "workspace_prepared",
+          message: `workspace prepared at ${workspace}`,
+          workspacePath: workspace,
+        });
+        await new Promise<void>((_resolve, reject) => {
+          abortSignal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("aborted by agents-level stall timeout"));
+            },
+            { once: true },
+          );
+        });
+        throw new Error("unreachable");
+      },
+    }),
+  );
+
+  try {
+    await runtime.pollOnce();
+    const running = orchestrator.snapshot().running[0];
+    assert.ok(running);
+    running.lastAgentTimestamp = new Date(Date.now() - 1_000);
+
+    await runtime.pollOnce({ dryRun: true });
+    await waitFor(() => aborted, 1_000);
+
+    const snapshot = runtime.snapshot();
+    assert.equal(snapshot.running.length, 0);
+    assert.equal(snapshot.runHistory[0]?.outcome, "stalled");
+  } finally {
+    runtime.stop();
+  }
+});
+
 // NOTE: This test modifies process.env.PATH to inject a fake ssh binary.
 // It restores PATH in the finally block but is NOT safe for parallel execution
 // with other tests that depend on PATH or invoke ssh. The test suite runs
@@ -473,6 +546,7 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
   const workflow = workflowFixture(root);
   workflow.settings.agent.ensembleSize = 2;
   workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.agents.codex.stallTimeoutMs = 50;
   workflow.settings.worker.sshTimeoutMs = 2_000;
   const orchestrator = new Orchestrator(workflow.settings);
   const controls = new Map<
@@ -575,6 +649,7 @@ test("runtime does not record late success after stall reconciliation wins", asy
   const issue = issueFixture("issue-late-success", "MT-LATE-SUCCESS");
   const workflow = workflowFixture();
   workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let aborted = false;
   const runControl: { resolve?: (value: any) => void } = {};
@@ -634,6 +709,7 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   const workflow = workflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
   workflow.settings.codex.stallTimeoutMs = 50;
+  workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let attempts = 0;
   const abortedAttempts = new Set<number>();

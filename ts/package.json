@@ -14,7 +14,7 @@
     "format": "prettier --write \"packages/**/*.{ts,tsx}\" \"apps/**/*.{ts,tsx}\" \"test/**/*.ts\" \"README.md\" \"CONTRIBUTING.md\" \"*.json\" \"*.yaml\"",
     "format:check": "prettier --check \"packages/**/*.{ts,tsx}\" \"apps/**/*.{ts,tsx}\" \"test/**/*.ts\" \"README.md\" \"CONTRIBUTING.md\" \"*.json\" \"*.yaml\"",
     "typecheck": "tsc --build",
-    "build": "tsc --build && chmod +x apps/cli/dist/bin/cli.js",
+    "build": "pnpm dashboard:build && tsc --build && chmod +x apps/cli/dist/bin/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:live:codex": "SYMPHONY_TS_RUN_REAL_CODEX_E2E=1 vitest run test/live-codex.test.ts",

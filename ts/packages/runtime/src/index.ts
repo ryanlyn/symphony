@@ -630,9 +630,10 @@ export class SymphonyRuntime {
       if (!currentEntry) continue;
       const effective = settingsForIssueState(this.workflow.settings, currentEntry.issue.state);
       const timeoutMs =
-        currentEntry.agentKind === "claude"
+        effective.agents[currentEntry.agentKind]?.stallTimeoutMs ??
+        (currentEntry.agentKind === "claude"
           ? effective.claude.stallTimeoutMs
-          : effective.codex.stallTimeoutMs;
+          : effective.codex.stallTimeoutMs);
       if (timeoutMs <= 0) continue;
       const lastActivity = currentEntry.lastAgentTimestamp ?? currentEntry.startedAt;
       const elapsedMs = this.now().getTime() - lastActivity.getTime();

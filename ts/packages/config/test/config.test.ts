@@ -46,6 +46,7 @@ test("partial codex agent override preserves bridgeCommand codex-acp", () => {
   const codexAgent = settings.agents.codex as any;
   assert.equal(codexAgent.executor, "acp");
   assert.equal(codexAgent.bridgeCommand, "codex-acp");
+  assert.equal(codexAgent.usageAccounting, "per-turn");
   assert.equal(codexAgent.stallTimeoutMs, 60000);
   assert.equal(codexAgent.providerConfig, undefined);
 });
@@ -316,6 +317,7 @@ test("agents map overrides known runtime settings via ACP records", () => {
       pi: {
         bridge_command: "pi-acp",
         provider_config: { safe_mode: true },
+        usage_accounting: "cumulative",
       },
     },
   });
@@ -328,10 +330,67 @@ test("agents map overrides known runtime settings via ACP records", () => {
     executor: "acp",
     bridgeCommand: "pi-acp",
     providerConfig: { safe_mode: true },
+    usageAccounting: "cumulative",
     turnTimeoutMs: 3_600_000,
     stallTimeoutMs: 300_000,
     strictMcpConfig: true,
   });
+});
+
+test("custom ACP agents default to cumulative usage unless using a known per-turn bridge", () => {
+  const settings = parseConfig({
+    agents: {
+      pi: { bridge_command: "pi-acp" },
+      claude_alias: { bridge_command: "claude-agent-acp" },
+    },
+  });
+
+  assert.equal(settings.agents.pi.usageAccounting, "cumulative");
+  assert.equal(settings.agents.claude_alias.usageAccounting, "per-turn");
+});
+
+test("agents map accepts shared timeout defaults with legacy per-agent overrides", () => {
+  const settings = parseConfig({
+    agents: {
+      turn_timeout_ms: 90_000,
+      stall_timeout_ms: 0,
+      claude: {
+        turn_timeout_ms: 120_000,
+        stall_timeout_ms: 5_000,
+      },
+      pi: {
+        bridge_command: "pi-acp",
+      },
+    },
+  });
+
+  assert.equal(settings.agents.codex.turnTimeoutMs, 90_000);
+  assert.equal(settings.agents.codex.stallTimeoutMs, 0);
+  assert.equal(settings.agents.claude.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 5_000);
+  assert.equal(settings.claude.turnTimeoutMs, 120_000);
+  assert.equal(settings.claude.stallTimeoutMs, 5_000);
+  assert.equal(settings.agents.pi.turnTimeoutMs, 90_000);
+  assert.equal(settings.agents.pi.stallTimeoutMs, 0);
+});
+
+test("legacy top-level claude timeouts remain fallback when agents defaults are omitted", () => {
+  const settings = parseConfig({
+    claude: {
+      turn_timeout_ms: 130_000,
+      stall_timeout_ms: 7_000,
+    },
+    agents: {
+      pi: {
+        bridge_command: "pi-acp",
+      },
+    },
+  });
+
+  assert.equal(settings.agents.claude.turnTimeoutMs, 130_000);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 7_000);
+  assert.equal(settings.agents.pi.turnTimeoutMs, 130_000);
+  assert.equal(settings.agents.pi.stallTimeoutMs, 7_000);
 });
 
 test("dispatch validation requires configured agents for active and override states", () => {

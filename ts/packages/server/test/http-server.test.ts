@@ -75,7 +75,7 @@ test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, 
     assert.deepEqual(dashboard, {
       error: {
         code: "dashboard_not_built",
-        message: "Dashboard assets not found. Run: pnpm dashboard:build",
+        message: "Dashboard assets not found. Run: pnpm build",
       },
     });
 
@@ -203,7 +203,7 @@ test("observability HTTP API matches Elixir snapshot timeout and unavailable bra
     assert.deepEqual(dashboard, {
       error: {
         code: "dashboard_not_built",
-        message: "Dashboard assets not found. Run: pnpm dashboard:build",
+        message: "Dashboard assets not found. Run: pnpm build",
       },
     });
   } finally {
