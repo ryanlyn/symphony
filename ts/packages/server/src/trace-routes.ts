@@ -29,8 +29,7 @@ export function createTraceRoutes(traceDir: string, issueStore: IssueStore): Tra
       const record = issueStore.get(t.issueId);
       return {
         ...t,
-        title: record?.title ?? t.title,
-        url: record?.url ?? t.url,
+        ...(record && { title: record.title, url: record.url }),
       };
     });
     return c.json({ tickets });
