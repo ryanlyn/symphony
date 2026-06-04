@@ -193,6 +193,57 @@ test("orchestrator does not double count streamed cumulative usage before final 
   });
 });
 
+test("orchestrator does not double-count ACP usage updates when turn completion repeats the same total", () => {
+  const orchestrator = new Orchestrator(parseConfig());
+  const issue = normalizeIssue({
+    id: "usage-acp",
+    identifier: "MT-ACP-USAGE",
+    title: "ACP usage",
+    state: { name: "Todo", type: "unstarted" },
+  });
+
+  assert.ok(orchestrator.claim(issue));
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "session_notification",
+    usageKind: "cumulative",
+    usage: { totalTokens: 5 },
+  });
+
+  let snapshot = orchestrator.snapshot();
+  assert.deepEqual(snapshot.running[0]?.usageTotals, {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 5,
+    secondsRunning: 0,
+  });
+  assert.deepEqual(snapshot.usageTotals, {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 5,
+    secondsRunning: 0,
+  });
+
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    usageKind: "delta",
+    usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+  });
+
+  snapshot = orchestrator.snapshot();
+  assert.deepEqual(snapshot.running[0]?.usageTotals, {
+    inputTokens: 2,
+    outputTokens: 3,
+    totalTokens: 5,
+    secondsRunning: 0,
+  });
+  assert.deepEqual(snapshot.usageTotals, {
+    inputTokens: 2,
+    outputTokens: 3,
+    totalTokens: 5,
+    secondsRunning: 0,
+  });
+});
+
 test("orchestrator assigns SSH worker hosts by least loaded capacity", () => {
   const settings = parseConfig({
     worker: { ssh_hosts: ["worker-a:2200", "worker-b:2200"], max_concurrent_agents_per_host: 1 },
