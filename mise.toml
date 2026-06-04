@@ -2,7 +2,7 @@
 _.file = ".env"
 
 [hooks]
-enter = "mise run check-env && prek install -v"
+enter = "mise run check-env && prek install --hook-type pre-push -v"
 
 [settings]
 experimental = true
