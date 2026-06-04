@@ -123,6 +123,7 @@ const acpAgentRecordSchema = z
     bridgeCommand: z.string().optional(),
     command: z.string().optional(),
     providerConfig: z.record(z.string(), z.unknown()).optional(),
+    // TODO: Remove per-agent timeout fields after configs use shared agents-level timeout defaults.
     turnTimeoutMs: coercedTimeoutMs.optional(),
     stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
     strictMcpConfig: coercedBoolean.optional(),
@@ -223,7 +224,7 @@ const serverRawSchema = z
   })
   .strict();
 const loggingRawSchema = z.object({ logFile: z.string().optional() }).strict();
-const rawRecordSchema = z.record(z.string(), z.unknown());
+const agentsRawSchema = z.record(z.string(), z.unknown());
 const partialAgentRawSchema = agentRawSchema.partial().strict();
 const partialCodexRawSchema = codexRawSchema.partial().strict();
 const partialClaudeRawSchema = claudeRawSchema.partial().strict();
@@ -245,7 +246,7 @@ const workflowConfigSchema = z.preprocess(
       worker: workerRawSchema.optional(),
       hooks: hooksRawSchema.optional(),
       agent: agentRawSchema.optional(),
-      agents: z.record(z.string(), rawRecordSchema).optional(),
+      agents: agentsRawSchema.optional(),
       codex: codexRawSchema.optional(),
       claude: claudeRawSchema.optional(),
       observability: observabilityRawSchema.optional(),
@@ -261,6 +262,7 @@ type TrackerRaw = z.infer<typeof trackerRawSchema>;
 type DispatchRaw = NonNullable<TrackerRaw["dispatch"]>;
 type HooksRaw = z.infer<typeof hooksRawSchema>;
 type AgentRaw = z.infer<typeof agentRawSchema>;
+type AgentsRaw = z.infer<typeof agentsRawSchema>;
 type CodexRaw = z.infer<typeof codexRawSchema>;
 type ClaudeRaw = z.infer<typeof claudeRawSchema>;
 type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;
@@ -298,6 +300,10 @@ const agentAliases = {
   max_turns: "maxTurns",
   max_retry_backoff_ms: "maxRetryBackoffMs",
   ensemble_size: "ensembleSize",
+};
+const agentsAliases = {
+  turn_timeout_ms: "turnTimeoutMs",
+  stall_timeout_ms: "stallTimeoutMs",
 };
 const codexAliases = {
   approval_policy: "approvalPolicy",
@@ -649,14 +655,16 @@ function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentS
 }
 
 function parseAgents(
-  raw: Record<string, unknown>,
+  raw: AgentsRaw,
   codex: CodexSettings,
   claude: ClaudeSettings,
 ): Record<string, AgentConfig> {
-  const baseAgents = defaultAgentRecords(codex, claude);
+  const { timeoutDefaults, records } = parseAgentsRaw(raw);
+  // TODO: Remove legacy top-level codex/claude timeout fallbacks after configs use shared agents-level timeout defaults.
+  const baseAgents = withAgentTimeoutDefaults(defaultAgentRecords(codex, claude), timeoutDefaults);
   const agents = cloneAgentRecords(baseAgents);
   const claudeDefaults = baseAgents.claude!;
-  for (const [name, value] of Object.entries(raw)) {
+  for (const [name, value] of Object.entries(records)) {
     const normalized = name.trim();
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
@@ -672,6 +680,46 @@ function parseAgents(
     agents[normalized] = parseAgent(parsed, defaults);
   }
   return agents;
+}
+
+interface AgentTimeoutDefaults {
+  turnTimeoutMs?: number | undefined;
+  stallTimeoutMs?: number | undefined;
+}
+
+function parseAgentsRaw(raw: AgentsRaw): {
+  timeoutDefaults: AgentTimeoutDefaults;
+  records: Record<string, unknown>;
+} {
+  const { turnTimeoutMs, stallTimeoutMs, ...records } = raw;
+  const result = z
+    .object({
+      turnTimeoutMs: coercedTimeoutMs.optional(),
+      stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
+    })
+    .strict()
+    .safeParse({ turnTimeoutMs, stallTimeoutMs });
+  if (!result.success) throw new Error(configErrorMessage(result.error, "agents"));
+  return { timeoutDefaults: result.data, records };
+}
+
+function withAgentTimeoutDefaults(
+  records: Record<string, AgentConfig>,
+  timeoutDefaults: AgentTimeoutDefaults,
+): Record<string, AgentConfig> {
+  if (timeoutDefaults.turnTimeoutMs === undefined && timeoutDefaults.stallTimeoutMs === undefined) {
+    return records;
+  }
+  return Object.fromEntries(
+    Object.entries(records).map(([name, record]) => [
+      name,
+      {
+        ...record,
+        turnTimeoutMs: timeoutDefaults.turnTimeoutMs ?? record.turnTimeoutMs,
+        stallTimeoutMs: timeoutDefaults.stallTimeoutMs ?? record.stallTimeoutMs,
+      },
+    ]),
+  );
 }
 
 type AgentRecordRaw = z.infer<typeof agentRecordSchema>;
@@ -975,6 +1023,7 @@ function normalizeWorkflowConfig(value: unknown): unknown {
   normalizeNested(normalized, "worker", workerAliases);
   normalizeNested(normalized, "hooks", hooksAliases);
   normalizeNested(normalized, "agent", agentAliases);
+  normalizeNested(normalized, "agents", agentsAliases);
   normalizeNested(normalized, "codex", codexAliases);
   normalizeNested(normalized, "claude", claudeAliases);
   normalizeNested(normalized, "observability", observabilityAliases);
