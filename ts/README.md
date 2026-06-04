@@ -148,6 +148,8 @@ agent:
   ensemble_size: 1 # default: 1
 
 agents:
+  turn_timeout_ms: 3600000 # default: 3600000
+  stall_timeout_ms: 300000 # default: 300000
   codex:
     executor: acp
     bridge_command: codex-acp
@@ -177,16 +179,12 @@ codex:
     writableRoots:
       - /path/to/workspace
     networkAccess: true
-  turn_timeout_ms: 3600000 # default: 3600000
   read_timeout_ms: 5000 # default: 5000
-  stall_timeout_ms: 300000 # default: 300000
 
 claude:
   command: claude-agent-acp # ACP bridge command
   model: claude-opus-4-6[1m]
   permission_mode: dontAsk
-  turn_timeout_ms: 3600000 # default: 3600000
-  stall_timeout_ms: 300000 # default: 300000
   strict_mcp_config: true # default: true
 
 hooks:

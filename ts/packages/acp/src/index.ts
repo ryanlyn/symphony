@@ -211,7 +211,7 @@ export class Executor implements AgentExecutor {
             executorPid: session.executorPid,
             message: { response },
             timestamp: new Date(),
-            ...(usage && { usage }),
+            ...(usage && { usage, usageKind: "cumulative" as const }),
           };
           if (action === "continue") {
             this.emit(session, { ...base, type: "turn_completed" });

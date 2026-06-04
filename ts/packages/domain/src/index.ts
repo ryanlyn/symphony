@@ -548,6 +548,8 @@ export interface UsageTotals {
   secondsRunning: number;
 }
 
+export type UsageUpdateKind = "cumulative" | "delta";
+
 /**
  * Live state of one agent slot currently executing an issue. Mutated as agent updates stream in.
  */
@@ -601,6 +603,8 @@ export interface AgentUpdateBase {
   timestamp?: Date | undefined;
   message?: unknown;
   usage?: Partial<UsageTotals> | undefined;
+  /** Whether usage fields are cumulative session high-water marks or per-update deltas. */
+  usageKind?: UsageUpdateKind | undefined;
   rateLimits?: unknown;
 }
 

@@ -32,9 +32,9 @@ agent:
 codex:
   approval_policy: never
   thread_sandbox: workspace-write
+agents:
   turn_timeout_ms: 120000
   stall_timeout_ms: 60000
-agents:
   codex:
     bridge_command: codex-acp
 

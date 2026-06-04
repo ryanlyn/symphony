@@ -40,6 +40,8 @@ codex:
     type: dangerFullAccess
     networkAccess: true
 agents:
+  turn_timeout_ms: 3600000
+  stall_timeout_ms: 300000
   codex:
     bridge_command: codex-acp
     provider_config:
@@ -56,8 +58,6 @@ agents:
       effortLevel: xhigh
       permissions:
         defaultMode: bypassPermissions
-    turn_timeout_ms: 3600000
-    stall_timeout_ms: 300000
     strict_mcp_config: true
 ---
 
