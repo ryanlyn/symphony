@@ -131,7 +131,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       onIssueDispatched: (issue) => {
         issueStore.upsert({
           issueId: issue.id,
-          identifier: issue.identifier,
+          issueIdentifier: issue.identifier,
           title: issue.title,
           url: issue.url ?? null,
         });
@@ -170,6 +170,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         ...(workflow.settings.server.staticDir !== undefined && {
           staticDir: workflow.settings.server.staticDir,
         }),
+        issueStore,
       });
       workflow.settings.server.port = server.port;
       boundServerPort = server.port;

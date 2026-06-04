@@ -32,7 +32,7 @@ describe("IssueStore", () => {
   it("inserts and retrieves a record", () => {
     store.upsert({
       issueId: "id-1",
-      identifier: "ENG-1",
+      issueIdentifier: "ENG-1",
       title: "Fix bug",
       url: "https://example.com",
     });
@@ -40,17 +40,17 @@ describe("IssueStore", () => {
     const record = store.get("id-1");
     expect(record).toEqual({
       issueId: "id-1",
-      identifier: "ENG-1",
+      issueIdentifier: "ENG-1",
       title: "Fix bug",
       url: "https://example.com",
     });
   });
 
   it("upserts existing record with new title and url", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "Old title", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Old title", url: null });
     store.upsert({
       issueId: "id-1",
-      identifier: "ENG-1",
+      issueIdentifier: "ENG-1",
       title: "New title",
       url: "https://new.url",
     });
@@ -60,12 +60,12 @@ describe("IssueStore", () => {
     expect(record?.url).toBe("https://new.url");
   });
 
-  it("updates identifier on upsert", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "Title", url: null });
-    store.upsert({ issueId: "id-1", identifier: "ENG-2", title: "Title", url: null });
+  it("updates issueIdentifier on upsert", () => {
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Title", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-2", title: "Title", url: null });
 
     const record = store.get("id-1");
-    expect(record?.identifier).toBe("ENG-2");
+    expect(record?.issueIdentifier).toBe("ENG-2");
   });
 
   it("returns undefined for non-existent id", () => {
@@ -73,7 +73,7 @@ describe("IssueStore", () => {
   });
 
   it("handles null title and url", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: null, url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: null, url: null });
 
     const record = store.get("id-1");
     expect(record?.title).toBeNull();
@@ -81,9 +81,9 @@ describe("IssueStore", () => {
   });
 
   it("getAll returns all records", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "A", url: null });
-    store.upsert({ issueId: "id-2", identifier: "ENG-2", title: "B", url: null });
-    store.upsert({ issueId: "id-3", identifier: "ENG-3", title: "C", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "A", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "B", url: null });
+    store.upsert({ issueId: "id-3", issueIdentifier: "ENG-3", title: "C", url: null });
 
     const all = store.getAll();
     expect(all).toHaveLength(3);
@@ -91,7 +91,7 @@ describe("IssueStore", () => {
   });
 
   it("survives close and reopen", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "Persistent", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Persistent", url: null });
     store.close();
 
     const store2 = new IssueStore(path.join(dir, "issues.db"));
@@ -101,10 +101,10 @@ describe("IssueStore", () => {
   });
 
   it("uses auto-incrementing id primary key, not issueId", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "First", url: null });
-    store.upsert({ issueId: "id-2", identifier: "ENG-2", title: "Second", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "First", url: null });
+    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "Second", url: null });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const db = (store as any).db;
     const rows = db.prepare("SELECT id, issueId FROM issues ORDER BY id").all() as Array<{
       id: number;
@@ -118,8 +118,8 @@ describe("IssueStore", () => {
   });
 
   it("updates existing record on repeated upsert", () => {
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "Old", url: null });
-    store.upsert({ issueId: "id-1", identifier: "ENG-1", title: "New", url: "https://x.com" });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Old", url: null });
+    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "New", url: "https://x.com" });
 
     const all = store.getAll();
     expect(all).toHaveLength(1);

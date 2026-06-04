@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 
 export interface IssueRecord {
   issueId: string;
-  identifier: string;
+  issueIdentifier: string;
   title: string | null;
   url: string | null;
 }
@@ -21,7 +21,7 @@ export class IssueStore {
       CREATE TABLE IF NOT EXISTS issues (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         issueId TEXT NOT NULL,
-        identifier TEXT NOT NULL,
+        issueIdentifier TEXT NOT NULL,
         title TEXT,
         url TEXT
       )
@@ -30,23 +30,23 @@ export class IssueStore {
       CREATE INDEX IF NOT EXISTS idx_issues_issueId ON issues(issueId)
     `);
     this.insertStmt = this.db.prepare(
-      "INSERT INTO issues (issueId, identifier, title, url) VALUES (?, ?, ?, ?)",
+      "INSERT INTO issues (issueId, issueIdentifier, title, url) VALUES (?, ?, ?, ?)",
     );
     this.updateStmt = this.db.prepare(
-      "UPDATE issues SET identifier = ?, title = ?, url = ? WHERE issueId = ?",
+      "UPDATE issues SET issueIdentifier = ?, title = ?, url = ? WHERE issueId = ?",
     );
     this.getStmt = this.db.prepare(
-      "SELECT issueId, identifier, title, url FROM issues WHERE issueId = ?",
+      "SELECT issueId, issueIdentifier, title, url FROM issues WHERE issueId = ?",
     );
-    this.getAllStmt = this.db.prepare("SELECT issueId, identifier, title, url FROM issues");
+    this.getAllStmt = this.db.prepare("SELECT issueId, issueIdentifier, title, url FROM issues");
   }
 
   upsert(record: IssueRecord): void {
     const existing = this.getStmt.get(record.issueId);
     if (existing) {
-      this.updateStmt.run(record.identifier, record.title, record.url, record.issueId);
+      this.updateStmt.run(record.issueIdentifier, record.title, record.url, record.issueId);
     } else {
-      this.insertStmt.run(record.issueId, record.identifier, record.title, record.url);
+      this.insertStmt.run(record.issueId, record.issueIdentifier, record.title, record.url);
     }
   }
 

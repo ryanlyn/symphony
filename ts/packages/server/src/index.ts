@@ -1,5 +1,4 @@
 import { readFile as fsReadFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +35,7 @@ export interface ObservabilityServerOptions {
   port: number;
   traceDir?: string;
   staticDir?: string;
+  issueStore?: IssueStore;
 }
 
 export interface ObservabilityServerHandle {
@@ -49,7 +49,7 @@ export async function startObservabilityServer(
   runtime: RuntimeServerSource,
   options: ObservabilityServerOptions,
 ): Promise<ObservabilityServerHandle> {
-  const { app, watcher, issueStore } = buildObservabilityApp(runtime, options);
+  const { app, watcher } = buildObservabilityApp(runtime, options);
   let internals: HonoServerInternals | undefined;
 
   if (watcher) {
@@ -58,7 +58,6 @@ export async function startObservabilityServer(
       injectWebSocket: wsSetup.injectWebSocket,
       stopWatcher: () => {
         watcher.stop();
-        issueStore?.close();
       },
     };
   }
@@ -116,7 +115,6 @@ async function startHonoServer(
 interface BuildResult {
   app: Hono;
   watcher: TraceWatcher | null;
-  issueStore: IssueStore | null;
 }
 
 function buildObservabilityApp(
@@ -194,10 +192,8 @@ function buildObservabilityApp(
 
   // Mount trace routes BEFORE the :identifier catch-all
   let watcher: TraceWatcher | null = null;
-  let issueStore: IssueStore | null = null;
-  if (options.traceDir) {
-    issueStore = new IssueStore(path.join(os.homedir(), ".symphony", "issues.db"));
-    const traceRoutes = createTraceRoutes(options.traceDir, issueStore);
+  if (options.traceDir && options.issueStore) {
+    const traceRoutes = createTraceRoutes(options.traceDir, options.issueStore);
     watcher = traceRoutes.watcher;
     app.route("/", traceRoutes.app);
   }
@@ -219,7 +215,7 @@ function buildObservabilityApp(
   );
 
   app.notFound(() => errorResponse(404, "not_found", "Route not found"));
-  return { app, watcher, issueStore };
+  return { app, watcher };
 }
 
 function runtimeSettings(runtime: RuntimeServerSource): Settings | null {
