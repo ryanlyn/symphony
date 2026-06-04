@@ -46,7 +46,7 @@ agents:
       shell_environment_policy:
         inherit: all
       model_reasoning_effort: xhigh
-      service_tier: fast
+      service_tier: flex
       model: gpt-5.5
   claude:
     executor: acp
