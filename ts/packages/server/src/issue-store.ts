@@ -12,7 +12,6 @@ export class IssueStore {
   private insertStmt: Database.Statement;
   private updateStmt: Database.Statement;
   private getStmt: Database.Statement;
-  private getAllStmt: Database.Statement;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath);
@@ -38,7 +37,6 @@ export class IssueStore {
     this.getStmt = this.db.prepare(
       "SELECT issueId, issueIdentifier, title, url FROM issues WHERE issueId = ?",
     );
-    this.getAllStmt = this.db.prepare("SELECT issueId, issueIdentifier, title, url FROM issues");
   }
 
   upsert(record: IssueRecord): void {
@@ -52,10 +50,6 @@ export class IssueStore {
 
   get(issueId: string): IssueRecord | undefined {
     return this.getStmt.get(issueId) as IssueRecord | undefined;
-  }
-
-  getAll(): IssueRecord[] {
-    return this.getAllStmt.all() as IssueRecord[];
   }
 
   close(): void {

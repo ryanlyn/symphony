@@ -80,17 +80,7 @@ describe("IssueStore", () => {
     expect(record?.url).toBeNull();
   });
 
-  it("getAll returns all records", () => {
-    store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "A", url: null });
-    store.upsert({ issueId: "id-2", issueIdentifier: "ENG-2", title: "B", url: null });
-    store.upsert({ issueId: "id-3", issueIdentifier: "ENG-3", title: "C", url: null });
-
-    const all = store.getAll();
-    expect(all).toHaveLength(3);
-    expect(all.map((r) => r.issueId).sort()).toEqual(["id-1", "id-2", "id-3"]);
-  });
-
-  it("survives close and reopen", () => {
+it("survives close and reopen", () => {
     store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Persistent", url: null });
     store.close();
 
@@ -120,9 +110,6 @@ describe("IssueStore", () => {
   it("updates existing record on repeated upsert", () => {
     store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "Old", url: null });
     store.upsert({ issueId: "id-1", issueIdentifier: "ENG-1", title: "New", url: "https://x.com" });
-
-    const all = store.getAll();
-    expect(all).toHaveLength(1);
 
     const record = store.get("id-1");
     expect(record?.title).toBe("New");
