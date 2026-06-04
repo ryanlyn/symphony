@@ -6,6 +6,7 @@ import type {
   AgentKind,
   AgentConfig,
   AgentSettings,
+  AgentUsageAccounting,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
@@ -15,6 +16,7 @@ import type {
   TrackerSettings,
 } from "@symphony/domain";
 import {
+  AGENT_USAGE_ACCOUNTING_VALUES,
   CODEX_APPROVAL_POLICY_NAMES,
   CODEX_SANDBOX_MODES,
   TRACKER_KINDS,
@@ -117,11 +119,14 @@ const reasoningSchema = z
   })
   .strict();
 
+const usageAccountingSchema = z.enum(AGENT_USAGE_ACCOUNTING_VALUES);
+
 const acpAgentRecordSchema = z
   .object({
     executor: z.literal("acp"),
     bridgeCommand: z.string().optional(),
     command: z.string().optional(),
+    usageAccounting: usageAccountingSchema.optional(),
     providerConfig: z.record(z.string(), z.unknown()).optional(),
     turnTimeoutMs: coercedTimeoutMs.optional(),
     stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
@@ -315,6 +320,7 @@ const claudeAliases = {
 };
 const acpAgentAliases = {
   bridge_command: "bridgeCommand",
+  usage_accounting: "usageAccounting",
   provider_config: "providerConfig",
 };
 const agentRecordAliases = {
@@ -669,7 +675,7 @@ function parseAgents(
       `agents.${normalized}`,
     );
     const defaults = baseAgents[normalized] ?? claudeDefaults;
-    agents[normalized] = parseAgent(parsed, defaults);
+    agents[normalized] = parseAgent(normalized, parsed, defaults);
   }
   return agents;
 }
@@ -682,10 +688,16 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string): Ag
   throw new Error(configErrorMessage(result.error, label));
 }
 
-function parseAgent(raw: z.infer<typeof acpAgentRecordSchema>, defaults: AgentConfig): AgentConfig {
+function parseAgent(
+  kind: AgentKind,
+  raw: z.infer<typeof acpAgentRecordSchema>,
+  defaults: AgentConfig,
+): AgentConfig {
+  const bridgeCommand = raw.bridgeCommand ?? raw.command ?? defaults.bridgeCommand;
   return {
     executor: "acp",
-    bridgeCommand: raw.bridgeCommand ?? raw.command ?? defaults.bridgeCommand,
+    bridgeCommand,
+    usageAccounting: raw.usageAccounting ?? inferUsageAccounting(kind, bridgeCommand),
     providerConfig: raw.providerConfig ?? defaults.providerConfig,
     turnTimeoutMs: raw.turnTimeoutMs ?? defaults.turnTimeoutMs,
     stallTimeoutMs: raw.stallTimeoutMs ?? defaults.stallTimeoutMs,
@@ -701,18 +713,26 @@ function defaultAgentRecords(
     codex: {
       executor: "acp",
       bridgeCommand: "codex-acp",
+      usageAccounting: "per-turn",
       turnTimeoutMs: codex.turnTimeoutMs,
       stallTimeoutMs: codex.stallTimeoutMs,
     },
     claude: {
       executor: "acp",
       bridgeCommand: claude.command,
+      usageAccounting: "per-turn",
       providerConfig: claude.providerConfig,
       turnTimeoutMs: claude.turnTimeoutMs,
       stallTimeoutMs: claude.stallTimeoutMs,
       strictMcpConfig: claude.strictMcpConfig,
     },
   };
+}
+
+function inferUsageAccounting(kind: AgentKind, bridgeCommand: string): AgentUsageAccounting {
+  if (kind === "codex" || kind === "claude") return "per-turn";
+  if (/(^|\s|\/)(codex-acp|claude-agent-acp)(\s|$)/.test(bridgeCommand)) return "per-turn";
+  return "cumulative";
 }
 
 function applyKnownAgentRecords(settings: Settings): void {

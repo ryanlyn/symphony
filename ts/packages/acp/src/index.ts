@@ -48,6 +48,7 @@ interface Session extends AgentSession {
   onUpdate?: ((update: AgentUpdate) => void) | undefined;
   loadingReplay: boolean;
   replayedUpdateCount: number;
+  usageTotals: UsageTotals;
   pendingTurn?: { reject: (error: Error) => void } | undefined;
 }
 
@@ -114,6 +115,7 @@ export class Executor implements AgentExecutor {
         onUpdate: input.onUpdate,
         loadingReplay: false,
         replayedUpdateCount: 0,
+        usageTotals: emptyUsageTotals(),
         stop: async () => {
           await this.stopSession(nextSession);
         },
@@ -200,7 +202,7 @@ export class Executor implements AgentExecutor {
           prompt: [{ type: "text", text: prompt }],
         })
         .then((response) => {
-          const usage = extractUsage(response.usage ?? undefined);
+          const usage = normalizeSessionUsage(session, extractUsage(response.usage ?? undefined));
           const action = actionForStopReason(response.stopReason);
           const base = {
             sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }),
@@ -275,9 +277,6 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     executorPid: session.executorPid,
     message: notification,
     timestamp: new Date(),
-    ...(notification.update.sessionUpdate === "usage_update" && {
-      usage: extractUsageUpdate(notification.update),
-    }),
   });
 }
 
@@ -581,21 +580,67 @@ function acpProtocolUpdate(
   };
 }
 
-function extractUsageUpdate(
-  update: SessionNotification["update"],
-): Partial<UsageTotals> | undefined {
-  if (update.sessionUpdate !== "usage_update") return undefined;
-  if (typeof update.used !== "number" || !Number.isFinite(update.used)) return undefined;
-  return { totalTokens: update.used };
-}
-
 function extractUsage(usage: Usage | undefined): Partial<UsageTotals> | undefined {
   if (!usage) return undefined;
+  const inputTokens =
+    nonNegativeFinite(usage.inputTokens) +
+    nonNegativeFinite(usage.cachedReadTokens) +
+    nonNegativeFinite(usage.cachedWriteTokens);
+  const outputTokens = nonNegativeFinite(usage.outputTokens);
+  const totalTokens = nonNegativeUsageValue(usage.totalTokens) ?? inputTokens + outputTokens;
   return {
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    totalTokens: usage.totalTokens,
+    inputTokens,
+    outputTokens,
+    totalTokens,
   };
+}
+
+function normalizeSessionUsage(
+  session: Session,
+  usage: Partial<UsageTotals> | undefined,
+): Partial<UsageTotals> | undefined {
+  if (!usage) return undefined;
+  if (session.agentConfig.usageAccounting === "cumulative") {
+    session.usageTotals = {
+      inputTokens: Math.max(session.usageTotals.inputTokens, usage.inputTokens ?? 0),
+      outputTokens: Math.max(session.usageTotals.outputTokens, usage.outputTokens ?? 0),
+      totalTokens: Math.max(session.usageTotals.totalTokens, usage.totalTokens ?? 0),
+      secondsRunning: session.usageTotals.secondsRunning,
+    };
+    return {
+      inputTokens: session.usageTotals.inputTokens,
+      outputTokens: session.usageTotals.outputTokens,
+      totalTokens: session.usageTotals.totalTokens,
+    };
+  }
+  session.usageTotals = {
+    inputTokens: session.usageTotals.inputTokens + (usage.inputTokens ?? 0),
+    outputTokens: session.usageTotals.outputTokens + (usage.outputTokens ?? 0),
+    totalTokens: session.usageTotals.totalTokens + (usage.totalTokens ?? 0),
+    secondsRunning: session.usageTotals.secondsRunning,
+  };
+  return {
+    inputTokens: session.usageTotals.inputTokens,
+    outputTokens: session.usageTotals.outputTokens,
+    totalTokens: session.usageTotals.totalTokens,
+  };
+}
+
+function emptyUsageTotals(): UsageTotals {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    secondsRunning: 0,
+  };
+}
+
+function nonNegativeFinite(value: number | null | undefined): number {
+  return nonNegativeUsageValue(value) ?? 0;
+}
+
+function nonNegativeUsageValue(value: number | null | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
 function resolveAgentConfig(settings: Settings, kind: AgentKind): AgentConfig {

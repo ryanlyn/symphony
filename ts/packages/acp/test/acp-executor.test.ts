@@ -24,6 +24,7 @@ test("ACP executor starts a session, translates updates, approves permissions, a
     onUpdate: (update) => updates.push(update),
   });
   const turnUpdates = await executor.runTurn(session, "hello", sampleIssue);
+  const secondTurnUpdates = await executor.runTurn(session, "hello again", sampleIssue);
   await session.stop();
 
   assert.equal(session.resumeId, "acp-new");
@@ -32,13 +33,21 @@ test("ACP executor starts a session, translates updates, approves permissions, a
     turnUpdates.find((update) => update.type === "turn_completed")?.sessionUpdate?.kind,
     "turn_completed",
   );
-  assert.ok(updates.some((update) => update.type === "session_notification" && update.usage));
+  assert.equal(
+    updates.some((update) => update.type === "session_notification" && update.usage),
+    false,
+  );
   assert.ok(updates.some((update) => update.type === "approval_auto_approved"));
   assert.ok(updates.some((update) => update.type === "fs_write"));
   assert.deepEqual(turnUpdates.find((update) => update.type === "turn_completed")?.usage, {
-    inputTokens: 2,
+    inputTokens: 7,
     outputTokens: 3,
-    totalTokens: 5,
+    totalTokens: 10,
+  });
+  assert.deepEqual(secondTurnUpdates.find((update) => update.type === "turn_completed")?.usage, {
+    inputTokens: 14,
+    outputTokens: 6,
+    totalTokens: 20,
   });
   assert.equal(
     await fs.readFile(path.join(root, "from-acp.txt"), "utf8"),
@@ -57,6 +66,37 @@ test("ACP executor starts a session, translates updates, approves permissions, a
   );
   const permission = traceEvents.find((event) => event.method === "permission");
   assert.equal(permission?.response?.outcome?.optionId, "allow");
+});
+
+test("ACP executor can pass through cumulative bridge usage without double counting", async () => {
+  const root = await tempDir("symphony-ts-acp-cumulative-usage");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
+  const settings = acpSettings(root, fake, trace, "cumulative-usage", 5_000, {
+    agentKind: "pi",
+    usageAccounting: "cumulative",
+  });
+  const executor = new Executor("pi");
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+  });
+  const firstTurnUpdates = await executor.runTurn(session, "hello", sampleIssue);
+  const secondTurnUpdates = await executor.runTurn(session, "hello again", sampleIssue);
+  await session.stop();
+
+  assert.deepEqual(firstTurnUpdates.find((update) => update.type === "turn_completed")?.usage, {
+    inputTokens: 7,
+    outputTokens: 3,
+    totalTokens: 10,
+  });
+  assert.deepEqual(secondTurnUpdates.find((update) => update.type === "turn_completed")?.usage, {
+    inputTokens: 14,
+    outputTokens: 6,
+    totalTokens: 20,
+  });
 });
 
 test("ACP executor prefers session/resume when the agent advertises resume support", async () => {
@@ -283,7 +323,11 @@ function acpSettings(
   trace: string,
   mode: string,
   turnTimeoutMs = 5_000,
-  opts?: { agentKind?: string; providerConfig?: Record<string, unknown> },
+  opts?: {
+    agentKind?: string;
+    providerConfig?: Record<string, unknown>;
+    usageAccounting?: "per-turn" | "cumulative";
+  },
 ) {
   const kind = opts?.agentKind ?? "claude";
   return parseConfig({
@@ -296,6 +340,7 @@ function acpSettings(
         turn_timeout_ms: turnTimeoutMs,
         stall_timeout_ms: 0,
         ...(opts?.providerConfig ? { provider_config: opts.providerConfig } : {}),
+        ...(opts?.usageAccounting ? { usage_accounting: opts.usageAccounting } : {}),
       },
     },
   });
@@ -323,6 +368,7 @@ function record(event) {
 class FakeAgent {
   constructor(connection) {
     this.connection = connection;
+    this.promptCount = 0;
   }
 
   async initialize(params) {
@@ -361,6 +407,7 @@ class FakeAgent {
 
   async prompt(params) {
     record({ method: "prompt", params });
+    this.promptCount += 1;
     if (mode === "stall") {
       await new Promise(() => {});
     }
@@ -419,11 +466,19 @@ class FakeAgent {
     });
     await this.connection.sessionUpdate({
       sessionId: params.sessionId,
-      update: { sessionUpdate: "usage_update", used: 5, size: 100 }
+      update: { sessionUpdate: "usage_update", used: 50, size: 100 }
     });
+    const usageMultiplier = mode === "cumulative-usage" ? this.promptCount : 1;
     return {
       stopReason: "end_turn",
-      usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 }
+      usage: {
+        inputTokens: 2 * usageMultiplier,
+        cachedReadTokens: 4 * usageMultiplier,
+        cachedWriteTokens: 1 * usageMultiplier,
+        outputTokens: 3 * usageMultiplier,
+        thoughtTokens: 9 * usageMultiplier,
+        totalTokens: 10 * usageMultiplier
+      }
     };
   }
 
