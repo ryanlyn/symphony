@@ -20,6 +20,7 @@ import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
 import { TraceEmitter } from "@symphony/traceviz-emitter";
+import { defaultIssueStorePath, IssueStore } from "@symphony/server";
 import type { Settings, WorkflowDefinition } from "@symphony/domain";
 
 import {
@@ -114,7 +115,9 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     const workflow = await loadRuntimeWorkflow();
     await configureLogFile(workflow.settings.logging.logFile);
 
-    const traceEmitter = new TraceEmitter(workflow.settings.server.traceDir!);
+    const traceDir = workflow.settings.server.traceDir!;
+    const traceEmitter = new TraceEmitter(traceDir);
+    const issueStore = new IssueStore(defaultIssueStorePath());
     const runtime = new SymphonyRuntime({
       workflow,
       clientFactory: createTrackerClient,
@@ -122,6 +125,14 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       runner: runAgentAttempt,
       onAgentUpdate: (issue, update) => {
         traceEmitter.emit(issue.id, issue.identifier, update);
+      },
+      onIssueDispatched: (issue) => {
+        issueStore.upsert({
+          issueId: issue.id,
+          issueIdentifier: issue.identifier,
+          title: issue.title,
+          url: issue.url ?? null,
+        });
       },
       ...runtimeAdapters,
     });
@@ -157,6 +168,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         ...(workflow.settings.server.staticDir !== undefined && {
           staticDir: workflow.settings.server.staticDir,
         }),
+        issueStore,
       });
       workflow.settings.server.port = server.port;
       boundServerPort = server.port;
@@ -187,6 +199,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       // can't slip past them and kill the process mid-shutdown.
       instance?.unmount();
       await server?.stop();
+      issueStore.close();
     }
     return 0;
   } catch (error) {

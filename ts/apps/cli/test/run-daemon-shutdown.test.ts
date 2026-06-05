@@ -63,6 +63,11 @@ vi.mock("@symphony/log-file", () => ({
 
 vi.mock("@symphony/server", () => ({
   startObservabilityServer: mocks.startObservabilityServer,
+  IssueStore: class {
+    upsert() {}
+    close() {}
+  },
+  defaultIssueStorePath: () => "/tmp/symphony-test-issues.db",
 }));
 
 vi.mock("ink", () => ({
