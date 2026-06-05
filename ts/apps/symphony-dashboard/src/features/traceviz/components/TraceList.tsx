@@ -33,7 +33,7 @@ export function TraceList({ onSelect }: TraceListProps) {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search issues..."
+          placeholder="Search by ID or title…"
           className={cn(
             "w-full rounded-lg border border-border bg-card py-2 pl-9 pr-3 text-sm text-foreground",
             "placeholder:text-muted focus:border-accent-purple/50 focus:outline-none focus:ring-2 focus:ring-accent-purple/50",
@@ -47,7 +47,11 @@ export function TraceList({ onSelect }: TraceListProps) {
         )}
       </div>
 
-      {!isSearchMode && (
+      {isSearchMode ? (
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted">
+          Results matching &ldquo;{query}&rdquo;
+        </h2>
+      ) : (
         <h2 className="text-xs font-medium uppercase tracking-wide text-muted">Recent</h2>
       )}
 
