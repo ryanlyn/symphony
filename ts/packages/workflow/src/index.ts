@@ -1,10 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { Liquid } from "liquidjs";
 import YAML from "yaml";
 import { parseConfig } from "@symphony/config";
 import type { WorkflowDefinition } from "@symphony/domain";
 import type { DefaultSettingsOptions } from "@symphony/config";
+import type { ParsedPromptTemplate } from "@symphony/domain";
+
+const promptTemplateEngine = new Liquid({
+  strictVariables: true,
+  strictFilters: true,
+});
 
 export const defaultPromptTemplate = `You are working on an issue from the configured tracker.
 
@@ -44,11 +51,13 @@ export async function loadWorkflow(
     );
   }
   const { config, body } = parseWorkflowContent(content);
+  const settings = parseConfig(config, env, defaults);
   return {
     path: absolute,
     config,
     promptTemplate: body,
-    settings: parseConfig(config, env, defaults),
+    parsedPromptTemplate: parsePromptTemplate(body),
+    settings,
   };
 }
 
@@ -84,6 +93,18 @@ export function parseWorkflowContent(content: string): {
 
 export function effectivePromptTemplate(promptTemplate: string): string {
   return promptTemplate.trim() === "" ? defaultPromptTemplate : promptTemplate;
+}
+
+export function parsePromptTemplate(promptTemplate: string): ParsedPromptTemplate {
+  const effectiveTemplate = effectivePromptTemplate(promptTemplate);
+  try {
+    return promptTemplateEngine.parse(effectiveTemplate);
+  } catch (error) {
+    throw new Error(
+      `template_parse_error: ${errorMessage(error)} template=${JSON.stringify(effectiveTemplate)}`,
+      { cause: error },
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

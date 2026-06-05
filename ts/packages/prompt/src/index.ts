@@ -1,14 +1,18 @@
 import { Liquid } from "liquidjs";
 import type { EnsembleContext, Issue, IssueRef } from "@symphony/domain";
-import { effectivePromptTemplate } from "@symphony/workflow";
+import type { ParsedPromptTemplate } from "@symphony/domain";
+import { effectivePromptTemplate, parsePromptTemplate } from "@symphony/workflow";
+import type { Template } from "liquidjs";
 
 const engine = new Liquid({
   strictVariables: true,
   strictFilters: true,
 });
 
+const parsedTemplateCache = new Map<string, ParsedPromptTemplate>();
+
 export async function buildPrompt(
-  template: string,
+  template: string | ParsedPromptTemplate,
   issue: Issue,
   options: {
     attempt?: number | null;
@@ -17,11 +21,21 @@ export async function buildPrompt(
   } = {},
 ): Promise<string> {
   const ensemble = ensembleContext(options.slotIndex ?? 0, options.ensembleSize ?? 1);
-  return engine.parseAndRender(effectivePromptTemplate(template), {
+  return engine.render(parsedPromptTemplateFor(template) as Template[], {
     issue: issuePromptContext(issue),
     attempt: options.attempt ?? null,
     ensemble,
   }) as Promise<string>;
+}
+
+function parsedPromptTemplateFor(template: string | ParsedPromptTemplate): ParsedPromptTemplate {
+  if (typeof template !== "string") return template;
+  const effectiveTemplate = effectivePromptTemplate(template);
+  const cached = parsedTemplateCache.get(effectiveTemplate);
+  if (cached) return cached;
+  const parsed = parsePromptTemplate(effectiveTemplate);
+  parsedTemplateCache.set(effectiveTemplate, parsed);
+  return parsed;
 }
 
 function ensembleContext(slotIndex: number, size: number): EnsembleContext {
