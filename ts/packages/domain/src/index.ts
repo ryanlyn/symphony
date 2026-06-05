@@ -48,6 +48,16 @@ export function isValidEnsembleSize(n: number): boolean {
   return Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
 }
 
+export function normalizeHttpBindHost(host: string): string {
+  return host.trim() === "" ? "127.0.0.1" : host;
+}
+
+export function httpUrlHost(host: string): string {
+  const normalized = normalizeHttpBindHost(host);
+  if (normalized === "0.0.0.0" || normalized === "::") return "127.0.0.1";
+  return normalized.includes(":") && !normalized.startsWith("[") ? `[${normalized}]` : normalized;
+}
+
 // --- Session protocol types ---
 
 export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
@@ -443,6 +453,12 @@ export interface WorkflowContentStamp {
 }
 
 /**
+ * Opaque parsed representation of a prompt template. Produced by workflow loading and
+ * consumed by prompt rendering so callers can avoid reparsing the same template.
+ */
+export type ParsedPromptTemplate = unknown[];
+
+/**
  * Parsed contents of a workflow file - a Markdown document with YAML front matter delimited
  * by `---` lines. The front matter becomes `config` (and is normalized into `settings`); the
  * body becomes `promptTemplate`.
@@ -458,6 +474,8 @@ export interface WorkflowDefinition {
    * slot index and size. Empty bodies fall back to a built-in default.
    */
   promptTemplate: string;
+  /** Parsed form of the effective prompt template, cached for prompt rendering. */
+  parsedPromptTemplate?: ParsedPromptTemplate | undefined;
   /** Last observed file stamp used to skip unchanged reload work. */
   stamp?: WorkflowContentStamp | undefined;
   /** Normalized, validated runtime settings derived from `config` plus env. */

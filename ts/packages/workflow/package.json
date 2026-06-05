@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "yaml": "catalog:",
+    "liquidjs": "catalog:",
     "@symphony/config": "workspace:*",
     "@symphony/domain": "workspace:*"
   }

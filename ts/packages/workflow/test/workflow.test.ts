@@ -43,6 +43,30 @@ test("loadWorkflow reads and parses YAML workflow file", async () => {
   assert.equal(result.promptTemplate, "Hello {{ issue.identifier }}");
 });
 
+test("loadWorkflow validates Liquid prompt templates with prompt context", async () => {
+  const dir = await tempDir("symphony-workflow-invalid-prompt");
+  const workflowFile = path.join(dir, "WORKFLOW.md");
+  await fs.writeFile(workflowFile, "{% if issue.identifier %}");
+
+  await assert.rejects(
+    () => loadWorkflow(workflowFile, {}, { cwd: dir }),
+    /template_parse_error:.*template="/s,
+  );
+});
+
+test("loadWorkflow caches the parsed effective prompt template", async () => {
+  const dir = await tempDir("symphony-workflow-parsed-prompt");
+  const workflowFile = path.join(dir, "WORKFLOW.md");
+  await fs.writeFile(workflowFile, "Hello {{ issue.identifier }}");
+
+  const result = await loadWorkflow(workflowFile, {}, { cwd: dir });
+
+  assert.ok(
+    Array.isArray((result as { parsedPromptTemplate?: unknown }).parsedPromptTemplate),
+    "expected loadWorkflow to include a parsedPromptTemplate array",
+  );
+});
+
 test("loadWorkflow returns error for missing file", async () => {
   const dir = await tempDir("symphony-workflow-missing");
   const missing = path.join(dir, "DOES_NOT_EXIST.md");
