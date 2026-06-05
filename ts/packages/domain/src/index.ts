@@ -436,6 +436,12 @@ export interface PartialRuntimeSettings {
   claude?: Partial<ClaudeSettings> | undefined;
 }
 
+export interface WorkflowContentStamp {
+  mtimeMs: number;
+  size: number;
+  contentHash: string;
+}
+
 /**
  * Parsed contents of a workflow file - a Markdown document with YAML front matter delimited
  * by `---` lines. The front matter becomes `config` (and is normalized into `settings`); the
@@ -452,6 +458,8 @@ export interface WorkflowDefinition {
    * slot index and size. Empty bodies fall back to a built-in default.
    */
   promptTemplate: string;
+  /** Last observed file stamp used to skip unchanged reload work. */
+  stamp?: WorkflowContentStamp | undefined;
   /** Normalized, validated runtime settings derived from `config` plus env. */
   settings: Settings;
 }

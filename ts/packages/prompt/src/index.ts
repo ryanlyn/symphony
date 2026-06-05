@@ -1,4 +1,4 @@
-import { Liquid } from "liquidjs";
+import { Liquid, ParseError, TokenizationError } from "liquidjs";
 import type { EnsembleContext, Issue, IssueRef } from "@symphony/domain";
 import { effectivePromptTemplate } from "@symphony/workflow";
 
@@ -17,11 +17,22 @@ export async function buildPrompt(
   } = {},
 ): Promise<string> {
   const ensemble = ensembleContext(options.slotIndex ?? 0, options.ensembleSize ?? 1);
-  return engine.parseAndRender(effectivePromptTemplate(template), {
-    issue: issuePromptContext(issue),
-    attempt: options.attempt ?? null,
-    ensemble,
-  }) as Promise<string>;
+  const effectiveTemplate = effectivePromptTemplate(template);
+  try {
+    return (await engine.parseAndRender(effectiveTemplate, {
+      issue: issuePromptContext(issue),
+      attempt: options.attempt ?? null,
+      ensemble,
+    })) as string;
+  } catch (error) {
+    if (isTemplateParseError(error)) {
+      throw new Error(
+        `template_parse_error: ${errorMessage(error)} template=${JSON.stringify(effectiveTemplate)}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 function ensembleContext(slotIndex: number, size: number): EnsembleContext {
@@ -70,4 +81,16 @@ function issueRefPromptContext(issue: IssueRef): Record<string, unknown> {
     state: issue.state ?? null,
     state_type: issue.stateType ?? null,
   };
+}
+
+function isTemplateParseError(error: unknown): boolean {
+  return (
+    error instanceof ParseError ||
+    error instanceof TokenizationError ||
+    (error instanceof Error && (error.name === "ParseError" || error.name === "TokenizationError"))
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
