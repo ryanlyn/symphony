@@ -1,5 +1,10 @@
 import { workerHostPool, type RemoteMcpTunnelLease } from "@symphony/worker-host-pool";
-import type { Settings, TrackerKind } from "@symphony/domain";
+import {
+  httpUrlHost,
+  normalizeHttpBindHost,
+  type Settings,
+  type TrackerKind,
+} from "@symphony/domain";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
 import { startClaudeMcpServer, type ObservabilityServerHandle } from "./server.js";
@@ -99,8 +104,9 @@ async function acquireRemoteMcpEndpoint(
 
 async function ensureLocalMcpServer(settings: Settings): Promise<LocalMcpServerLease | null> {
   const configuredPort = settings.server.port;
+  const serverHost = normalizeHttpBindHost(settings.server.host);
   if (typeof configuredPort === "number" && configuredPort > 0) {
-    const key = `${settings.server.host}:${configuredPort}`;
+    const key = `${serverHost}:${configuredPort}`;
     const existing = localMcpServers.get(key);
     if (existing) {
       existing.refCount += 1;
@@ -108,14 +114,14 @@ async function ensureLocalMcpServer(settings: Settings): Promise<LocalMcpServerL
     }
     if (await configuredMcpServerReachable(settings)) return null;
     const handle = await startClaudeMcpServer(settings, {
-      host: settings.server.host,
+      host: serverHost,
       port: configuredPort,
     });
     localMcpServers.set(key, { handle, refCount: 1 });
     return { key, handle };
   }
 
-  const handle = await startClaudeMcpServer(settings, { host: settings.server.host, port: 0 });
+  const handle = await startClaudeMcpServer(settings, { host: serverHost, port: 0 });
   return { key: null, handle };
 }
 
@@ -145,9 +151,5 @@ async function configuredMcpServerReachable(settings: Settings): Promise<boolean
 }
 
 function configuredLocalMcpUrl(settings: Settings): string {
-  return `http://${httpHost(settings.server.host)}:${settings.server.port}${mcpPath}`;
-}
-
-function httpHost(host: string): string {
-  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${httpUrlHost(settings.server.host)}:${settings.server.port}${mcpPath}`;
 }
