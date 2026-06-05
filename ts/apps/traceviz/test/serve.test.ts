@@ -1,3 +1,4 @@
+import type * as NodeFs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
@@ -21,7 +22,7 @@ vi.mock("@hono/node-server/serve-static", () => ({
 }));
 
 vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+  const actual = await importOriginal<typeof NodeFs>();
   const existsSync = (target: Parameters<typeof actual.existsSync>[0]): boolean => {
     if (target.toString().endsWith("apps/symphony-dashboard/dist")) {
       return true;
