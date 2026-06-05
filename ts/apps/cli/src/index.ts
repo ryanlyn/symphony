@@ -39,6 +39,7 @@ export {
   defaultPromptTemplate,
   effectivePromptTemplate,
   loadWorkflow,
+  parsePromptTemplate,
   parseWorkflowContent,
   workflowFilePath,
 } from "@symphony/workflow";

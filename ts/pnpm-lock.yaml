@@ -826,6 +826,9 @@ importers:
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
+      liquidjs:
+        specifier: "catalog:"
+        version: 10.27.0
       yaml:
         specifier: "catalog:"
         version: 2.9.0

@@ -163,11 +163,15 @@ class RunController {
         throwIfAborted(input.abortSignal);
         const prompt =
           turnCount === 0
-            ? await buildPrompt(input.workflow.promptTemplate, issue, {
-                attempt: input.attempt ?? null,
-                slotIndex,
-                ensembleSize: size,
-              })
+            ? await buildPrompt(
+                input.workflow.parsedPromptTemplate ?? input.workflow.promptTemplate,
+                issue,
+                {
+                  attempt: input.attempt ?? null,
+                  slotIndex,
+                  ensembleSize: size,
+                },
+              )
             : continuationPrompt(turnCount + 1, runtime.agent.maxTurns);
         const turnUpdates = await runTurnWithAbort(
           executor,
