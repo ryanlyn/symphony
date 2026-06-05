@@ -75,6 +75,16 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     }
   }
 
+  function consumeLatestTurnStart(): void {
+    for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+      const record = turnStartedRecords[i];
+      if (record !== undefined && !record.consumed) {
+        record.consumed = true;
+        break;
+      }
+    }
+  }
+
   for (const line of lines) {
     const raw = parseLine(line);
     if (!raw) continue;
@@ -231,20 +241,28 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
-      case "turn_failed":
-      case "turn_cancelled": {
+      case "turn_failed": {
         flushPendingText();
-        for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
-          const record = turnStartedRecords[i];
-          if (record !== undefined && !record.consumed) {
-            record.consumed = true;
-            break;
-          }
-        }
+        consumeLatestTurnStart();
         const msg = raw.message;
         events.push({
           kind: "turn_failed",
           text: `Turn ${raw.type}: ${typeof msg === "string" ? msg : JSON.stringify(msg ?? "")}`,
+          timestamp: ts,
+        });
+        break;
+      }
+
+      case "turn_cancelled": {
+        flushPendingText();
+        consumeLatestTurnStart();
+        const stopReason = raw.message?.response.stopReason;
+        events.push({
+          kind: "turn_failed",
+          text:
+            typeof stopReason === "string" && stopReason.length > 0
+              ? `Turn cancelled: ${stopReason}`
+              : "Turn cancelled",
           timestamp: ts,
         });
         break;
