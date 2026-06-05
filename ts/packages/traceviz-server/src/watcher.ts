@@ -11,6 +11,7 @@
  *       trace.jsonl
  */
 
+import { readFileSync } from "node:fs";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -25,7 +26,7 @@ interface FileState {
   issueIdentifier: string;
   lineCount: number;
   lastModified: number;
-  events: DisplayEvent[];
+  filePath: string;
   cachedTicketInfo: TicketInfo;
 }
 
@@ -117,7 +118,18 @@ export class TraceWatcher {
 
   getEventsForTicket(issueId: string): DisplayEvent[] {
     const state = this.fileStates.get(issueId);
-    return state ? state.events : [];
+    if (!state) return [];
+    return this.readAndParseSync(state.filePath);
+  }
+
+  private readAndParseSync(filePath: string): DisplayEvent[] {
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      const lines = content.split("\n").filter((l) => l.trim().length > 0);
+      return parseTraceLines(lines);
+    } catch {
+      return [];
+    }
   }
 
   private async scan(callback: WatcherCallback): Promise<void> {
@@ -159,15 +171,15 @@ export class TraceWatcher {
             continue;
           }
 
-          const state = await this.readFile(filePath, entry, fileStat.mtimeMs);
-          if (state) {
-            const canonicalKey = state.issueId;
+          const result = await this.readFile(filePath, entry, fileStat.mtimeMs);
+          if (result) {
+            const canonicalKey = result.state.issueId;
             const existingByKey = this.fileStates.get(canonicalKey);
-            if (state.lineCount !== (existingByKey?.lineCount ?? 0)) {
-              this.fileStates.set(canonicalKey, state);
-              callback(canonicalKey, state.events);
+            if (result.state.lineCount !== (existingByKey?.lineCount ?? 0)) {
+              this.fileStates.set(canonicalKey, result.state);
+              callback(canonicalKey, result.events);
             } else {
-              this.fileStates.set(canonicalKey, state);
+              this.fileStates.set(canonicalKey, result.state);
             }
           }
         } catch {
@@ -183,7 +195,7 @@ export class TraceWatcher {
     filePath: string,
     issueId: string,
     mtimeMs?: number,
-  ): Promise<FileState | null> {
+  ): Promise<{ state: FileState; events: DisplayEvent[] } | null> {
     try {
       const content = await readFile(filePath, "utf-8");
       const lines = content.split("\n").filter((l) => l.trim().length > 0);
@@ -193,18 +205,20 @@ export class TraceWatcher {
       const resolvedIssueId = metadata?.issueId ?? issueId;
       const resolvedIdentifier = metadata?.issueIdentifier ?? issueId;
 
-      return {
+      const state: FileState = {
         issueId: resolvedIssueId,
         issueIdentifier: resolvedIdentifier,
         lineCount: lines.length,
         lastModified,
-        events,
+        filePath,
         cachedTicketInfo: computeTicketInfo({
           issueId: resolvedIssueId,
           issueIdentifier: resolvedIdentifier,
           events,
         }),
       };
+
+      return { state, events };
     } catch {
       return null;
     }

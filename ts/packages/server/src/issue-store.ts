@@ -41,6 +41,8 @@ export class IssueStore {
         updatedAt INTEGER NOT NULL DEFAULT 0
       )
     `);
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_issues_identifier ON issues (issueIdentifier)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_issues_title ON issues (title)");
     this.upsertStmt = this.db.prepare(`
       INSERT INTO issues (issueId, issueIdentifier, title, url, updatedAt) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(issueId) DO UPDATE SET
