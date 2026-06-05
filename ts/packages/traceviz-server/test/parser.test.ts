@@ -325,6 +325,34 @@ describe("parseTraceLines turn handling", () => {
     expect(turns.length).toBe(1);
     expect(turns[0]!.kind === "turn_started" && turns[0]!.turnIndex).toBe(1);
   });
+
+  it("renders turn_cancelled without serializing the PromptResponse", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_cancelled",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          response: {
+            stopReason: "cancelled",
+            usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+            output: [{ type: "text", text: "serialized-response-marker" }],
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const turnFailed = events.find((e) => e.kind === "turn_failed");
+
+    expect(turnFailed).toMatchObject({
+      kind: "turn_failed",
+      text: "Turn cancelled: cancelled",
+    });
+    expect(turnFailed?.kind === "turn_failed" && turnFailed.text).not.toContain(
+      "serialized-response-marker",
+    );
+  });
 });
 
 describe("parseTraceLines noise filtering", () => {
