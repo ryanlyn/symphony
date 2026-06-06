@@ -76,10 +76,5 @@ export {
 export { ProjectionActor } from "@symphony/projections";
 export type { RuntimeProjectionInput } from "@symphony/projections";
 export { Executor } from "@symphony/acp";
-export {
-  AGENT_UPDATE_TYPES,
-  CODEX_APPROVAL_POLICY_NAMES,
-  CODEX_SANDBOX_MODES,
-  ISSUE_STATE_TYPES,
-} from "@symphony/domain";
+export { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES } from "@symphony/domain";
 export type * from "@symphony/domain";
