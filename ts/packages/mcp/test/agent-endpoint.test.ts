@@ -42,6 +42,20 @@ test("remote endpoint acquisition releases a newly-started local MCP server when
   assert.equal(handle.stop.mock.calls.length, 1);
 });
 
+test("remote endpoint release returns the acquired tunnel lease", async () => {
+  const handle = fakeServerHandle(39_004);
+  const tunnelLease = { leaseId: "lease-1", workerHost: "worker-1", remotePort: 46_000 };
+  mockStartClaudeMcpServer.mockResolvedValue(handle);
+  mockAcquireRemoteMcpTunnel.mockReturnValue(tunnelLease);
+
+  const lease = await acquireAgentMcpEndpoint(settingsWithServerPort(39_004), "worker-1");
+
+  await lease.release();
+
+  assert.deepEqual(mockReleaseRemoteMcpTunnel.mock.calls[0], [tunnelLease]);
+  assert.equal(handle.stop.mock.calls.length, 1);
+});
+
 test("concurrent local MCP endpoint acquisition starts one configured-port server", async () => {
   const handle = fakeServerHandle(39_002);
   mockStartClaudeMcpServer.mockResolvedValue(handle);
