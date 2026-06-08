@@ -1,39 +1,39 @@
 import { startReverseTunnel } from "@symphony/ssh";
 
 export interface RemoteMcpTunnelLease {
+  leaseId: string;
   workerHost: string;
   remotePort: number;
 }
 
-interface RemoteMcpTunnelEntry extends RemoteMcpTunnelLease {
+interface RemoteMcpTunnelEntry {
+  workerHost: string;
   localHost: string;
   localPort: number;
+  remotePort: number;
   process: ReturnType<typeof startReverseTunnel>;
-  refCount: number;
+  leaseIds: Set<string>;
   exited: boolean;
 }
 
 export class WorkerHostPool {
   private nextRemoteMcpPort = 46_000;
+  private nextRemoteMcpLeaseId = 1;
   private readonly availableRemoteMcpPorts: number[] = [];
-  private readonly remoteMcpTunnels = new Map<string, RemoteMcpTunnelEntry>();
+  private readonly remoteMcpTunnelsByEndpoint = new Map<string, RemoteMcpTunnelEntry>();
+  private readonly remoteMcpTunnelEntriesByLeaseId = new Map<string, RemoteMcpTunnelEntry>();
 
   acquireRemoteMcpTunnel(
     workerHost: string,
     localHost: string,
     localPort: number,
   ): RemoteMcpTunnelLease {
-    const current = this.remoteMcpTunnels.get(workerHost);
-    if (
-      current &&
-      !current.exited &&
-      current.localHost === localHost &&
-      current.localPort === localPort
-    ) {
-      current.refCount += 1;
-      return { workerHost, remotePort: current.remotePort };
+    const endpointKey = this.remoteMcpTunnelEndpointKey(workerHost, localHost, localPort);
+    const current = this.remoteMcpTunnelsByEndpoint.get(endpointKey);
+    if (current && !current.exited) {
+      return this.createRemoteMcpTunnelLease(current);
     }
-    if (current) this.closeRemoteMcpTunnel(workerHost, current, true);
+    if (current) this.closeRemoteMcpTunnel(current, true);
 
     const recycledPort = this.availableRemoteMcpPorts.shift();
     const remotePort = recycledPort ?? this.nextRemoteMcpPort;
@@ -50,42 +50,51 @@ export class WorkerHostPool {
       localHost,
       localPort,
       process,
-      refCount: 1,
+      leaseIds: new Set(),
       remotePort,
       exited: false,
     };
-    this.remoteMcpTunnels.set(workerHost, entry);
+    this.remoteMcpTunnelsByEndpoint.set(endpointKey, entry);
     process.on("close", () => {
       entry.exited = true;
-      if (this.remoteMcpTunnels.get(workerHost) === entry) {
-        this.closeRemoteMcpTunnel(workerHost, entry, true);
+      if (this.remoteMcpTunnelsByEndpoint.get(endpointKey) === entry) {
+        this.closeRemoteMcpTunnel(entry, true);
       }
     });
     process.on("error", () => {
       entry.exited = true;
-      if (this.remoteMcpTunnels.get(workerHost) === entry) {
-        this.closeRemoteMcpTunnel(workerHost, entry, true);
+      if (this.remoteMcpTunnelsByEndpoint.get(endpointKey) === entry) {
+        this.closeRemoteMcpTunnel(entry, true);
       }
     });
-    return { workerHost, remotePort };
+    return this.createRemoteMcpTunnelLease(entry);
   }
 
-  releaseRemoteMcpTunnel(workerHost: string): void {
-    const entry = this.remoteMcpTunnels.get(workerHost);
+  releaseRemoteMcpTunnel(lease: RemoteMcpTunnelLease): void {
+    const entry = this.remoteMcpTunnelEntriesByLeaseId.get(lease.leaseId);
     if (!entry) return;
-    if (entry.refCount > 1) {
-      entry.refCount -= 1;
+    if (entry.workerHost !== lease.workerHost || entry.remotePort !== lease.remotePort) {
       return;
     }
-    this.closeRemoteMcpTunnel(workerHost, entry, true);
+    this.remoteMcpTunnelEntriesByLeaseId.delete(lease.leaseId);
+    entry.leaseIds.delete(lease.leaseId);
+    if (entry.leaseIds.size > 0) return;
+    this.closeRemoteMcpTunnel(entry, true);
   }
 
-  private closeRemoteMcpTunnel(
-    workerHost: string,
-    entry: RemoteMcpTunnelEntry,
-    recyclePort: boolean,
-  ): void {
-    this.remoteMcpTunnels.delete(workerHost);
+  private closeRemoteMcpTunnel(entry: RemoteMcpTunnelEntry, recyclePort: boolean): void {
+    const endpointKey = this.remoteMcpTunnelEndpointKey(
+      entry.workerHost,
+      entry.localHost,
+      entry.localPort,
+    );
+    if (this.remoteMcpTunnelsByEndpoint.get(endpointKey) === entry) {
+      this.remoteMcpTunnelsByEndpoint.delete(endpointKey);
+    }
+    for (const leaseId of entry.leaseIds) {
+      this.remoteMcpTunnelEntriesByLeaseId.delete(leaseId);
+    }
+    entry.leaseIds.clear();
     if (recyclePort) this.recycleRemoteMcpPort(entry.remotePort);
     if (!entry.exited) {
       entry.exited = true;
@@ -97,6 +106,26 @@ export class WorkerHostPool {
     if (this.availableRemoteMcpPorts.includes(remotePort)) return;
     this.availableRemoteMcpPorts.push(remotePort);
     this.availableRemoteMcpPorts.sort((left, right) => left - right);
+  }
+
+  private createRemoteMcpTunnelLease(entry: RemoteMcpTunnelEntry): RemoteMcpTunnelLease {
+    const leaseId = String(this.nextRemoteMcpLeaseId);
+    this.nextRemoteMcpLeaseId += 1;
+    entry.leaseIds.add(leaseId);
+    this.remoteMcpTunnelEntriesByLeaseId.set(leaseId, entry);
+    return {
+      leaseId,
+      workerHost: entry.workerHost,
+      remotePort: entry.remotePort,
+    };
+  }
+
+  private remoteMcpTunnelEndpointKey(
+    workerHost: string,
+    localHost: string,
+    localPort: number,
+  ): string {
+    return `${workerHost}\0${localHost}\0${localPort}`;
   }
 }
 

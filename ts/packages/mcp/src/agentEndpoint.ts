@@ -65,13 +65,13 @@ export async function acquireAgentMcpEndpoint(
         if (released) return;
         released = true;
         revokeMcpToken(token);
-        if (endpoint?.tunnel) workerHostPool.releaseRemoteMcpTunnel(endpoint.tunnel.workerHost);
+        if (endpoint?.tunnel) workerHostPool.releaseRemoteMcpTunnel(endpoint.tunnel);
         if (endpoint?.localServer) await releaseLocalMcpServer(endpoint.localServer);
       },
     };
   } catch (error) {
     revokeMcpToken(token);
-    if (endpoint?.tunnel) workerHostPool.releaseRemoteMcpTunnel(endpoint.tunnel.workerHost);
+    if (endpoint?.tunnel) workerHostPool.releaseRemoteMcpTunnel(endpoint.tunnel);
     if (endpoint?.localServer) await releaseLocalMcpServer(endpoint.localServer);
     throw error;
   }
