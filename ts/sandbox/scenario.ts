@@ -1,5 +1,5 @@
 import { SymphonyRuntime } from "@symphony/runtime";
-import type { Issue, IssueStateType, WorkflowDefinition } from "@symphony/cli";
+import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@symphony/cli";
 import type {
   RuntimeEvent,
   RuntimeSnapshot,
@@ -81,8 +81,12 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     removeIssueWorkspaces: async () => {},
     deleteResumeState: async () => {},
     appendLogEvent: async () => {},
+    onAgentUpdate: () => {
+      lastAgentActivityAt = Date.now();
+    },
   };
 
+  let lastAgentActivityAt = Date.now();
   const runtime = new SymphonyRuntime(runtimeOptions);
 
   const unsubscribe = runtime.subscribe((snapshot) => {
@@ -118,7 +122,11 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
       }
 
       try {
-        await runtime.pollOnce({ waitForRuns });
+        await pollOnceWithScenarioTimeout(runtime, { waitForRuns }, {
+          tick,
+          timeoutMs: scenarioPollTimeoutMs(settings, waitForRuns),
+          lastActivityAt: () => lastAgentActivityAt,
+        });
       } catch (err) {
         errors.push(err instanceof Error ? err : new Error(String(err)));
       }
@@ -150,6 +158,51 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     ticksExecuted,
     clientCallCount: client.callCount,
   };
+}
+
+async function pollOnceWithScenarioTimeout(
+  runtime: SymphonyRuntime,
+  options: { waitForRuns: boolean },
+  timeout: { tick: number; timeoutMs: number; lastActivityAt: () => number },
+): Promise<void> {
+  if (!options.waitForRuns || timeout.timeoutMs <= 0) {
+    await runtime.pollOnce(options);
+    return;
+  }
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const poll = runtime.pollOnce(options);
+  const timeoutError = new Error(
+    `sandbox poll tick ${timeout.tick} exceeded stall timeout of ${timeout.timeoutMs}ms while waiting for runs`,
+  );
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    const checkForStall = () => {
+      const remainingMs = timeout.timeoutMs - (Date.now() - timeout.lastActivityAt());
+      if (remainingMs > 0) {
+        timeoutHandle = setTimeout(checkForStall, remainingMs);
+        return;
+      }
+      runtime.stop();
+      reject(timeoutError);
+    };
+    timeoutHandle = setTimeout(checkForStall, timeout.timeoutMs);
+  });
+
+  try {
+    await Promise.race([poll, timeoutPromise]);
+  } catch (error) {
+    if (error === timeoutError) {
+      poll.catch(() => {});
+    }
+    throw error;
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+function scenarioPollTimeoutMs(settings: Settings, waitForRuns: boolean): number {
+  if (!waitForRuns) return 0;
+  return settings.agents[settings.agent.kind]?.stallTimeoutMs ?? 0;
 }
 
 /** Mutation descriptor types for JSON-serializable mutation definitions. */
