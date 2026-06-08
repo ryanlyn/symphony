@@ -1,12 +1,17 @@
 import path from "node:path";
 import { accessSync, constants } from "node:fs";
 import { setTimeout, clearTimeout } from "node:timers";
+import { setTimeout as delay } from "node:timers/promises";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { execa } from "execa";
 
 const DEFAULT_SSH_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 5_000;
+const DEFAULT_REMOTE_TCP_PORT_READY_TIMEOUT_MS = 10_000;
+const DEFAULT_REMOTE_TCP_PORT_READY_INTERVAL_MS = 200;
+const DEFAULT_REMOTE_TCP_PORT_READY_ATTEMPT_TIMEOUT_MS = 1_000;
+const TCP_PORT_MAX = 65_535;
 const NUMERIC_CHMOD_MODE = /^[0-7]{3,4}$/;
 const SYMBOLIC_CHMOD_MODE =
   /^(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*)))(?:,(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*))))*$/;
@@ -41,6 +46,12 @@ export interface SshRunResult {
 export interface SshTarget {
   destination: string;
   port: string | null;
+}
+
+export interface RemoteTcpPortWaitOptions {
+  timeoutMs?: number | undefined;
+  intervalMs?: number | undefined;
+  attemptTimeoutMs?: number | undefined;
 }
 
 export async function runSsh(
@@ -151,6 +162,51 @@ export function startReverseTunnel(
     stderr: "pipe",
     reject: false,
   }) as unknown as ChildProcessWithoutNullStreams;
+}
+
+export async function waitForRemoteTcpPort(
+  host: string,
+  remotePort: number,
+  options: RemoteTcpPortWaitOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_REMOTE_TCP_PORT_READY_TIMEOUT_MS;
+  const intervalMs = options.intervalMs ?? DEFAULT_REMOTE_TCP_PORT_READY_INTERVAL_MS;
+  const attemptTimeoutMs =
+    options.attemptTimeoutMs ?? DEFAULT_REMOTE_TCP_PORT_READY_ATTEMPT_TIMEOUT_MS;
+  if (!Number.isInteger(remotePort) || remotePort <= 0 || remotePort > TCP_PORT_MAX) {
+    throw new Error(`invalid_remote_tcp_port: ${remotePort}`);
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(`invalid_remote_tcp_port_ready_timeout: ${timeoutMs}`);
+  }
+  if (!Number.isInteger(intervalMs) || intervalMs <= 0) {
+    throw new Error(`invalid_remote_tcp_port_ready_interval: ${intervalMs}`);
+  }
+  if (!Number.isInteger(attemptTimeoutMs) || attemptTimeoutMs <= 0) {
+    throw new Error(`invalid_remote_tcp_port_ready_attempt_timeout: ${attemptTimeoutMs}`);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let lastFailure: unknown;
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1, deadline - Date.now());
+    try {
+      const result = await runSsh(host, `: < /dev/tcp/127.0.0.1/${remotePort}`, {
+        stderrToStdout: true,
+        timeoutMs: Math.min(attemptTimeoutMs, remainingMs),
+      });
+      if (result.status === 0) return;
+      lastFailure = new Error(`remote_tcp_probe_status: ${result.status} ${result.stdout}`);
+    } catch (error) {
+      lastFailure = error;
+    }
+
+    const sleepMs = Math.min(intervalMs, Math.max(0, deadline - Date.now()));
+    if (sleepMs > 0) await delay(sleepMs);
+  }
+  throw new Error(`remote_tcp_port_unreachable: ${host} ${remotePort}`, {
+    cause: lastFailure,
+  });
 }
 
 export async function writeRemoteFile(

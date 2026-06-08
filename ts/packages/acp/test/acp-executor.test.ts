@@ -729,6 +729,9 @@ if [ "$is_tunnel" = "1" ]; then
   trap 'exit 0' TERM INT
   while :; do sleep 1; done
 fi
+case "$last_arg" in
+  *'/dev/tcp/127.0.0.1/'*) exit 0 ;;
+esac
 eval "$last_arg"
 `,
   );

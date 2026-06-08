@@ -104,7 +104,7 @@ async function acquireRemoteMcpEndpoint(
     if (typeof localPort !== "number" || localPort <= 0) {
       throw new Error("remote_acp_mcp_requires_server_port");
     }
-    const tunnel = workerHostPool.acquireRemoteMcpTunnel(workerHost, localHost, localPort);
+    const tunnel = await workerHostPool.acquireRemoteMcpTunnel(workerHost, localHost, localPort);
     return {
       url: `http://127.0.0.1:${tunnel.remotePort}${mcpPath}`,
       authScope:

@@ -885,12 +885,21 @@ async function installEvalSsh(
     path.join(bin, "ssh"),
     `#!/bin/sh
 printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
-for arg in "$@"; do last_arg="$arg"; done
+is_tunnel=0
+for arg in "$@"; do
+  if [ "$arg" = "-N" ]; then is_tunnel=1; fi
+  last_arg="$arg"
+done
+if [ "$is_tunnel" = "1" ]; then
+  trap 'exit 0' TERM INT
+  while :; do sleep 1; done
+fi
 case "$last_arg" in
   *'printf "%s\\n" "$HOME"'*)
     printf '%s\\n' ${shellEscape(canonicalRemoteHome)}
     exit 0
     ;;
+  *'/dev/tcp/127.0.0.1/'*) exit 0 ;;
 esac
 export HOME=${shellEscape(canonicalRemoteHome)}
 eval "$last_arg"
