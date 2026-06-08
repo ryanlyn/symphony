@@ -161,6 +161,14 @@ describe("shouldDispatchIssue", () => {
     claimed.add(slotKey(issue.id, 2));
     assert.equal(shouldDispatchIssue(issue, settings, state), false);
   });
+
+  test("ignores oversized ensemble labels and uses settings slot count", () => {
+    const settings = makeSettings({ agent: { ensemble_size: 1 } });
+    const issue = makeIssue({ labels: ["ensemble:101"] });
+    const claimed = new Set([slotKey(issue.id, 0)]);
+    const state = { runningCount: 0, claimedSlots: claimed };
+    assert.equal(shouldDispatchIssue(issue, settings, state), false);
+  });
 });
 
 describe("routedToThisWorker", () => {
@@ -417,6 +425,13 @@ describe("firstUnclaimedSlot", () => {
     const claimed = new Set([slotKey(issue.id, 0), slotKey(issue.id, 1), slotKey(issue.id, 2)]);
     // ensemble:4 gives 4 slots, so slot 3 is still unclaimed
     assert.equal(firstUnclaimedSlot(issue, settings, claimed), 3);
+  });
+
+  test("oversized ensemble label falls back to settings ensemble_size", () => {
+    const settings = makeSettings({ agent: { ensemble_size: 1 } });
+    const issue = makeIssue({ labels: ["ensemble:101"] });
+    const claimed = new Set([slotKey(issue.id, 0)]);
+    assert.equal(firstUnclaimedSlot(issue, settings, claimed), null);
   });
 
   test("preferred slot out of range falls through to linear scan", () => {
