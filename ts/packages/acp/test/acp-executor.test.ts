@@ -367,7 +367,12 @@ test("writeProviderConfig writes .codex/config.toml for codex bridge", async () 
   const root = await tempDir("symphony-ts-acp-provider-codex");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const providerConfig = { model: "gpt-5.5", model_reasoning_effort: "xhigh" };
+  const providerConfig = {
+    "bad key": "literal-space",
+    model: "gpt-5.5",
+    "model.provider": "literal-dot",
+    model_reasoning_effort: "xhigh",
+  };
   const settings = acpSettings(root, fake, trace, "new", 5_000, {
     agentKind: "codex",
     providerConfig,
@@ -381,7 +386,9 @@ test("writeProviderConfig writes .codex/config.toml for codex bridge", async () 
   await session.stop();
 
   const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
+  assert.match(toml, /"bad key" = "literal-space"/);
   assert.match(toml, /model = "gpt-5.5"/);
+  assert.match(toml, /"model.provider" = "literal-dot"/);
   assert.match(toml, /model_reasoning_effort = "xhigh"/);
 });
 
@@ -391,7 +398,8 @@ test("writeProviderConfig writes nested TOML sections", async () => {
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = {
     model: "gpt-5.5",
-    history: { max_entries: 100, persistence: true },
+    history: { "max.entries": 100, persistence: true },
+    "history.options": { "save mode": "all" },
   };
   const settings = acpSettings(root, fake, trace, "new", 5_000, {
     agentKind: "codex",
@@ -408,8 +416,10 @@ test("writeProviderConfig writes nested TOML sections", async () => {
   const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
   assert.match(toml, /model = "gpt-5.5"/);
   assert.match(toml, /\[history\]/);
-  assert.match(toml, /max_entries = 100/);
+  assert.match(toml, /"max.entries" = 100/);
   assert.match(toml, /persistence = true/);
+  assert.match(toml, /\["history.options"\]/);
+  assert.match(toml, /"save mode" = "all"/);
 });
 
 test("writeProviderConfig is skipped when providerConfig is absent from agent config", async () => {
