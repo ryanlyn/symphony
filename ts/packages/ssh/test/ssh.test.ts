@@ -152,6 +152,59 @@ eval "$last_arg"
   assert.notMatch(traceText, /cat <<'__SYMPHONY_SSH_WRITE_PAYLOAD__'/);
 });
 
+test("SSH writeRemoteFile rejects unsafe string modes without executing them", async () => {
+  const root = await tempDir("symphony-ts-ssh-unsafe-mode");
+  const trace = path.join(root, "ssh.trace");
+  const marker = path.join(root, "marker");
+  const remotePath = path.join(root, "script.sh");
+
+  await installFakeSsh(
+    root,
+    trace,
+    `#!/bin/sh
+printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
+for arg in "$@"; do last_arg="$arg"; done
+eval "$last_arg"
+`,
+  );
+
+  let writeError: unknown;
+  try {
+    await writeRemoteFile("localhost", remotePath, "echo ready\n", {
+      mode: `u+x; printf pwned > ${shellEscape(marker)}`,
+    });
+  } catch (error) {
+    writeError = error;
+  }
+
+  await assertMissing(marker, "unsafe chmod mode created marker");
+  assert.match(String(writeError), /invalid_chmod_mode/);
+});
+
+test("SSH writeRemoteFile shell-quotes string modes and protects dash-leading paths", async () => {
+  const root = await tempDir("symphony-ts-ssh-string-mode");
+  const trace = path.join(root, "ssh.trace");
+  const remotePath = "-script.sh";
+
+  await installFakeSsh(
+    root,
+    trace,
+    `#!/bin/sh
+printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
+for arg in "$@"; do last_arg="$arg"; done
+cd ${shellEscape(root)}
+eval "$last_arg"
+`,
+  );
+
+  await writeRemoteFile("localhost", remotePath, "echo ready\n", { mode: "u+x" });
+
+  const stat = await fs.stat(path.join(root, remotePath));
+  assert.equal(stat.mode & 0o777, 0o744);
+  const traceText = await fs.readFile(trace, "utf8");
+  assert.match(traceText, /chmod '"'"'u\+x'"'"' '"'"'\.\/-script\.sh'"'"'/);
+});
+
 async function installFakeSsh(root: string, trace: string, source: string): Promise<void> {
   const bin = path.join(root, "bin");
   await fs.mkdir(bin, { recursive: true });
@@ -176,4 +229,14 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void>
     await delay(50);
   }
   throw new Error(`process ${pid} still running after ${timeoutMs}ms`);
+}
+
+async function assertMissing(filePath: string, message: string): Promise<void> {
+  try {
+    await fs.access(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(message);
 }
