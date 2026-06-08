@@ -6,6 +6,7 @@ import {
   type IssueRef,
   type IssueStateType,
   type Priority,
+  isValidEnsembleSize,
 } from "@symphony/domain";
 
 export function normalizeIssue(input: Record<string, unknown>, assignee?: string): Issue {
@@ -79,7 +80,7 @@ export function ensembleSize(issue: Issue): number | null {
     const match = /^ensemble:(\d+)$/.exec(label.trim().toLowerCase());
     if (!match) continue;
     const size = Number(match[1]);
-    if (Number.isInteger(size) && size > 0) return size;
+    if (isValidEnsembleSize(size)) return size;
   }
   return null;
 }
