@@ -12,6 +12,9 @@ const DEFAULT_REMOTE_TCP_PORT_READY_TIMEOUT_MS = 10_000;
 const DEFAULT_REMOTE_TCP_PORT_READY_INTERVAL_MS = 200;
 const DEFAULT_REMOTE_TCP_PORT_READY_ATTEMPT_TIMEOUT_MS = 1_000;
 const TCP_PORT_MAX = 65_535;
+const NUMERIC_CHMOD_MODE = /^[0-7]{3,4}$/;
+const SYMBOLIC_CHMOD_MODE =
+  /^(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*)))(?:,(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*))))*$/;
 
 function requireSshExecutable(): string {
   const pathValue = process.env.PATH ?? "";
@@ -31,6 +34,7 @@ function requireSshExecutable(): string {
 export interface SshRunOptions {
   timeoutMs?: number | undefined;
   stderrToStdout?: boolean | undefined;
+  abortSignal?: AbortSignal | undefined;
 }
 
 export interface SshRunResult {
@@ -58,6 +62,7 @@ export async function runSsh(
   const timeoutMs = options.timeoutMs ?? DEFAULT_SSH_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0)
     throw new Error(`invalid_ssh_timeout: ${timeoutMs}`);
+  if (options.abortSignal?.aborted) throw new Error(`ssh_aborted: ${host}`);
 
   try {
     // Spawn in its own process group (detached) so we can kill the entire group on timeout.
@@ -74,7 +79,8 @@ export async function runSsh(
     });
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
-    let timedOut = false;
+    let terminationRequested = false;
+    let abortHandler: (() => void) | undefined;
 
     const killProcessGroup = (signal: NodeJS.Signals): void => {
       try {
@@ -84,27 +90,44 @@ export async function runSsh(
       }
     };
 
+    const forceKillProcessGroup = (): void => {
+      forceKillTimer ??= setTimeout(() => {
+        killProcessGroup("SIGKILL");
+      }, FORCE_KILL_DELAY_MS);
+    };
+
     const clearTimers = (): void => {
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       // After timeout, descendants can still hold inherited pipes open even if the direct child exits.
-      if (!timedOut && forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      if (!terminationRequested && forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      if (abortHandler) options.abortSignal?.removeEventListener("abort", abortHandler);
+    };
+
+    const clearForceKillTimer = (): void => {
+      if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+    };
+
+    const terminate = (error: Error, reject: (reason: Error) => void): void => {
+      terminationRequested = true;
+      killProcessGroup("SIGTERM");
+      forceKillProcessGroup();
+      reject(error);
     };
 
     const timeout = new Promise<never>((_, reject) => {
       timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        killProcessGroup("SIGTERM");
-        forceKillTimer = setTimeout(() => {
-          killProcessGroup("SIGKILL");
-        }, FORCE_KILL_DELAY_MS);
-        reject(new Error(`ssh_timeout: ${host} ${timeoutMs}`));
+        terminate(new Error(`ssh_timeout: ${host} ${timeoutMs}`), reject);
       }, timeoutMs);
     });
+    const abort = new Promise<never>((_, reject) => {
+      if (!options.abortSignal) return;
+      abortHandler = () => terminate(new Error(`ssh_aborted: ${host}`), reject);
+      options.abortSignal.addEventListener("abort", abortHandler, { once: true });
+    });
 
-    void subprocess.then(clearTimers, clearTimers);
+    void subprocess.then(clearForceKillTimer, clearForceKillTimer);
 
-    const result = await Promise.race([subprocess, timeout]);
-    clearTimers();
+    const result = await Promise.race([subprocess, timeout, abort]).finally(clearTimers);
     if ((result as { code?: string }).code === "ENOENT") throw new Error("ssh_not_found");
     return {
       stdout: options.stderrToStdout ? (result.all ?? "") : result.stdout,
@@ -208,6 +231,7 @@ export function sshArgs(host: string, command: string): string[] {
     ...sshConfigArgs(),
     "-T",
     ...(target.port ? ["-p", target.port] : []),
+    "--",
     target.destination,
     remoteShellCommand(command),
   ];
@@ -229,6 +253,7 @@ export function reverseTunnelArgs(
     ...(target.port ? ["-p", target.port] : []),
     "-R",
     `${remotePort}:${localHost}:${localPort}`,
+    "--",
     target.destination,
   ];
 }
@@ -244,11 +269,12 @@ export function shellEscape(value: string): string {
 export function parseSshTarget(target: string): SshTarget {
   const trimmed = target.trim();
   const match = /^(.*):(\d+)$/.exec(trimmed);
-  if (!match) return { destination: trimmed, port: null };
+  if (!match) return { destination: validateSshDestination(trimmed), port: null };
   const destination = match[1] ?? "";
   const port = match[2] ?? "";
-  if (validPortDestination(destination)) return { destination, port };
-  return { destination: trimmed, port: null };
+  if (validPortDestination(destination))
+    return { destination: validateSshDestination(destination), port };
+  return { destination: validateSshDestination(trimmed), port: null };
 }
 
 function sshConfigArgs(): string[] {
@@ -260,14 +286,39 @@ function validPortDestination(destination: string): boolean {
   return destination !== "" && (!destination.includes(":") || bracketedHost(destination));
 }
 
+function validateSshDestination(destination: string): string {
+  if (destination === "" || destination.startsWith("-"))
+    throw new Error(`invalid_ssh_destination: ${destination}`);
+  return destination;
+}
+
 function bracketedHost(destination: string): boolean {
   return destination.includes("[") && destination.includes("]");
 }
 
 function chmodCommand(mode: number | string | undefined, remotePath: string): string {
   if (typeof mode === "number" && Number.isInteger(mode))
-    return `chmod ${mode.toString(8)} ${shellEscape(remotePath)}`;
-  if (typeof mode === "string" && mode.trim() !== "")
-    return `chmod ${mode} ${shellEscape(remotePath)}`;
+    return `chmod ${mode.toString(8)} ${shellEscape(chmodPathOperand(remotePath))}`;
+  if (typeof mode === "string") {
+    const normalizedMode = normalizeChmodMode(mode);
+    if (normalizedMode !== "")
+      return `chmod ${shellEscape(normalizedMode)} ${shellEscape(chmodPathOperand(remotePath))}`;
+  }
   return "true";
+}
+
+function normalizeChmodMode(mode: string): string {
+  const trimmed = mode.trim();
+  if (trimmed === "") return "";
+  if (trimmed !== mode || !validChmodMode(trimmed))
+    throw new Error(`invalid_chmod_mode: ${JSON.stringify(mode)}`);
+  return trimmed;
+}
+
+function validChmodMode(mode: string): boolean {
+  return NUMERIC_CHMOD_MODE.test(mode) || SYMBOLIC_CHMOD_MODE.test(mode);
+}
+
+function chmodPathOperand(remotePath: string): string {
+  return remotePath.startsWith("-") ? `./${remotePath}` : remotePath;
 }
