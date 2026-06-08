@@ -62,9 +62,32 @@ test("concurrent local MCP endpoint acquisition starts one configured-port serve
   assert.equal(handle.stop.mock.calls.length, 1);
 });
 
+test("configured-port local MCP endpoint rejects different tracker settings", async () => {
+  const handle = fakeServerHandle(39_003);
+  mockStartClaudeMcpServer.mockResolvedValue(handle);
+
+  const firstLease = await acquireAgentMcpEndpoint(localSettingsWithServerPort(39_003, "board-a"));
+  let secondLease: Awaited<ReturnType<typeof acquireAgentMcpEndpoint>> | undefined;
+  try {
+    try {
+      secondLease = await acquireAgentMcpEndpoint(localSettingsWithServerPort(39_003, "board-b"));
+    } catch (error) {
+      assert.match(String(error), /configured_mcp_server_conflict/);
+      return;
+    }
+    throw new Error("expected conflicting tracker settings to be rejected");
+  } finally {
+    await secondLease?.release();
+    await firstLease.release();
+  }
+
+  assert.equal(mockStartClaudeMcpServer.mock.calls.length, 1);
+  assert.equal(handle.stop.mock.calls.length, 1);
+});
+
 test("configured-port acquisition waits for final release stop before replacing local MCP server", async () => {
-  const firstHandle = fakeServerHandle(39_003);
-  const secondHandle = fakeServerHandle(39_003);
+  const firstHandle = fakeServerHandle(39_004);
+  const secondHandle = fakeServerHandle(39_004);
   const stopGate = deferred<void>();
   firstHandle.stop.mockImplementation(() => stopGate.promise);
   mockStartClaudeMcpServer.mockResolvedValueOnce(firstHandle).mockResolvedValueOnce(secondHandle);
@@ -72,7 +95,7 @@ test("configured-port acquisition waits for final release stop before replacing 
     .spyOn(globalThis, "fetch")
     .mockResolvedValue(new Response("", { status: 404 }));
 
-  const settings = settingsWithServerPort(39_003);
+  const settings = settingsWithServerPort(39_004);
   const firstLease = await acquireAgentMcpEndpoint(settings);
   const releasePromise = firstLease.release();
   let acquiredBeforeStop = false;
@@ -92,7 +115,7 @@ test("configured-port acquisition waits for final release stop before replacing 
     secondLease = await secondAcquire;
 
     assert.equal(mockStartClaudeMcpServer.mock.calls.length, 2);
-    assert.equal(secondLease.url, "http://127.0.0.1:39003/claude-mcp");
+    assert.equal(secondLease.url, "http://127.0.0.1:39004/claude-mcp");
   } finally {
     stopGate.resolve();
     await releasePromise;
@@ -106,6 +129,13 @@ test("configured-port acquisition waits for final release stop before replacing 
 
 function settingsWithServerPort(port: number): Settings {
   return parseConfig({ server: { host: "127.0.0.1", port } }, {});
+}
+
+function localSettingsWithServerPort(port: number, boardPath: string): Settings {
+  return parseConfig(
+    { tracker: { kind: "local", path: boardPath }, server: { host: "127.0.0.1", port } },
+    {},
+  );
 }
 
 test("local MCP endpoint reports a connectable URL when configured server binds wildcard", async () => {
@@ -132,12 +162,14 @@ test("local MCP endpoint reports a connectable URL when configured server binds 
 function fakeServerHandle(port: number): {
   host: string;
   port: number;
+  authScope: string;
   url(path?: string): string;
   stop: ReturnType<typeof vi.fn>;
 } {
   return {
     host: "127.0.0.1",
     port,
+    authScope: `test:${port}`,
     url(path = "/") {
       return `http://127.0.0.1:${port}${path}`;
     },
