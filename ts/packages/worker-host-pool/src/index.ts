@@ -1,4 +1,4 @@
-import { startReverseTunnel } from "@symphony/ssh";
+import { startReverseTunnel, waitForRemoteTcpPort } from "@symphony/ssh";
 
 export interface RemoteMcpTunnelLease {
   leaseId: string;
@@ -13,6 +13,7 @@ interface RemoteMcpTunnelEntry {
   remotePort: number;
   process: ReturnType<typeof startReverseTunnel>;
   leaseIds: Set<string>;
+  readyPromise: Promise<void>;
   processEnded: boolean;
   recyclePortOnProcessEnd: boolean;
 }
@@ -24,14 +25,15 @@ export class WorkerHostPool {
   private readonly remoteMcpTunnelsByEndpoint = new Map<string, RemoteMcpTunnelEntry>();
   private readonly remoteMcpTunnelEntriesByLeaseId = new Map<string, RemoteMcpTunnelEntry>();
 
-  acquireRemoteMcpTunnel(
+  async acquireRemoteMcpTunnel(
     workerHost: string,
     localHost: string,
     localPort: number,
-  ): RemoteMcpTunnelLease {
+  ): Promise<RemoteMcpTunnelLease> {
     const endpointKey = this.remoteMcpTunnelEndpointKey(workerHost, localHost, localPort);
     const current = this.remoteMcpTunnelsByEndpoint.get(endpointKey);
     if (current && !current.processEnded) {
+      await this.waitForRemoteMcpTunnelReady(current);
       return this.createRemoteMcpTunnelLease(current);
     }
     if (current) this.closeRemoteMcpTunnel(current, true);
@@ -52,6 +54,7 @@ export class WorkerHostPool {
       localPort,
       process,
       leaseIds: new Set(),
+      readyPromise: Promise.resolve(),
       remotePort,
       processEnded: false,
       recyclePortOnProcessEnd: false,
@@ -60,6 +63,8 @@ export class WorkerHostPool {
     process.on("close", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
     process.on("exit", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
     process.on("error", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
+    entry.readyPromise = this.confirmRemoteMcpTunnelReady(entry);
+    await this.waitForRemoteMcpTunnelReady(entry);
     return this.createRemoteMcpTunnelLease(entry);
   }
 
@@ -108,6 +113,69 @@ export class WorkerHostPool {
       return;
     }
     if (entry.recyclePortOnProcessEnd) this.recycleRemoteMcpPort(entry.remotePort);
+  }
+
+  private async waitForRemoteMcpTunnelReady(entry: RemoteMcpTunnelEntry): Promise<void> {
+    try {
+      await entry.readyPromise;
+    } catch (error) {
+      throw this.remoteMcpTunnelSetupError(entry, error);
+    }
+    if (entry.processEnded) {
+      throw this.remoteMcpTunnelSetupError(entry, new Error("reverse_tunnel_process_ended"));
+    }
+  }
+
+  private async confirmRemoteMcpTunnelReady(entry: RemoteMcpTunnelEntry): Promise<void> {
+    const processEndWatcher = this.watchRemoteMcpTunnelSetupProcessEnd(entry);
+    try {
+      await Promise.race([
+        waitForRemoteTcpPort(entry.workerHost, entry.remotePort),
+        processEndWatcher.promise,
+      ]);
+    } catch (error) {
+      this.closeRemoteMcpTunnel(entry, true);
+      throw error;
+    } finally {
+      processEndWatcher.dispose();
+    }
+  }
+
+  private watchRemoteMcpTunnelSetupProcessEnd(entry: RemoteMcpTunnelEntry): {
+    promise: Promise<never>;
+    dispose: () => void;
+  } {
+    let dispose = (): void => {};
+    const promise = new Promise<never>((_, reject) => {
+      const rejectOnce = (reason: string): void => {
+        dispose();
+        reject(new Error(reason));
+      };
+      const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+        rejectOnce(`reverse_tunnel_closed: ${code ?? "null"} ${signal ?? "null"}`);
+      };
+      const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+        rejectOnce(`reverse_tunnel_exited: ${code ?? "null"} ${signal ?? "null"}`);
+      };
+      const onError = (error: Error): void => {
+        rejectOnce(`reverse_tunnel_error: ${error.message}`);
+      };
+      dispose = (): void => {
+        entry.process.off("close", onClose);
+        entry.process.off("exit", onExit);
+        entry.process.off("error", onError);
+      };
+      entry.process.once("close", onClose);
+      entry.process.once("exit", onExit);
+      entry.process.once("error", onError);
+    });
+    return { promise, dispose };
+  }
+
+  private remoteMcpTunnelSetupError(entry: RemoteMcpTunnelEntry, cause: unknown): Error {
+    return new Error(`remote_mcp_tunnel_setup_failed: ${entry.workerHost} ${entry.remotePort}`, {
+      cause,
+    });
   }
 
   private recycleRemoteMcpPort(remotePort: number): void {

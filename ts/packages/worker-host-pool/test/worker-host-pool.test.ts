@@ -2,7 +2,7 @@ import EventEmitter from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { beforeEach, test, vi } from "vitest";
-import { startReverseTunnel } from "@symphony/ssh";
+import { startReverseTunnel, waitForRemoteTcpPort } from "@symphony/ssh";
 
 import { assert } from "../../../test/assert.js";
 
@@ -10,9 +10,11 @@ import { WorkerHostPool } from "@symphony/worker-host-pool";
 
 vi.mock("@symphony/ssh", () => ({
   startReverseTunnel: vi.fn(),
+  waitForRemoteTcpPort: vi.fn(),
 }));
 
 const mockStartReverseTunnel = vi.mocked(startReverseTunnel);
+const mockWaitForRemoteTcpPort = vi.mocked(waitForRemoteTcpPort);
 
 function makeFakeProcess(): ChildProcessWithoutNullStreams {
   const emitter = new EventEmitter();
@@ -23,6 +25,8 @@ function makeFakeProcess(): ChildProcessWithoutNullStreams {
 
 beforeEach(() => {
   mockStartReverseTunnel.mockReset();
+  mockWaitForRemoteTcpPort.mockReset();
+  mockWaitForRemoteTcpPort.mockResolvedValue(undefined);
 });
 
 function setupMock(): void {
@@ -55,11 +59,11 @@ test("WorkerHostPool starts empty with no leases", () => {
   });
 });
 
-test("acquireRemoteMcpTunnel creates a new MCP tunnel lease for a session", () => {
+test("acquireRemoteMcpTunnel creates a new MCP tunnel lease for a session", async () => {
   setupMock();
   const pool = new WorkerHostPool();
 
-  const lease = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
 
   assert.equal(lease.workerHost, "worker-1");
   assert.equal(typeof lease.leaseId, "string");
@@ -72,12 +76,82 @@ test("acquireRemoteMcpTunnel creates a new MCP tunnel lease for a session", () =
   assert.equal(mockStartReverseTunnel.mock.calls[0]![3], 3000);
 });
 
-test("acquireRemoteMcpTunnel reuses existing tunnel for same worker host and endpoint", () => {
+test("acquireRemoteMcpTunnel rejects when reverse tunnel closes before readiness", async () => {
+  const fakeProcess = makeFakeProcess() as ChildProcessWithoutNullStreams & EventEmitter;
+  mockStartReverseTunnel.mockReturnValue(fakeProcess);
+  mockWaitForRemoteTcpPort.mockImplementation(() => new Promise(() => {}));
+  const pool = new WorkerHostPool();
+
+  const acquisition = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  fakeProcess.emit("close", 255);
+
+  await assert.rejects(() => acquisition, /remote_mcp_tunnel_setup_failed/);
+
+  mockStartReverseTunnel.mockImplementation(() => makeFakeProcess());
+  mockWaitForRemoteTcpPort.mockResolvedValue(undefined);
+  const nextLease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  assert.equal(nextLease.remotePort, 46_000);
+  assert.equal(mockStartReverseTunnel.mock.calls.length, 2);
+});
+
+test("acquireRemoteMcpTunnel rejects when reverse tunnel errors before readiness", async () => {
+  const fakeProcess = makeFakeProcess() as ChildProcessWithoutNullStreams & EventEmitter;
+  mockStartReverseTunnel.mockReturnValue(fakeProcess);
+  mockWaitForRemoteTcpPort.mockImplementation(() => new Promise(() => {}));
+  const pool = new WorkerHostPool();
+
+  const acquisition = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  fakeProcess.emit("error", new Error("auth rejected"));
+
+  await assert.rejects(() => acquisition, /remote_mcp_tunnel_setup_failed/);
+
+  mockStartReverseTunnel.mockImplementation(() => makeFakeProcess());
+  mockWaitForRemoteTcpPort.mockResolvedValue(undefined);
+  const nextLease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  assert.equal(nextLease.remotePort, 46_000);
+  assert.equal(mockStartReverseTunnel.mock.calls.length, 2);
+});
+
+test("acquireRemoteMcpTunnel waits for reverse tunnel readiness before returning lease", async () => {
+  setupMock();
+  const ready = deferred<void>();
+  mockWaitForRemoteTcpPort.mockReturnValue(ready.promise);
+  const pool = new WorkerHostPool();
+
+  let returned = false;
+  const acquisition = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000).then((lease) => {
+    returned = true;
+    return lease;
+  });
+  await Promise.resolve();
+
+  assert.equal(returned, false);
+
+  ready.resolve();
+  const lease = await acquisition;
+  assert.equal(returned, true);
+  assert.equal(lease.remotePort, 46_000);
+});
+
+test("acquireRemoteMcpTunnel kills pending tunnel when readiness probe fails", async () => {
+  const processes = setupProcessTrackingMock();
+  mockWaitForRemoteTcpPort.mockRejectedValue(new Error("probe failed"));
+  const pool = new WorkerHostPool();
+
+  await assert.rejects(
+    () => pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000),
+    /remote_mcp_tunnel_setup_failed/,
+  );
+
+  assert.equal(processes[0]!.kill.mock.calls.length, 1);
+});
+
+test("acquireRemoteMcpTunnel reuses existing tunnel for same worker host and endpoint", async () => {
   setupMock();
   const pool = new WorkerHostPool();
 
-  const lease1 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
-  const lease2 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease1 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
 
   assert.equal(lease1.remotePort, lease2.remotePort);
   assert.notEqual(lease1.leaseId, lease2.leaseId);
@@ -86,17 +160,17 @@ test("acquireRemoteMcpTunnel reuses existing tunnel for same worker host and end
   assert.equal(mockStartReverseTunnel.mock.calls.length, 1);
 });
 
-test("releaseRemoteMcpTunnel keeps shared endpoint tunnel alive until final lease release", () => {
+test("releaseRemoteMcpTunnel keeps shared endpoint tunnel alive until final lease release", async () => {
   setupMock();
   const pool = new WorkerHostPool();
 
-  const lease1 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
-  const lease2 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease1 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
 
   pool.releaseRemoteMcpTunnel(lease1);
 
   // Tunnel should still be reusable
-  const lease3 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease3 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
   // Still only 1 tunnel process started
   assert.equal(mockStartReverseTunnel.mock.calls.length, 1);
   assert.ok(lease3.remotePort >= 46_000);
@@ -106,7 +180,7 @@ test("releaseRemoteMcpTunnel keeps shared endpoint tunnel alive until final leas
   pool.releaseRemoteMcpTunnel(lease3);
 
   // Now acquiring should start a new tunnel
-  pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
   assert.equal(mockStartReverseTunnel.mock.calls.length, 2);
 });
 
@@ -127,14 +201,14 @@ test("releaseRemoteMcpTunnel is idempotent (no-op for unknown session)", () => {
   pool.releaseRemoteMcpTunnel({ leaseId: "", workerHost: "", remotePort: 0 });
 });
 
-test("acquireRemoteMcpTunnel allocates sequential ports for different worker hosts", () => {
+test("acquireRemoteMcpTunnel allocates sequential ports for different worker hosts", async () => {
   setupMock();
   const pool = new WorkerHostPool();
 
   // Acquire tunnels for multiple hosts — each gets a unique port
-  const lease1 = pool.acquireRemoteMcpTunnel("worker-a", "127.0.0.1", 3000);
-  const lease2 = pool.acquireRemoteMcpTunnel("worker-b", "127.0.0.1", 3000);
-  const lease3 = pool.acquireRemoteMcpTunnel("worker-c", "127.0.0.1", 3000);
+  const lease1 = await pool.acquireRemoteMcpTunnel("worker-a", "127.0.0.1", 3000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("worker-b", "127.0.0.1", 3000);
+  const lease3 = await pool.acquireRemoteMcpTunnel("worker-c", "127.0.0.1", 3000);
 
   // Ports should be allocated sequentially
   assert.equal(lease1.remotePort, 46_000);
@@ -147,26 +221,26 @@ test("acquireRemoteMcpTunnel allocates sequential ports for different worker hos
   assert.equal(lease3.workerHost, "worker-c");
 });
 
-test("acquireRemoteMcpTunnel works correctly with a single worker host", () => {
+test("acquireRemoteMcpTunnel works correctly with a single worker host", async () => {
   setupMock();
   const pool = new WorkerHostPool();
 
-  const lease = pool.acquireRemoteMcpTunnel("only-host", "localhost", 8080);
+  const lease = await pool.acquireRemoteMcpTunnel("only-host", "localhost", 8080);
 
   assert.equal(lease.workerHost, "only-host");
   assert.equal(lease.remotePort, 46_000);
   assert.equal(mockStartReverseTunnel.mock.calls.length, 1);
 });
 
-test("acquireRemoteMcpTunnel starts another tunnel when local endpoint changes", () => {
+test("acquireRemoteMcpTunnel starts another tunnel when local endpoint changes", async () => {
   const processes = setupProcessTrackingMock();
   const pool = new WorkerHostPool();
 
   // First tunnel on port 3000
-  const lease1 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const lease1 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
 
   // Acquire same host but different local port, which should coexist.
-  const lease2 = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
 
   // Old tunnel process should remain alive until its lease is released.
   assert.equal(processes[0]!.kill.mock.calls.length, 0);
@@ -176,12 +250,12 @@ test("acquireRemoteMcpTunnel starts another tunnel when local endpoint changes",
   assert.notEqual(lease2.remotePort, lease1.remotePort);
 });
 
-test("acquireRemoteMcpTunnel keeps different local endpoints isolated until lease release", () => {
+test("acquireRemoteMcpTunnel keeps different local endpoints isolated until lease release", async () => {
   const processes = setupProcessTrackingMock();
   const pool = new WorkerHostPool();
 
-  const firstLease = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
-  const secondLease = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
+  const firstLease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 3000);
+  const secondLease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
 
   assert.notEqual(secondLease.remotePort, firstLease.remotePort);
   assert.equal(processes[0]!.kill.mock.calls.length, 0);
@@ -191,7 +265,7 @@ test("acquireRemoteMcpTunnel keeps different local endpoints isolated until leas
   assert.equal(processes[0]!.kill.mock.calls.length, 1);
   assert.equal(processes[1]!.kill.mock.calls.length, 0);
 
-  const sharedSecondLease = pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
+  const sharedSecondLease = await pool.acquireRemoteMcpTunnel("worker-1", "127.0.0.1", 4000);
   assert.equal(sharedSecondLease.remotePort, secondLease.remotePort);
   assert.equal(mockStartReverseTunnel.mock.calls.length, 2);
 
@@ -202,14 +276,14 @@ test("acquireRemoteMcpTunnel keeps different local endpoints isolated until leas
   assert.equal(processes[1]!.kill.mock.calls.length, 1);
 });
 
-test("port recycling returns freed ports in sorted order", () => {
+test("port recycling returns freed ports in sorted order", async () => {
   const processes = setupProcessTrackingMock();
   const pool = new WorkerHostPool();
 
   // Acquire three hosts
-  const lease1 = pool.acquireRemoteMcpTunnel("host-a", "127.0.0.1", 3000);
-  const lease2 = pool.acquireRemoteMcpTunnel("host-b", "127.0.0.1", 3000);
-  pool.acquireRemoteMcpTunnel("host-c", "127.0.0.1", 3000);
+  const lease1 = await pool.acquireRemoteMcpTunnel("host-a", "127.0.0.1", 3000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("host-b", "127.0.0.1", 3000);
+  await pool.acquireRemoteMcpTunnel("host-c", "127.0.0.1", 3000);
 
   assert.equal(lease1.remotePort, 46_000);
   assert.equal(lease2.remotePort, 46_001);
@@ -221,41 +295,43 @@ test("port recycling returns freed ports in sorted order", () => {
   processes[0]!.emitter.emit("close");
 
   // Next acquire should reuse 46000 (lowest available recycled port)
-  const lease4 = pool.acquireRemoteMcpTunnel("host-d", "127.0.0.1", 3000);
+  const lease4 = await pool.acquireRemoteMcpTunnel("host-d", "127.0.0.1", 3000);
   assert.equal(lease4.remotePort, 46_000);
 
   // Then 46001
-  const lease5 = pool.acquireRemoteMcpTunnel("host-e", "127.0.0.1", 3000);
+  const lease5 = await pool.acquireRemoteMcpTunnel("host-e", "127.0.0.1", 3000);
   assert.equal(lease5.remotePort, 46_001);
 });
 
-test("releaseRemoteMcpTunnel waits for process close before recycling the remote port", () => {
+test("releaseRemoteMcpTunnel waits for process close before recycling the remote port", async () => {
   const processes = setupProcessTrackingMock();
   const pool = new WorkerHostPool();
 
-  const firstLease = pool.acquireRemoteMcpTunnel("host-a", "127.0.0.1", 3000);
+  const firstLease = await pool.acquireRemoteMcpTunnel("host-a", "127.0.0.1", 3000);
   assert.equal(firstLease.remotePort, 46_000);
 
   pool.releaseRemoteMcpTunnel(firstLease);
 
   assert.equal(processes[0]!.kill.mock.calls.length, 1);
 
-  const secondLease = pool.acquireRemoteMcpTunnel("host-b", "127.0.0.1", 3000);
+  const secondLease = await pool.acquireRemoteMcpTunnel("host-b", "127.0.0.1", 3000);
   assert.equal(secondLease.remotePort, 46_001);
 
   processes[0]!.emitter.emit("close");
 
-  const thirdLease = pool.acquireRemoteMcpTunnel("host-c", "127.0.0.1", 3000);
+  const thirdLease = await pool.acquireRemoteMcpTunnel("host-c", "127.0.0.1", 3000);
   assert.equal(thirdLease.remotePort, 46_000);
 });
 
-test("rapid sequential acquire/release of many workers maintains consistent port allocation", () => {
+test("rapid concurrent acquire/release of many workers maintains consistent port allocation", async () => {
   const processes = setupProcessTrackingMock();
   const pool = new WorkerHostPool();
 
-  // Acquire 10 different workers in quick succession
-  const results = Array.from({ length: 10 }, (_, i) =>
-    pool.acquireRemoteMcpTunnel(`worker-${i}`, "127.0.0.1", 3000),
+  // Acquire 10 different workers concurrently.
+  const results = await Promise.all(
+    Array.from({ length: 10 }, (_, i) =>
+      pool.acquireRemoteMcpTunnel(`worker-${i}`, "127.0.0.1", 3000),
+    ),
   );
 
   // Each should get a unique, sequentially-allocated port
@@ -274,15 +350,15 @@ test("rapid sequential acquire/release of many workers maintains consistent port
   }
 
   // All ports recycled — next acquire should get lowest recycled port
-  const newLease = pool.acquireRemoteMcpTunnel("new-worker", "127.0.0.1", 3000);
+  const newLease = await pool.acquireRemoteMcpTunnel("new-worker", "127.0.0.1", 3000);
   assert.equal(newLease.remotePort, 46_000);
 
   // Verify a second acquire gets the next recycled port (46001), not a fresh one
-  const newLease2 = pool.acquireRemoteMcpTunnel("new-worker-2", "127.0.0.1", 3000);
+  const newLease2 = await pool.acquireRemoteMcpTunnel("new-worker-2", "127.0.0.1", 3000);
   assert.equal(newLease2.remotePort, 46_001);
 });
 
-test("tunnel close event triggers cleanup and port recycling", () => {
+test("tunnel close event triggers cleanup and port recycling", async () => {
   let fakeProcess: EventEmitter & { kill: ReturnType<typeof vi.fn> };
   mockStartReverseTunnel.mockImplementation(() => {
     fakeProcess = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn> };
@@ -292,14 +368,28 @@ test("tunnel close event triggers cleanup and port recycling", () => {
   });
 
   const pool = new WorkerHostPool();
-  const lease = pool.acquireRemoteMcpTunnel("worker-x", "127.0.0.1", 5000);
+  const lease = await pool.acquireRemoteMcpTunnel("worker-x", "127.0.0.1", 5000);
   assert.equal(lease.remotePort, 46_000);
 
   // Simulate process closing unexpectedly
   fakeProcess!.emit("close");
 
   // After close, acquiring should create a new tunnel with recycled port
-  const lease2 = pool.acquireRemoteMcpTunnel("worker-x", "127.0.0.1", 5000);
+  const lease2 = await pool.acquireRemoteMcpTunnel("worker-x", "127.0.0.1", 5000);
   assert.equal(lease2.remotePort, 46_000);
   assert.equal(mockStartReverseTunnel.mock.calls.length, 2);
 });
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve: (value: T | PromiseLike<T>) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}

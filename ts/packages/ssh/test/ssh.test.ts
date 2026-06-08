@@ -18,6 +18,7 @@ import {
   runSsh,
   shellEscape,
   sshArgs,
+  waitForRemoteTcpPort,
   writeRemoteFile,
 } from "@symphony/ssh";
 
@@ -150,6 +151,34 @@ eval "$last_arg"
   const traceText = await fs.readFile(trace, "utf8");
   assert.match(traceText, /printf/);
   assert.notMatch(traceText, /cat <<'__SYMPHONY_SSH_WRITE_PAYLOAD__'/);
+});
+
+test("SSH waitForRemoteTcpPort probes the remote loopback port", async () => {
+  const root = await tempDir("symphony-ts-ssh-port-probe");
+  const trace = path.join(root, "ssh.trace");
+
+  await installFakeSsh(
+    root,
+    trace,
+    `#!/bin/sh
+printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
+for arg in "$@"; do last_arg="$arg"; done
+case "$last_arg" in
+  *'/dev/tcp/127.0.0.1/46000'*) exit 0 ;;
+  *) exit 13 ;;
+esac
+`,
+  );
+
+  await waitForRemoteTcpPort("localhost:2222", 46_000, {
+    timeoutMs: 2_000,
+    intervalMs: 100,
+    attemptTimeoutMs: 1_000,
+  });
+
+  const traceText = await fs.readFile(trace, "utf8");
+  assert.match(traceText, /-T -p 2222 localhost bash -lc/);
+  assert.match(traceText, /\/dev\/tcp\/127\.0\.0\.1\/46000/);
 });
 
 async function installFakeSsh(root: string, trace: string, source: string): Promise<void> {
