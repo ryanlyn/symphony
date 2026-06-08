@@ -7,6 +7,9 @@ import { execa } from "execa";
 
 const DEFAULT_SSH_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 5_000;
+const NUMERIC_CHMOD_MODE = /^[0-7]{3,4}$/;
+const SYMBOLIC_CHMOD_MODE =
+  /^(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*)))(?:,(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*))))*$/;
 
 function requireSshExecutable(): string {
   const pathValue = process.env.PATH ?? "";
@@ -230,8 +233,27 @@ function bracketedHost(destination: string): boolean {
 
 function chmodCommand(mode: number | string | undefined, remotePath: string): string {
   if (typeof mode === "number" && Number.isInteger(mode))
-    return `chmod ${mode.toString(8)} ${shellEscape(remotePath)}`;
-  if (typeof mode === "string" && mode.trim() !== "")
-    return `chmod ${mode} ${shellEscape(remotePath)}`;
+    return `chmod ${mode.toString(8)} ${shellEscape(chmodPathOperand(remotePath))}`;
+  if (typeof mode === "string") {
+    const normalizedMode = normalizeChmodMode(mode);
+    if (normalizedMode !== "")
+      return `chmod ${shellEscape(normalizedMode)} ${shellEscape(chmodPathOperand(remotePath))}`;
+  }
   return "true";
+}
+
+function normalizeChmodMode(mode: string): string {
+  const trimmed = mode.trim();
+  if (trimmed === "") return "";
+  if (trimmed !== mode || !validChmodMode(trimmed))
+    throw new Error(`invalid_chmod_mode: ${JSON.stringify(mode)}`);
+  return trimmed;
+}
+
+function validChmodMode(mode: string): boolean {
+  return NUMERIC_CHMOD_MODE.test(mode) || SYMBOLIC_CHMOD_MODE.test(mode);
+}
+
+function chmodPathOperand(remotePath: string): string {
+  return remotePath.startsWith("-") ? `./${remotePath}` : remotePath;
 }
