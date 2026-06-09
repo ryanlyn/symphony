@@ -11,8 +11,8 @@ import { tempDir, writeExecutable } from "./helpers.js";
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 
-test("worktree initializer prepares TypeScript when Elixir is absent", async () => {
-  const checkout = await createCheckout({ includeElixir: false });
+test("worktree initializer prepares the TypeScript workspace", async () => {
+  const checkout = await createCheckout();
   const { binDir, logPath } = await createStubToolchain(checkout);
 
   await runInitializer(checkout, binDir, logPath);
@@ -28,18 +28,7 @@ test("worktree initializer prepares TypeScript when Elixir is absent", async () 
   assert.notMatch(log, /:make:/);
 });
 
-test("worktree initializer keeps Elixir setup when Elixir is present", async () => {
-  const checkout = await createCheckout({ includeElixir: true });
-  const { binDir, logPath } = await createStubToolchain(checkout);
-
-  await runInitializer(checkout, binDir, logPath);
-
-  const log = await fs.readFile(logPath, "utf8");
-  assert.match(log, commandPattern(checkout, "ts", "pnpm", "install --frozen-lockfile"));
-  assert.match(log, commandPattern(checkout, "elixir", "make", "setup"));
-});
-
-async function createCheckout({ includeElixir }: { includeElixir: boolean }): Promise<string> {
+async function createCheckout(): Promise<string> {
   const checkout = await tempDir("symphony-worktree-init");
 
   await fs.mkdir(path.join(checkout, ".codex"), { recursive: true });
@@ -49,10 +38,6 @@ async function createCheckout({ includeElixir }: { includeElixir: boolean }): Pr
   );
   await fs.chmod(path.join(checkout, ".codex", "worktree_init.sh"), 0o755);
   await fs.mkdir(path.join(checkout, "ts"), { recursive: true });
-
-  if (includeElixir) {
-    await fs.mkdir(path.join(checkout, "elixir"), { recursive: true });
-  }
 
   return checkout;
 }
@@ -91,14 +76,6 @@ esac
 `,
   );
 
-  await writeExecutable(
-    path.join(binDir, "make"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s:%s:%s\\n' "$PWD" "make" "$*" >> "$WORKTREE_INIT_LOG"
-`,
-  );
-
   return { binDir, logPath };
 }
 
@@ -117,8 +94,8 @@ async function runInitializer(checkout: string, binDir: string, logPath: string)
 
 function commandPattern(
   checkout: string,
-  packageDir: "elixir" | "ts",
-  command: "make" | "mise" | "pnpm",
+  packageDir: "ts",
+  command: "mise" | "pnpm",
   args: string,
 ): RegExp {
   return new RegExp(
