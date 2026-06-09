@@ -104,10 +104,6 @@ async function setupLiveWorkers(): Promise<LiveWorkerSetupResult> {
   const hosts = ports.map((port) => `localhost:${port}`);
   const dockerSupportDir = path.resolve(
     import.meta.dirname,
-    "..",
-    "..",
-    "elixir",
-    "test",
     "support",
     "live_e2e_docker",
   );

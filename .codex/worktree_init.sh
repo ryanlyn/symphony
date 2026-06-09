@@ -21,20 +21,4 @@ prepare_typescript() {
   )
 }
 
-prepare_elixir() {
-  local elixir_dir="$repo_root/elixir"
-
-  if [ ! -d "$elixir_dir" ]; then
-    echo "Skipping Elixir setup: $elixir_dir not found"
-    return
-  fi
-
-  echo "Preparing Elixir workspace in $elixir_dir"
-  (
-    cd "$elixir_dir"
-    make setup
-  )
-}
-
 prepare_typescript
-prepare_elixir
