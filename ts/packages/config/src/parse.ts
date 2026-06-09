@@ -148,8 +148,7 @@ export function validateDispatchConfig(settings: Settings): void {
   if (settings.tracker.kind === "jira") {
     if (!settings.tracker.baseUrl) throw new Error("tracker.base_url is required for jira tracker");
     if (!settings.tracker.email) throw new Error("tracker.email is required for jira tracker");
-    if (!settings.tracker.apiToken)
-      throw new Error("tracker.api_token is required for jira tracker");
+    if (!settings.tracker.apiKey) throw new Error("tracker.api_key is required for jira tracker");
     assertJiraScopeConfig(settings);
   }
   if (settings.tracker.kind === "jira-mcp") {
@@ -219,11 +218,7 @@ function parseTracker(
 
   const resolveLinearFallbacks = kindUnspecified || kind === "linear";
   const resolveJiraFallbacks = kind === "jira" || kind === "jira-mcp";
-  const apiKey = resolveConfiguredSecret(
-    trackerRaw.apiKey,
-    env,
-    resolveLinearFallbacks ? "LINEAR_API_KEY" : undefined,
-  );
+  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, apiKeyFallback(kind));
   const baseUrl =
     resolveEnv(trackerRaw.baseUrl ?? (resolveJiraFallbacks ? "$JIRA_BASE_URL" : ""), env) ||
     undefined;
@@ -231,11 +226,6 @@ function parseTracker(
     trackerRaw.email,
     env,
     resolveJiraFallbacks ? "JIRA_EMAIL" : undefined,
-  );
-  const apiToken = resolveConfiguredSecret(
-    trackerRaw.apiToken ?? (resolveJiraFallbacks ? trackerRaw.apiKey : undefined),
-    env,
-    resolveJiraFallbacks ? "JIRA_API_TOKEN" : undefined,
   );
   const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
   const assignee = resolveConfiguredSecret(
@@ -256,7 +246,6 @@ function parseTracker(
     endpoint: trackerRaw.endpoint ?? defaults.endpoint,
     baseUrl,
     email,
-    apiToken,
     path: trackerRaw.path ?? defaults.path ?? ".symphony/local",
     idPrefix,
     apiKey,
@@ -272,6 +261,12 @@ function parseTracker(
     terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
     dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
   };
+}
+
+function apiKeyFallback(kind: TrackerSettings["kind"]): string | undefined {
+  if (kind === undefined || kind === "linear") return "LINEAR_API_KEY";
+  if (kind === "jira") return "JIRA_API_KEY";
+  return undefined;
 }
 
 function parseTrackerMcp(

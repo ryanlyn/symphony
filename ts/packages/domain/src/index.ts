@@ -217,8 +217,6 @@ export interface TrackerSettings {
   baseUrl?: string | undefined;
   /** Account email for trackers that use email+token authentication, such as Jira Cloud basic auth. */
   email?: string | undefined;
-  /** API token for trackers that distinguish token auth from a generic API key. */
-  apiToken?: string | undefined;
   /** @deprecated Use `projectSlugs` instead. Single Linear project slug; required when `kind === "linear"`. */
   projectSlug?: string | undefined;
   /** Linear project slugs to monitor. Mutually exclusive with `projectLabels`. */

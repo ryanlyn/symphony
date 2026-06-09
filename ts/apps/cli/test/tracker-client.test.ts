@@ -91,7 +91,7 @@ test("tracker factory selects Jira adapters from workflow settings", () => {
         kind: "jira",
         base_url: "https://example.atlassian.net",
         email: "bot@example.com",
-        api_token: "jira-token",
+        api_key: "jira-token",
         project_keys: ["ENG"],
       },
     },

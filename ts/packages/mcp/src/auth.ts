@@ -24,7 +24,6 @@ export function mcpAuthScopeForSettings(
       apiKey: tracker.apiKey ?? null,
       baseUrl: tracker.baseUrl ?? null,
       email: tracker.email ?? null,
-      apiToken: tracker.apiToken ?? null,
       projectSlug: tracker.projectSlug ?? null,
       projectSlugs: tracker.projectSlugs ?? null,
       projectLabels: tracker.projectLabels ?? null,

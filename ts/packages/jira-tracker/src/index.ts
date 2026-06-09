@@ -194,9 +194,9 @@ export class JiraClient implements RuntimeTrackerClient {
 
   private authHeader(): string {
     const email = this.settings.tracker.email;
-    const token = this.settings.tracker.apiToken;
+    const token = this.settings.tracker.apiKey;
     if (!email) throw new Error("tracker.email is required for jira tracker");
-    if (!token) throw new Error("tracker.api_token is required for jira tracker");
+    if (!token) throw new Error("tracker.api_key is required for jira tracker");
     return `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}`;
   }
 

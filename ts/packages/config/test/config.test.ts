@@ -131,13 +131,13 @@ test("jira tracker config resolves canonical env fallbacks", () => {
     {
       JIRA_BASE_URL: "https://example.atlassian.net",
       JIRA_EMAIL: "bot@example.com",
-      JIRA_API_TOKEN: "jira-token",
+      JIRA_API_KEY: "jira-token",
     },
   );
 
   assert.equal(settings.tracker.baseUrl, "https://example.atlassian.net");
   assert.equal(settings.tracker.email, "bot@example.com");
-  assert.equal(settings.tracker.apiToken, "jira-token");
+  assert.equal(settings.tracker.apiKey, "jira-token");
   assert.deepEqual(settings.tracker.projectKeys, ["ENG"]);
   validateDispatchConfig(settings);
 });

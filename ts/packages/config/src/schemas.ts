@@ -126,7 +126,6 @@ const trackerRawSchema = z
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
     email: z.string().optional(),
-    apiToken: z.string().optional(),
     projectSlug: z.string().optional(),
     projectSlugs: z.array(z.string()).optional(),
     projectLabels: z.array(z.string()).optional(),

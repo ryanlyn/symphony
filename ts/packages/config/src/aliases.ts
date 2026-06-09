@@ -2,7 +2,6 @@ import { isRecord as isPlainRecord } from "@symphony/domain";
 
 const trackerAliases = {
   api_key: "apiKey",
-  api_token: "apiToken",
   base_url: "baseUrl",
   project_slug: "projectSlug",
   id_prefix: "idPrefix",

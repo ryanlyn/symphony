@@ -256,8 +256,8 @@ Supported kinds:
   `tracker.project_labels`. Agents can use provider-neutral `tracker_*` tools or the legacy
   `linear_graphql` tool.
 - `jira` - issues live in Jira Cloud and are accessed directly over Jira REST. Configure
-  `tracker.base_url`, `tracker.email`, `tracker.api_token`, and either `tracker.project_keys` or
-  `tracker.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` are used as fallbacks.
+  `tracker.base_url`, `tracker.email`, `tracker.api_key`, and either `tracker.project_keys` or
+  `tracker.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_KEY` are used as fallbacks.
 - `jira-mcp` - issues live in Jira, but Symphony reaches them through an external MCP server.
   Configure `tracker.mcp.url` and either `tracker.project_keys` or `tracker.jql`. Tool names can be
   overridden under `tracker.mcp.tools`.
@@ -293,7 +293,7 @@ tracker:
   kind: jira
   base_url: https://example.atlassian.net
   email: $JIRA_EMAIL
-  api_token: $JIRA_API_TOKEN
+  api_key: $JIRA_API_KEY
   project_keys: ["ENG"]
   # Optional provider-native scope. When present, Symphony combines it with active_states.
   # jql: 'project = ENG AND labels in ("symphony")'

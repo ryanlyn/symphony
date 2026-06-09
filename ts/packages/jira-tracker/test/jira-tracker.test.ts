@@ -4,7 +4,6 @@ import { assert } from "@symphony/test-utils";
 
 import { JiraClient, JiraMcpClient } from "@symphony/jira-tracker";
 
-
 interface FetchCall {
   url: string;
   body: Record<string, unknown>;
@@ -19,7 +18,7 @@ test("Jira REST client searches scoped candidates and normalizes Jira fields", a
         kind: "jira",
         base_url: "https://example.atlassian.net/",
         email: "bot@example.com",
-        api_token: "jira-token",
+        api_key: "jira-token",
         project_keys: ["ENG"],
         active_states: ["To Do"],
         assignee: "account-1",
@@ -136,7 +135,7 @@ function jiraSettings() {
         kind: "jira",
         base_url: "https://example.atlassian.net",
         email: "bot@example.com",
-        api_token: "jira-token",
+        api_key: "jira-token",
         project_keys: ["ENG"],
       },
     },
