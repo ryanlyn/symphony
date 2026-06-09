@@ -89,6 +89,7 @@ export class TraceWatcher {
   }
 
   start(callback: WatcherCallback): void {
+    if (this.timer !== null) return;
     this.stopped = false;
     void this.scan(callback);
     this.timer = setInterval(() => {

@@ -2,7 +2,7 @@ import { mkdirSync, appendFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import { TraceWatcher } from "../src/watcher.js";
 import type { DisplayEvent } from "../src/models/display-events.js";
@@ -66,6 +66,22 @@ describe("TraceWatcher", () => {
     expect(callbacks.length).toBeGreaterThan(0);
     const first = callbacks[0]!;
     expect(first.events.some((e) => e.kind === "message")).toBe(true);
+  });
+
+  it("clears the active interval after start is called twice", () => {
+    vi.useFakeTimers();
+    try {
+      watcher.start(() => {});
+      watcher.start(() => {});
+
+      expect(vi.getTimerCount()).toBe(1);
+      watcher.stop();
+      vi.advanceTimersByTime(50);
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("only calls back when new lines are appended", async () => {
