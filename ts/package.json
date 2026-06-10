@@ -50,7 +50,6 @@
     "@symphony/memory-tracker": "workspace:*",
     "@symphony/orchestrator": "workspace:*",
     "@symphony/policies": "workspace:*",
-    "@symphony/ports": "workspace:*",
     "@symphony/projections": "workspace:*",
     "@symphony/resume-state": "workspace:*",
     "@symphony/retry-scheduler": "workspace:*",

@@ -11,7 +11,7 @@ import {
   slotKey,
 } from "@symphony/cli";
 import type { RuntimeProjectionInput, RuntimeRunHistoryEntry } from "@symphony/cli";
-import type { ClockPort } from "@symphony/ports";
+import type { ClockPort } from "@symphony/domain";
 
 import { assert } from "./assert.js";
 

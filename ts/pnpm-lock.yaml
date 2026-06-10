@@ -187,9 +187,6 @@ importers:
       "@symphony/policies":
         specifier: workspace:*
         version: link:packages/policies
-      "@symphony/ports":
-        specifier: workspace:*
-        version: link:packages/ports
       "@symphony/projections":
         specifier: workspace:*
         version: link:packages/projections
@@ -441,9 +438,6 @@ importers:
       "@agentclientprotocol/sdk":
         specifier: "catalog:"
         version: 0.21.1(zod@4.4.3)
-      "@symphony/child-process":
-        specifier: workspace:*
-        version: link:../child-process
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
@@ -487,8 +481,6 @@ importers:
       "@agentclientprotocol/sdk":
         specifier: "catalog:"
         version: 0.21.1(zod@4.4.3)
-
-  packages/child-process: {}
 
   packages/cli-kit:
     dependencies:
@@ -620,9 +612,6 @@ importers:
       "@symphony/policies":
         specifier: workspace:*
         version: link:../policies
-      "@symphony/ports":
-        specifier: workspace:*
-        version: link:../ports
 
   packages/policies:
     dependencies:
@@ -632,8 +621,6 @@ importers:
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
-
-  packages/ports: {}
 
   packages/presenter:
     dependencies:
@@ -685,9 +672,9 @@ importers:
 
   packages/retry-scheduler:
     dependencies:
-      "@symphony/ports":
+      "@symphony/domain":
         specifier: workspace:*
-        version: link:../ports
+        version: link:../domain
       "@symphony/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events

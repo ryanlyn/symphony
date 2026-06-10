@@ -9,7 +9,7 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/ports": "workspace:*",
+    "@symphony/domain": "workspace:*",
     "@symphony/runtime-events": "workspace:*"
   }
 }

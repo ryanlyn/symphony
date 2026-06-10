@@ -8,9 +8,6 @@
       "path": "./packages/agent-runner"
     },
     {
-      "path": "./packages/child-process"
-    },
-    {
       "path": "./packages/cli-kit"
     },
     {
@@ -48,9 +45,6 @@
     },
     {
       "path": "./packages/policies"
-    },
-    {
-      "path": "./packages/ports"
     },
     {
       "path": "./packages/presenter"

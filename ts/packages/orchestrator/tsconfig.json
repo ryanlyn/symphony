@@ -24,9 +24,6 @@
     },
     {
       "path": "../policies"
-    },
-    {
-      "path": "../ports"
     }
   ]
 }

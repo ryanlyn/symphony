@@ -1,5 +1,5 @@
 import { beforeEach, test } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 
 import { assert } from "../../../test/assert.js";
 

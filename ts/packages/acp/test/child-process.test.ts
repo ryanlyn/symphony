@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { test } from "vitest";
 
 import { assert } from "../../../test/assert.js";
-import { stopChild } from "../src/index.js";
+import { stopChild } from "../src/childProcess.js";
 
 test("stopChild waits for SIGKILL close when SIGTERM is handled", async () => {
   const child = spawn(process.execPath, [

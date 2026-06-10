@@ -11,18 +11,19 @@ import { normalizeStateName, settingsForIssueState } from "@symphony/config";
 import { retryBackoffMs } from "@symphony/policies/retry";
 import { mergeMonotonicUsage } from "@symphony/policies/usage";
 import { selectLeastLoadedHost } from "@symphony/policies/workerHost";
-import type {
-  AgentUpdate,
-  DispatchBlockReason,
-  DispatchBlockEntry,
-  Issue,
-  RetryEntry,
-  RunningEntry,
-  Settings,
-  UsageTokenUpdate,
-  UsageTotals,
+import {
+  systemClock,
+  type AgentUpdate,
+  type ClockPort,
+  type DispatchBlockReason,
+  type DispatchBlockEntry,
+  type Issue,
+  type RetryEntry,
+  type RunningEntry,
+  type Settings,
+  type UsageTokenUpdate,
+  type UsageTotals,
 } from "@symphony/domain";
-import { systemClock, type ClockPort } from "@symphony/ports";
 
 export interface OrchestratorState {
   running: Map<string, RunningEntry>;
