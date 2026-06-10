@@ -41,6 +41,8 @@ run = "pnpm agent-settings:check"
 
 [tasks.architecture]
 run = "pnpm architecture:check"
+# dependency-cruiser resolves workspace imports through each package's built dist/.
+depends = ["build"]
 
 [tasks.tsconfig-refs]
 run = "pnpm tsconfig:refs:check"

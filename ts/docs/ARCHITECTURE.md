@@ -84,6 +84,9 @@ provider entirely from SDK surface and drives config parsing, dispatch validatio
 creation, and MCP tools through it. If a new backend needs more than the steps above, that
 test - and this document - have regressed.
 
+The `extensions-depend-on-sdk-layers-only` dependency-cruiser rule holds the other side of
+the bargain: a provider package that reaches into engine packages fails the build.
+
 ## The agent extension points
 
 Agents extend along two independent axes:
@@ -117,14 +120,22 @@ all registry consumers accept them as parameters.
 
 ## Enforcement
 
-The layering is checked mechanically, not just documented: `scripts/check-architecture.ts`
-(run as `pnpm architecture:check`, part of `mise run check`) classifies every workspace
-package into a layer from its name and validates the `package.json` dependency graph
-against the rules above. An engine package that imports a tracker provider fails CI.
+The layering is checked mechanically, not just documented. `.dependency-cruiser.cjs`
+(run as `pnpm architecture:check`, part of `mise run check`) validates the real import
+graph of every source file against the layer rules above, plus the file-level rules no
+other gate covers: no circular imports, cross-package imports only through a package's
+published surface (its `exports` map), and no package importing an app. An engine package
+that imports a tracker provider fails CI.
+
+`pnpm architecture:graph` renders the same graph as Mermaid for inspection.
+
+Two neighbouring gates close the remaining gaps: pnpm's strict `node_modules` plus
+`scripts/sync-tsconfig-refs.ts` keep undeclared package.json dependencies unbuildable,
+and knip flags dependencies that are declared but unused.
 
 ## Conventions that keep the boundary clean
 
-- The engine never imports a tracker package; `scripts/check-architecture.ts` enforces it
+- The engine never imports a tracker package; `pnpm architecture:check` enforces it
   structurally.
 - A provider package is self-contained: config knowledge, client, and tools live together,
   and its tests live with it.

@@ -61,7 +61,7 @@ records a `workflow_reload_failed` event.
 
 ## Workspace Layout
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the layering rules and the tracker extension
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the layering rules and the tracker extension
 contract (including the recipe for adding a new tracker backend).
 
 - `apps/cli` is the composition root: it registers the built-in tracker providers and wires

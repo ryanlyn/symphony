@@ -32,7 +32,8 @@
     "traceviz": "pnpm --filter @symphony/traceviz traceviz",
     "lint:versions": "syncpack lint",
     "agent-settings:check": "tsx scripts/check-agent-settings-policy.ts",
-    "architecture:check": "tsx scripts/check-architecture.ts"
+    "architecture:check": "depcruise --config .dependency-cruiser.cjs packages/*/src apps/*/src",
+    "architecture:graph": "depcruise --config .dependency-cruiser.cjs --output-type mermaid packages/*/src apps/*/src"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "catalog:",
@@ -69,6 +70,7 @@
     "@symphony/workspace": "workspace:*",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
+    "dependency-cruiser": "catalog:",
     "eslint": "catalog:",
     "eslint-plugin-import-x": "catalog:",
     "fast-check": "catalog:",
