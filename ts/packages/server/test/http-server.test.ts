@@ -82,10 +82,6 @@ test("observability HTTP API exposes state, issue, runs, refresh, and errors", a
       },
     });
 
-    const events = await getEventStream(server.url("/api/v1/events"));
-    assert.match(events, /event: state/);
-    assert.match(events, /MT-HTTP/);
-
     const refresh = await postJson(server.url("/api/v1/refresh"));
     assert.equal(refresh.queued, true);
     assert.deepEqual(refresh.operations, ["poll", "reconcile"]);
@@ -445,29 +441,6 @@ async function postRawMcp(
   assert.equal(response.status, expectedStatus);
   assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
   return response.json();
-}
-
-async function getEventStream(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = AbortSignal.timeout(2_000);
-  timeout.addEventListener("abort", () => controller.abort(timeout.reason));
-  const response = await fetch(url, { signal: controller.signal });
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
-  assert.equal(response.headers.get("cache-control"), "no-cache, no-transform");
-  const reader = response.body?.getReader();
-  assert.ok(reader);
-  let text = "";
-  try {
-    while (!text.includes("event: state")) {
-      const read = await reader.read();
-      if (read.done) break;
-      text += Buffer.from(read.value).toString("utf8");
-    }
-    return text;
-  } finally {
-    controller.abort();
-  }
 }
 
 function fakeRuntime(code: "snapshot_timeout" | "snapshot_unavailable"): SymphonyRuntime {

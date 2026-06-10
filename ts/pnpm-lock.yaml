@@ -367,6 +367,9 @@ importers:
 
   apps/symphony-dashboard:
     dependencies:
+      "@symphony/presenter":
+        specifier: workspace:*
+        version: link:../../packages/presenter
       "@symphony/traceviz-server":
         specifier: workspace:*
         version: link:../../packages/traceviz-server

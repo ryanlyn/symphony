@@ -22,6 +22,9 @@
   ],
   "references": [
     {
+      "path": "../../packages/presenter"
+    },
+    {
       "path": "../../packages/traceviz-server"
     }
   ]

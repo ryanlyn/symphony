@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import type { OpsStatePayload } from "@symphony/presenter";
+import type { TicketInfo, DisplayEvent } from "@symphony/traceviz-server";
 
-import type { WsMessage } from "../api/types";
+/** Messages pushed by the server over the `/ws` connection. */
+export type WsMessage =
+  | { type: "init"; tickets: TicketInfo[] }
+  | { type: "update"; issueId: string; tickets: TicketInfo[] }
+  | { type: "events"; issueId: string; events: DisplayEvent[] }
+  | { type: "ops_state"; state: OpsStatePayload }
+  | { type: "ping" };
 
 type WsStatus = "connecting" | "connected" | "disconnected";
 
