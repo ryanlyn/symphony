@@ -50,24 +50,15 @@ export async function executeTool(
   fetchImpl: typeof fetch = fetch,
 ): Promise<ToolResult> {
   const kind = trackerKind(settings);
-  const specs = toolSpecs(settings);
-  const supportedTools = specs.map((tool) => tool.name);
-  if (specs.some((tool) => tool.name === name && name.startsWith("tracker_"))) {
-    return executeTrackerTool(name, input, settings, fetchImpl);
-  }
+  const supportedTools = toolSpecs(settings).map((tool) => tool.name);
+  if (!supportedTools.includes(name)) return unsupportedToolFailure(name, supportedTools);
+  if (name.startsWith("tracker_")) return executeTrackerTool(name, input, settings, fetchImpl);
   switch (kind) {
     case "linear":
-      if (!linearToolSpecs().some((tool) => tool.name === name)) {
-        return unsupportedToolFailure(name, supportedTools);
-      }
       return executeLinearTool(name, input, settings, fetchImpl);
     case "local":
-      if (!localToolSpecs().some((tool) => tool.name === name)) {
-        return unsupportedToolFailure(name, supportedTools);
-      }
       return executeLocalTool(name, input, settings);
     case "memory":
-      return unsupportedToolFailure(name, []);
     case "jira":
     case "jira-mcp":
       return unsupportedToolFailure(name, supportedTools);

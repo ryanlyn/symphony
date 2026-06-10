@@ -286,6 +286,11 @@ tracker:
 
 ### Jira tracker
 
+For both `jira` and `jira-mcp`, Symphony only picks up issues that are assigned to the configured
+user (`tracker.assignee`, defaulting to the authenticated user via `assignee = currentUser()`) and
+labeled `agent`. This holds even when `tracker.jql` widens the scope, so issues must be explicitly
+delegated before Symphony will dispatch them.
+
 Direct Jira REST configuration:
 
 ```yaml

@@ -11,6 +11,8 @@ import {
 import { defaultStateType, normalizeIssue } from "@symphony/issue";
 
 const JIRA_REQUEST_TIMEOUT_MS = 30_000;
+/** Issues must carry this label to be picked up for dispatch; it marks them as delegated to agents. */
+const AGENT_LABEL = "agent";
 const JIRA_FIELDS = [
   "summary",
   "description",
@@ -46,7 +48,7 @@ export class JiraClient implements RuntimeTrackerClient {
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {
-    return this.searchIssues(this.candidateJql());
+    return this.searchIssues(candidateJql(this.settings));
   }
 
   async fetchIssuesByIds(ids: string[]): Promise<Issue[]> {
@@ -63,11 +65,8 @@ export class JiraClient implements RuntimeTrackerClient {
   }
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
-    const stateNames = normalizeStateNames(states);
-    if (stateNames.length === 0) return [];
-    const scoped = this.baseScopeJql();
-    const stateJql = `status in (${stateNames.map(jqlString).join(", ")})`;
-    return this.searchIssues(scoped ? `${scoped} AND ${stateJql}` : stateJql);
+    const jql = statesJql(this.settings, states);
+    return jql ? this.searchIssues(jql) : [];
   }
 
   async readIssue(issueIdOrKey: string): Promise<Issue> {
@@ -75,7 +74,7 @@ export class JiraClient implements RuntimeTrackerClient {
       `/rest/api/3/issue/${encodeURIComponent(issueIdOrKey)}?fields=${encodeURIComponent(JIRA_FIELDS.join(","))}`,
       { method: "GET" },
     );
-    return normalizeJiraIssue(raw, this.assigneeFilterValue(), this.baseUrl());
+    return normalizeJiraIssue(raw, assigneeFilterValue(this.settings), this.baseUrl());
   }
 
   async updateIssueStatus(issueIdOrKey: string, status: string): Promise<Issue> {
@@ -146,38 +145,12 @@ export class JiraClient implements RuntimeTrackerClient {
       const nodes = Array.isArray(page.issues) ? page.issues : [];
       for (const node of nodes) {
         if (isRecord(node))
-          out.push(normalizeJiraIssue(node, this.assigneeFilterValue(), this.baseUrl()));
+          out.push(normalizeJiraIssue(node, assigneeFilterValue(this.settings), this.baseUrl()));
       }
       const total = typeof page.total === "number" ? page.total : out.length;
       if (nodes.length === 0 || startAt + nodes.length >= total) return out;
       startAt += nodes.length;
     }
-  }
-
-  private candidateJql(): string {
-    const parts: string[] = [];
-    const base = this.baseScopeJql();
-    if (base) parts.push(base);
-    if (this.settings.tracker.activeStates.length > 0) {
-      parts.push(`status in (${this.settings.tracker.activeStates.map(jqlString).join(", ")})`);
-    }
-    const assignee = this.settings.tracker.assignee?.trim();
-    if (assignee) {
-      parts.push(
-        assignee.toLowerCase() === "me"
-          ? "assignee = currentUser()"
-          : `assignee = ${jqlString(assignee)}`,
-      );
-    }
-    return parts.length > 0 ? parts.join(" AND ") : "order by updated DESC";
-  }
-
-  private baseScopeJql(): string {
-    const jql = this.settings.tracker.jql?.trim();
-    if (jql) return `(${jql})`;
-    const projectKeys = this.settings.tracker.projectKeys ?? [];
-    if (projectKeys.length === 0) return "";
-    return `project in (${projectKeys.map(jqlString).join(", ")})`;
   }
 
   private requiredProjectKey(): string {
@@ -198,12 +171,6 @@ export class JiraClient implements RuntimeTrackerClient {
     if (!email) throw new Error("tracker.email is required for jira tracker");
     if (!token) throw new Error("tracker.api_key is required for jira tracker");
     return `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}`;
-  }
-
-  private assigneeFilterValue(): string | undefined {
-    const assignee = this.settings.tracker.assignee?.trim();
-    if (!assignee || assignee.toLowerCase() === "me") return undefined;
-    return assignee;
   }
 
   private async request<T = unknown>(path: string, init: RequestInit): Promise<T> {
@@ -237,7 +204,7 @@ export class JiraMcpClient implements RuntimeTrackerClient {
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {
-    return this.searchIssues(this.candidateJql());
+    return this.searchIssues(candidateJql(this.settings));
   }
 
   async fetchIssuesByIds(ids: string[]): Promise<Issue[]> {
@@ -247,10 +214,10 @@ export class JiraMcpClient implements RuntimeTrackerClient {
     if (readTool) {
       const issues: Issue[] = [];
       for (const id of uniqueIds) {
-        const payload = await this.callTool(readTool, { issueIdOrKey: id, issueId: id, key: id });
+        const payload = await this.callTool(readTool, issueRefArgs(id));
         const issue = firstIssueFromPayload(
           payload,
-          this.assigneeFilterValue(),
+          assigneeFilterValue(this.settings),
           this.baseUrlOrNull(),
         );
         if (issue) issues.push(issue);
@@ -261,42 +228,35 @@ export class JiraMcpClient implements RuntimeTrackerClient {
   }
 
   async fetchIssuesByStates(states: string[]): Promise<Issue[]> {
-    const stateNames = normalizeStateNames(states);
-    if (stateNames.length === 0) return [];
-    const scoped = this.baseScopeJql();
-    const stateJql = `status in (${stateNames.map(jqlString).join(", ")})`;
-    return this.searchIssues(scoped ? `${scoped} AND ${stateJql}` : stateJql);
+    const jql = statesJql(this.settings, states);
+    return jql ? this.searchIssues(jql) : [];
   }
 
   async readIssue(issueIdOrKey: string): Promise<Issue> {
-    const payload = await this.callTool(this.toolName("readIssue"), {
-      issueIdOrKey,
-      issueId: issueIdOrKey,
-      key: issueIdOrKey,
-    });
-    const issue = firstIssueFromPayload(payload, this.assigneeFilterValue(), this.baseUrlOrNull());
+    const payload = await this.callTool(this.toolName("readIssue"), issueRefArgs(issueIdOrKey));
+    const issue = firstIssueFromPayload(
+      payload,
+      assigneeFilterValue(this.settings),
+      this.baseUrlOrNull(),
+    );
     if (!issue) throw new Error("jira-mcp read issue returned no issue");
     return issue;
   }
 
   async updateIssueStatus(issueIdOrKey: string, status: string): Promise<Issue> {
     const payload = await this.callTool(this.toolName("updateStatus"), {
-      issueIdOrKey,
-      issueId: issueIdOrKey,
-      key: issueIdOrKey,
+      ...issueRefArgs(issueIdOrKey),
       status,
     });
     return (
-      firstIssueFromPayload(payload, this.assigneeFilterValue(), this.baseUrlOrNull()) ??
+      firstIssueFromPayload(payload, assigneeFilterValue(this.settings), this.baseUrlOrNull()) ??
       this.readIssue(issueIdOrKey)
     );
   }
 
   async addComment(issueIdOrKey: string, body: string): Promise<void> {
     await this.callTool(this.toolName("comment"), {
-      issueIdOrKey,
-      issueId: issueIdOrKey,
-      key: issueIdOrKey,
+      ...issueRefArgs(issueIdOrKey),
       body,
       comment: body,
     });
@@ -316,50 +276,22 @@ export class JiraMcpClient implements RuntimeTrackerClient {
       description: input.body,
       status: input.status,
     });
-    const issue = firstIssueFromPayload(payload, this.assigneeFilterValue(), this.baseUrlOrNull());
+    const issue = firstIssueFromPayload(
+      payload,
+      assigneeFilterValue(this.settings),
+      this.baseUrlOrNull(),
+    );
     if (!issue) throw new Error("jira-mcp create issue returned no issue");
     return issue;
   }
 
   async searchIssues(jql: string): Promise<Issue[]> {
     const payload = await this.callTool(this.toolName("search"), { jql, fields: JIRA_FIELDS });
-    return issuesFromPayload(payload, this.assigneeFilterValue(), this.baseUrlOrNull());
-  }
-
-  private candidateJql(): string {
-    const parts: string[] = [];
-    const base = this.baseScopeJql();
-    if (base) parts.push(base);
-    if (this.settings.tracker.activeStates.length > 0) {
-      parts.push(`status in (${this.settings.tracker.activeStates.map(jqlString).join(", ")})`);
-    }
-    const assignee = this.settings.tracker.assignee?.trim();
-    if (assignee) {
-      parts.push(
-        assignee.toLowerCase() === "me"
-          ? "assignee = currentUser()"
-          : `assignee = ${jqlString(assignee)}`,
-      );
-    }
-    return parts.length > 0 ? parts.join(" AND ") : "order by updated DESC";
-  }
-
-  private baseScopeJql(): string {
-    const jql = this.settings.tracker.jql?.trim();
-    if (jql) return `(${jql})`;
-    const projectKeys = this.settings.tracker.projectKeys ?? [];
-    if (projectKeys.length === 0) return "";
-    return `project in (${projectKeys.map(jqlString).join(", ")})`;
+    return issuesFromPayload(payload, assigneeFilterValue(this.settings), this.baseUrlOrNull());
   }
 
   private baseUrlOrNull(): string | null {
     return this.settings.tracker.baseUrl?.replace(/\/+$/, "") ?? null;
-  }
-
-  private assigneeFilterValue(): string | undefined {
-    const assignee = this.settings.tracker.assignee?.trim();
-    if (!assignee || assignee.toLowerCase() === "me") return undefined;
-    return assignee;
   }
 
   private toolName(name: keyof Required<TrackerMcpToolMap>, required?: true): string;
@@ -401,6 +333,56 @@ export class JiraMcpClient implements RuntimeTrackerClient {
     }
     return mcpResultPayload(body);
   }
+}
+
+/**
+ * JQL selecting issues eligible for dispatch. Candidates are always restricted to issues
+ * assigned to the worker's user and labeled {@link AGENT_LABEL}, so Symphony never picks up
+ * work that was not explicitly delegated to it — even when `tracker.jql` widens the scope.
+ */
+function candidateJql(settings: Settings): string {
+  const parts: string[] = [];
+  const base = baseScopeJql(settings);
+  if (base) parts.push(base);
+  if (settings.tracker.activeStates.length > 0) {
+    parts.push(`status in (${settings.tracker.activeStates.map(jqlString).join(", ")})`);
+  }
+  parts.push(assigneeJql(settings), `labels = ${jqlString(AGENT_LABEL)}`);
+  return parts.join(" AND ");
+}
+
+function assigneeJql(settings: Settings): string {
+  const assignee = settings.tracker.assignee?.trim();
+  return !assignee || assignee.toLowerCase() === "me"
+    ? "assignee = currentUser()"
+    : `assignee = ${jqlString(assignee)}`;
+}
+
+function statesJql(settings: Settings, states: string[]): string | null {
+  const stateNames = normalizeStateNames(states);
+  if (stateNames.length === 0) return null;
+  const stateJql = `status in (${stateNames.map(jqlString).join(", ")})`;
+  const scoped = baseScopeJql(settings);
+  return scoped ? `${scoped} AND ${stateJql}` : stateJql;
+}
+
+function baseScopeJql(settings: Settings): string {
+  const jql = settings.tracker.jql?.trim();
+  if (jql) return `(${jql})`;
+  const projectKeys = settings.tracker.projectKeys ?? [];
+  if (projectKeys.length === 0) return "";
+  return `project in (${projectKeys.map(jqlString).join(", ")})`;
+}
+
+function assigneeFilterValue(settings: Settings): string | undefined {
+  const assignee = settings.tracker.assignee?.trim();
+  if (!assignee || assignee.toLowerCase() === "me") return undefined;
+  return assignee;
+}
+
+function issueRefArgs(issueIdOrKey: string): Record<string, unknown> {
+  // External MCP servers disagree on the parameter name, so send the common aliases.
+  return { issueIdOrKey, issueId: issueIdOrKey, key: issueIdOrKey };
 }
 
 export function normalizeJiraIssue(

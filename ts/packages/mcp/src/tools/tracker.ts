@@ -186,9 +186,8 @@ async function readIssue(
     case "linear":
       return readLinearIssue(settings, issueId, fetchImpl);
     case "jira":
-      return new JiraClient(settings, { fetchImpl }).readIssue(issueId);
     case "jira-mcp":
-      return new JiraMcpClient(settings, { fetchImpl }).readIssue(issueId);
+      return jiraClient(settings, fetchImpl).readIssue(issueId);
     case "memory":
     case undefined:
       throw new Error("tracker tools are unavailable for memory tracker");
@@ -218,14 +217,9 @@ async function queryIssues(
     }
     case "linear":
       return projectIssues(await queryLinearIssues(settings, args, fetchImpl), select, args);
-    case "jira": {
-      const client = new JiraClient(settings, { fetchImpl });
-      const issues = await queryRuntimeClient(client, settings, args);
-      return projectIssues(issues, select, args);
-    }
+    case "jira":
     case "jira-mcp": {
-      const client = new JiraMcpClient(settings, { fetchImpl });
-      const issues = await queryRuntimeClient(client, settings, args);
+      const issues = await queryJiraIssues(jiraClient(settings, fetchImpl), settings, args);
       return projectIssues(issues, select, args);
     }
     case "memory":
@@ -249,9 +243,8 @@ async function updateStatus(
     case "linear":
       return updateLinearStatus(settings, issueId, status, fetchImpl);
     case "jira":
-      return new JiraClient(settings, { fetchImpl }).updateIssueStatus(issueId, status);
     case "jira-mcp":
-      return new JiraMcpClient(settings, { fetchImpl }).updateIssueStatus(issueId, status);
+      return jiraClient(settings, fetchImpl).updateIssueStatus(issueId, status);
     case "memory":
     case undefined:
       throw new Error("tracker tools are unavailable for memory tracker");
@@ -274,10 +267,8 @@ async function addComment(
       await createLinearComment(settings, issueId, body, fetchImpl);
       return;
     case "jira":
-      await new JiraClient(settings, { fetchImpl }).addComment(issueId, body);
-      return;
     case "jira-mcp":
-      await new JiraMcpClient(settings, { fetchImpl }).addComment(issueId, body);
+      await jiraClient(settings, fetchImpl).addComment(issueId, body);
       return;
     case "memory":
     case undefined:
@@ -303,32 +294,30 @@ async function createIssue(
     case "linear":
       return createLinearIssue(settings, input, fetchImpl);
     case "jira":
-      return new JiraClient(settings, { fetchImpl }).createIssue(input);
     case "jira-mcp":
-      return new JiraMcpClient(settings, { fetchImpl }).createIssue(input);
+      return jiraClient(settings, fetchImpl).createIssue(input);
     case "memory":
     case undefined:
       throw new Error("tracker tools are unavailable for memory tracker");
   }
 }
 
-async function queryRuntimeClient(
-  client: {
-    searchIssues?: (jql: string) => Promise<Issue[]>;
-    fetchIssuesByIds(ids: string[]): Promise<Issue[]>;
-    fetchIssuesByStates?(states: string[]): Promise<Issue[]>;
-    fetchCandidateIssues(): Promise<Issue[]>;
-  },
+function jiraClient(settings: Settings, fetchImpl: typeof fetch): JiraClient | JiraMcpClient {
+  return settings.tracker.kind === "jira-mcp"
+    ? new JiraMcpClient(settings, { fetchImpl })
+    : new JiraClient(settings, { fetchImpl });
+}
+
+async function queryJiraIssues(
+  client: JiraClient | JiraMcpClient,
   settings: Settings,
   args: Record<string, unknown>,
 ): Promise<Issue[]> {
   const issueIds = stringArray(args.issueIds);
   if (issueIds) return client.fetchIssuesByIds(issueIds);
-  if (typeof args.jql === "string" && args.jql.trim() !== "" && client.searchIssues) {
-    return client.searchIssues(args.jql);
-  }
+  if (typeof args.jql === "string" && args.jql.trim() !== "") return client.searchIssues(args.jql);
   const states = stringArray(args.states);
-  if (states && client.fetchIssuesByStates) return client.fetchIssuesByStates(states);
+  if (states) return client.fetchIssuesByStates(states);
   if (settings.tracker.activeStates.length > 0) return client.fetchCandidateIssues();
   return [];
 }
@@ -551,12 +540,12 @@ function localReadResultToIssue(value: unknown): Issue {
   if (!isRecord(value) || !isRecord(value.issue))
     throw new Error("local_read_issue returned no issue");
   return normalizeIssue({
-    id: requireString(value.issue, "id"),
-    identifier: requireString(value.issue, "id"),
-    title: requireString(value.issue, "title"),
+    id: requireStr(value.issue, "id"),
+    identifier: requireStr(value.issue, "id"),
+    title: requireStr(value.issue, "title"),
     description: typeof value.issue.description === "string" ? value.issue.description : null,
-    state: requireString(value.issue, "status"),
-    state_type: stateTypeFromStatus(requireString(value.issue, "status")),
+    state: requireStr(value.issue, "status"),
+    state_type: stateTypeFromStatus(requireStr(value.issue, "status")),
     labels: [],
     blockers: [],
   });
@@ -595,12 +584,6 @@ function stateTypeFromStatus(status: string): Issue["stateType"] {
 function requireStr(args: Record<string, unknown>, key: string): string {
   const value = args[key];
   if (typeof value !== "string" || value.trim() === "") throw new Error(`'${key}' is required`);
-  return value;
-}
-
-function requireString(args: Record<string, unknown>, key: string): string {
-  const value = args[key];
-  if (typeof value !== "string" || value.trim() === "") throw new Error(`${key} is required`);
   return value;
 }
 

@@ -49,6 +49,8 @@ test("Jira REST client searches scoped candidates and normalizes Jira fields", a
   assert.equal(issues[0]?.url, "https://example.atlassian.net/browse/ENG-1");
   assert.match(String(calls[0]?.body.jql), /project in \("ENG"\)/);
   assert.match(String(calls[0]?.body.jql), /status in \("To Do"\)/);
+  assert.match(String(calls[0]?.body.jql), /assignee = "account-1"/);
+  assert.match(String(calls[0]?.body.jql), /labels = "agent"/);
   assert.equal(
     calls[0]?.headers.authorization,
     `Basic ${Buffer.from("bot@example.com:jira-token").toString("base64")}`,
@@ -112,7 +114,7 @@ test("Jira MCP client calls configured external tools and normalizes returned is
   assert.deepEqual(calls[0]?.body.params, {
     name: "atlassian_search_jira",
     arguments: {
-      jql: 'project in ("ENG") AND status in ("To Do")',
+      jql: 'project in ("ENG") AND status in ("To Do") AND assignee = currentUser() AND labels = "agent"',
       fields: [
         "summary",
         "description",
