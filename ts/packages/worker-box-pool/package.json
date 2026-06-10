@@ -1,0 +1,16 @@
+{
+  "name": "@symphony/worker-box-pool",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "dependencies": {
+    "@symphony/domain": "workspace:*",
+    "@symphony/ports": "workspace:*",
+    "@symphony/ssh": "workspace:*"
+  }
+}

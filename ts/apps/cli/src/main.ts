@@ -14,6 +14,7 @@ import {
   type ParseResult,
 } from "@symphony/cli-kit";
 import { validateDispatchConfig } from "@symphony/config";
+import { checkSlotsPerMachineGate } from "@symphony/dispatch-coordinator";
 import { startObservabilityServer, type ObservabilityServerHandle } from "@symphony/server";
 import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
@@ -28,6 +29,7 @@ import {
   type RunsCommanderOptions,
 } from "./runs.js";
 import {
+  buildDispatchCoordinator,
   createTrackerClient,
   runAgentAttempt,
   runtimeAdapters,
@@ -114,13 +116,22 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     const workflow = await loadRuntimeWorkflow();
     await configureLogFile(workflow.settings.logging.logFile);
 
+    const coordinator = buildDispatchCoordinator(workflow.settings, process.env);
+    // Post-construction gate: slotsPerMachine>1 is only safe once the coordinator
+    // advertises per-run MCP endpoints AND the operator has explicitly opted into
+    // co-residence (a poisoned box fails every co-resident run on recycle). The
+    // capability is known only here, after the coordinator exists, so this is the
+    // right home for the check (validateDispatchConfig stays capability-free).
+    assertSlotsPerMachineGate(workflow.settings, coordinator);
     const runtime = new SymphonyRuntime({
       workflow,
       clientFactory: createTrackerClient,
       reloadWorkflow: loadRuntimeWorkflow,
       runner: runAgentAttempt,
+      coordinator,
       ...runtimeAdapters,
     });
+    await coordinator?.hydrate();
     let server: ObservabilityServerHandle | null = null;
     const stop = () => runtime.stop();
     process.once("SIGINT", stop);
@@ -160,6 +171,9 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       await runtime.start({ once: options.once, dryRun: options.dryRun });
     } finally {
       instance?.unmount();
+      // start() returns once stop() flips the runtime to stopped; drain paid
+      // cloud boxes before tearing down the server so they are destroyed on exit.
+      await runtime.drainBoxPool();
       await server?.stop();
     }
     return 0;
@@ -215,4 +229,33 @@ export function projectUrlForSettings(settings: Settings): string | undefined {
   const slug = settings.tracker.projectSlug?.trim();
   if (!slug) return undefined;
   return `https://linear.app/project/${encodeURIComponent(slug)}/issues`;
+}
+
+/**
+ * Post-construction blast-radius gate for `worker.box_pool.slots_per_machine > 1`
+ * (the canonical field behind the legacy `max_in_flight` key). Co-residence packs
+ * multiple run slots onto one machine, so it requires BOTH:
+ *
+ *  1. a coordinator that advertises `capabilities.perRunEndpoint === true` (each
+ *     RunSlot owns its own MCP endpoint - token + local-server + tunnel - so two
+ *     co-resident runs never share or tear out each other's endpoint), and
+ *  2. an explicit `worker.box_pool.co_residence` operator opt-in, because a single
+ *     poisoned box fails every co-resident run on recycle: widening that blast
+ *     radius is a deliberate tradeoff, not just a capability.
+ *
+ * `slotsPerMachine === 1` (the default) always passes - the gate never triggers, so
+ * the single-tenant startup path stays byte-identical. This lives in the daemon
+ * rather than {@link validateDispatchConfig} because the per-run-endpoint capability
+ * only exists once the coordinator has been constructed; the per-poll config
+ * validation must stay capability-free.
+ */
+export function assertSlotsPerMachineGate(
+  settings: Settings,
+  coordinator: { readonly capabilities: { readonly perRunEndpoint: boolean } } | undefined,
+): void {
+  // Delegate to the shared PURE predicate so this STARTUP gate and the runtime
+  // RELOAD guard enforce byte-identical rules (no drift). `null` means safe; a
+  // string is the operator-facing failure message, which the daemon throws.
+  const message = checkSlotsPerMachineGate(settings.worker.boxPool, coordinator?.capabilities);
+  if (message !== null) throw new Error(message);
 }

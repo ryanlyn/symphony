@@ -14,10 +14,11 @@ import { settingsForIssueState, validateDispatchConfig } from "@symphony/config"
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
-import { AGENT_UPDATE_TYPES } from "@symphony/domain";
+import { AGENT_UPDATE_TYPES, withDerivedMaxInFlight } from "@symphony/domain";
 import type {
   AgentKind,
   AgentUpdateType,
+  BoxPoolSettings,
   DispatchBlockEntry,
   Issue,
   RunningEntry,
@@ -25,6 +26,15 @@ import type {
   UsageTotals,
   WorkflowDefinition,
 } from "@symphony/domain";
+import type { BoxOutcome, BoxPool } from "@symphony/worker-box-pool";
+import {
+  checkSlotsPerMachineGate,
+  createDispatchCoordinator,
+  nullEndpointManager,
+  type AcquireRunSlotResult,
+  type DispatchCoordinator,
+  type RunSlot,
+} from "@symphony/dispatch-coordinator";
 
 export type RuntimeRunner = (input: Parameters<typeof runAgentAttempt>[0]) => Promise<RunResult>;
 
@@ -176,6 +186,53 @@ export interface SymphonyRuntimeOptions {
     | undefined;
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
   now?: (() => Date) | undefined;
+  /**
+   * Optional embedded box pool. When present, the orchestrator is constructed with a capacity
+   * probe backed by the pool's `canAcquire` (bypassing the static `sshHosts` selection), and
+   * each run acquires a {@link RunSlot} before the runner and releases/fails it in the run's
+   * `finally`. Absent (default) preserves the existing local / `sshHosts` behavior byte-for-byte.
+   *
+   * A bare `boxPool` is wrapped internally in a null-endpoint passthrough
+   * {@link DispatchCoordinator} (see {@link SymphonyRuntimeOptions.coordinator}), so every run
+   * drives the coordinator uniformly while a bare pool injection stays byte-identical at the
+   * runtime boundary (default `slotsPerMachine=1` + `mcpEndpoint=null`). Prefer threading a
+   * pre-built `coordinator`; `boxPool` is the low-churn path that keeps existing injection
+   * sites unchanged. When BOTH are supplied, `coordinator` wins.
+   */
+  boxPool?: BoxPool | undefined;
+  /**
+   * Optional embedded dispatch coordinator wrapping a machine {@link BoxPool} plus an injected
+   * per-run MCP endpoint manager. When present it governs capacity and mints a {@link RunSlot}
+   * per run exactly as a wrapped {@link SymphonyRuntimeOptions.boxPool} would; the daemon builds
+   * it once (a reload-surviving singleton) via `buildDispatchCoordinator`. Takes precedence over
+   * `boxPool` when both are supplied.
+   */
+  coordinator?: DispatchCoordinator | undefined;
+}
+
+/**
+ * Classifies a run error into a box outcome. Returns `poison` ONLY for typed box-transport faults
+ * (the box is bad and must be recycled); everything else is `healthy` (a local/config/agent fault
+ * that left the box reusable). Matches typed PREFIXES, not arbitrary substrings, so that
+ * `invalid_ssh_timeout` (a local config fault) is never mistaken for the `ssh_timeout` transport
+ * fault even though one is a substring of the other.
+ */
+const POISON_BOX_ERROR_PREFIXES = [
+  "ssh_timeout:",
+  "remote_home_lookup_failed:",
+  "workspace_prepare_failed:",
+  // A REMOTE workspace hook (run over SSH against the box's workerHost) that exits
+  // non-zero throws `workspace hook failed with status N: ...`. That is a box-side
+  // fault, so it poisons the box. The LOCAL hook failure string is
+  // `hook failed with status N` (no `workspace ` prefix) and stays healthy.
+  "workspace hook failed with status ",
+] as const;
+
+export function classifyBoxOutcome(error: unknown): BoxOutcome {
+  const message = error instanceof Error ? error.message : String(error);
+  return POISON_BOX_ERROR_PREFIXES.some((prefix) => message.startsWith(prefix))
+    ? "poison"
+    : "healthy";
 }
 
 export interface RuntimeStartOptions {
@@ -190,6 +247,12 @@ export interface PollOptions {
 
 class ActiveRunHandle {
   readonly controller = new AbortController();
+  /**
+   * Set when the run is force-finished externally (e.g. a stall reconciliation aborts it). The
+   * box pool reads this so a stall-finished run poisons its box even though the runner surfaces a
+   * generic `agent_run_aborted` (which would otherwise classify as healthy).
+   */
+  reason: "stalled" | null = null;
 
   constructor(
     readonly key: string,
@@ -209,7 +272,8 @@ class ActiveRunHandle {
     this.controller.abort();
   }
 
-  finishExternally(): void {
+  finishExternally(reason: "stalled" | null = null): void {
+    if (reason) this.reason = reason;
     this.abort();
     this.release();
   }
@@ -240,11 +304,41 @@ export class SymphonyRuntime {
   private startupCleanupDone = false;
   private nextRunNumber = 1;
   private pollInProgress: Promise<void> | null = null;
+  private boxPoolDrained = false;
+  /**
+   * The reload-surviving coordinator singleton. Built ONCE here: either the
+   * pre-built `input.coordinator` (preferred), or a null-endpoint passthrough
+   * wrapping a bare `input.boxPool` (the low-churn path that keeps every existing
+   * boxPool-injecting site byte-identical at the runtime boundary). `undefined`
+   * when neither is supplied (the static/local path, byte-identical to today).
+   */
+  private readonly coordinator: DispatchCoordinator | undefined;
 
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
-    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings);
+    // Prefer the pre-built coordinator; otherwise wrap a bare boxPool in a
+    // null-endpoint passthrough so `acquireRunSlot`/`capacityProbe`/`reconcile`/
+    // `drain` drive a uniform surface (default slotsPerMachine=1 + mcpEndpoint=null
+    // make this a 1:1 passthrough over the pool). Built once: a reload reconciles
+    // it in place, never reconstructs it.
+    this.coordinator =
+      input.coordinator ?? wrapBoxPoolInCoordinator(input.boxPool, input.workflow.settings);
+    const coordinator = this.coordinator;
+    this.orchestrator =
+      input.orchestrator ??
+      new Orchestrator(
+        input.workflow.settings,
+        undefined,
+        undefined,
+        // The probe is installed for the orchestrator's lifetime whenever a coordinator exists,
+        // but a reload can disable the underlying pool (draining it to zero) without tearing the
+        // probe down. `governs` tracks whether the live pool still governs capacity so a disabled
+        // pool falls through to static/local execution instead of permanently blocking dispatch as
+        // worker_host_capacity. The coordinator builds its probe ONCE (stable identity across
+        // reconcile) and re-reads live pool state each call.
+        coordinator?.capacityProbe(),
+      );
     this.runner = input.runner ?? runAgentAttempt;
     this.now = input.now ?? (() => new Date());
     this.appStatus = "idle";
@@ -304,6 +398,18 @@ export class SymphonyRuntime {
     for (const handle of this.activeRuns.values()) handle.abort();
     this.retryScheduler.stop();
     this.emit();
+  }
+
+  /**
+   * Drains the box pool once (idempotent). `stop()` stays synchronous (it only flips `stopped` and
+   * aborts handles), so this is invoked by the daemon's `finally` AFTER `start()` resolves to
+   * destroy paid cloud boxes before process exit. A no-op when no pool is configured.
+   */
+  async drainBoxPool(): Promise<void> {
+    if (this.boxPoolDrained) return;
+    this.boxPoolDrained = true;
+    const deadlineMs = this.workflow.settings.worker.boxPool?.drainDeadlineMs ?? 30_000;
+    await this.coordinator?.drain({ deadlineMs });
   }
 
   async pollOnce(options: PollOptions = {}): Promise<void> {
@@ -390,6 +496,7 @@ export class SymphonyRuntime {
       runId,
       claim.workerHost ?? null,
       handle,
+      claim.affinityHost ?? null,
     );
     this.inFlight.add(run);
     void run.finally(() => {
@@ -418,15 +525,85 @@ export class SymphonyRuntime {
     runId: string,
     workerHost: string | null,
     handle: ActiveRunHandle,
+    affinityHost: string | null = null,
   ): Promise<void> {
     const startedAt = this.now().toISOString();
+    let effectiveWorkerHost = workerHost;
+    let slot: RunSlot | null = null;
+    let boxOutcome: BoxOutcome = "healthy";
+    // Only acquire a slot while the coordinator's pool is actually ENABLED (governing capacity). A
+    // reload can disable the pool (draining it to zero) without tearing the probe down; once
+    // disabled the orchestrator's claim takes the static/local path (a real host or null), so here
+    // we skip the acquire entirely and run with that workerHost rather than abandoning the claim
+    // against a pool that will only ever report no_capacity.
+    if (this.coordinator && this.coordinator.isEnabled()) {
+      let acquired: AcquireRunSlotResult;
+      try {
+        acquired = await this.coordinator.acquireRunSlot({
+          issueId: issue.id,
+          slotIndex,
+          labels: issue.labels,
+          affinityKey: affinityHost,
+          timeoutMs: this.workflow.settings.worker.boxPool?.acquireTimeoutMs ?? 30_000,
+          signal: handle.signal,
+          // Thread the FULL workflow Settings (with server.port) so the per-run
+          // endpoint manager can build the remote endpoint; the BoxPoolSettings the
+          // coordinator holds has no server.port and would fail every acquire.
+          settings: this.workflow.settings,
+          // Only the ACP/Claude executor consumes the per-run /claude-mcp endpoint
+          // over the reverse tunnel; the Codex/appserver executor runs its dynamic
+          // tools in-process and IGNORES it. Tell the coordinator so a Codex run
+          // never opens an endpoint (nor takes a tunnel-ceiling reservation) it
+          // would never use - otherwise a Codex box-pool run could be SKIPPED by an
+          // open failure / port-forward restriction / maxConcurrentTunnels.
+          needsMcpEndpoint: this.runNeedsMcpEndpoint(issue, agentKind),
+        });
+      } catch (error) {
+        // acquireRunSlot() REJECTED outside the no_capacity result path (ledger /
+        // filesystem / provider / endpoint-open fault). Handle it like a failed
+        // dispatch rather than letting the rejection strand the claim: abandon the
+        // claim so the slot is re-evaluated next poll, release the active handle,
+        // surface a clear error event (never swallowed), and return WITHOUT running
+        // or recording history. No slot was bound, so there is nothing to settle.
+        this.addEvent(
+          "dispatch_skipped",
+          `${issue.identifier} box_pool_acquire_error ${errorMessage(error)}`,
+        );
+        this.orchestrator.abandonClaim(issue.id, slotIndex);
+        handle.release();
+        return;
+      }
+      if (acquired.status !== "bound") {
+        // No capacity within the acquire window (EVERY typed no_capacity reason
+        // maps to the SAME event - no per-reason differentiation, matching today):
+        // un-claim the slot (NO retry/backoff) so the next poll re-evaluates
+        // capacity via canAcquire(); never record history for a run that did not
+        // start.
+        this.addEvent("dispatch_skipped", `${issue.identifier} worker_host_capacity`);
+        this.orchestrator.abandonClaim(issue.id, slotIndex);
+        handle.release();
+        return;
+      }
+      slot = acquired.slot;
+      effectiveWorkerHost = slot.workerHost;
+      // Overwrite the pending:// sentinel with the real slot address BEFORE the
+      // runner so the snapshot/history downstream see the real worker host.
+      this.orchestrator.setWorkerHost(issue.id, slotIndex, effectiveWorkerHost);
+    }
+    const heartbeatSlot = slot;
     try {
       const result = await this.runner({
         issue,
         workflow: this.workflow,
-        workerHost,
+        workerHost: effectiveWorkerHost,
         slotIndex,
+        // Thread the bound slot's per-run MCP endpoint (or null on the local /
+        // non-pool / null-manager path) into the runner so acp consumes it and
+        // SKIPS its own acquire+release; codex ignores it. The coordinator owns the
+        // whole lease and closes it via slot.release in this run's finally.
+        mcpEndpoint: slot?.mcpEndpoint ?? null,
         onUpdate: (update) => {
+          heartbeatSlot?.heartbeat();
           this.orchestrator.applyUpdate(issue.id, slotIndex, update);
           this.addEvent(update.type, `${issue.identifier} ${update.type}`);
         },
@@ -471,6 +648,11 @@ export class SymphonyRuntime {
       });
       this.addEvent("run_completed", `${issue.identifier} turns=${result.turnCount}`);
     } catch (error) {
+      // Classify the box outcome BEFORE any early return so a run finished
+      // externally (e.g. a stall reconciliation aborted it -> the runner throws
+      // `agent_run_aborted`) still poisons the box: a stall-finished run is
+      // treated as poison via `handle.reason`, otherwise typed transport faults.
+      boxOutcome = handle.reason === "stalled" ? "poison" : classifyBoxOutcome(error);
       if (!handle.isActive) return;
       const entry = this.orchestrator
         .snapshot()
@@ -508,7 +690,41 @@ export class SymphonyRuntime {
       this.addEvent("run_failed", `${issue.identifier} ${errorMessage(error)}`);
     } finally {
       handle.release();
+      if (slot) {
+        // A stall reconciliation force-finished this run (handle.reason='stalled').
+        // The CATCH path already poisons on a rejected runner, but a runner that
+        // ignores the abort - or races to a SUCCESSFUL resolve after finishExternally -
+        // takes the success path's early return with boxOutcome still 'healthy'. Poison
+        // the box here, BEFORE settling, whenever the run was stall-finished,
+        // independent of whether the runner resolved or rejected: a stalled box must
+        // never be released healthy and reused.
+        if (handle.reason === "stalled") boxOutcome = "poison";
+        // Settle the slot exactly once: close THIS slot's endpoint (a no-op in
+        // STEP 1's null-endpoint passthrough) THEN settle the wrapped lease. Lease
+        // ops are leaseId + settled + box-state guarded inside the pool, so a stale
+        // generation's late resolve is a no-op that never touches inFlight.
+        if (boxOutcome === "poison") {
+          await slot.fail("box_poisoned");
+        } else {
+          await slot.release("healthy");
+        }
+      }
     }
+  }
+
+  /**
+   * Whether the run for `agentKind` (resolved against the issue's effective per-state
+   * settings) actually consumes a per-run MCP endpoint. Only the ACP executor reads
+   * the threaded `mcpEndpoint` (its `/claude-mcp` server is reached over the reverse
+   * tunnel); the Codex/appserver executor runs its dynamic tools in-process and
+   * ignores it. Mirrors the daemon's `agents[kind].executor` lookup. An unknown kind
+   * (no `agents` record) defaults to needing the endpoint - the conservative ACP
+   * behaviour - so an unrecognized backend never silently loses its endpoint.
+   */
+  private runNeedsMcpEndpoint(issue: Issue, agentKind: AgentKind): boolean {
+    const effective = settingsForIssueState(this.workflow.settings, issue.state);
+    const executor = effective.agents[agentKind]?.executor;
+    return executor !== "appserver";
   }
 
   private async fetchIssueOrSelf(issue: Issue): Promise<Issue> {
@@ -518,8 +734,41 @@ export class SymphonyRuntime {
 
   private async reloadWorkflowIfConfigured(): Promise<void> {
     if (!this.input.reloadWorkflow) return;
+    const prevBoxPool = this.input.workflow.settings.worker.boxPool;
     try {
       const workflow = await this.input.reloadWorkflow();
+      // Enforce the SAME slots-per-machine co-residence gate the daemon runs at
+      // startup. The startup gate runs ONCE; without this a live daemon could
+      // reload max_in_flight 1 -> >1 WITHOUT the per-run-endpoint capability OR the
+      // co_residence opt-in, silently widening the shared-machine blast radius the
+      // startup gate rejects. Throwing here lands in the catch below: last-good
+      // settings are KEPT (not applied, the live pool is NOT reconciled onto the
+      // unsafe settings) and a workflow_reload_failed event carries the gate's
+      // message - mirroring the anti-double-capacity guard behavior.
+      const gateMessage = checkSlotsPerMachineGate(
+        workflow.settings.worker.boxPool,
+        this.coordinator?.capabilities,
+      );
+      if (gateMessage !== null) throw new Error(gateMessage);
+      // TRANSACTIONAL reload: run EVERY throwing side effect FIRST (the gate above,
+      // then the coordinator/pool reconcile), and ONLY swap the runtime settings
+      // (this.input.workflow + this.orchestrator.settings + the client) AFTER they
+      // ALL succeed. If reconcile throws (e.g. provider unavailable / invalid
+      // providerOptions) the catch below leaves BOTH the runtime settings AND the
+      // pool/coordinator state on the PREVIOUS config - last-good is never partially
+      // applied, so dispatch can never use settings that do not match the live pool.
+      //
+      // The coordinator (and its pool) is a reload-surviving singleton: diff
+      // prev-vs-next box-pool settings instead of being reconstructed. When the
+      // reload REMOVES the box_pool block entirely (next === undefined), reconcile
+      // to a disabled-equivalent of the prior settings so the live pool drains to
+      // zero instead of leaking its (paid) boxes unmanaged. A present block (even
+      // one with `enabled: false`) keeps the existing path: reconcile handles the
+      // disable-and-drain itself.
+      if (this.coordinator) {
+        const next = workflow.settings.worker.boxPool ?? disabledBoxPoolSettings(prevBoxPool);
+        if (next) this.coordinator.reconcile(next);
+      }
       this.input.workflow = workflow;
       this.orchestrator.settings = workflow.settings;
       if (!this.input.client && this.input.clientFactory) {
@@ -527,6 +776,9 @@ export class SymphonyRuntime {
       }
       this.addEvent("workflow_reloaded", workflow.path);
     } catch (error) {
+      // Keeps last-good settings. errorMessage(error) already surfaces the
+      // anti-double-capacity guard message so operators learn why a reload that
+      // tried to enable the pool alongside ssh_hosts did not take effect.
       this.addEvent("workflow_reload_failed", errorMessage(error));
     }
   }
@@ -544,13 +796,13 @@ export class SymphonyRuntime {
     for (const entry of snapshot.running)
       tracked.set(entry.issue.id, {
         identifier: entry.issue.identifier,
-        workerHost: entry.workerHost,
+        workerHost: cleanupWorkerHost(entry.workerHost),
         workspacePath: entry.workspacePath,
       });
     for (const entry of snapshot.retrying)
       tracked.set(entry.issueId, {
         identifier: entry.identifier,
-        workerHost: entry.workerHost,
+        workerHost: cleanupWorkerHost(entry.workerHost),
         workspacePath: entry.workspacePath,
       });
     if (tracked.size === 0) return;
@@ -621,7 +873,7 @@ export class SymphonyRuntime {
       if (!entry) continue;
       this.orchestrator.finish(entry.issue.id, entry.slotIndex, true, error, "failure");
       this.syncRetryTimer(entry.issue.id);
-      activeHandle?.finishExternally();
+      activeHandle?.finishExternally("stalled");
       await this.invalidateResumeStateForRunningEntry(currentEntry, "stalled");
       this.recordHistory({
         id: runId,
@@ -894,6 +1146,75 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Normalizes a worker host for workspace/resume-state cleanup. During the claim->acquire window a
+ * box-pool slot carries the `pending://<id>/<slot>` sentinel rather than a real address; the cleanup
+ * sink treats any truthy workerHost as a remote box and would SSH to the bogus sentinel host (a
+ * wasted, always-failing round-trip). Mapping the sentinel to `null` makes cleanup stay local.
+ */
+function cleanupWorkerHost(workerHost: string | null | undefined): string | null | undefined {
+  return workerHost?.startsWith("pending://") ? null : workerHost;
+}
+
 function durationMs(startedAt: string, endedAt: string): number {
   return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
+}
+
+/**
+ * Builds a disabled-equivalent of the prior box-pool settings so a reload that REMOVES the
+ * `worker.box_pool` block (next === undefined) can still reconcile the live pool to a drain
+ * rather than leaking it. Preserves `drainDeadlineMs` from the prior settings so the drain
+ * honors the operator's configured deadline. Returns `undefined` when there were no prior
+ * settings (nothing to drain).
+ */
+function disabledBoxPoolSettings(prev: BoxPoolSettings | undefined): BoxPoolSettings | undefined {
+  if (!prev) return undefined;
+  return { ...prev, enabled: false };
+}
+
+/**
+ * Wraps a bare {@link BoxPool} in a null-endpoint passthrough {@link DispatchCoordinator} so the
+ * runtime drives every run through the uniform coordinator surface while a bare-pool injection
+ * stays byte-identical at the runtime boundary. STEP 1's null manager mints nothing
+ * (`perRunEndpoint=false`, every `RunSlot.mcpEndpoint=null`), so this is a 1:1 passthrough over
+ * the pool: `acquireRunSlot` delegates to `pool.acquire`, settle delegates straight to the
+ * `BoxLease`, and `reconcile`/`drain`/`capacityProbe` forward verbatim. Returns `undefined` when
+ * no pool is supplied (the static/local path).
+ *
+ * `settings` only needs to satisfy the coordinator's constructor; in STEP 1 the coordinator does
+ * not read it past construction (the pool owns live settings), so the live `worker.boxPool`
+ * settings are passed when present and a disabled placeholder otherwise.
+ */
+function wrapBoxPoolInCoordinator(
+  pool: BoxPool | undefined,
+  settings: WorkflowDefinition["settings"],
+): DispatchCoordinator | undefined {
+  if (!pool) return undefined;
+  // A bare boxPool is only ever injected alongside a configured `worker.box_pool`
+  // block, so its settings are present in practice. The disabled placeholder is a
+  // defensive fallback for the never-in-practice case; STEP 1's coordinator does
+  // not read `settings` past construction (the pool owns live settings), so the
+  // exact values are irrelevant to behavior - only the shape must satisfy the
+  // constructor.
+  const boxPoolSettings: BoxPoolSettings =
+    settings.worker.boxPool ??
+    withDerivedMaxInFlight({
+      enabled: false,
+      provider: "fake",
+      min: 0,
+      max: 0,
+      warm: 0,
+      slotsPerMachine: 1,
+      ttlMs: 0,
+      idleReapMs: 0,
+      acquireTimeoutMs: 0,
+      reapIntervalMs: 0,
+      staleHeartbeatMs: 0,
+      drainDeadlineMs: 0,
+    });
+  return createDispatchCoordinator({
+    pool,
+    mcpEndpointManager: nullEndpointManager,
+    settings: boxPoolSettings,
+  });
 }

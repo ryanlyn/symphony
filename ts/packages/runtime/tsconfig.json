@@ -20,6 +20,9 @@
       "path": "../dispatch"
     },
     {
+      "path": "../dispatch-coordinator"
+    },
+    {
       "path": "../domain"
     },
     {
@@ -36,6 +39,9 @@
     },
     {
       "path": "../retry-scheduler"
+    },
+    {
+      "path": "../worker-box-pool"
     }
   ]
 }

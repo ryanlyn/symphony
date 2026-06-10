@@ -25,6 +25,7 @@
     "yaml": "^2.8.0",
     "zod": "^4.4.3",
     "@symphony/dispatch": "workspace:*",
+    "@symphony/dispatch-coordinator": "workspace:*",
     "@symphony/policies": "workspace:*",
     "@symphony/issue": "workspace:*",
     "@symphony/orchestrator": "workspace:*",
@@ -32,6 +33,7 @@
     "@symphony/agent-runner": "workspace:*",
     "@symphony/projections": "workspace:*",
     "@symphony/retry-scheduler": "workspace:*",
+    "@symphony/worker-box-pool": "workspace:*",
     "@symphony/domain": "workspace:*"
   }
 }

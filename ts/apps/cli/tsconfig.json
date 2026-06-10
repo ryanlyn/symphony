@@ -29,6 +29,9 @@
       "path": "../../packages/dispatch"
     },
     {
+      "path": "../../packages/dispatch-coordinator"
+    },
+    {
       "path": "../../packages/domain"
     },
     {
@@ -54,6 +57,12 @@
     },
     {
       "path": "../../packages/policies"
+    },
+    {
+      "path": "../../packages/ports"
+    },
+    {
+      "path": "../../packages/worker-box-pool"
     },
     {
       "path": "../../packages/presenter"

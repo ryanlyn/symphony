@@ -44,6 +44,21 @@ export function createState(): OrchestratorState {
   };
 }
 
+/**
+ * Optional capacity gate supplied by a configured box pool. The probe is installed for the
+ * orchestrator's LIFETIME whenever a pool object exists, but a config reload can DISABLE or REMOVE
+ * the pool (it drains to zero) without the probe being torn down. {@link CapacityProbe.governs}
+ * reports whether the live pool currently governs capacity: only while it does are worker-host
+ * decisions delegated to {@link CapacityProbe.canAcquire} and the static `sshHosts` selection
+ * bypassed (deferring the real address to a later {@link Orchestrator.setWorkerHost}). Once it no
+ * longer governs (a disabled pool), both paths fall through to the normal static/local logic so a
+ * reload that turns the pool off cannot permanently block dispatch as `worker_host_capacity`.
+ */
+export interface CapacityProbe {
+  governs(): boolean;
+  canAcquire(): boolean;
+}
+
 export class Orchestrator {
   readonly state: OrchestratorState;
 
@@ -51,6 +66,7 @@ export class Orchestrator {
     public settings: Settings,
     private readonly clock: ClockPort = systemClock,
     state: OrchestratorState = createState(),
+    private readonly capacityProbe?: CapacityProbe,
   ) {
     this.state = state;
   }
@@ -113,8 +129,20 @@ export class Orchestrator {
       retry?.slotIndex,
     );
     if (slotIndex === null) return null;
-    const workerHost = this.selectWorkerHost();
-    if (workerHost === undefined) return null;
+    let workerHost: string | null;
+    let affinityHost: string | null | undefined;
+    if (this.capacityProbe?.governs()) {
+      // The pool governs capacity: defer the real address to the box-pool acquire
+      // via the pending:// sentinel and carry the prior host as the retry affinity.
+      workerHost = `pending://${issue.id}/${slotIndex}`;
+      affinityHost = retry?.workerHost ?? null;
+    } else {
+      // No pool (or a disabled pool whose probe no longer governs): take the normal
+      // static/local selection, which yields null/local when ssh_hosts is empty.
+      const selected = this.selectWorkerHost();
+      if (selected === undefined) return null;
+      workerHost = selected;
+    }
 
     const effective = settingsForIssueState(this.settings, issue.state);
     const size = ensembleSize(issue) ?? this.settings.agent.ensembleSize;
@@ -126,6 +154,7 @@ export class Orchestrator {
       ensembleSize: size,
       agentKind: effective.agent.kind,
       workerHost,
+      affinityHost,
       workspacePath: null,
       sessionId: null,
       resumeId: null,
@@ -147,6 +176,28 @@ export class Orchestrator {
     return entry;
   }
 
+  /**
+   * Overwrites the `pending://` sentinel on a running slot with the real worker host resolved by the
+   * box pool. No-op when the slot is no longer running (e.g. it was abandoned or finished).
+   */
+  setWorkerHost(issueId: string, slotIndex: number, host: string): void {
+    const entry = this.state.running.get(slotKey(issueId, slotIndex));
+    if (!entry) return;
+    entry.workerHost = host;
+  }
+
+  /**
+   * Drops the running + claimed records for a slot without recording any retry or backoff, leaving
+   * the slot immediately re-claimable on the next tick. Used when a box-pool acquire reports no
+   * capacity so the slot is re-evaluated via {@link CapacityProbe.canAcquire}; the inverse of
+   * {@link Orchestrator.claim} and distinct from {@link Orchestrator.finish}, which schedules backoff.
+   */
+  abandonClaim(issueId: string, slotIndex: number): void {
+    const key = slotKey(issueId, slotIndex);
+    this.state.running.delete(key);
+    this.state.claimed.delete(key);
+  }
+
   private selectWorkerHost(): string | null | undefined {
     const counts = new Map<string, number>();
     for (const entry of this.state.running.values()) {
@@ -161,6 +212,11 @@ export class Orchestrator {
   }
 
   private workerCapacityAvailable(): boolean {
+    // Only honor the probe while the live pool actually governs capacity. A disabled
+    // pool's probe lingers but reports canAcquire() === false; deferring to it would
+    // permanently block dispatch as worker_host_capacity, so fall through to the
+    // static/local logic (local has capacity, ssh_hosts honored) instead.
+    if (this.capacityProbe?.governs()) return this.capacityProbe.canAcquire();
     if (this.settings.worker.sshHosts.length === 0) return true;
     return this.selectWorkerHost() !== undefined;
   }

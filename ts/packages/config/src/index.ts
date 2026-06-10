@@ -6,6 +6,9 @@ import type {
   AgentSettings,
   AcpAgentConfig,
   AppServerAgentConfig,
+  BoxPoolProvider,
+  BoxPoolSettings,
+  BoxPoolSettingsInput,
   ClaudeSettings,
   CodexSettings,
   HooksSettings,
@@ -13,8 +16,15 @@ import type {
   Settings,
   TrackerKind,
   TrackerSettings,
+  WorkerSettings,
 } from "@symphony/domain";
-import { CODEX_APPROVAL_POLICY_NAMES, CODEX_SANDBOX_MODES, TRACKER_KINDS } from "@symphony/domain";
+import {
+  CODEX_APPROVAL_POLICY_NAMES,
+  CODEX_SANDBOX_MODES,
+  PROVIDER_KINDS,
+  TRACKER_KINDS,
+  withDerivedMaxInFlight,
+} from "@symphony/domain";
 
 const appServerAgentRecordSchema = z
   .object({
@@ -68,11 +78,41 @@ const trackerRawSchema = z
 
 const pollingRawSchema = z.object({ intervalMs: z.unknown().optional() }).strict();
 const workspaceRawSchema = z.object({ root: z.unknown().optional() }).strict();
+const rawRecordSchema = z.record(z.string(), z.unknown());
 const workerRawSchema = z
   .object({
     sshHosts: z.unknown().optional(),
     sshTimeoutMs: z.unknown().optional(),
     maxConcurrentAgentsPerHost: z.unknown().optional(),
+    boxPool: z.unknown().optional(),
+  })
+  .strict();
+const boxPoolSpendRawSchema = z
+  .object({
+    maxConcurrentBoxes: z.unknown().optional(),
+    maxBoxSeconds: z.unknown().optional(),
+    dailyBoxSeconds: z.unknown().optional(),
+  })
+  .strict();
+const boxPoolRawSchema = z
+  .object({
+    enabled: z.unknown().optional(),
+    provider: z.unknown().optional(),
+    min: z.unknown().optional(),
+    max: z.unknown().optional(),
+    warm: z.unknown().optional(),
+    maxInFlight: z.unknown().optional(),
+    ttlMs: z.unknown().optional(),
+    idleReapMs: z.unknown().optional(),
+    acquireTimeoutMs: z.unknown().optional(),
+    reapIntervalMs: z.unknown().optional(),
+    staleHeartbeatMs: z.unknown().optional(),
+    drainDeadlineMs: z.unknown().optional(),
+    maxBoxesPerIssue: z.unknown().optional(),
+    coResidence: z.unknown().optional(),
+    maxConcurrentTunnels: z.unknown().optional(),
+    spend: boxPoolSpendRawSchema.optional(),
+    providerOptions: rawRecordSchema.optional(),
   })
   .strict();
 const hooksRawSchema = z
@@ -128,7 +168,6 @@ const serverRawSchema = z
   })
   .strict();
 const loggingRawSchema = z.object({ logFile: z.unknown().optional() }).strict();
-const rawRecordSchema = z.record(z.string(), z.unknown());
 const partialAgentRawSchema = agentRawSchema.partial().strict();
 const partialCodexRawSchema = codexRawSchema.partial().strict();
 const partialClaudeRawSchema = claudeRawSchema.partial().strict();
@@ -187,6 +226,29 @@ const workerAliases = {
   ssh_hosts: "sshHosts",
   ssh_timeout_ms: "sshTimeoutMs",
   max_concurrent_agents_per_host: "maxConcurrentAgentsPerHost",
+  box_pool: "boxPool",
+};
+// NOTE: providerOptions (provider_options) is intentionally NOT alias-normalized.
+// The normalizer is a flat per-key map that does not recurse into nested maps, so
+// provider_options is passed through to providers verbatim (snake_case preserved).
+// StaticSshBoxProvider therefore accepts both ssh_hosts and sshHosts.
+const boxPoolAliases = {
+  max_in_flight: "maxInFlight",
+  ttl_ms: "ttlMs",
+  idle_reap_ms: "idleReapMs",
+  acquire_timeout_ms: "acquireTimeoutMs",
+  reap_interval_ms: "reapIntervalMs",
+  stale_heartbeat_ms: "staleHeartbeatMs",
+  drain_deadline_ms: "drainDeadlineMs",
+  max_boxes_per_issue: "maxBoxesPerIssue",
+  co_residence: "coResidence",
+  max_concurrent_tunnels: "maxConcurrentTunnels",
+  provider_options: "providerOptions",
+};
+const boxPoolSpendAliases = {
+  max_concurrent_boxes: "maxConcurrentBoxes",
+  max_box_seconds: "maxBoxSeconds",
+  daily_box_seconds: "dailyBoxSeconds",
 };
 const hooksAliases = {
   after_create: "afterCreate",
@@ -346,6 +408,11 @@ export function parseConfig(
       "worker.max_concurrent_agents_per_host",
     );
   }
+  const boxPool = parseBoxPool(workerRaw.boxPool);
+  if (boxPool) settings.worker.boxPool = boxPool;
+  if (boxPool?.enabled && settings.worker.sshHosts.length > 0) {
+    throw new Error("worker.box_pool.enabled cannot be combined with worker.ssh_hosts");
+  }
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   settings.agent = parseAgent(settings.agent, parsed.agent ?? {});
@@ -500,6 +567,149 @@ function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings 
     beforeRemove: optionalString(hooksRaw.beforeRemove),
     timeoutMs: positiveInt(hooksRaw.timeoutMs, defaults.timeoutMs, "hooks.timeout_ms"),
   };
+}
+
+function parseBoxPool(raw: unknown): BoxPoolSettings | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const boxPoolRaw = parseBoxPoolSchema(raw);
+  const providerOptions = optionalMap(
+    boxPoolRaw.providerOptions,
+    null,
+    "worker.box_pool.provider_options",
+  );
+
+  const enabled = booleanValue(boxPoolRaw.enabled, false);
+  const provider = boxPoolProviderValue(boxPoolRaw.provider, "fake", "worker.box_pool.provider");
+  const min = nonNegativeIntWithFallback(boxPoolRaw.min, 0, "worker.box_pool.min");
+  const max = positiveInt(boxPoolRaw.max, 1, "worker.box_pool.max");
+  const warm = nonNegativeIntWithFallback(boxPoolRaw.warm, 1, "worker.box_pool.warm");
+
+  if (max < min) {
+    throw new Error("worker.box_pool.max must be >= worker.box_pool.min");
+  }
+  if (warm > max) {
+    throw new Error("worker.box_pool.warm must be <= worker.box_pool.max");
+  }
+
+  // `maxInFlight` is a derived getter over `slotsPerMachine` (domain `withDerivedMaxInFlight`),
+  // so the constructed object carries exactly ONE own field (`slotsPerMachine`). The config key
+  // `worker.box_pool.max_in_flight` is unchanged; it parses into `slotsPerMachine`.
+  const input: BoxPoolSettingsInput = {
+    enabled,
+    provider,
+    min,
+    max,
+    warm,
+    slotsPerMachine: positiveInt(boxPoolRaw.maxInFlight, 1, "worker.box_pool.max_in_flight"),
+    ttlMs: positiveInt(boxPoolRaw.ttlMs, 3_600_000, "worker.box_pool.ttl_ms"),
+    idleReapMs: positiveInt(boxPoolRaw.idleReapMs, 300_000, "worker.box_pool.idle_reap_ms"),
+    acquireTimeoutMs: positiveInt(
+      boxPoolRaw.acquireTimeoutMs,
+      30_000,
+      "worker.box_pool.acquire_timeout_ms",
+    ),
+    reapIntervalMs: positiveInt(
+      boxPoolRaw.reapIntervalMs,
+      15_000,
+      "worker.box_pool.reap_interval_ms",
+    ),
+    staleHeartbeatMs: positiveInt(
+      boxPoolRaw.staleHeartbeatMs,
+      600_000,
+      "worker.box_pool.stale_heartbeat_ms",
+    ),
+    drainDeadlineMs: positiveInt(
+      boxPoolRaw.drainDeadlineMs,
+      30_000,
+      "worker.box_pool.drain_deadline_ms",
+    ),
+  };
+
+  const settings = withDerivedMaxInFlight(input);
+
+  if (boxPoolRaw.maxBoxesPerIssue !== undefined) {
+    settings.maxBoxesPerIssue = positiveInt(
+      boxPoolRaw.maxBoxesPerIssue,
+      1,
+      "worker.box_pool.max_boxes_per_issue",
+    );
+  }
+
+  // Co-residence opt-in + tunnel ceiling stay absent unless explicitly set, so a default config's
+  // settings object keeps exactly the same own fields (the absent-box_pool deep-equal-clone holds).
+  if (boxPoolRaw.coResidence !== undefined) {
+    settings.coResidence = booleanValue(boxPoolRaw.coResidence, false);
+  }
+  if (boxPoolRaw.maxConcurrentTunnels !== undefined) {
+    settings.maxConcurrentTunnels = positiveInt(
+      boxPoolRaw.maxConcurrentTunnels,
+      1,
+      "worker.box_pool.max_concurrent_tunnels",
+    );
+  }
+
+  const spend = parseBoxPoolSpend(boxPoolRaw.spend);
+  if (spend) settings.spend = spend;
+  if (providerOptions) settings.providerOptions = providerOptions;
+
+  if (enabled && provider === "static-ssh" && !hasStaticSshHosts(providerOptions)) {
+    throw new Error("worker.box_pool.provider_options.ssh_hosts is required for static-ssh");
+  }
+
+  return settings;
+}
+
+function parseBoxPoolSpend(raw: unknown): BoxPoolSettings["spend"] {
+  if (raw === undefined || raw === null) return undefined;
+  const spendRaw = raw as Record<string, unknown>;
+  const spend: NonNullable<BoxPoolSettings["spend"]> = {};
+  if (spendRaw.maxConcurrentBoxes !== undefined) {
+    spend.maxConcurrentBoxes = positiveInt(
+      spendRaw.maxConcurrentBoxes,
+      1,
+      "worker.box_pool.spend.max_concurrent_boxes",
+    );
+  }
+  if (spendRaw.maxBoxSeconds !== undefined) {
+    spend.maxBoxSeconds = positiveInt(
+      spendRaw.maxBoxSeconds,
+      1,
+      "worker.box_pool.spend.max_box_seconds",
+    );
+  }
+  if (spendRaw.dailyBoxSeconds !== undefined) {
+    spend.dailyBoxSeconds = positiveInt(
+      spendRaw.dailyBoxSeconds,
+      1,
+      "worker.box_pool.spend.daily_box_seconds",
+    );
+  }
+  return spend;
+}
+
+function parseBoxPoolSchema(raw: unknown): z.infer<typeof boxPoolRawSchema> {
+  const result = boxPoolRawSchema.safeParse(raw);
+  if (result.success) return result.data;
+  throw new Error(configErrorMessage(result.error, "worker.box_pool"));
+}
+
+function hasStaticSshHosts(providerOptions: Record<string, unknown> | null): boolean {
+  if (!providerOptions) return false;
+  const hosts = providerOptions.ssh_hosts ?? providerOptions.sshHosts;
+  return (
+    Array.isArray(hosts) && hosts.length > 0 && hosts.every((host) => typeof host === "string")
+  );
+}
+
+function boxPoolProviderValue(
+  value: unknown,
+  fallback: BoxPoolProvider,
+  label: string,
+): BoxPoolProvider {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "string") throw new Error(`${label} must be a string`);
+  if (isOneOf(value, PROVIDER_KINDS)) return value;
+  throw new Error(`unsupported ${label}: ${value}`);
 }
 
 function parseAgent(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
@@ -788,7 +998,7 @@ function cloneSettings(settings: Settings): Settings {
     tracker: { ...settings.tracker, dispatch: { ...settings.tracker.dispatch } },
     polling: { ...settings.polling },
     workspace: { ...settings.workspace },
-    worker: { ...settings.worker, sshHosts: [...settings.worker.sshHosts] },
+    worker: cloneWorkerSettings(settings.worker),
     hooks: { ...settings.hooks },
     agent: { ...settings.agent },
     agents: cloneAgentRecords(settings.agents),
@@ -799,6 +1009,31 @@ function cloneSettings(settings: Settings): Settings {
     logging: { ...settings.logging },
     statusOverrides: new Map(settings.statusOverrides),
   };
+}
+
+function cloneWorkerSettings(worker: WorkerSettings): WorkerSettings {
+  const cloned: WorkerSettings = { ...worker, sshHosts: [...worker.sshHosts] };
+  if (worker.boxPool === undefined) {
+    delete cloned.boxPool;
+  } else {
+    cloned.boxPool = cloneBoxPool(worker.boxPool);
+  }
+  return cloned;
+}
+
+function cloneBoxPool(boxPool: BoxPoolSettings): BoxPoolSettings {
+  // A shallow spread copies the enumerable `maxInFlight` getter as a plain data property; strip it
+  // and re-install the derived accessor over the cloned `slotsPerMachine` so the clone stays
+  // drift-proof (single own field) exactly like the parse path.
+  const { maxInFlight: _maxInFlight, ...rest } = boxPool;
+  const input: BoxPoolSettingsInput = { ...rest };
+  if (boxPool.spend !== undefined) input.spend = { ...boxPool.spend };
+  if (boxPool.providerOptions !== undefined) {
+    // structuredClone guarantees nested arrays/objects (e.g. ssh_hosts) are copied,
+    // so a per-issue settings clone never aliases the source providerOptions.
+    input.providerOptions = structuredClone(boxPool.providerOptions);
+  }
+  return withDerivedMaxInFlight(input);
 }
 
 function cloneAgentRecords(records: Record<string, AgentConfig>): Record<string, AgentConfig> {
@@ -883,6 +1118,14 @@ function normalizeWorkflowConfig(value: unknown): unknown {
   normalizeNested(normalized, "polling", pollingAliases);
   normalizeNested(normalized, "workspace", workspaceAliases);
   normalizeNested(normalized, "worker", workerAliases);
+  if (isPlainRecord(normalized.worker) && isPlainRecord(normalized.worker.boxPool)) {
+    normalizeNested(normalized.worker, "boxPool", boxPoolAliases);
+    const boxPool = normalized.worker.boxPool;
+    // providerOptions is intentionally NOT normalized (flat per-key normalizer, no recursion).
+    if (isPlainRecord(boxPool) && isPlainRecord(boxPool.spend)) {
+      normalizeNested(boxPool, "spend", boxPoolSpendAliases);
+    }
+  }
   normalizeNested(normalized, "hooks", hooksAliases);
   normalizeNested(normalized, "agent", agentAliases);
   normalizeNested(normalized, "codex", codexAliases);

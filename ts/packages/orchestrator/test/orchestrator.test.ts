@@ -1,5 +1,6 @@
 import { test } from "vitest";
-import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
+import { createState, Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
+import { systemClock } from "@symphony/ports";
 
 import { assert } from "../../../test/assert.js";
 
@@ -279,4 +280,205 @@ test("orchestrator retries an ensemble issue in its original slot", () => {
   });
 
   assert.equal(orchestrator.claim(issue)?.slotIndex, 2);
+});
+
+test("orchestrator workerCapacityAvailable consults capacityProbe.canAcquire when present", () => {
+  const settings = parseConfig();
+  let available = false;
+  const probe = { governs: () => true, canAcquire: () => available };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "probe-capacity",
+    identifier: "MT-PROBE",
+    title: "Probe",
+    state: "Todo",
+  });
+
+  assert.deepEqual(orchestrator.eligibleIssues([issue]), []);
+  assert.equal(orchestrator.snapshot().blocked[0]?.reason, "worker_host_capacity");
+  assert.equal(orchestrator.claim(issue), null);
+
+  available = true;
+  assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-PROBE");
+  assert.ok(orchestrator.claim(issue));
+});
+
+test("orchestrator claim bypass sets workerHost to pending:// sentinel (never null) when probe present", () => {
+  const settings = parseConfig();
+  const probe = { governs: () => true, canAcquire: () => true };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "sentinel-issue",
+    identifier: "MT-SENTINEL",
+    title: "Sentinel",
+    state: "Todo",
+  });
+
+  const entry = orchestrator.claim(issue);
+  assert.equal(entry?.workerHost, `pending://${issue.id}/0`);
+  assert.notEqual(entry?.workerHost, null);
+  assert.equal(entry?.affinityHost, null);
+  assert.equal(orchestrator.snapshot().running[0]?.workerHost, `pending://${issue.id}/0`);
+});
+
+test("orchestrator claim bypass sets affinityHost = retry.workerHost (retry affinity preserved)", () => {
+  const settings = parseConfig();
+  const probe = { governs: () => true, canAcquire: () => true };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "affinity-issue",
+    identifier: "MT-AFFINITY",
+    title: "Affinity",
+    state: "Todo",
+  });
+
+  orchestrator.state.retryAttempts.set(issue.id, {
+    issueId: issue.id,
+    identifier: issue.identifier,
+    attempt: 1,
+    dueAt: new Date(Date.now() - 1),
+    slotIndex: 0,
+    workerHost: "warm-box-7:2200",
+    error: "agent exited",
+  });
+
+  const entry = orchestrator.claim(issue);
+  assert.equal(entry?.workerHost, `pending://${issue.id}/0`);
+  assert.equal(entry?.affinityHost, "warm-box-7:2200");
+  assert.equal(entry?.retryAttempt, 1);
+});
+
+test("orchestrator static sshHosts path unchanged when no capacity probe is present", () => {
+  const settings = parseConfig({
+    worker: { ssh_hosts: ["worker-a:2200", "worker-b:2200"], max_concurrent_agents_per_host: 1 },
+    agent: { max_concurrent_agents: 2 },
+  });
+  const orchestrator = new Orchestrator(settings);
+  const first = normalizeIssue({ id: "s1", identifier: "MT-S1", title: "One", state: "Todo" });
+  const second = normalizeIssue({ id: "s2", identifier: "MT-S2", title: "Two", state: "Todo" });
+
+  const firstEntry = orchestrator.claim(first);
+  const secondEntry = orchestrator.claim(second);
+  assert.equal(firstEntry?.workerHost, "worker-a:2200");
+  assert.equal(firstEntry?.affinityHost, undefined);
+  assert.equal(secondEntry?.workerHost, "worker-b:2200");
+  assert.equal(orchestrator.claim(first), null);
+});
+
+test("orchestrator setWorkerHost overwrites the pending:// sentinel with the leased host", () => {
+  const settings = parseConfig();
+  const probe = { governs: () => true, canAcquire: () => true };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "set-host-issue",
+    identifier: "MT-SET",
+    title: "Set host",
+    state: "Todo",
+  });
+
+  const entry = orchestrator.claim(issue);
+  assert.equal(entry?.workerHost, `pending://${issue.id}/0`);
+
+  orchestrator.setWorkerHost(issue.id, 0, "leased-box-3:2200");
+  assert.equal(orchestrator.snapshot().running[0]?.workerHost, "leased-box-3:2200");
+  assert.equal(
+    orchestrator.state.running.get(slotKey(issue.id, 0))?.workerHost,
+    "leased-box-3:2200",
+  );
+});
+
+test("orchestrator abandonClaim drops running+claimed with NO retry record, leaving the slot re-claimable", () => {
+  const settings = parseConfig();
+  const available = true;
+  const probe = { governs: () => true, canAcquire: () => available };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "abandon-issue",
+    identifier: "MT-ABANDON",
+    title: "Abandon",
+    state: "Todo",
+  });
+
+  assert.ok(orchestrator.claim(issue));
+  assert.equal(orchestrator.state.claimed.has(slotKey(issue.id, 0)), true);
+  const retryAttemptsBefore = orchestrator.state.retryAttempts.size;
+
+  orchestrator.abandonClaim(issue.id, 0);
+
+  assert.equal(orchestrator.state.running.has(slotKey(issue.id, 0)), false);
+  assert.equal(orchestrator.state.claimed.has(slotKey(issue.id, 0)), false);
+  assert.equal(orchestrator.snapshot().retrying.length, 0);
+  assert.equal(orchestrator.state.retryAttempts.size, retryAttemptsBefore);
+  assert.equal(orchestrator.snapshot().usageTotals.secondsRunning, 0);
+
+  const reclaim = orchestrator.claim(issue);
+  assert.equal(reclaim?.slotIndex, 0);
+  assert.equal(reclaim?.workerHost, `pending://${issue.id}/0`);
+});
+
+test("orchestrator workerCapacityAvailable falls through to local (true) when probe is present but not governing", () => {
+  // A disabled (reloaded-off) pool's probe is still installed for the lifetime, but
+  // its canAcquire() returns false. When it no longer governs capacity the
+  // orchestrator must NOT block on it; it must fall through to the static/local
+  // path. With no ssh_hosts the local path always has capacity (true), so eligible
+  // work resumes instead of being permanently blocked as worker_host_capacity.
+  const settings = parseConfig();
+  const probe = { governs: () => false, canAcquire: () => false };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "fallthrough-local",
+    identifier: "MT-FALLTHROUGH-LOCAL",
+    title: "Fallthrough local",
+    state: "Todo",
+  });
+
+  assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, "MT-FALLTHROUGH-LOCAL");
+  assert.equal(orchestrator.snapshot().blocked.length, 0);
+});
+
+test("orchestrator workerCapacityAvailable honors static ssh_hosts when probe is present but not governing", () => {
+  // When the probe does not govern, the static sshHosts host-selection path is the
+  // source of truth: a saturated host pool still reports no capacity.
+  const settings = parseConfig({
+    worker: { ssh_hosts: ["worker-a"], max_concurrent_agents_per_host: 1 },
+    agent: { max_concurrent_agents: 5 },
+  });
+  const probe = { governs: () => false, canAcquire: () => true };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const running = normalizeIssue({
+    id: "static-running",
+    identifier: "MT-STATIC-RUN",
+    title: "Running",
+    state: "Todo",
+  });
+  const blocked = normalizeIssue({
+    id: "static-blocked",
+    identifier: "MT-STATIC-BLOCK",
+    title: "Blocked",
+    state: "Todo",
+  });
+
+  // The claim takes the static selectWorkerHost path (real host, not the sentinel).
+  assert.equal(orchestrator.claim(running)?.workerHost, "worker-a");
+  assert.deepEqual(orchestrator.eligibleIssues([blocked]), []);
+  assert.equal(orchestrator.snapshot().blocked[0]?.reason, "worker_host_capacity");
+});
+
+test("orchestrator claim does NOT set the pending:// sentinel when probe is present but not governing", () => {
+  // A non-governing probe must use the normal selectWorkerHost path, which yields
+  // null/local (no ssh_hosts) instead of the pending:// bypass sentinel.
+  const settings = parseConfig();
+  const probe = { governs: () => false, canAcquire: () => false };
+  const orchestrator = new Orchestrator(settings, systemClock, createState(), probe);
+  const issue = normalizeIssue({
+    id: "no-sentinel",
+    identifier: "MT-NO-SENTINEL",
+    title: "No sentinel",
+    state: "Todo",
+  });
+
+  const entry = orchestrator.claim(issue);
+  assert.ok(entry);
+  assert.equal(entry?.workerHost, null);
+  assert.equal(entry?.affinityHost, undefined);
 });

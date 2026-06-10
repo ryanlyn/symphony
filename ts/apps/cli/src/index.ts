@@ -9,6 +9,8 @@ export {
 } from "./main.js";
 export type { CliOptions, CliParseResult } from "./main.js";
 export {
+  buildBoxPool,
+  buildDispatchCoordinator,
   createRunAgentAttemptAdapters,
   createTrackerClient,
   runAgentAttempt,
@@ -172,3 +174,35 @@ export {
   TRACKER_KINDS,
 } from "@symphony/domain";
 export type * from "@symphony/domain";
+export {
+  createBoxPool,
+  registerBoxProvider,
+  resolveProvider,
+  clearBoxProviderRegistry,
+  FakeBoxProvider,
+  StaticSshBoxProvider,
+} from "@symphony/worker-box-pool";
+export type {
+  BoxPool,
+  BoxLease,
+  BoxProvider,
+  BoxPoolSnapshot,
+  AcquireResult,
+} from "@symphony/worker-box-pool";
+export {
+  createDispatchCoordinator,
+  nullEndpointManager,
+  createNullEndpointManager,
+} from "@symphony/dispatch-coordinator";
+export type {
+  DispatchCoordinator,
+  CreateDispatchCoordinatorDeps,
+  AcquireRunSlotRequest,
+  AcquireRunSlotResult,
+  NoCapacityReason,
+  CapacityProbe,
+  DispatchCoordinatorSnapshot,
+  RunSlotSnapshotEntry,
+  RunSlot,
+  McpEndpointManager,
+} from "@symphony/dispatch-coordinator";

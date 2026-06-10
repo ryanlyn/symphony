@@ -28,6 +28,7 @@
     "@symphony/dispatch": "workspace:*",
     "@symphony/issue": "workspace:*",
     "@symphony/prompt": "workspace:*",
+    "@symphony/mcp": "workspace:*",
     "@symphony/domain": "workspace:*"
   }
 }

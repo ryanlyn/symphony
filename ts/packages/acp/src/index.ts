@@ -45,6 +45,15 @@ export interface AcpSession extends AgentSession {
   agentConfig: AcpAgentConfig;
   init: InitializeResponse;
   mcpEndpoint: AgentMcpEndpointLease;
+  /**
+   * True when {@link AcpSession.mcpEndpoint} was THREADED in by the dispatch
+   * coordinator (it owns the whole lease for this run). acp must then SKIP both its
+   * own `acquireAgentMcpEndpoint` AND its own `mcpEndpoint.release()` so the
+   * coordinator's `slot.release` is the single owner (no double-close / orphaned
+   * token+local-server+tunnel). False on the local / non-pool path, where acp
+   * acquires AND releases its own endpoint byte-for-byte as before.
+   */
+  ownsMcpEndpoint: boolean;
   workerHost?: string | null | undefined;
   onUpdate?: ((update: AgentUpdate) => void) | undefined;
   loadingReplay: boolean;
@@ -65,6 +74,15 @@ export class AcpExecutor implements AgentExecutor {
     settings: Settings;
     resumeId?: string | null;
     workerHost?: string | null;
+    /**
+     * A pre-resolved per-run MCP endpoint lease threaded in by the dispatch
+     * coordinator (it owns the whole lease for the run). When present (non-null) acp
+     * USES it instead of acquiring its own AND skips releasing it in `stopSession`
+     * (the coordinator's `slot.release` closes it - single ownership). When absent
+     * (null / local / non-pool) acp acquires AND releases its OWN endpoint exactly
+     * as before.
+     */
+    mcpEndpoint?: AgentMcpEndpointLease | null;
     onUpdate?: (update: AgentUpdate) => void;
   }): Promise<AcpSession> {
     const workspace = await validateWorkspaceCwd(
@@ -74,11 +92,17 @@ export class AcpExecutor implements AgentExecutor {
     );
     const agentKind = input.settings.agent.kind;
     const agentConfig = acpAgentConfig(input.settings, agentKind);
+    // The coordinator owns the lease ONLY when one was threaded in; otherwise acp
+    // owns the endpoint it acquires below and must release it on stop.
+    const threadedEndpoint = input.mcpEndpoint ?? null;
+    const ownsMcpEndpoint = threadedEndpoint === null;
     let mcpEndpoint: AgentMcpEndpointLease | null = null;
     let child: ChildProcessWithoutNullStreams | null = null;
     let session: AcpSession | null = null;
     try {
-      mcpEndpoint = await acquireAgentMcpEndpoint(input.settings, input.workerHost ?? null);
+      mcpEndpoint =
+        threadedEndpoint ??
+        (await acquireAgentMcpEndpoint(input.settings, input.workerHost ?? null));
       child = startBridgeProcess(agentConfig, workspace, input.workerHost ?? null);
       const client = acpClient({
         workspace,
@@ -107,6 +131,7 @@ export class AcpExecutor implements AgentExecutor {
         agentConfig,
         init,
         mcpEndpoint,
+        ownsMcpEndpoint,
         workerHost: input.workerHost ?? null,
         sessionId: input.resumeId ?? null,
         resumeId: input.resumeId ?? null,
@@ -138,7 +163,10 @@ export class AcpExecutor implements AgentExecutor {
       if (session) await this.stopSession(session);
       else {
         if (child) await stopChild(child);
-        await mcpEndpoint?.release();
+        // Only release the endpoint acp OWNS. A threaded lease belongs to the
+        // coordinator's slot.release, so acp must never release it (even on a
+        // startup error) or it would double-close the token+local-server+tunnel.
+        if (ownsMcpEndpoint) await mcpEndpoint?.release();
       }
       throw error;
     }
@@ -277,7 +305,11 @@ export class AcpExecutor implements AgentExecutor {
       // Closing is best effort because the bridge may already be gone.
     } finally {
       await stopChild(session.process);
-      await session.mcpEndpoint.release();
+      // Release ONLY the endpoint acp owns. When the coordinator threaded a
+      // per-run lease in (`ownsMcpEndpoint === false`) the slot.release closes it,
+      // so acp skips its own release to avoid a double-close of the shared
+      // token+local-server+tunnel.
+      if (session.ownsMcpEndpoint) await session.mcpEndpoint.release();
     }
   }
 }

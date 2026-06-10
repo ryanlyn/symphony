@@ -20,6 +20,9 @@
       "path": "./packages/dispatch"
     },
     {
+      "path": "./packages/dispatch-coordinator"
+    },
+    {
       "path": "./packages/domain"
     },
     {
@@ -30,6 +33,9 @@
     },
     {
       "path": "./packages/ssh"
+    },
+    {
+      "path": "./packages/worker-box-pool"
     },
     {
       "path": "./packages/worker-host-pool"

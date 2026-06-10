@@ -67,6 +67,42 @@ export async function acquireAgentMcpEndpoint(
   }
 }
 
+export async function acquireAgentMcpEndpointForRun(
+  settings: Settings,
+  workerHost: string,
+  runKey: string,
+): Promise<AgentMcpEndpointLease> {
+  let endpoint: McpEndpoint | null = null;
+  const token = issueMcpToken();
+  let released = false;
+  try {
+    endpoint = await acquirePerRunMcpEndpoint(workerHost, runKey, settings);
+    const resolved = endpoint;
+    return {
+      url: resolved.url,
+      token,
+      acpServer: () => ({
+        type: "http",
+        name: "symphony_linear",
+        url: resolved.url,
+        headers: [{ name: "Authorization", value: `Bearer ${token}` }],
+      }),
+      release: async () => {
+        if (released) return;
+        released = true;
+        revokeMcpToken(token);
+        workerHostPool.closeForRun(workerHost, runKey);
+        if (resolved.localServer) await releaseLocalMcpServer(resolved.localServer);
+      },
+    };
+  } catch (error) {
+    revokeMcpToken(token);
+    workerHostPool.closeForRun(workerHost, runKey);
+    if (endpoint?.localServer) await releaseLocalMcpServer(endpoint.localServer);
+    throw error;
+  }
+}
+
 export function mcpConfigContents(serverUrl: string, token: string): string {
   return `${JSON.stringify(
     {
@@ -109,6 +145,36 @@ async function acquireRemoteMcpEndpoint(
     tunnel,
     localServer: localServer ?? undefined,
   };
+}
+
+async function acquirePerRunMcpEndpoint(
+  workerHost: string,
+  runKey: string,
+  settings: Settings,
+): Promise<McpEndpoint> {
+  // The refcounted local MCP server is acquired BEFORE the per-run tunnel is
+  // opened. If anything after this point throws (notably `openForRun` failing
+  // to spawn the reverse tunnel), this function rejects before returning an
+  // McpEndpoint, so the caller never sees `localServer` and cannot release it.
+  // Drop the ref here so repeated tunnel-spawn failures don't leak refcounted
+  // local MCP servers / their listeners.
+  const localServer = await ensureLocalMcpServer(settings);
+  try {
+    const localHost = "127.0.0.1";
+    const localPort = localServer?.handle.port ?? settings.server.port;
+    if (typeof localPort !== "number" || localPort <= 0) {
+      throw new Error("remote_acp_mcp_requires_server_port");
+    }
+    const tunnel = workerHostPool.openForRun(workerHost, runKey, localHost, localPort);
+    return {
+      url: `http://127.0.0.1:${tunnel.remotePort}${mcpPath}`,
+      tunnel,
+      localServer: localServer ?? undefined,
+    };
+  } catch (error) {
+    if (localServer) await releaseLocalMcpServer(localServer);
+    throw error;
+  }
 }
 
 async function ensureLocalMcpServer(settings: Settings): Promise<LocalMcpServerLease | null> {

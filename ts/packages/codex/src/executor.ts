@@ -9,7 +9,7 @@ import type {
   UsageTotals,
 } from "@symphony/domain";
 import type { SessionUpdate, SessionUpdateKind } from "@symphony/protocol";
-import { executeTool, toolSpecs } from "@symphony/mcp";
+import { executeTool, toolSpecs, type AgentMcpEndpointLease } from "@symphony/mcp";
 import { shellEscape, startSshProcess } from "@symphony/ssh";
 import { validateWorkspaceCwd } from "@symphony/workspace";
 import { match, P } from "ts-pattern";
@@ -44,6 +44,14 @@ export class CodexAppServerExecutor implements AgentExecutor {
     settings: Settings;
     resumeId?: string | null;
     workerHost?: string | null;
+    /**
+     * Accepted for a UNIFORM executor `startSession` shape (the agent-runner threads
+     * the dispatch coordinator's per-run MCP endpoint here). The codex app-server
+     * executor does NOT use the MCP reverse tunnel - its dynamic tools run in-process
+     * - so it intentionally IGNORES this lease. acp is the only executor that
+     * consumes it.
+     */
+    mcpEndpoint?: AgentMcpEndpointLease | null;
     onUpdate?: (update: AgentUpdate) => void;
   }): Promise<CodexSession> {
     const workspace = await validateWorkspaceCwd(
