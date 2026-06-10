@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { normalizeIssue, ensembleSize, isTerminalState } from "@symphony/cli";
 import { ENSEMBLE_SIZE_MAX, type Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 // --- normalizeIssue ---
 

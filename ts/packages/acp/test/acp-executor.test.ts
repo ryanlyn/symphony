@@ -5,9 +5,7 @@ import path from "node:path";
 import { test, vi } from "vitest";
 import { Executor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
 let nextAcpServerPort = 45_000 + (process.pid % 1_000);
 

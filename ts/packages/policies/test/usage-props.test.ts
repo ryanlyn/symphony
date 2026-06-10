@@ -1,8 +1,6 @@
 import { test } from "vitest";
 import fc from "fast-check";
-
-import { assert } from "../../../test/assert.js";
-import { arbUsageTotals } from "../../../test/arbitraries.js";
+import { assert, arbUsageTotals } from "@symphony/test-utils";
 
 import { mergeMonotonicUsage } from "@symphony/policies";
 

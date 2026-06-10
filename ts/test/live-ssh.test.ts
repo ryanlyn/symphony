@@ -8,9 +8,7 @@ import { promisify } from "node:util";
 import { test, vi } from "vitest";
 import { parseConfig, readResumeState, runAgentAttempt, runSsh, shellEscape } from "@symphony/cli";
 import type { Issue, WorkflowDefinition } from "@symphony/cli";
-
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir } from "./helpers.js";
+import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
 
 const execFileAsync = promisify(execFile);
 const runLiveSsh = process.env.SYMPHONY_TS_RUN_LIVE_SSH_E2E === "1";
@@ -102,11 +100,7 @@ async function setupLiveWorkers(): Promise<LiveWorkerSetupResult> {
   const configPath = path.join(sshRoot, "config");
   const ports = [await reserveTcpPort(), await reserveTcpPort()];
   const hosts = ports.map((port) => `localhost:${port}`);
-  const dockerSupportDir = path.resolve(
-    import.meta.dirname,
-    "support",
-    "live_e2e_docker",
-  );
+  const dockerSupportDir = path.resolve(import.meta.dirname, "support", "live_e2e_docker");
   const projectName = dockerProjectName(runId);
   const claudeToken =
     process.env.SYMPHONY_LIVE_DOCKER_CLAUDE_CODE_OAUTH_TOKEN ??

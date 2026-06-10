@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
 import type { ClockPort } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return normalizeIssue({

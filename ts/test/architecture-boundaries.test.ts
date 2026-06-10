@@ -12,8 +12,7 @@ import {
 } from "@symphony/cli";
 import type { RuntimeProjectionInput, RuntimeRunHistoryEntry } from "@symphony/cli";
 import type { ClockPort } from "@symphony/domain";
-
-import { assert } from "./assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("deterministic policies pin retry, stop reason, usage, and resume decisions", () => {
   assert.equal(retryBackoffMs(1, 60_000, "failure"), 10_000);

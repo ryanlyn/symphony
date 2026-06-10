@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { statePayload } from "@symphony/presenter";
 import type { RuntimeSnapshot } from "@symphony/runtime-events";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { startObservabilityServer, type RuntimeServerSource } from "@symphony/server";
 

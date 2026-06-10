@@ -2,9 +2,7 @@ import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
 import { afterEach, beforeEach, test, vi } from "vitest";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import { assert, tempDir } from "@symphony/test-utils";
 
 const mocks = vi.hoisted(() => ({
   loadWorkflow: vi.fn(),

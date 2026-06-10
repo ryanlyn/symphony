@@ -12,8 +12,7 @@ import {
 } from "@symphony/cli";
 import { normalizeIssue } from "@symphony/issue";
 import type { WorkflowDefinition } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { IssueStore, startObservabilityServer } from "@symphony/server";
 import { startClaudeMcpServer } from "@symphony/server";

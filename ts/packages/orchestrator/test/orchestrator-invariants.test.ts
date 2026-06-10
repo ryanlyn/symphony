@@ -2,9 +2,8 @@ import { test, describe } from "vitest";
 import fc from "fast-check";
 import { defaultSettings, parseConfig } from "@symphony/config";
 import { slotKey } from "@symphony/dispatch";
-import type { Issue, RunningEntry, Settings } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import type { RunningEntry, Settings } from "@symphony/domain";
+import { assert, issueWith as makeIssue } from "@symphony/test-utils";
 
 import { Orchestrator } from "@symphony/orchestrator";
 
@@ -22,27 +21,6 @@ function makeClock(baseMs: number) {
       now += ms;
       monotonic += ms;
     },
-  };
-}
-
-function makeIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "issue-1",
-    identifier: "TEST-1",
-    title: "Test issue",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: 1,
-    createdAt: null,
-    updatedAt: null,
-    labels: [],
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-    ...overrides,
   };
 }
 

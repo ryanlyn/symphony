@@ -157,9 +157,6 @@ importers:
       "@symphony/dispatch":
         specifier: workspace:*
         version: link:packages/dispatch
-      "@symphony/domain":
-        specifier: workspace:*
-        version: link:packages/domain
       "@symphony/humanize":
         specifier: workspace:*
         version: link:packages/humanize
@@ -208,6 +205,9 @@ importers:
       "@symphony/ssh":
         specifier: workspace:*
         version: link:packages/ssh
+      "@symphony/test-utils":
+        specifier: workspace:*
+        version: link:packages/test-utils
       "@symphony/traceviz-emitter":
         specifier: workspace:*
         version: link:packages/traceviz-emitter
@@ -770,6 +770,24 @@ importers:
       "@types/node":
         specifier: "catalog:"
         version: 22.19.19
+
+  packages/test-utils:
+    dependencies:
+      "@symphony/config":
+        specifier: workspace:*
+        version: link:../config
+      "@symphony/domain":
+        specifier: workspace:*
+        version: link:../domain
+      "@symphony/issue":
+        specifier: workspace:*
+        version: link:../issue
+      fast-check:
+        specifier: "catalog:"
+        version: 4.8.0
+      vitest:
+        specifier: "catalog:"
+        version: 4.1.7(@types/node@22.19.19)(msw@2.14.6(@types/node@22.19.19)(typescript@5.9.3))(vite@6.4.2(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
 
   packages/traceviz-emitter:
     dependencies:
@@ -5206,6 +5224,13 @@ packages:
       }
     engines: { node: ">=18" }
 
+  tinyglobby@0.2.16:
+    resolution:
+      {
+        integrity: sha512-pn99VhoACYR8nFHhxqix+uvsbXineAasWm5ojXoN8xEwK5Kd3/TrhNn1wByuD52UxWRLy8pu+kRMniEi6Eq9Zg==,
+      }
+    engines: { node: ">=12.0.0" }
+
   tinyglobby@0.2.17:
     resolution:
       {
@@ -6522,7 +6547,7 @@ snapshots:
       debug: 4.4.3
       minimatch: 10.2.5
       semver: 7.8.1
-      tinyglobby: 0.2.17
+      tinyglobby: 0.2.16
       ts-api-utils: 2.5.0(typescript@5.9.3)
       typescript: 5.9.3
     transitivePeerDependencies:
@@ -8107,6 +8132,11 @@ snapshots:
 
   tinyexec@1.2.3: {}
 
+  tinyglobby@0.2.16:
+    dependencies:
+      fdir: 6.5.0(picomatch@4.0.4)
+      picomatch: 4.0.4
+
   tinyglobby@0.2.17:
     dependencies:
       fdir: 6.5.0(picomatch@4.0.4)
@@ -8292,7 +8322,7 @@ snapshots:
       std-env: 4.1.0
       tinybench: 2.9.0
       tinyexec: 1.2.3
-      tinyglobby: 0.2.17
+      tinyglobby: 0.2.16
       tinyrainbow: 3.1.0
       vite: 6.4.2(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0)
       why-is-node-running: 2.3.0

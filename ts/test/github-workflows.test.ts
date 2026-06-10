@@ -3,8 +3,7 @@ import path from "node:path";
 
 import { test } from "vitest";
 import { parse as parseYaml } from "yaml";
-
-import { assert } from "./assert.js";
+import { assert } from "@symphony/test-utils";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 

@@ -1,6 +1,6 @@
 import { test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { toToml } from "../src/toml.js";
 
 test("toToml quotes literal keys and section names that are not bare TOML keys", () => {

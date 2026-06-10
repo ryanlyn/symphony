@@ -11,9 +11,7 @@ import {
   validateDispatchConfig,
   workflowFilePath,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import { assert, tempDir } from "@symphony/test-utils";
 
 test("config resolves env-backed Linear token and assignee", () => {
   const settings = parseConfig(

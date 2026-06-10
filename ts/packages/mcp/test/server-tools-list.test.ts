@@ -6,8 +6,7 @@ import path from "node:path";
 import { parseConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import {
   issueMcpToken,

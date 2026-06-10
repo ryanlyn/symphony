@@ -74,6 +74,9 @@
       "path": "./packages/ssh"
     },
     {
+      "path": "./packages/test-utils"
+    },
+    {
       "path": "./packages/traceviz-emitter"
     },
     {

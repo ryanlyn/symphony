@@ -1,72 +1,11 @@
-import { parseConfig, normalizeIssue } from "@symphony/cli";
-import type { Issue, Settings } from "@symphony/cli";
+import type { Issue } from "@symphony/cli";
+import { makeIssue } from "@symphony/test-utils";
+
+export { makeIssue, makeSettings } from "@symphony/test-utils";
 
 /** Promisified setTimeout. */
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Quickly create an Issue object with sensible defaults. */
-export function makeIssue(
-  id: string,
-  identifier: string,
-  overrides: Record<string, unknown> = {},
-): Issue {
-  return normalizeIssue({
-    id,
-    identifier,
-    title: overrides.title ?? `Issue ${identifier}`,
-    state: overrides.state ?? "Todo",
-    stateType: overrides.stateType ?? "unstarted",
-    labels: overrides.labels ?? [],
-    blockers: overrides.blockers ?? [],
-    priority: overrides.priority ?? 2,
-    description: overrides.description ?? null,
-    ...overrides,
-  });
-}
-
-/** Create a Settings object with sensible testing defaults. */
-export function makeSettings(overrides: Record<string, unknown> = {}): Settings {
-  return parseConfig(
-    {
-      tracker: {
-        kind: "memory",
-        endpoint: "memory://test",
-        activeStates: ["Todo", "In Progress"],
-        terminalStates: ["Done", "Cancelled"],
-        dispatch: {
-          acceptUnrouted: true,
-          onlyRoutes: null,
-          routeLabelPrefix: "Symphony:",
-        },
-      },
-      polling: { intervalMs: 100 },
-      workspace: { root: "/tmp/sandbox_workspaces" },
-      agent: {
-        kind: "codex",
-        maxConcurrentAgents: 5,
-        maxTurns: 10,
-        maxRetryBackoffMs: 1000,
-        ensembleSize: 1,
-      },
-      codex: {
-        command: "echo codex",
-        turnTimeoutMs: 60_000,
-        stallTimeoutMs: 30_000,
-      },
-      claude: {
-        command: "echo claude",
-        turnTimeoutMs: 60_000,
-        stallTimeoutMs: 30_000,
-        strictMcpConfig: true,
-        providerConfig: { permissions: { defaultMode: "dontAsk" } },
-      },
-      ...overrides,
-    },
-    {},
-    { tmpdir: "/tmp", cwd: "/tmp" },
-  );
 }
 
 /** Create N issues forming a dependency chain where each blocks the next. */

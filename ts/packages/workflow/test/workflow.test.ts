@@ -2,9 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import { assert, tempDir } from "@symphony/test-utils";
 
 import {
   workflowFilePath,

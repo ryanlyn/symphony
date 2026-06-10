@@ -3,8 +3,8 @@ import fc from "fast-check";
 import type { AgentSession, AgentUpdate, Issue, Settings } from "@symphony/domain";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { defaultSettings } from "@symphony/config";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { runAgentAttempt, type RunAgentAttemptAdapters } from "../src/index.js";
 
 // ---------------------------------------------------------------------------

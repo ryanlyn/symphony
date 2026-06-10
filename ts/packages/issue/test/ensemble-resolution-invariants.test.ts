@@ -1,8 +1,7 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
 import { ENSEMBLE_SIZE_MAX, type Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith as baseIssue } from "@symphony/test-utils";
 
 import { ensembleSize, normalizeIssue } from "@symphony/issue";
 
@@ -11,23 +10,7 @@ import { ensembleSize, normalizeIssue } from "@symphony/issue";
 // ---------------------------------------------------------------------------
 
 function issueWith(labels: string[]): Issue {
-  return {
-    id: "id-1",
-    identifier: "TEST-1",
-    title: "Test issue",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: null,
-    createdAt: null,
-    updatedAt: null,
-    labels,
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-  };
+  return baseIssue({ priority: null, labels });
 }
 
 /**

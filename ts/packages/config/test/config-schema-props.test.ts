@@ -2,8 +2,7 @@ import { test } from "vitest";
 import fc from "fast-check";
 import { parseConfig } from "@symphony/cli";
 import { ONE_WEEK_MS, PORT_MAX } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 // --- camelToSnake (tested indirectly via error labels) ---
 

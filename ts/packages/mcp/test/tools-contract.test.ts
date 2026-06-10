@@ -1,7 +1,6 @@
 import { test, vi } from "vitest";
 import { executeTool, parseConfig, toolSpecs } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("linear_graphql tool validates name, input, and API key before network", async () => {
   const settings = parseConfig({ tracker: { project_slug: "mono" } }, {});

@@ -1,8 +1,7 @@
 import { test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
 import config from "../vitest.config.ts";
-
-import { assert } from "./assert.js";
 
 test("Vitest discovers app TS and TSX tests", () => {
   const include = config.test?.include ?? [];

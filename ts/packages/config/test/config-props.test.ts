@@ -6,8 +6,7 @@ import {
   defaultSettings,
   settingsForIssueState,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 // --- normalizeStateName ---
 

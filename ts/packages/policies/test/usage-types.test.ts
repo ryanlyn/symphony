@@ -1,6 +1,5 @@
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { mergeMonotonicUsage } from "@symphony/policies/usage";
 import type { UsageMergeInput } from "@symphony/policies/usage";
