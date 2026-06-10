@@ -476,11 +476,11 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
   }
 });
 
-test("writeProviderConfig writes .claude/settings.local.json for claude bridge", async () => {
+test("provider config rides session/new _meta as a claude settings overlay", async () => {
   const root = await tempDir("symphony-ts-acp-provider-claude");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const providerConfig = { permission_mode: "dontAsk" };
+  const providerConfig = { model: "claude-opus-4-6", permissions: { defaultMode: "dontAsk" } };
   const settings = acpSettings(root, fake, trace, "new", 5_000, { providerConfig });
   const executor = new Executor("claude");
   const session = await executor.startSession({
@@ -490,21 +490,19 @@ test("writeProviderConfig writes .claude/settings.local.json for claude bridge",
   });
   await session.stop();
 
-  const written = JSON.parse(
-    await fs.readFile(path.join(root, ".claude", "settings.local.json"), "utf8"),
-  );
-  assert.deepEqual(written, { permission_mode: "dontAsk" });
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/settings"], providerConfig);
+  await assert.rejects(() => fs.access(path.join(root, ".claude", "settings.local.json")));
 });
 
-test("writeProviderConfig writes .codex/config.toml for codex bridge", async () => {
+test("provider config rides session/new _meta as codex config overrides", async () => {
   const root = await tempDir("symphony-ts-acp-provider-codex");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = {
-    "bad key": "literal-space",
     model: "gpt-5.5",
-    "model.provider": "literal-dot",
     model_reasoning_effort: "xhigh",
+    shell_environment_policy: { inherit: "all" },
   };
   const settings = acpSettings(root, fake, trace, "new", 5_000, {
     agentKind: "codex",
@@ -518,44 +516,31 @@ test("writeProviderConfig writes .codex/config.toml for codex bridge", async () 
   });
   await session.stop();
 
-  const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
-  assert.match(toml, /"bad key" = "literal-space"/);
-  assert.match(toml, /model = "gpt-5.5"/);
-  assert.match(toml, /"model.provider" = "literal-dot"/);
-  assert.match(toml, /model_reasoning_effort = "xhigh"/);
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/config"], providerConfig);
+  await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
 });
 
-test("writeProviderConfig writes nested TOML sections", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-toml-nested");
+test("provider config _meta also rides session/resume", async () => {
+  const root = await tempDir("symphony-ts-acp-provider-resume");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const providerConfig = {
-    model: "gpt-5.5",
-    history: { "max.entries": 100, persistence: true },
-    "history.options": { "save mode": "all" },
-  };
-  const settings = acpSettings(root, fake, trace, "new", 5_000, {
-    agentKind: "codex",
-    providerConfig,
-  });
-  const executor = new Executor("codex");
+  const providerConfig = { permissions: { defaultMode: "dontAsk" } };
+  const settings = acpSettings(root, fake, trace, "resume", 5_000, { providerConfig });
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
     issue: sampleIssue,
+    resumeId: "acp-existing",
   });
   await session.stop();
 
-  const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
-  assert.match(toml, /model = "gpt-5.5"/);
-  assert.match(toml, /\[history\]/);
-  assert.match(toml, /"max.entries" = 100/);
-  assert.match(toml, /persistence = true/);
-  assert.match(toml, /\["history.options"\]/);
-  assert.match(toml, /"save mode" = "all"/);
+  const resume = (await readTrace(trace)).find((event) => event.method === "resumeSession");
+  assert.deepEqual(resume?.params?._meta?.["symphony/settings"], providerConfig);
 });
 
-test("writeProviderConfig is skipped when providerConfig is absent from agent config", async () => {
+test("session requests omit _meta when providerConfig is absent", async () => {
   const root = await tempDir("symphony-ts-acp-provider-none");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
@@ -569,6 +554,8 @@ test("writeProviderConfig is skipped when providerConfig is absent from agent co
   });
   await session.stop();
 
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.equal(newSession?.params?._meta, undefined);
   await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
 });
 
