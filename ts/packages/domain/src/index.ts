@@ -291,6 +291,11 @@ export interface CodexSettings {
 export interface ClaudeSettings {
   /** Shell command for the Claude Code ACP bridge; invoked via `bash -lc` in the workspace. */
   command: string;
+  /**
+   * Model id Claude sessions are pinned to. Flows into the `model` key of {@link providerConfig}
+   * unless an explicit `providerConfig` already selects one.
+   */
+  model: string;
   /** Hard limit (ms) on a single Claude turn before it is force-cancelled. */
   turnTimeoutMs: number;
   /** Inactivity window (ms) before a stalled session is aborted. `<= 0` disables stall detection. */

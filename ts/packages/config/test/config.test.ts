@@ -153,9 +153,69 @@ test("config defaults and validation match expected defaults", () => {
   const settings = parseConfig({}, {});
 
   assert.equal(settings.tracker.kind, undefined);
-  assert.deepEqual(settings.claude.providerConfig, { permissions: { defaultMode: "dontAsk" } });
+  assert.equal(settings.claude.model, "claude-opus-4-6[1m]");
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
   assert.equal(settings.observability.renderIntervalMs, 16);
   assert.throws(() => validateDispatchConfig(settings), /tracker.kind is required/);
+});
+
+test("claude.model overrides the pinned model in the provider config", () => {
+  const settings = parseConfig({ claude: { model: "claude-haiku-4-5" } });
+
+  assert.equal(settings.claude.model, "claude-haiku-4-5");
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+  assert.deepEqual(settings.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+});
+
+test("claude provider_config without a model key picks up claude.model", () => {
+  const settings = parseConfig({
+    claude: {
+      model: "claude-haiku-4-5",
+      provider_config: { permissions: { defaultMode: "acceptEdits" } },
+    },
+  });
+
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "acceptEdits" },
+  });
+});
+
+test("explicit claude provider_config model wins over claude.model", () => {
+  const settings = parseConfig({
+    claude: { provider_config: { model: "claude-sonnet-4-6" } },
+  });
+
+  assert.equal(settings.claude.model, "claude-opus-4-6[1m]");
+  assert.deepEqual(settings.claude.providerConfig, { model: "claude-sonnet-4-6" });
+});
+
+test("status override of claude.model re-pins the provider config", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      "In Review": { claude: { model: "claude-haiku-4-5" } },
+    },
+  });
+
+  const effective = settingsForIssueState(settings, "In Review");
+  assert.equal(effective.claude.model, "claude-haiku-4-5");
+  assert.deepEqual(effective.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+  assert.deepEqual(effective.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde paths", () => {
@@ -385,6 +445,7 @@ test("custom ACP agents default to cumulative usage unless using a known per-tur
   assert.equal(settings.agents.codex_alias.providerConfig, undefined);
   assert.equal(settings.agents.claude_alias.usageAccounting, "per-turn");
   assert.deepEqual(settings.agents.claude_alias.providerConfig, {
+    model: "claude-opus-4-6[1m]",
     permissions: { defaultMode: "dontAsk" },
   });
 });
