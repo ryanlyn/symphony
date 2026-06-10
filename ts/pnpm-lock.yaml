@@ -445,6 +445,12 @@ importers:
 
   packages/acp:
     dependencies:
+      '@agentclientprotocol/claude-agent-acp':
+        specifier: workspace:*
+        version: link:../../vendor/claude-agent-acp
+      '@agentclientprotocol/codex-acp':
+        specifier: workspace:*
+        version: link:../../vendor/codex-acp
       '@agentclientprotocol/sdk':
         specifier: 'catalog:'
         version: 0.21.1(zod@4.4.3)
