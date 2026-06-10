@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
+// The stats subpath avoids pulling the server's Node-only watcher into the browser bundle.
+import { computeStats } from "@symphony/traceviz-server/stats";
 
+import { useWebSocket } from "../../../shared/hooks/useWebSocket";
 import type { TicketInfo, DisplayEvent, Stats } from "../api/types";
 import { fetchTickets, fetchEvents, fetchStats } from "../api/client";
-import { computeStatsFromEvents } from "../api/stats";
-
-import { useWebSocket } from "./useWebSocket";
 
 export function useTraceData() {
   const [tickets, setTickets] = useState<TicketInfo[]>([]);
@@ -71,7 +71,7 @@ export function useTraceData() {
       }
     } else if (msg.type === "events" && msg.issueId === selectedTicketId) {
       setEvents(msg.events);
-      setStats(computeStatsFromEvents(msg.events));
+      setStats(computeStats(msg.events));
       setTraceExists(true);
     }
   }, [lastMessage, loadTicketData, selectedTicketId]);

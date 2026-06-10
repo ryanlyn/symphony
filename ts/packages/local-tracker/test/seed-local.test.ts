@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { SEED_ISSUES, seedLocalBoard } from "../../../sandbox/seed-local.js";
 
 import { BoardStore } from "@symphony/local-tracker";

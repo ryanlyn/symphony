@@ -3,14 +3,12 @@ import fc from "fast-check";
 import { buildPrompt } from "@symphony/cli";
 import { effectivePromptTemplate, defaultPromptTemplate } from "@symphony/cli";
 import type { Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith } from "@symphony/test-utils";
 
 // --- Helper arbitraries ---
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "issue-1",
+  return issueWith({
     identifier: "ENG-42",
     title: "Fix the login bug",
     description: "Users cannot log in when using SSO.",
@@ -18,12 +16,8 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     stateType: "started",
     branchName: "fix/login-bug",
     url: "https://linear.app/team/issue/ENG-42",
-    priority: 1,
-    labels: [],
-    blockers: [],
-    assignedToWorker: true,
     ...overrides,
-  };
+  });
 }
 
 /** Arbitrary that produces strings guaranteed to be whitespace-only per JS trim() semantics. */

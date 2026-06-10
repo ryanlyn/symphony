@@ -43,6 +43,7 @@ export const assert = {
     }
     throw new Error("Expected function to throw");
   },
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents -- Promise<unknown> documents that async callbacks are accepted
   async rejects(fn: () => unknown | Promise<unknown>, expected?: ErrorExpectation): Promise<void> {
     try {
       await fn();

@@ -7,8 +7,7 @@ import { parseConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
 import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 registerBuiltinTrackerProviders();
 

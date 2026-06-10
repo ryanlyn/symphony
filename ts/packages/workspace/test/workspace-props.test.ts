@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import fc from "fast-check";
 import { safeIdentifier, workspacePath, ensureInsideRoot } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 const SAFE_CHARS = /^[A-Za-z0-9._-]*$/;
 

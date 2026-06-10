@@ -5,8 +5,7 @@ import React from "react";
 import { test } from "vitest";
 import { render } from "ink-testing-library";
 import type { RuntimeSnapshot } from "@symphony/runtime";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import {
   formatDashboard,

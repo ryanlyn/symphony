@@ -168,6 +168,7 @@ const codexRawSchema = z
 const claudeRawSchema = z
   .object({
     command: z.string().optional(),
+    model: z.string().optional(),
     turnTimeoutMs: coercedTimeoutMs.optional(),
     stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
     strictMcpConfig: coercedBoolean.optional(),

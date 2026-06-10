@@ -1,4 +1,7 @@
 import { SymphonyRuntime } from "@symphony/runtime";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@symphony/cli";
 import type {
   RuntimeEvent,
@@ -58,6 +61,13 @@ export interface SandboxScenario {
  * runner, executes poll ticks, collects all events and snapshots, and returns
  * the full history.
  */
+// The sandbox harness is its own composition root: the runtime validates dispatch config
+// against the default registries on every poll, so the built-in backends must be registered.
+registerBuiltinTrackerProviders();
+if (defaultAgentExecutorRegistry.get("acp") === undefined) {
+  defaultAgentExecutorRegistry.register(acpExecutorProvider);
+}
+
 export async function runScenario(scenario: SandboxScenario): Promise<SandboxResult> {
   const settings = makeSettings(scenario.settingsOverrides ?? {});
   const client = new ChaosLinearClient(scenario.issues, scenario.chaosConfig);

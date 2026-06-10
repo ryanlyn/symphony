@@ -1,6 +1,5 @@
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { WorkerHostPool } from "@symphony/worker-host-pool";
 

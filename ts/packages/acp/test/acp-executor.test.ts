@@ -5,9 +5,7 @@ import path from "node:path";
 import { test, vi } from "vitest";
 import { Executor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
 let nextAcpServerPort = 45_000 + (process.pid % 1_000);
 
@@ -405,6 +403,28 @@ test("writeProviderConfig writes .claude/settings.local.json for claude bridge",
     await fs.readFile(path.join(root, ".claude", "settings.local.json"), "utf8"),
   );
   assert.deepEqual(written, { permission_mode: "dontAsk" });
+});
+
+test("writeProviderConfig pins the default claude model in settings.local.json", async () => {
+  const root = await tempDir("symphony-ts-acp-provider-claude-model");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "new", 5_000);
+  const executor = new Executor("claude");
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+  });
+  await session.stop();
+
+  const written = JSON.parse(
+    await fs.readFile(path.join(root, ".claude", "settings.local.json"), "utf8"),
+  );
+  assert.deepEqual(written, {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("writeProviderConfig writes .codex/config.toml for codex bridge", async () => {

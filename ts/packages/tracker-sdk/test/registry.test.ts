@@ -1,6 +1,5 @@
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { TrackerRegistry, type TrackerProvider } from "@symphony/tracker-sdk";
 

@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import type { Issue } from "@symphony/domain";
 import { ensembleSize } from "@symphony/issue";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
 

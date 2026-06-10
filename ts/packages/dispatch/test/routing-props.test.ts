@@ -6,51 +6,9 @@ import {
   shouldDispatchIssue,
   issueHasOpenBlockers,
   dispatchBlockReason,
-  defaultSettings,
   normalizeRouteName,
 } from "@symphony/cli";
-import type { Issue, Settings } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
-
-function makeSettings(
-  overrides: {
-    acceptUnrouted?: boolean;
-    onlyRoutes?: string[] | null;
-    routeLabelPrefix?: string;
-    activeStates?: string[];
-    terminalStates?: string[];
-  } = {},
-): Settings {
-  const s = defaultSettings();
-  s.tracker.dispatch.acceptUnrouted = overrides.acceptUnrouted ?? true;
-  s.tracker.dispatch.onlyRoutes = overrides.onlyRoutes ?? null;
-  s.tracker.dispatch.routeLabelPrefix = overrides.routeLabelPrefix ?? "Symphony:";
-  if (overrides.activeStates) s.tracker.activeStates = overrides.activeStates;
-  if (overrides.terminalStates) s.tracker.terminalStates = overrides.terminalStates;
-  return s;
-}
-
-function issueWith(overrides: Partial<Issue>): Issue {
-  return {
-    id: "id-1",
-    identifier: "TEST-1",
-    title: "Test issue",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: 1,
-    createdAt: null,
-    updatedAt: null,
-    labels: [],
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-    ...overrides,
-  };
-}
+import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
 
 // --- routeNames ---
 

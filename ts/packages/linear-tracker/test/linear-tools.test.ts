@@ -1,9 +1,8 @@
 import { test, vi } from "vitest";
 import { parseConfig } from "@symphony/config";
 import { executeTool, toolSpecs } from "@symphony/mcp";
+import { assert } from "@symphony/test-utils";
 import { registerBuiltinTrackerProviders } from "@symphony/trackers";
-
-import { assert } from "../../../test/assert.js";
 
 registerBuiltinTrackerProviders();
 

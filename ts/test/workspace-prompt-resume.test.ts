@@ -19,9 +19,7 @@ import {
   validateWorkspaceCwd,
 } from "@symphony/cli";
 import type { ResumeState } from "@symphony/resume-state";
-
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "./helpers.js";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
 function resumeKey(workspace: string, workerHost?: string | null): string {
   return `${workerHost ?? "local"}\0${workspace}`;

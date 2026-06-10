@@ -1,7 +1,6 @@
 import { test } from "vitest";
 import { LinearClient, parseConfig } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 interface FetchCall {
   url: string;

@@ -423,11 +423,12 @@ API routes:
 
 - `/`
 - `/api/v1/state`
-- `/api/v1/events`
 - `/api/v1/runs`
 - `/api/v1/runs?id=<run-id>`
 - `/api/v1/refresh`
 - `/api/v1/:issue_identifier`
+
+Live updates (ops state and trace events) stream over the `/ws` WebSocket endpoint.
 
 Claude sessions use `/claude-mcp` for injected dynamic tools when the runtime has started an
 observability server. The server also starts automatically for Claude workflows so the ACP bridge

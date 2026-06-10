@@ -1,8 +1,6 @@
 import { test } from "vitest";
 import { Executor, parseConfig } from "@symphony/cli";
-
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir } from "./helpers.js";
+import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
 
 const claudeBridge = process.env.SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND;
 const runLiveClaude = process.env.SYMPHONY_TS_RUN_REAL_CLAUDE_E2E === "1" && Boolean(claudeBridge);

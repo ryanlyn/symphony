@@ -10,8 +10,7 @@ import {
   toolSuccess,
   type TrackerProvider,
 } from "@symphony/tracker-sdk";
-
-import { assert } from "./assert.js";
+import { assert } from "@symphony/test-utils";
 
 // Stand-in for the composition root's executor registration; the default agent records
 // select the "acp" executor, and this test only needs validation to pass.

@@ -10,7 +10,7 @@
  *   engine      every other packages/*          - engine + SDKs + extension support + leaf
  *   sdk         packages/{tracker,agent}-sdk    - leaf only
  *   support     packages/issue                  - leaf only
- *   leaf        packages/{domain,ports}         - no workspace dependencies
+ *   leaf        packages/domain                 - no workspace dependencies
  *
  * Cross-package imports resolve through pnpm workspace symlinks to the target package's
  * published `dist/` surface (Node `exports` encapsulation forbids anything else at
@@ -18,7 +18,7 @@
  * whether the edge lands on dist/index.js or a sanctioned subpath export.
  */
 
-const LEAF = "packages/(?:domain|ports)/";
+const LEAF = "packages/domain/";
 const SDK = "packages/(?:tracker-sdk|agent-sdk)/";
 const SUPPORT = "packages/issue/";
 const EXTENSION = "packages/[^/]+-tracker/";
@@ -59,9 +59,9 @@ module.exports = {
     },
     {
       name: "leaf-has-no-workspace-dependencies",
-      comment: "domain and ports are the dependency root; they import nothing internal.",
+      comment: "domain is the dependency root; it imports nothing internal.",
       severity: "error",
-      from: { path: "^(packages/(?:domain|ports))/" },
+      from: { path: "^(packages/domain)/" },
       to: { path: "^(?:packages|apps)/", pathNot: "^$1/" },
     },
     {

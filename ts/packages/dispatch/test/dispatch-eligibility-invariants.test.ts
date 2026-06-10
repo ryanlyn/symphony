@@ -4,53 +4,17 @@ import {
   shouldDispatchIssue,
   dispatchBlockReason,
   issueHasOpenBlockers,
-  defaultSettings,
   slotKey,
   issueIsActive,
   routedToThisWorker,
 } from "@symphony/cli";
-import type { Issue, Settings } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import type { Issue } from "@symphony/domain";
+import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
 
 // --- Helper arbitraries and factories ---
 
-function makeSettings(
-  overrides: Partial<{
-    activeStates: string[];
-    terminalStates: string[];
-    maxConcurrentAgents: number;
-    ensembleSize: number;
-  }> = {},
-): Settings {
-  const s = defaultSettings();
-  if (overrides.activeStates) s.tracker.activeStates = overrides.activeStates;
-  if (overrides.terminalStates) s.tracker.terminalStates = overrides.terminalStates;
-  if (overrides.maxConcurrentAgents !== undefined)
-    s.agent.maxConcurrentAgents = overrides.maxConcurrentAgents;
-  if (overrides.ensembleSize !== undefined) s.agent.ensembleSize = overrides.ensembleSize;
-  return s;
-}
-
 function validIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "issue-1",
-    identifier: "TEST-1",
-    title: "A valid test issue",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: 1,
-    createdAt: null,
-    updatedAt: null,
-    labels: [],
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-    ...overrides,
-  };
+  return issueWith({ title: "A valid test issue", ...overrides });
 }
 
 /** Arbitrary that takes a base string and applies random case/whitespace transformations */

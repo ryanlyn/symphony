@@ -6,8 +6,7 @@ import { parseConfig } from "@symphony/config";
 import { executeTool, toolSpecs } from "@symphony/mcp";
 import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { BoardStore } from "@symphony/local-tracker";
 

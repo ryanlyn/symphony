@@ -11,7 +11,6 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
     "@symphony/agent-sdk": "workspace:*",
-    "@symphony/child-process": "workspace:*",
     "@symphony/domain": "workspace:*",
     "@symphony/mcp": "workspace:*",
     "@symphony/policies": "workspace:*",

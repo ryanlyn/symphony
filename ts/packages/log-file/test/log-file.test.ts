@@ -4,9 +4,7 @@ import path from "node:path";
 
 import { afterEach, test, vi } from "vitest";
 import { appendLogEvent, configureLogFile, defaultLogFile } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import { assert, tempDir } from "@symphony/test-utils";
 
 const fsSyncMockState = vi.hoisted(() => ({
   failNextSymlinkSync: false,

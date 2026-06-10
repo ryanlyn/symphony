@@ -2,12 +2,10 @@ import { Liquid } from "liquidjs";
 import { test } from "vitest";
 import { buildPrompt, continuationPrompt } from "@symphony/cli";
 import type { Issue, ParsedPromptTemplate } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith } from "@symphony/test-utils";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "issue-1",
+  return issueWith({
     identifier: "ENG-42",
     title: "Fix the login bug",
     description: "Users cannot log in when using SSO.",
@@ -15,12 +13,8 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     stateType: "started",
     branchName: "fix/login-bug",
     url: "https://linear.app/team/issue/ENG-42",
-    priority: 1,
-    labels: [],
-    blockers: [],
-    assignedToWorker: true,
     ...overrides,
-  };
+  });
 }
 
 // --- buildPrompt ---

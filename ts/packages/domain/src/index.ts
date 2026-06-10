@@ -119,6 +119,26 @@ export function durationMs(startedAt: string, endedAt: string): number {
   return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
 }
 
+// --- Clock ---
+
+export interface ClockPort {
+  now(): Date;
+  monotonicMs(): number;
+  setTimeout(callback: () => void, delayMs: number): TimerHandle;
+  clearTimeout(handle: TimerHandle): void;
+}
+
+export interface TimerHandle {
+  unref?: (() => void) | undefined;
+}
+
+export const systemClock: ClockPort = {
+  now: () => new Date(),
+  monotonicMs: () => performance.now(),
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 export const PRIORITY_VALUES = [1, 2, 3, 4] as const;
 
 export type Priority = (typeof PRIORITY_VALUES)[number];

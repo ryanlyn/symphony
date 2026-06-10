@@ -9,5 +9,15 @@
     "src/**/*.ts",
     "src/**/*.tsx"
   ],
-  "references": []
+  "references": [
+    {
+      "path": "../config"
+    },
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../issue"
+    }
+  ]
 }

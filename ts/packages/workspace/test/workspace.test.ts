@@ -13,9 +13,8 @@ import {
   shellEscape,
 } from "@symphony/cli";
 import type { Settings } from "@symphony/domain";
+import { assert, tempDir, sampleIssue } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir, sampleIssue } from "../../../test/helpers.js";
 import { runHook } from "../src/index.js";
 
 function makeSettings(

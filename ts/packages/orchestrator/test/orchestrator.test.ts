@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import type { ClockPort } from "@symphony/ports";
-
-import { assert } from "../../../test/assert.js";
+import type { ClockPort } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 function fakeClock(initial = new Date()) {
   let tick = initial.getTime();

@@ -11,9 +11,6 @@
       "path": "./packages/agent-sdk"
     },
     {
-      "path": "./packages/child-process"
-    },
-    {
       "path": "./packages/cli-kit"
     },
     {
@@ -53,9 +50,6 @@
       "path": "./packages/policies"
     },
     {
-      "path": "./packages/ports"
-    },
-    {
       "path": "./packages/presenter"
     },
     {
@@ -81,6 +75,9 @@
     },
     {
       "path": "./packages/ssh"
+    },
+    {
+      "path": "./packages/test-utils"
     },
     {
       "path": "./packages/traceviz-emitter"

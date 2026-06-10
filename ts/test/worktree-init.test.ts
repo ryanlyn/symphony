@@ -4,9 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { test } from "vitest";
-
-import { assert } from "./assert.js";
-import { tempDir, writeExecutable } from "./helpers.js";
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");

@@ -8,9 +8,7 @@ import { promisify } from "node:util";
 import { test, vi } from "vitest";
 import { parseConfig, readResumeState, runAgentAttempt, runSsh, shellEscape } from "@symphony/cli";
 import type { Issue, WorkflowDefinition } from "@symphony/cli";
-
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir } from "./helpers.js";
+import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
 
 const execFileAsync = promisify(execFile);
 const runLiveSsh = process.env.SYMPHONY_TS_RUN_LIVE_SSH_E2E === "1";

@@ -16,9 +16,7 @@ import {
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
 } from "@symphony/runtime-events";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,

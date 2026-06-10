@@ -23,7 +23,7 @@ mcp, server, tui, presenter, projections, …
 ─────────────────────────────────────────────────────────────────────────
 @symphony/tracker-sdk, @symphony/agent-sdk    extension SDKs (contracts + registries)
 ─────────────────────────────────────────────────────────────────────────
-@symphony/domain, ports, issue, policies, …   pure types, constants, leaf logic
+@symphony/domain, issue, policies, …          pure types, constants, leaf logic
 ```
 
 - **domain** holds pure types and leaf functions shared by everything. It carries no

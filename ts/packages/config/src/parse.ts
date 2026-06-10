@@ -91,7 +91,7 @@ export function parseConfig(
   if (serverRaw.traceDir !== undefined) settings.server.traceDir = serverRaw.traceDir;
   if (serverRaw.staticDir !== undefined) settings.server.staticDir = serverRaw.staticDir;
 
-  settings.statusOverrides = parseStatusOverrides(parsed.statusOverrides ?? {});
+  settings.statusOverrides = parseStatusOverrides(parsed.statusOverrides ?? {}, settings.agents);
   return settings;
 }
 
@@ -271,7 +271,7 @@ function legacyAgentRecordOverrides(
   const overrides: Record<string, Partial<AgentConfig>> = {};
   const codex = agentRecordFragment(codexRaw);
   if (Object.keys(codex).length > 0) overrides.codex = codex;
-  const claude = agentRecordFragment(claudeRaw);
+  const claude = claudeRecordFragment(defaultAgentRecords().claude!, claudeRaw);
   if (Object.keys(claude).length > 0) overrides.claude = claude;
   return overrides;
 }
@@ -285,6 +285,22 @@ function agentRecordFragment(raw: Partial<CodexRaw & ClaudeRaw>): Partial<AgentC
     ...(raw.strictMcpConfig !== undefined ? { strictMcpConfig: raw.strictMcpConfig } : {}),
     ...(raw.providerConfig !== undefined ? { providerConfig: raw.providerConfig } : {}),
   };
+}
+
+/**
+ * Like {@link agentRecordFragment}, plus the top-level `claude.model` handling: the model
+ * setting pins the `model` key of the record's provider config; an explicit `model` key
+ * inside a configured provider config takes precedence.
+ */
+function claudeRecordFragment(base: AgentConfig, raw: ClaudeRaw): Partial<AgentConfig> {
+  const fragment = agentRecordFragment(raw);
+  if (raw.model === undefined && raw.providerConfig === undefined) return fragment;
+  const baseModel = base.providerConfig?.model;
+  const model = raw.model ?? baseModel;
+  fragment.providerConfig = raw.providerConfig
+    ? { ...(model !== undefined ? { model } : {}), ...raw.providerConfig }
+    : { ...base.providerConfig, ...(model !== undefined ? { model } : {}) };
+  return fragment;
 }
 
 function parseAgents(
@@ -394,7 +410,10 @@ function isClaudeCompatibleBridgeCommand(bridgeCommand: string): boolean {
   return /(^|\s|\/)claude-agent-acp(\s|$)/.test(bridgeCommand);
 }
 
-function parseStatusOverrides(raw: StatusOverridesRaw): Map<string, PartialRuntimeSettings> {
+function parseStatusOverrides(
+  raw: StatusOverridesRaw,
+  baseAgents: Record<string, AgentConfig>,
+): Map<string, PartialRuntimeSettings> {
   const overrides = new Map<string, PartialRuntimeSettings>();
 
   for (const [stateName, value] of Object.entries(raw)) {
@@ -403,7 +422,7 @@ function parseStatusOverrides(raw: StatusOverridesRaw): Map<string, PartialRunti
 
     const next: PartialRuntimeSettings = {};
     if (value.agent !== undefined) next.agent = parsePartialAgent(value.agent);
-    const agents = parseStatusOverrideAgents(normalizedState, value);
+    const agents = parseStatusOverrideAgents(normalizedState, value, baseAgents);
     if (Object.keys(agents).length > 0) next.agents = agents;
     overrides.set(normalizedState, next);
   }
@@ -428,6 +447,7 @@ function parsePartialAgent(raw: Partial<AgentRaw>): Partial<AgentSettings> {
 function parseStatusOverrideAgents(
   state: string,
   value: StatusOverridesRaw[string],
+  baseAgents: Record<string, AgentConfig>,
 ): Record<string, Partial<AgentConfig>> {
   const agents: Record<string, Partial<AgentConfig>> = {};
   for (const [kind, recordRaw] of Object.entries(value.agents ?? {})) {
@@ -445,7 +465,13 @@ function parseStatusOverrideAgents(
     agents.codex = { ...agentRecordFragment(value.codex), ...agents.codex };
   }
   if (value.claude !== undefined) {
-    agents.claude = { ...agentRecordFragment(value.claude), ...agents.claude };
+    const fragment = agentRecordFragment(value.claude);
+    // A model override re-pins the provider config unless the override supplies its own.
+    const base = baseAgents.claude;
+    if (value.claude.model !== undefined && value.claude.providerConfig === undefined && base) {
+      fragment.providerConfig = { ...base.providerConfig, model: value.claude.model };
+    }
+    agents.claude = { ...fragment, ...agents.claude };
   }
   return agents;
 }

@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES, RUNTIME_EVENT_TYPES } from "@symphony/cli";
 import type { AgentUpdate, CodexSettings, Issue, RuntimeEvent } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 const codexSettingsFixture: CodexSettings = {
   command: "codex-acp",

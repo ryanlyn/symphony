@@ -1,7 +1,6 @@
 import { test, vi } from "vitest";
 import { parseConfig } from "@symphony/config";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { main, parseCliArgs, projectUrlForSettings } from "@symphony/cli";
 
