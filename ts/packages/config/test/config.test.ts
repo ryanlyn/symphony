@@ -77,7 +77,7 @@ test("config resolves op:// references from env var fallback", async () => {
   await fs.chmod(opScript, 0o755);
 
   const settings = parseConfig(
-    {},
+    { tracker: { kind: "linear" } },
     { LINEAR_API_KEY: "op://vault/item/key", PATH: `${root}:${process.env.PATH}` },
   );
   assert.equal(settings.tracker.apiKey, "env-secret");
@@ -133,6 +133,7 @@ test("config falls back to canonical env vars when explicit env refs resolve emp
   const settings = parseConfig(
     {
       tracker: {
+        kind: "linear",
         api_key: "$EMPTY_TOKEN",
         assignee: "$EMPTY_ASSIGNEE",
       },
@@ -303,8 +304,8 @@ test("config validates literal-only backend names and rejects removed Codex keys
   assert.equal(settings.tracker.kind, "memory");
 
   assert.throws(
-    () => parseConfig({ tracker: { kind: "github" } }),
-    /unsupported tracker.kind: github/,
+    () => validateDispatchConfig(parseConfig({ tracker: { kind: "github" } })),
+    /unsupported tracker.kind: github \(known kinds: linear, local, memory\)/,
   );
   assert.throws(
     () => parseConfig({ codex: { approval_policy: "never" } }),
@@ -474,7 +475,7 @@ test("known workflow sections reject unsupported nested keys after alias normali
       parseConfig({
         tracker: { kind: "memory", project_slug: "mono", surprise: true },
       }),
-    /tracker contains unsupported keys: surprise/,
+    /unsupported tracker option\(s\) for kind "memory": project_slug, surprise/,
   );
 
   assert.throws(
@@ -561,7 +562,11 @@ test("config rejects empty strings and booleans for typed fields", () => {
     () => parseConfig({ observability: { dashboard_enabled: "" } }),
     /expected a boolean/,
   );
-  assert.throws(() => parseConfig({ tracker: { kind: "" } }), /unsupported tracker.kind/);
+  // A blank kind parses as "unset" and is rejected when dispatch is validated.
+  assert.throws(
+    () => validateDispatchConfig(parseConfig({ tracker: { kind: "" } })),
+    /tracker.kind is required/,
+  );
 });
 
 test("stall_timeout_ms=0 is accepted as a valid value at top-level and in status overrides", () => {
@@ -719,15 +724,15 @@ test("parses local tracker config with path", () => {
     {},
   );
   assert.equal(settings.tracker.kind, "local");
-  assert.equal(settings.tracker.path, ".symphony/local");
+  assert.equal(settings.tracker.options.path, ".symphony/local");
 });
 
 test("local tracker id_prefix defaults to BOARD- and can be overridden", () => {
   const def = parseConfig({ tracker: { kind: "local" } }, {});
-  assert.equal(def.tracker.idPrefix, "BOARD-");
+  assert.equal(def.tracker.options.idPrefix, "BOARD-");
 
   const custom = parseConfig({ tracker: { kind: "local", id_prefix: "XXX-" } }, {});
-  assert.equal(custom.tracker.idPrefix, "XXX-");
+  assert.equal(custom.tracker.options.idPrefix, "XXX-");
 });
 
 test("an unsafe id_prefix is rejected at config parse", () => {
@@ -756,7 +761,7 @@ test("config validation accepts project_slugs as an alternative to project_slug"
     {},
   );
 
-  assert.deepEqual(settings.tracker.projectSlugs, ["slug-a", "slug-b"]);
+  assert.deepEqual(settings.tracker.options.projectSlugs, ["slug-a", "slug-b"]);
   validateDispatchConfig(settings);
 });
 
@@ -775,7 +780,7 @@ test("config validation accepts project_labels as an alternative to project_slug
     {},
   );
 
-  assert.deepEqual(settings.tracker.projectLabels, ["team:backend"]);
+  assert.deepEqual(settings.tracker.options.projectLabels, ["team:backend"]);
   validateDispatchConfig(settings);
 });
 

@@ -12,9 +12,6 @@
   "references": [
     {
       "path": "../domain"
-    },
-    {
-      "path": "../tracker-sdk"
     }
   ]
 }

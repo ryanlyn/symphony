@@ -14,6 +14,7 @@ test("Linear client queries multiple project slugs via project_slugs config", as
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_slugs: ["slug-a", "slug-b"],
           active_states: ["Todo"],
@@ -47,6 +48,7 @@ test("Linear client normalizes single project_slug into multi-slug query", async
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_slug: "mono",
           active_states: ["Todo"],
@@ -79,6 +81,7 @@ test("Linear client resolves project slugs from labels via API", async () => {
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_labels: ["team:backend", "symphony-managed"],
           active_states: ["Todo"],
@@ -121,6 +124,7 @@ test("Linear client resolves project slugs from labels across every page", async
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_labels: ["team:backend"],
           active_states: ["Todo"],
@@ -171,6 +175,7 @@ test("Linear client throws when label resolution returns no projects", async () 
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_labels: ["nonexistent-label"],
           active_states: ["Todo"],
@@ -199,6 +204,7 @@ test("Linear client caches resolved project slugs across calls", async () => {
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_labels: ["team:backend"],
           active_states: ["Todo"],
@@ -248,6 +254,7 @@ test("Linear client retries project label resolution after transient failure", a
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_labels: ["team:backend"],
           active_states: ["Todo"],
@@ -294,6 +301,7 @@ test("Linear client throws when no project config is provided", async () => {
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           active_states: ["Todo"],
         },

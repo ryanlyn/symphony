@@ -19,6 +19,8 @@ import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
+import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import { TraceEmitter } from "@symphony/traceviz-emitter";
 import { defaultIssueStorePath, IssueStore } from "@symphony/server";
 import { errorMessage, type Settings, type WorkflowDefinition } from "@symphony/domain";
@@ -35,6 +37,9 @@ import {
   runtimeAdapters,
   runtimeDefaultSettingsOptions,
 } from "./daemon.js";
+
+// Composition root: the CLI decides which tracker backends this binary supports.
+registerBuiltinTrackerProviders();
 
 export interface CliOptions {
   workflowPath: string | null;
@@ -258,7 +263,5 @@ function applyCliOverrides(workflow: WorkflowDefinition, options: CliOptions): v
 }
 
 export function projectUrlForSettings(settings: Settings): string | undefined {
-  const slug = settings.tracker.projectSlug?.trim();
-  if (!slug) return undefined;
-  return `https://linear.app/project/${encodeURIComponent(slug)}/issues`;
+  return defaultTrackerRegistry.providerFor(settings)?.projectUrl?.(settings);
 }

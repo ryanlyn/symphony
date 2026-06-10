@@ -87,7 +87,7 @@ test("shipped WORKFLOW.local.md selects a local tracker client with a real playb
   const raw = await readFile(path.join(import.meta.dirname, "../../../WORKFLOW.local.md"), "utf8");
   const settings = parseConfig(frontmatter(raw), {});
   assert.equal(settings.tracker.kind, "local");
-  assert.equal(settings.tracker.path, ".symphony/local/symphony");
+  assert.equal(settings.tracker.options.path, ".symphony/local/symphony");
   assert.ok(createTrackerClient(settings) instanceof LocalTrackerClient);
 
   const prose = body(raw);

@@ -214,6 +214,12 @@ importers:
       "@symphony/traceviz-emitter":
         specifier: workspace:*
         version: link:packages/traceviz-emitter
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:packages/tracker-sdk
+      "@symphony/trackers":
+        specifier: workspace:*
+        version: link:packages/trackers
       "@symphony/tui":
         specifier: workspace:*
         version: link:packages/tui
@@ -349,6 +355,12 @@ importers:
       "@symphony/traceviz-emitter":
         specifier: workspace:*
         version: link:../../packages/traceviz-emitter
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../../packages/tracker-sdk
+      "@symphony/trackers":
+        specifier: workspace:*
+        version: link:../../packages/trackers
       "@symphony/tui":
         specifier: workspace:*
         version: link:../../packages/tui
@@ -501,6 +513,9 @@ importers:
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../tracker-sdk
       execa:
         specifier: "catalog:"
         version: 9.6.1
@@ -545,6 +560,9 @@ importers:
       "@symphony/issue":
         specifier: workspace:*
         version: link:../issue
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../tracker-sdk
 
   packages/local-tracker:
     dependencies:
@@ -554,6 +572,9 @@ importers:
       "@symphony/issue":
         specifier: workspace:*
         version: link:../issue
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../tracker-sdk
       yaml:
         specifier: "catalog:"
         version: 2.9.0
@@ -578,9 +599,9 @@ importers:
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/local-tracker":
+      "@symphony/tracker-sdk":
         specifier: workspace:*
-        version: link:../local-tracker
+        version: link:../tracker-sdk
       "@symphony/worker-host-pool":
         specifier: workspace:*
         version: link:../worker-host-pool
@@ -602,6 +623,9 @@ importers:
       "@symphony/issue":
         specifier: workspace:*
         version: link:../issue
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../tracker-sdk
 
   packages/orchestrator:
     dependencies:
@@ -805,6 +829,27 @@ importers:
       typescript:
         specifier: "catalog:"
         version: 5.9.3
+
+  packages/tracker-sdk:
+    dependencies:
+      "@symphony/domain":
+        specifier: workspace:*
+        version: link:../domain
+
+  packages/trackers:
+    dependencies:
+      "@symphony/linear-tracker":
+        specifier: workspace:*
+        version: link:../linear-tracker
+      "@symphony/local-tracker":
+        specifier: workspace:*
+        version: link:../local-tracker
+      "@symphony/memory-tracker":
+        specifier: workspace:*
+        version: link:../memory-tracker
+      "@symphony/tracker-sdk":
+        specifier: workspace:*
+        version: link:../tracker-sdk
 
   packages/tui:
     dependencies:

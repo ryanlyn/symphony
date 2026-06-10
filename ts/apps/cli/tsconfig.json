@@ -83,6 +83,12 @@
       "path": "../../packages/traceviz-emitter"
     },
     {
+      "path": "../../packages/tracker-sdk"
+    },
+    {
+      "path": "../../packages/trackers"
+    },
+    {
       "path": "../../packages/tui"
     },
     {

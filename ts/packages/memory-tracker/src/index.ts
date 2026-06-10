@@ -1,4 +1,5 @@
 import { normalizeIssue } from "@symphony/issue";
+import { rejectUnknownOptions, type TrackerProvider } from "@symphony/tracker-sdk";
 import {
   ISSUE_STATE_TYPES,
   isRecord,
@@ -103,3 +104,18 @@ function isIssueStateType(value: unknown): value is Issue["stateType"] {
 function normalizeState(value: string): string {
   return value.trim().toLowerCase();
 }
+
+/**
+ * In-process tracker fixture: issues come from `SYMPHONY_MEMORY_TRACKER_ISSUES_JSON`.
+ * Used by tests and sandboxes; exposes no agent tools.
+ */
+export const memoryTrackerProvider: TrackerProvider = {
+  kind: "memory",
+  parseOptions(options) {
+    rejectUnknownOptions(options, [], "memory");
+    return {};
+  },
+  createClient(_settings, context) {
+    return new MemoryTrackerClient(memoryIssuesFromEnv(context.env));
+  },
+};

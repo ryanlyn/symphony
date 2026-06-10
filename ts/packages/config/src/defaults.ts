@@ -28,9 +28,6 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
   return {
     tracker: {
       kind: undefined,
-      endpoint: "https://api.linear.app/graphql",
-      path: ".symphony/local",
-      idPrefix: "BOARD-",
       activeStates: ["Todo", "In Progress"],
       terminalStates: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
       dispatch: {
@@ -38,6 +35,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
         onlyRoutes: null,
         routeLabelPrefix: "Symphony:",
       },
+      options: {},
     },
     polling: { intervalMs: 30_000 },
     workspace: {

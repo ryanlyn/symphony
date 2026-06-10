@@ -10,13 +10,13 @@ interface FetchCall {
 
 test("Linear client refuses requests without an API key", async () => {
   const calls: FetchCall[] = [];
-  const client = new LinearClient(parseConfig({ tracker: { project_slug: "mono" } }, {}), (async (
-    input,
-    init,
-  ) => {
-    calls.push(fetchCall(input, init));
-    return jsonResponse({ data: { viewer: { id: "viewer-1" } } });
-  }) as typeof fetch);
+  const client = new LinearClient(
+    parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {}),
+    (async (input, init) => {
+      calls.push(fetchCall(input, init));
+      return jsonResponse({ data: { viewer: { id: "viewer-1" } } });
+    }) as typeof fetch,
+  );
 
   await assert.rejects(() => client.viewer(), /missing Linear API key/);
   assert.equal(calls.length, 0);
@@ -306,6 +306,7 @@ test("Linear assignee me resolves through viewer before normalizing issues", asy
     parseConfig(
       {
         tracker: {
+          kind: "linear",
           api_key: "linear-token",
           project_slug: "mono",
           active_states: ["Todo"],
@@ -551,6 +552,7 @@ function settings() {
   return parseConfig(
     {
       tracker: {
+        kind: "linear",
         api_key: "linear-token",
         project_slug: "mono",
         active_states: ["Todo"],

@@ -389,6 +389,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
 function workflowFixture(): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
+      kind: "linear",
       api_key: "linear-token",
       project_slug: "mono",
       active_states: ["Todo", "In Progress"],

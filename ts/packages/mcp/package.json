@@ -11,11 +11,11 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
     "@hono/node-server": "catalog:",
+    "@symphony/domain": "workspace:*",
+    "@symphony/tracker-sdk": "workspace:*",
+    "@symphony/worker-host-pool": "workspace:*",
     "hono": "catalog:",
     "ts-pattern": "catalog:",
-    "zod": "catalog:",
-    "@symphony/domain": "workspace:*",
-    "@symphony/local-tracker": "workspace:*",
-    "@symphony/worker-host-pool": "workspace:*"
+    "zod": "catalog:"
   }
 }

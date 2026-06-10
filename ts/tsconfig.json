@@ -86,6 +86,12 @@
       "path": "./packages/traceviz-server"
     },
     {
+      "path": "./packages/tracker-sdk"
+    },
+    {
+      "path": "./packages/trackers"
+    },
+    {
       "path": "./packages/tui"
     },
     {

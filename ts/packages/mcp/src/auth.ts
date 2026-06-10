@@ -14,26 +14,25 @@ export function mcpAuthScopeForSettings(
   host: string,
   port: number | undefined,
 ): string {
-  const tracker = settings.tracker;
-  const identity = JSON.stringify({
-    host,
-    port,
-    tracker: {
-      kind: tracker.kind ?? "linear",
-      endpoint: tracker.endpoint,
-      apiKey: tracker.apiKey ?? null,
-      projectSlug: tracker.projectSlug ?? null,
-      projectSlugs: tracker.projectSlugs ?? null,
-      projectLabels: tracker.projectLabels ?? null,
-      assignee: tracker.assignee ?? null,
-      path: tracker.path ?? null,
-      idPrefix: tracker.idPrefix ?? null,
-      activeStates: tracker.activeStates,
-      terminalStates: tracker.terminalStates,
-      dispatch: tracker.dispatch,
-    },
-  });
+  const identity = stableJson({ host, port: port ?? null, tracker: settings.tracker });
   return `mcp:${createHash("sha256").update(identity).digest("base64url")}`;
+}
+
+/**
+ * Deterministic JSON for hashing: object keys are sorted recursively and `undefined`
+ * values are normalized to `null` so the scope is independent of property insertion order
+ * and of which optional tracker fields happen to be set explicitly.
+ */
+function stableJson(value: unknown): string {
+  if (value === undefined || value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 export function issueMcpToken(scope = defaultMcpAuthScope): string {

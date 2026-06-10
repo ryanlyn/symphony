@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@symphony/domain": "workspace:*",
-    "@symphony/issue": "workspace:*"
+    "@symphony/issue": "workspace:*",
+    "@symphony/tracker-sdk": "workspace:*"
   }
 }

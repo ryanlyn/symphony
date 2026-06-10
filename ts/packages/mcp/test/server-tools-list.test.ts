@@ -5,9 +5,12 @@ import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import { test } from "vitest";
 
 import { assert } from "../../../test/assert.js";
+
+registerBuiltinTrackerProviders();
 
 import {
   issueMcpToken,

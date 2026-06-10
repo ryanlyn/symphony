@@ -10,17 +10,12 @@ import type {
   HooksSettings,
   PartialRuntimeSettings,
   Settings,
-  TrackerKind,
   TrackerSettings,
 } from "@symphony/domain";
-import {
-  TRACKER_KINDS,
-  isOneOf,
-  isRecord as isPlainRecord,
-  normalizeHttpBindHost,
-} from "@symphony/domain";
+import { isRecord as isPlainRecord, normalizeHttpBindHost } from "@symphony/domain";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
 
-import { hooksAliases } from "./aliases.js";
+import { hooksAliases, normalizeAliases } from "./aliases.js";
 import { defaultAgentRecords, defaultSettings, type DefaultSettingsOptions } from "./defaults.js";
 import { configErrorMessage } from "./errors.js";
 import { joinPath, nonEmptyString } from "./leaf-utils.js";
@@ -45,12 +40,13 @@ export function parseConfig(
   raw: Record<string, unknown> = {},
   env: NodeJS.ProcessEnv = {},
   defaults: DefaultSettingsOptions = {},
+  registry: TrackerRegistry = defaultTrackerRegistry,
 ): Settings {
   const settings = defaultSettings(defaults);
   const parsed = parseWorkflowConfig(raw);
 
   const trackerRaw = parsed.tracker ?? {};
-  settings.tracker = parseTracker(settings.tracker, trackerRaw, env);
+  settings.tracker = parseTracker(settings.tracker, trackerRaw, env, registry);
 
   const pollingRaw = parsed.polling ?? {};
   settings.polling.intervalMs = pollingRaw.intervalMs ?? settings.polling.intervalMs;
@@ -110,29 +106,12 @@ export function settingsForIssueState(settings: Settings, state: string): Settin
   return merged;
 }
 
-export function validateDispatchConfig(settings: Settings): void {
-  if (!settings.tracker.kind) throw new Error("tracker.kind is required");
-  if (settings.tracker.kind === "linear") {
-    if (!settings.tracker.apiKey) throw new Error("tracker.api_key is required");
-    const { projectSlug, projectSlugs, projectLabels } = settings.tracker;
-    const hasSlug = !!projectSlug;
-    const hasSlugs = !!projectSlugs && projectSlugs.length > 0;
-    const hasLabels = !!projectLabels && projectLabels.length > 0;
-    const count = [hasSlug, hasSlugs, hasLabels].filter(Boolean).length;
-    if (count === 0)
-      throw new Error(
-        "tracker.project_slug, tracker.project_slugs, or tracker.project_labels is required",
-      );
-    if (count > 1)
-      throw new Error(
-        "tracker.project_slug, tracker.project_slugs, and tracker.project_labels are mutually exclusive",
-      );
-  }
-  if (settings.tracker.kind === "local") {
-    if (!settings.tracker.path || settings.tracker.path.trim() === "") {
-      throw new Error("tracker.path (board directory) is required for the local tracker");
-    }
-  }
+export function validateDispatchConfig(
+  settings: Settings,
+  registry: TrackerRegistry = defaultTrackerRegistry,
+): void {
+  const provider = registry.require(settings.tracker.kind);
+  provider.validateDispatch?.(settings);
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
   for (const override of settings.statusOverrides.values()) {
@@ -161,62 +140,52 @@ export function normalizeRouteName(value: unknown): string {
   return String(value).trim().toLowerCase();
 }
 
-/**
- * Local-tracker issue-id prefixes must be filesystem-safe so `<prefix><n>.md` can never escape the
- * board dir. Mirrors BoardStore's own guard (config must not import the tracker packages, so the
- * rule is duplicated here as the user-facing validation). Default "BOARD-" satisfies it.
- */
-const LOCAL_ID_PREFIX_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-function assertValidLocalIdPrefix(prefix: string): void {
-  if (!LOCAL_ID_PREFIX_PATTERN.test(prefix)) {
-    throw new Error(
-      `tracker.id_prefix ${JSON.stringify(prefix)} is invalid: ` +
-        `must start alphanumeric, then only letters, digits, "_" or "-"`,
-    );
-  }
-}
+/** Keys of the tracker config section owned by the core; everything else belongs to the provider. */
+const TRACKER_COMMON_KEYS = new Set([
+  "kind",
+  "endpoint",
+  "apiKey",
+  "assignee",
+  "activeStates",
+  "terminalStates",
+  "dispatch",
+]);
 
 function parseTracker(
   defaults: TrackerSettings,
   trackerRaw: TrackerRaw,
   env: NodeJS.ProcessEnv,
+  registry: TrackerRegistry,
 ): TrackerSettings {
-  const kindRaw = trackerRaw.kind;
-  const kindUnspecified = kindRaw === undefined || kindRaw === null;
-  const kind = kindUnspecified ? defaults.kind : trackerKindValue(kindRaw, "tracker.kind");
+  const kind = trackerKindValue(trackerRaw.kind) ?? defaults.kind;
+  // Unregistered kinds parse generically (options pass through unvalidated) and are
+  // rejected with the full list of known kinds by validateDispatchConfig.
+  const provider = registry.get(kind);
 
-  const resolveLinearFallbacks = kindUnspecified || kind === "linear";
-  const apiKey = resolveConfiguredSecret(
-    trackerRaw.apiKey,
-    env,
-    resolveLinearFallbacks ? "LINEAR_API_KEY" : undefined,
-  );
-  const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
+  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, provider?.envFallbacks?.apiKey);
   const assignee = resolveConfiguredSecret(
     trackerRaw.assignee,
     env,
-    resolveLinearFallbacks ? "LINEAR_ASSIGNEE" : undefined,
+    provider?.envFallbacks?.assignee,
   );
-  const idPrefix = trackerRaw.idPrefix ?? defaults.idPrefix ?? "BOARD-";
-  assertValidLocalIdPrefix(idPrefix);
+  const endpoint = trackerRaw.endpoint ?? provider?.defaultEndpoint ?? defaults.endpoint;
 
-  const projectSlugs = trackerRaw.projectSlugs?.length ? trackerRaw.projectSlugs : undefined;
-  const projectLabels = trackerRaw.projectLabels?.length ? trackerRaw.projectLabels : undefined;
+  const providerRaw: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(trackerRaw)) {
+    if (!TRACKER_COMMON_KEYS.has(key)) providerRaw[key] = value;
+  }
+  const aliased = normalizeAliases(providerRaw, { ...(provider?.configAliases ?? {}) });
+  const options = provider?.parseOptions ? provider.parseOptions(aliased, { env }) : aliased;
 
   return {
-    ...defaults,
     kind,
-    endpoint: trackerRaw.endpoint ?? defaults.endpoint,
-    path: trackerRaw.path ?? defaults.path ?? ".symphony/local",
-    idPrefix,
+    endpoint,
     apiKey,
-    projectSlug,
-    projectSlugs,
-    projectLabels,
     assignee,
     activeStates: trackerRaw.activeStates ?? defaults.activeStates,
     terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
     dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
+    options,
   };
 }
 
@@ -544,8 +513,8 @@ function applyStateBackendOverridesToAgentRecords(
 }
 
 /**
- * Deep-copy mutable tracker collections (dispatch and state lists) so per-issue-state clones
- * cannot mutate the shared base config.
+ * Deep-copy mutable tracker collections (dispatch, state lists, provider options) so
+ * per-issue-state clones cannot mutate the shared base config.
  */
 function cloneTracker(tracker: TrackerSettings): TrackerSettings {
   return {
@@ -553,6 +522,7 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
     dispatch: { ...tracker.dispatch },
     activeStates: [...tracker.activeStates],
     terminalStates: [...tracker.terminalStates],
+    options: structuredClone(tracker.options),
   };
 }
 
@@ -578,10 +548,10 @@ function parseWorkflowConfig(raw: Record<string, unknown>): WorkflowConfigRaw {
   throw new Error(configErrorMessage(result.error));
 }
 
-function trackerKindValue(value: unknown, label: string): TrackerKind {
-  if (typeof value !== "string") throw new Error(`${label} must be a string`);
-  if (isOneOf(value, TRACKER_KINDS)) return value;
-  throw new Error(`unsupported ${label}: ${value}`);
+function trackerKindValue(value: string | null | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const kind = value.trim();
+  return kind === "" ? undefined : kind;
 }
 
 function normalizeOnlyRoutes(routes: string[]): string[] {

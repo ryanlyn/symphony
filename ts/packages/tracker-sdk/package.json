@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/config",
+  "name": "@symphony/tracker-sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,6 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*",
-    "@symphony/tracker-sdk": "workspace:*",
-    "execa": "catalog:",
-    "zod": "catalog:"
+    "@symphony/domain": "workspace:*"
   }
 }

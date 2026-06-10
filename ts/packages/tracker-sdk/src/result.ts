@@ -1,4 +1,4 @@
-import type { ToolResult } from "../tools.js";
+import type { ToolResult } from "./provider.js";
 
 export function toolSuccess(result: unknown): ToolResult {
   return { success: true, result };

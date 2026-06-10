@@ -1,10 +1,18 @@
 import { errorMessage, isRecord, type Issue, type Settings } from "@symphony/domain";
-import { BoardStore, resolveBoardDir, type BoardStoreOptions } from "@symphony/local-tracker";
+import {
+  applyQuery,
+  parseQuerySpec,
+  parseSelect,
+  pickFields,
+  toolFailure,
+  toolSuccess,
+  unsupportedToolFailure,
+  type ToolResult,
+  type ToolSpec,
+} from "@symphony/tracker-sdk";
 
-import { applyQuery, parseQuerySpec, parseSelect, pickFields } from "../filter.js";
-import type { ToolResult, ToolSpec } from "../tools.js";
-
-import { toolFailure, toolSuccess, unsupportedToolFailure } from "./result.js";
+import { BoardStore, type BoardStoreOptions } from "./boardStore.js";
+import { localBoardDir, localTrackerOptions } from "./options.js";
 
 const TOOL_NAMES = [
   "local_update_status",
@@ -148,8 +156,9 @@ export async function executeLocalTool(
 }
 
 function storeFor(settings: Settings, options: BoardStoreOptions = {}): BoardStore {
-  return new BoardStore(resolveBoardDir(settings.tracker.path), {
-    ...(settings.tracker.idPrefix !== undefined ? { idPrefix: settings.tracker.idPrefix } : {}),
+  const { idPrefix } = localTrackerOptions(settings);
+  return new BoardStore(localBoardDir(settings), {
+    ...(idPrefix !== undefined ? { idPrefix } : {}),
     ...options,
   });
 }

@@ -1,10 +1,14 @@
 import { test, vi } from "vitest";
-import { executeTool, parseConfig, toolSpecs } from "@symphony/cli";
+import { parseConfig } from "@symphony/config";
+import { executeTool, toolSpecs } from "@symphony/mcp";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 
 import { assert } from "../../../test/assert.js";
 
+registerBuiltinTrackerProviders();
+
 test("linear_graphql tool validates name, input, and API key before network", async () => {
-  const settings = parseConfig({ tracker: { project_slug: "mono" } }, {});
+  const settings = parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {});
   const calls: unknown[] = [];
   const fetchImpl = (async () => {
     calls.push("called");
@@ -362,7 +366,10 @@ test("linear_graphql tool sends variables through unchanged", async () => {
 });
 
 function linearSettings() {
-  return parseConfig({ tracker: { api_key: "linear-token", project_slug: "mono" } }, {});
+  return parseConfig(
+    { tracker: { kind: "linear", api_key: "linear-token", project_slug: "mono" } },
+    {},
+  );
 }
 
 function fetchSequence(...responses: Response[]): typeof fetch {

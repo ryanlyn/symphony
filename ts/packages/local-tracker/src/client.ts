@@ -1,7 +1,7 @@
 import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
 
 import { BoardStore } from "./boardStore.js";
-import { resolveBoardDir } from "./resolveBoardDir.js";
+import { localBoardDir, localTrackerOptions } from "./options.js";
 
 /** Minimal logging surface so a degraded board file is surfaced (default: console.warn). */
 export interface LocalTrackerLogger {
@@ -17,9 +17,10 @@ export class LocalTrackerClient implements RuntimeTrackerClient {
     env: NodeJS.ProcessEnv = process.env,
     logger: LocalTrackerLogger = { warn: (message) => console.warn(message) },
   ) {
-    const dir = resolveBoardDir(settings.tracker.path, { cwd, env });
+    const dir = localBoardDir(settings, { cwd, env });
+    const { idPrefix } = localTrackerOptions(settings);
     this.store = new BoardStore(dir, {
-      ...(settings.tracker.idPrefix !== undefined ? { idPrefix: settings.tracker.idPrefix } : {}),
+      ...(idPrefix !== undefined ? { idPrefix } : {}),
       // A malformed file in the board dir must not abort candidate discovery (and the poll);
       // skip it but log a warning so the operator can see and fix the offending file.
       onSkip: ({ id, error }) =>

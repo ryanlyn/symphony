@@ -17,38 +17,22 @@ import {
   resumeStateMatches,
   writeResumeState,
 } from "@symphony/resume-state";
-import { LinearClient } from "@symphony/linear-tracker";
-import { LocalTrackerClient } from "@symphony/local-tracker";
-import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
+import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
+
+// Composition root: the CLI decides which tracker backends this binary supports. Everything
+// downstream (config parsing, dispatch, MCP tools) resolves them through the registry.
+registerBuiltinTrackerProviders();
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
   return { tmpdir: os.tmpdir() };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unhandled tracker kind: ${String(value)}`);
 }
 
 export function createTrackerClient(
   settings: Settings,
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimeTrackerClient {
-  const kind = settings.tracker.kind;
-  if (kind === undefined) throw new Error("tracker.kind is required");
-  switch (kind) {
-    case "memory":
-      return new MemoryTrackerClient(memoryIssuesFromEnv(env));
-    case "linear": {
-      const client = new LinearClient(settings);
-      // Resolve project slugs (e.g. from project_labels) in the background; from origin/main.
-      void client.resolveProjectSlugs();
-      return client;
-    }
-    case "local":
-      return new LocalTrackerClient(settings);
-    default:
-      return assertNever(kind);
-  }
+  return defaultTrackerRegistry.require(settings.tracker.kind).createClient(settings, { env });
 }
 
 function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {

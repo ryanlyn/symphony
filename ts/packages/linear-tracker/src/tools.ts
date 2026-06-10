@@ -1,8 +1,13 @@
 import { errorMessage, isRecord, type Settings } from "@symphony/domain";
+import {
+  toolFailure,
+  toolSuccess,
+  unsupportedToolFailure,
+  type ToolResult,
+  type ToolSpec,
+} from "@symphony/tracker-sdk";
 
-import { type ToolResult, type ToolSpec } from "../tools.js";
-
-import { toolFailure, toolSuccess, unsupportedToolFailure } from "./result.js";
+import { linearEndpoint } from "./options.js";
 
 const LINEAR_MAX_RETRIES = 4;
 const MAX_ERROR_BODY_LOG_BYTES = 1000;
@@ -140,7 +145,7 @@ async function fetchWithRateLimitRetry(
   logger: LinearToolLogger,
 ): Promise<Response> {
   for (let retryCount = 0; ; retryCount += 1) {
-    const response = await fetchImpl(settings.tracker.endpoint, {
+    const response = await fetchImpl(linearEndpoint(settings), {
       method: "POST",
       signal: AbortSignal.timeout(30_000),
       headers: {

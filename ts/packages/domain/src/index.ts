@@ -74,9 +74,12 @@ export const AGENT_USAGE_ACCOUNTING_VALUES = ["per-turn", "cumulative"] as const
 
 export type AgentUsageAccounting = (typeof AGENT_USAGE_ACCOUNTING_VALUES)[number];
 
-export const TRACKER_KINDS = ["linear", "memory", "local"] as const;
-
-export type TrackerKind = (typeof TRACKER_KINDS)[number];
+/**
+ * Identifies a tracker backend by name (e.g. `"linear"`, `"local"`, `"memory"`).
+ * Open-ended: the set of supported kinds is whatever the composition root registered
+ * in its tracker provider registry, not a closed union owned by the domain.
+ */
+export type TrackerKind = string;
 
 export const ISSUE_STATE_TYPES = [
   "backlog",
@@ -187,32 +190,31 @@ export interface DispatchSettings {
 
 /**
  * Connection and filtering rules for the issue tracker that feeds work into this instance.
+ *
+ * Only fields every backend shares live here. Provider-specific keys of the `tracker:`
+ * config section (e.g. Linear's `project_slug`, the local board's `path`) are normalized
+ * and validated by the registered tracker provider and carried opaquely in {@link options}.
  */
 export interface TrackerSettings {
   /** Backend adapter selector. `"memory"` is an in-process fixture used for tests. */
   kind?: TrackerKind | undefined;
-  endpoint: string;
+  /** Tracker API endpoint; when unset, the provider's default endpoint applies. */
+  endpoint?: string | undefined;
+  /** Tracker credential; supports `$VAR` and `op://` references plus provider env fallbacks. */
   apiKey?: string | undefined;
-  /** @deprecated Use `projectSlugs` instead. Single Linear project slug; required when `kind === "linear"`. */
-  projectSlug?: string | undefined;
-  /** Linear project slugs to monitor. Mutually exclusive with `projectLabels`. */
-  projectSlugs?: string[] | undefined;
-  /** Linear project labels for dynamic discovery. Mutually exclusive with `projectSlugs`. */
-  projectLabels?: string[] | undefined;
   /** Tracker assignee identity (or `$VAR`) used to scope candidate queries to one user. */
   assignee?: string | undefined;
-  /** Local tracker board directory (e.g. `.symphony/local`). Used when `kind === "local"`. */
-  path?: string | undefined;
-  /**
-   * Local tracker issue-id prefix (e.g. `"BOARD-"`, `"XXX-"`). Issue files are `<prefix><n>.md`
-   * and new ids are minted with this prefix. Defaults to `"BOARD-"`. Used when `kind === "local"`.
-   */
-  idPrefix?: string | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */
   activeStates: string[];
   /** Tracker state names that mark an issue as finished; running agents on these issues are stopped and their workspaces cleaned up. */
   terminalStates: string[];
   dispatch: DispatchSettings;
+  /**
+   * Provider-specific settings, normalized and validated by the tracker provider registered
+   * for {@link kind}. Read through the provider package's typed accessor (e.g.
+   * `linearTrackerOptions(settings)`), never by key from core code.
+   */
+  options: Record<string, unknown>;
 }
 
 /**

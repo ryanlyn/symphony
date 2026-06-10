@@ -11,7 +11,13 @@
   ],
   "references": [
     {
-      "path": "../domain"
+      "path": "../linear-tracker"
+    },
+    {
+      "path": "../local-tracker"
+    },
+    {
+      "path": "../memory-tracker"
     },
     {
       "path": "../tracker-sdk"

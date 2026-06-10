@@ -100,17 +100,14 @@ export const acpAgentRecordSchema = z
   })
   .strict();
 
+// Common keys are validated here; any other key in the tracker section is provider-specific
+// and is passed through (`catchall`) to the registered tracker provider's option parser.
 const trackerRawSchema = z
   .object({
     kind: z.string().optional(),
     endpoint: z.string().optional(),
     apiKey: z.string().optional(),
-    projectSlug: z.string().optional(),
-    projectSlugs: z.array(z.string()).optional(),
-    projectLabels: z.array(z.string()).optional(),
     assignee: z.string().optional(),
-    path: z.string().optional(),
-    idPrefix: z.string().optional(),
     activeStates: z.array(z.string()).optional(),
     terminalStates: z.array(z.string()).optional(),
     dispatch: z
@@ -122,7 +119,7 @@ const trackerRawSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .catchall(z.unknown());
 
 const pollingRawSchema = z.object({ intervalMs: coercedIntervalMs.optional() }).strict();
 const workspaceRawSchema = z

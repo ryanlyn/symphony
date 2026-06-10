@@ -3,12 +3,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
-import { BoardStore } from "@symphony/local-tracker";
+import { executeTool, toolSpecs } from "@symphony/mcp";
+import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import { test } from "vitest";
 
 import { assert } from "../../../test/assert.js";
 
-import { executeTool, toolSpecs } from "@symphony/mcp";
+import { BoardStore } from "@symphony/local-tracker";
+
+registerBuiltinTrackerProviders();
 
 async function localSettings() {
   const dir = await mkdtemp(path.join(tmpdir(), "board-tools-"));
