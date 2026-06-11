@@ -364,25 +364,23 @@ function consumeCallUsage(
 }
 
 /**
- * Turn-end usage. When per-call buckets drove the accounting this turn, the
- * bridge's turn-level report is only used to reconcile gaps: cumulative
- * reports act as a floor, per-turn reports top up any shortfall against the
- * sum of buckets observed this turn. Without buckets the prior turn-level
- * accounting applies unchanged.
+ * Turn-end usage. The bridge's turn-level report is normalized to a
+ * session-cumulative value (a per-turn report is the turn's delta, so it is
+ * offset from the turn-start totals; a cumulative report already is one) and
+ * applied as a monotonic floor on the session totals. With per-call buckets
+ * this reconciles gaps without re-adding what the buckets already counted;
+ * without buckets it reproduces plain turn-level accounting.
  */
 function finalizeTurnUsage(
   session: Session,
   reported: UsageTokenUpdate | undefined,
 ): UsageTokenUpdate | undefined {
-  if (!session.sawCallUsageThisTurn) return normalizeSessionUsage(session, reported);
-  if (reported) {
-    if (session.agentConfig.usageAccounting === "cumulative") {
-      maxUsageTotals(session, reported);
-    } else {
-      const turnDelta = subtractUsage(usageSnapshot(session), session.turnStartTotals);
-      addUsageTotals(session, subtractUsage(reported, turnDelta));
-    }
-  }
+  if (!reported) return session.sawCallUsageThisTurn ? usageSnapshot(session) : undefined;
+  const reportedCumulative =
+    session.agentConfig.usageAccounting === "cumulative"
+      ? reported
+      : addUsage(session.turnStartTotals, reported);
+  maxUsageTotals(session, reportedCumulative);
   return usageSnapshot(session);
 }
 
@@ -423,6 +421,14 @@ function maxUsageTotals(session: Session, usage: UsageTokenUpdate): void {
     outputTokens: Math.max(session.usageTotals.outputTokens, usage.outputTokens ?? 0),
     totalTokens: Math.max(session.usageTotals.totalTokens, usage.totalTokens ?? 0),
     secondsRunning: session.usageTotals.secondsRunning,
+  };
+}
+
+function addUsage(left: UsageTokenUpdate, right: UsageTokenUpdate): UsageTokenUpdate {
+  return {
+    inputTokens: (left.inputTokens ?? 0) + (right.inputTokens ?? 0),
+    outputTokens: (left.outputTokens ?? 0) + (right.outputTokens ?? 0),
+    totalTokens: (left.totalTokens ?? 0) + (right.totalTokens ?? 0),
   };
 }
 
@@ -749,37 +755,6 @@ function extractUsage(usage: Usage | undefined): UsageTokenUpdate | undefined {
     inputTokens,
     outputTokens,
     totalTokens,
-  };
-}
-
-function normalizeSessionUsage(
-  session: Session,
-  usage: UsageTokenUpdate | undefined,
-): UsageTokenUpdate | undefined {
-  if (!usage) return undefined;
-  if (session.agentConfig.usageAccounting === "cumulative") {
-    session.usageTotals = {
-      inputTokens: Math.max(session.usageTotals.inputTokens, usage.inputTokens ?? 0),
-      outputTokens: Math.max(session.usageTotals.outputTokens, usage.outputTokens ?? 0),
-      totalTokens: Math.max(session.usageTotals.totalTokens, usage.totalTokens ?? 0),
-      secondsRunning: session.usageTotals.secondsRunning,
-    };
-    return {
-      inputTokens: session.usageTotals.inputTokens,
-      outputTokens: session.usageTotals.outputTokens,
-      totalTokens: session.usageTotals.totalTokens,
-    };
-  }
-  session.usageTotals = {
-    inputTokens: session.usageTotals.inputTokens + (usage.inputTokens ?? 0),
-    outputTokens: session.usageTotals.outputTokens + (usage.outputTokens ?? 0),
-    totalTokens: session.usageTotals.totalTokens + (usage.totalTokens ?? 0),
-    secondsRunning: session.usageTotals.secondsRunning,
-  };
-  return {
-    inputTokens: session.usageTotals.inputTokens,
-    outputTokens: session.usageTotals.outputTokens,
-    totalTokens: session.usageTotals.totalTokens,
   };
 }
 
