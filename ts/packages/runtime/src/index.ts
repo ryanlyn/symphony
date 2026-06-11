@@ -9,7 +9,7 @@ import {
   type RuntimeReconciliationReason,
 } from "@symphony/policies/reconciliation";
 import { isTerminalState } from "@symphony/issue";
-import { Orchestrator } from "@symphony/orchestrator";
+import { Orchestrator, type SlotReservation } from "@symphony/orchestrator";
 import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
@@ -498,23 +498,35 @@ export class SymphonyRuntime {
       return [];
     }
     this.syncRetryTimer(refreshed.id);
-    const key = slotKey(refreshed.id, claim.slotIndex);
+    const slotIndex =
+      claim.kind === "running" ? claim.entry.slotIndex : claim.reservation.slotIndex;
+    const key = slotKey(refreshed.id, slotIndex);
     const runId = `run-${this.nextRunNumber}`;
     this.nextRunNumber += 1;
+    // The handle is registered for the WHOLE run lifecycle - including the reserved
+    // path's acquire window - so stop()/reconcile abort an in-acquire run (the
+    // signal reaches the pool's FIFO waiter) exactly as they abort a running one.
     const handle = new ActiveRunHandle(key, runId, this.activeRuns);
     this.activeRuns.set(key, handle);
-    this.addEvent("run_started", `${refreshed.identifier} slot=${claim.slotIndex}`);
+    // On the static/local path the run starts immediately. On the pool-governed
+    // path run_started moves AFTER bindReservation (inside runReservedClaim): a
+    // capacity-refused dispatch never emits a phantom run_started.
+    if (claim.kind === "running") {
+      this.addEvent("run_started", `${refreshed.identifier} slot=${slotIndex}`);
+    }
     this.input.onIssueDispatched?.(refreshed);
 
-    const run = this.runClaim(
-      refreshed,
-      claim.slotIndex,
-      claim.agentKind,
-      runId,
-      claim.workerHost ?? null,
-      handle,
-      claim.affinityHost ?? null,
-    );
+    const run =
+      claim.kind === "running"
+        ? this.runClaim(
+            refreshed,
+            claim.entry.slotIndex,
+            claim.entry.agentKind,
+            runId,
+            claim.entry.workerHost ?? null,
+            handle,
+          )
+        : this.runReservedClaim(refreshed, claim.reservation, runId, handle);
     this.inFlight.add(run);
     void run.finally(() => {
       this.inFlight.delete(run);
@@ -535,6 +547,107 @@ export class SymphonyRuntime {
     }
   }
 
+  /**
+   * Phase 1 -> negotiation -> phase 2 for a pool-governed (reserved) claim: drive the
+   * coordinator's acquire inside this detached per-run promise (a cold provision never blocks
+   * the poll thread), then either bind the reservation to the CONCRETE `slot.workerHost` and run,
+   * or cancel the reservation (restoring the consumed retry entry) on a capacity refusal /
+   * acquire fault. `run_started` is only emitted after a successful bind.
+   */
+  private async runReservedClaim(
+    issue: Issue,
+    reservation: SlotReservation,
+    runId: string,
+    handle: ActiveRunHandle,
+  ): Promise<void> {
+    const coordinator = this.coordinator;
+    if (!coordinator) {
+      // A reservation can only be minted while a capacity probe governs, which in
+      // production implies a coordinator. An injected probe without one (test
+      // wiring) is treated like an acquire fault: cancel and skip, never strand.
+      this.addEvent(
+        "dispatch_skipped",
+        `${issue.identifier} box_pool_acquire_error coordinator_missing`,
+      );
+      this.orchestrator.cancelReservation(reservation);
+      handle.release();
+      return;
+    }
+    let acquired: AcquireRunSlotResult;
+    try {
+      acquired = await coordinator.acquireRunSlot({
+        issueId: issue.id,
+        slotIndex: reservation.slotIndex,
+        labels: issue.labels,
+        // Sticky retry affinity travels on the reservation (the prior run's
+        // CONCRETE host from the consumed retry entry).
+        affinityKey: reservation.affinityHost,
+        timeoutMs: this.workflow.settings.worker.boxPool?.acquireTimeoutMs ?? 30_000,
+        signal: handle.signal,
+        // Thread the FULL workflow Settings (with server.port) so the per-run
+        // endpoint manager can build the remote endpoint; the BoxPoolSettings the
+        // coordinator holds has no server.port and would fail every acquire.
+        settings: this.workflow.settings,
+        // The ACP executor - the only executor - consumes the per-run MCP
+        // endpoint over the reverse tunnel, so every run needs one. The flag
+        // stays on the request so a future executor that runs its tools
+        // in-process can skip minting the endpoint (and its tunnel-ceiling
+        // reservation) without an API change.
+        needsMcpEndpoint: true,
+      });
+    } catch (error) {
+      // acquireRunSlot() REJECTED outside the no_capacity result path (ledger /
+      // filesystem / driver / endpoint-open fault). Handle it like a failed
+      // dispatch rather than letting the rejection strand the reservation: cancel
+      // it (restoring the consumed retry entry) so the slot is re-evaluated next
+      // poll, release the active handle, surface a clear error event (never
+      // swallowed), and return WITHOUT running or recording history. The
+      // coordinator already settled any just-bound lease healthy before throwing,
+      // so there is nothing to settle here.
+      this.addEvent(
+        "dispatch_skipped",
+        `${issue.identifier} box_pool_acquire_error ${errorMessage(error)}`,
+      );
+      this.orchestrator.cancelReservation(reservation);
+      handle.release();
+      return;
+    }
+    if (acquired.status !== "bound") {
+      // No capacity within the acquire window (EVERY typed no_capacity reason maps
+      // to the SAME event - no per-reason differentiation, matching today): cancel
+      // the reservation with NO backoff. The consumed retry entry is RESTORED (its
+      // deadline already passed) so the issue is immediately re-eligible with its
+      // affinity and attempt counter intact; never record history for a run that
+      // did not start.
+      this.addEvent("dispatch_skipped", `${issue.identifier} worker_host_capacity`);
+      this.orchestrator.cancelReservation(reservation);
+      this.syncRetryTimer(issue.id);
+      handle.release();
+      return;
+    }
+    const slot = acquired.slot;
+    const entry = this.orchestrator.bindReservation(reservation, slot.workerHost);
+    if (!entry) {
+      // The reservation was cancelled/expired during the acquire (cleanup, stop,
+      // or the expiry sweep): release the bound box back to warm inventory (the
+      // slot's settled-once guard makes this exactly-once) and skip the run.
+      await slot.release("healthy");
+      this.addEvent("dispatch_skipped", `${issue.identifier} reservation_lapsed`);
+      handle.release();
+      return;
+    }
+    this.addEvent("run_started", `${issue.identifier} slot=${reservation.slotIndex}`);
+    await this.runClaim(
+      issue,
+      reservation.slotIndex,
+      reservation.agentKind,
+      runId,
+      slot.workerHost,
+      handle,
+      slot,
+    );
+  }
+
   private async runClaim(
     issue: Issue,
     slotIndex: number,
@@ -542,70 +655,11 @@ export class SymphonyRuntime {
     runId: string,
     workerHost: string | null,
     handle: ActiveRunHandle,
-    affinityHost: string | null = null,
+    slot: RunSlot | null = null,
   ): Promise<void> {
     const startedAt = this.clock.now().toISOString();
-    let effectiveWorkerHost = workerHost;
-    let slot: RunSlot | null = null;
+    const effectiveWorkerHost = workerHost;
     let boxOutcome: BoxOutcome = "healthy";
-    // Only acquire a slot while the coordinator's pool is actually ENABLED (governing capacity). A
-    // reload can disable the pool (draining it to zero) without tearing the probe down; once
-    // disabled the orchestrator's claim takes the static/local path (a real host or null), so here
-    // we skip the acquire entirely and run with that workerHost rather than abandoning the claim
-    // against a pool that will only ever report no_capacity.
-    if (this.coordinator && this.coordinator.isEnabled()) {
-      let acquired: AcquireRunSlotResult;
-      try {
-        acquired = await this.coordinator.acquireRunSlot({
-          issueId: issue.id,
-          slotIndex,
-          labels: issue.labels,
-          affinityKey: affinityHost,
-          timeoutMs: this.workflow.settings.worker.boxPool?.acquireTimeoutMs ?? 30_000,
-          signal: handle.signal,
-          // Thread the FULL workflow Settings (with server.port) so the per-run
-          // endpoint manager can build the remote endpoint; the BoxPoolSettings the
-          // coordinator holds has no server.port and would fail every acquire.
-          settings: this.workflow.settings,
-          // The ACP executor - the only executor - consumes the per-run MCP
-          // endpoint over the reverse tunnel, so every run needs one. The flag
-          // stays on the request so a future executor that runs its tools
-          // in-process can skip minting the endpoint (and its tunnel-ceiling
-          // reservation) without an API change.
-          needsMcpEndpoint: true,
-        });
-      } catch (error) {
-        // acquireRunSlot() REJECTED outside the no_capacity result path (ledger /
-        // filesystem / driver / endpoint-open fault). Handle it like a failed
-        // dispatch rather than letting the rejection strand the claim: abandon the
-        // claim so the slot is re-evaluated next poll, release the active handle,
-        // surface a clear error event (never swallowed), and return WITHOUT running
-        // or recording history. No slot was bound, so there is nothing to settle.
-        this.addEvent(
-          "dispatch_skipped",
-          `${issue.identifier} box_pool_acquire_error ${errorMessage(error)}`,
-        );
-        this.orchestrator.abandonClaim(issue.id, slotIndex);
-        handle.release();
-        return;
-      }
-      if (acquired.status !== "bound") {
-        // No capacity within the acquire window (EVERY typed no_capacity reason
-        // maps to the SAME event - no per-reason differentiation, matching today):
-        // un-claim the slot (NO retry/backoff) so the next poll re-evaluates
-        // capacity via canAcquire(); never record history for a run that did not
-        // start.
-        this.addEvent("dispatch_skipped", `${issue.identifier} worker_host_capacity`);
-        this.orchestrator.abandonClaim(issue.id, slotIndex);
-        handle.release();
-        return;
-      }
-      slot = acquired.slot;
-      effectiveWorkerHost = slot.workerHost;
-      // Overwrite the pending:// sentinel with the real slot address BEFORE the
-      // runner so the snapshot/history downstream see the real worker host.
-      this.orchestrator.setWorkerHost(issue.id, slotIndex, effectiveWorkerHost);
-    }
     const heartbeatSlot = slot;
     try {
       const result = await this.runner({
@@ -785,6 +839,15 @@ export class SymphonyRuntime {
         workspacePath?: string | null | undefined;
       }
     >();
+    // Reserving (in-acquire) slots are tracked host-less so an issue that goes
+    // terminal mid-acquire is still aborted and cleaned up; running/retrying
+    // entries below override with their richer metadata when present.
+    for (const entry of snapshot.reserving)
+      tracked.set(entry.issueId, {
+        identifier: entry.identifier,
+        workerHost: null,
+        workspacePath: null,
+      });
     for (const entry of snapshot.running)
       tracked.set(entry.issue.id, {
         identifier: entry.issue.identifier,

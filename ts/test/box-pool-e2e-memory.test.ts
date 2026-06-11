@@ -61,7 +61,7 @@ test("memory-tracker daemon leases a fake box, completes a run, and returns it t
   const harness = await setupHarness({ issues: [eligibleIssue("issue-e2e-1", "BOX-E2E-1")] });
 
   // One deterministic poll through the REAL runtime: poll -> eligible ->
-  // claim (pending:// sentinel) -> acquire fake box -> setWorkerHost ->
+  // claim (host-less reservation) -> acquire fake box -> bindReservation ->
   // real runner over the eval-ssh shim -> run completes -> lease released.
   await harness.runtime.start({ once: true, dryRun: false });
 

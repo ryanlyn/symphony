@@ -1426,7 +1426,7 @@ interface FakeBoxPool extends BoxPool {
 
 function makeFakeBoxPool(
   options: {
-    result?: AcquireResult | (() => AcquireResult);
+    result?: AcquireResult | (() => AcquireResult | Promise<AcquireResult>);
     lease?: FakeLease;
     canAcquire?: boolean | (() => boolean);
     isEnabled?: boolean | (() => boolean);
@@ -1765,7 +1765,7 @@ function makeFakeEndpointLease(): AgentMcpEndpointLease {
 // (needsMcpEndpoint=true regardless of agent kind). When the per-run open
 // THROWS, the run must NOT dispatch: the coordinator settles the just-bound
 // lease HEALTHY (only the endpoint failed, the box is fine), the runtime
-// abandons the claim so the slot is re-evaluated next poll, and no history is
+// cancels the reservation so the slot is re-evaluated next poll, and no history is
 // recorded for a run that never started.
 
 test("box pool: a codex run is skipped when the per-run endpoint open THROWS (every run needs an endpoint) (HIGH)", async () => {
@@ -1823,9 +1823,10 @@ test("box pool: a codex run is skipped when the per-run endpoint open THROWS (ev
   assert.equal(snapshot.runHistory.length, 0);
   assert.equal(snapshot.retrying.length, 0);
   assert.equal(snapshot.running.length, 0);
-  // The claim was abandoned (re-claimable next poll), not stranded.
+  // The reservation was cancelled (re-claimable next poll), not stranded.
   assert.equal(orchestrator.state.claimed.size, 0);
   assert.equal(orchestrator.state.running.size, 0);
+  assert.equal(orchestrator.state.reserved.size, 0);
   // The box itself is fine - only the endpoint failed - so the just-bound lease
   // settled HEALTHY, never poisoned.
   assert.deepEqual(lease.settles, [{ kind: "release", arg: "healthy" }]);
@@ -1893,29 +1894,41 @@ test("box pool: an ACP/claude run STILL opens its per-run endpoint (the per-run 
   assert.equal(runtime.snapshot().runHistory[0]?.outcome, "success");
 });
 
-test("box pool: pending:// sentinel is visible between claim and acquire, real host after", async () => {
-  const issue = issueFixture("issue-bp-sentinel", "MT-BP-SENTINEL");
+test("box pool: a claim is a host-less reservation between claim and acquire, concrete host after bind", async () => {
+  const issue = issueFixture("issue-bp-reserved", "MT-BP-RESERVED");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
-  const lease = makeFakeLease({ workerHost: "fake://box-sentinel" });
-  let sentinelDuringAcquire: string | null | undefined;
+  const workflow = boxPoolWorkflowFixture();
+  const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
+    governs: () => true,
+    canAcquire: () => true,
+  });
+  const lease = makeFakeLease({ workerHost: "fake://box-reserved" });
+  let runningDuringAcquire = -1;
+  let reservingDuringAcquire: ReturnType<Orchestrator["snapshot"]>["reserving"] = [];
+  let runStartedDuringAcquire = true;
   const boxPool = makeFakeBoxPool({
     result: () => {
-      sentinelDuringAcquire = runtime
+      // During the acquire window the slot is an honest, host-less reservation:
+      // NOT in running (no fake host anywhere) and no run_started emitted yet.
+      runningDuringAcquire = runtime.snapshot().running.length;
+      reservingDuringAcquire = orchestrator.snapshot().reserving;
+      runStartedDuringAcquire = runtime
         .snapshot()
-        .running.find((entry) => entry.issueId === issue.id)?.workerHost;
+        .recentEvents.some((event) => event.type === "run_started");
       return { status: "leased", lease };
     },
   });
   const runtime = new SymphonyRuntime(
     runtimeOptions({
-      workflow: boxPoolWorkflowFixture(),
+      workflow,
+      orchestrator,
       boxPool,
       client: {
         fetchCandidateIssues: async () => [issue],
         fetchIssuesByIds: async () => [issue],
       },
       runner: async () => ({
-        workspace: "/tmp/symphony/MT-BP-SENTINEL",
+        workspace: "/tmp/symphony/MT-BP-RESERVED",
         turnCount: 1,
         updates: [],
         resumeId: "resume",
@@ -1927,8 +1940,16 @@ test("box pool: pending:// sentinel is visible between claim and acquire, real h
 
   await runtime.start({ once: true, dryRun: false });
 
-  assert.equal(sentinelDuringAcquire, `pending://${issue.id}/0`);
-  assert.equal(runtime.snapshot().runHistory[0]?.workerHost, "fake://box-sentinel");
+  assert.equal(runningDuringAcquire, 0);
+  assert.equal(reservingDuringAcquire.length, 1);
+  assert.equal(reservingDuringAcquire[0]?.issueId, issue.id);
+  assert.equal(runStartedDuringAcquire, false);
+  // run_started fired post-bind, exactly once, and the run carried the bound host.
+  assert.equal(
+    runtime.snapshot().recentEvents.filter((event) => event.type === "run_started").length,
+    1,
+  );
+  assert.equal(runtime.snapshot().runHistory[0]?.workerHost, "fake://box-reserved");
 });
 
 test("box pool: acquire uses the prior real workerHost as affinityKey on retry", async () => {
@@ -1980,7 +2001,7 @@ test("box pool: acquire uses the prior real workerHost as affinityKey on retry",
   assert.equal(boxPool.acquireCalls[0]?.timeoutMs, 12_345);
 });
 
-test("box pool: no_capacity abandons the claim, skips the runner, records no history or backoff", async () => {
+test("box pool: no_capacity cancels the reservation, skips the runner, records no history or backoff", async () => {
   const issue = issueFixture("issue-bp-nocap", "MT-BP-NOCAP");
   const workflow = boxPoolWorkflowFixture();
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
@@ -2016,15 +2037,98 @@ test("box pool: no_capacity abandons the claim, skips the runner, records no his
   assert.equal(snapshot.running.length, 0);
   assert.equal(orchestrator.state.claimed.size, 0);
   assert.equal(orchestrator.state.running.size, 0);
+  assert.equal(orchestrator.state.reserved.size, 0);
   assert.ok(snapshot.recentEvents.some((event) => event.message.includes("worker_host_capacity")));
+  // The phantom started-then-skipped pair is gone: a capacity-refused dispatch
+  // never emits run_started.
+  assert.equal(
+    snapshot.recentEvents.some((event) => event.type === "run_started"),
+    false,
+  );
 });
 
-test("box pool: a thrown acquire rejection abandons the claim, skips the runner, and re-claims next poll", async () => {
+test("box pool: no_capacity restores the consumed retry entry so affinity and attempt survive", async () => {
+  const issue = issueFixture("issue-bp-nocap-retry", "MT-BP-NOCAP-RETRY");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const workflow = boxPoolWorkflowFixture();
+  const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
+    governs: () => true,
+    canAcquire: () => true,
+  });
+  // A due retry carrying the prior run's CONCRETE host and attempt counter.
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 0), {
+    issueId: issue.id,
+    identifier: issue.identifier,
+    attempt: 3,
+    monotonicDeadlineMs: 0,
+    dueAtIso: new Date(Date.now() - 1).toISOString(),
+    slotIndex: 0,
+    workerHost: "fake://box-sticky",
+    workspacePath: null,
+    error: "agent exited",
+  });
+  let acquireAttempts = 0;
+  const boxPool = makeFakeBoxPool({
+    result: () => {
+      acquireAttempts += 1;
+      // The FIRST acquire is capacity-refused; the restored retry entry makes the
+      // issue immediately re-eligible and the SECOND acquire binds.
+      if (acquireAttempts === 1) return { status: "no_capacity", reason: "acquire_timeout" };
+      return { status: "leased", lease: makeFakeLease({ workerHost: "fake://box-sticky" }) };
+    },
+  });
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      orchestrator,
+      boxPool,
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => ({
+        workspace: "/tmp/symphony/MT-BP-NOCAP-RETRY",
+        turnCount: 1,
+        updates: [],
+        resumeId: "resume",
+        agentKind: "codex",
+        finalIssue: doneIssue,
+      }),
+    }),
+  );
+
+  try {
+    await runtime.pollOnce({ waitForRuns: true });
+    // The capacity miss restored the consumed retry entry (still due), so the
+    // retry timer re-polls promptly and the re-claim re-consumes it.
+    await waitFor(() => runtime.snapshot().runHistory.length === 1, 2_000);
+
+    // BOTH acquires carried the sticky affinity key from the (restored) retry
+    // entry - the affinity survived the capacity miss.
+    assert.equal(boxPool.acquireCalls.length, 2);
+    assert.equal(boxPool.acquireCalls[0]?.affinityKey, "fake://box-sticky");
+    assert.equal(boxPool.acquireCalls[1]?.affinityKey, "fake://box-sticky");
+    const snapshot = runtime.snapshot();
+    // The attempt counter survived too: the eventual run is attempt 3.
+    assert.equal(snapshot.runHistory[0]?.retryAttempt, 3);
+    assert.equal(snapshot.runHistory[0]?.workerHost, "fake://box-sticky");
+    // Exactly ONE run_started (post-bind of the successful acquire); the refused
+    // dispatch emitted only worker_host_capacity.
+    assert.equal(snapshot.recentEvents.filter((event) => event.type === "run_started").length, 1);
+    assert.ok(
+      snapshot.recentEvents.some((event) => event.message.includes("worker_host_capacity")),
+    );
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("box pool: a thrown acquire rejection cancels the reservation, skips the runner, and re-claims next poll", async () => {
   // acquire() can REJECT (throw) outside the no_capacity result path (ledger /
   // filesystem / driver error). That rejection must be handled like a failed
-  // dispatch: release the active handle, abandon the claim (so the slot is
+  // dispatch: release the active handle, cancel the reservation (so the slot is
   // re-evaluated next poll), emit a clear error event, and return WITHOUT
-  // running and WITHOUT leaving the claim/handle dangling as a stuck 'running'.
+  // running and WITHOUT leaving the reservation/handle dangling as a stuck slot.
   const issue = issueFixture("issue-bp-acq-throw", "MT-BP-ACQ-THROW");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   const workflow = boxPoolWorkflowFixture();
@@ -2079,6 +2183,7 @@ test("box pool: a thrown acquire rejection abandons the claim, skips the runner,
   assert.equal(snapshot.running.length, 0);
   assert.equal(orchestrator.state.claimed.size, 0);
   assert.equal(orchestrator.state.running.size, 0);
+  assert.equal(orchestrator.state.reserved.size, 0);
   // A clear error event surfaces the failure (not swallowed silently): the
   // message names the acquire error and carries the thrown error text.
   assert.ok(
@@ -2433,6 +2538,158 @@ test("box pool: a stale-generation late resolve is a lease no-op (leaseId guard)
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     assert.equal(staleLease.settles.length, 0);
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("box pool: a reserving (in-acquire) slot is never stall-finished and records no bogus retry host", async () => {
+  // Regression for the latent sentinel bug: the old flow placed an in-acquire
+  // entry in `running` with lastAgentTimestamp=null and startedAt=claim time, so a
+  // slow cold provision could be stall-finished and `pending://...` persisted into
+  // RetryEntry.workerHost. A reservation has NO running entry, so the stall
+  // reconciler structurally cannot touch it.
+  const issue = issueFixture("issue-bp-reserving-stall", "MT-BP-RESERVING-STALL");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const workflow = boxPoolWorkflowFixture();
+  workflow.settings.agents.codex.stallTimeoutMs = 50;
+  const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
+    governs: () => true,
+    canAcquire: () => true,
+  });
+  const lease = makeFakeLease({ workerHost: "fake://box-slow-provision" });
+  const acquireControl: { release?: () => void } = {};
+  const boxPool = makeFakeBoxPool({
+    result: async () => {
+      // A slow (cold-provision) acquire held open until the test releases it.
+      await new Promise<void>((resolve) => {
+        acquireControl.release = resolve;
+      });
+      return { status: "leased", lease };
+    },
+  });
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      orchestrator,
+      boxPool,
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => ({
+        workspace: "/tmp/symphony/MT-BP-RESERVING-STALL",
+        turnCount: 1,
+        updates: [],
+        resumeId: "resume",
+        agentKind: "codex",
+        finalIssue: doneIssue,
+      }),
+    }),
+  );
+
+  try {
+    await runtime.pollOnce();
+    await waitFor(() => orchestrator.snapshot().reserving.length === 1, 1_000);
+
+    // Let the acquire window outlast the stall timeout, then run the reconciler.
+    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    await runtime.pollOnce({ dryRun: true });
+
+    // The reserving slot was NOT stall-finished: no run_stalled, no retry entry
+    // (and therefore no bogus retry host), the reservation still live.
+    const snapshot = runtime.snapshot();
+    assert.equal(
+      snapshot.recentEvents.some((event) => event.type === "run_stalled"),
+      false,
+    );
+    assert.equal(snapshot.retrying.length, 0);
+    assert.equal(orchestrator.snapshot().reserving.length, 1);
+
+    // The acquire completes; the run binds, executes, and finishes normally with
+    // the CONCRETE host recorded everywhere (RetryEntry.workerHost included).
+    acquireControl.release?.();
+    await waitFor(() => runtime.snapshot().runHistory.length === 1, 2_000);
+    assert.equal(runtime.snapshot().runHistory[0]?.outcome, "success");
+    assert.equal(runtime.snapshot().runHistory[0]?.workerHost, "fake://box-slow-provision");
+    const retryHosts = orchestrator.snapshot().retrying.map((entry) => entry.workerHost ?? null);
+    for (const host of retryHosts) {
+      assert.equal(host, "fake://box-slow-provision");
+    }
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("box pool: a bind after cleanup releases the box healthy and skips as reservation_lapsed", async () => {
+  // Failure path C: the issue went terminal mid-acquire (cleanupIssue cancelled
+  // the reservation), then the acquire resolves bound. The late bind is token
+  // guarded to null; the runtime releases the just-bound box HEALTHY (back to
+  // warm inventory) and skips the run with the reservation_lapsed detail.
+  const issue = issueFixture("issue-bp-lapsed", "MT-BP-LAPSED");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const workflow = boxPoolWorkflowFixture();
+  const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
+    governs: () => true,
+    canAcquire: () => true,
+  });
+  const lease = makeFakeLease({ workerHost: "fake://box-lapsed" });
+  const acquireControl: { release?: () => void } = {};
+  const boxPool = makeFakeBoxPool({
+    result: async () => {
+      await new Promise<void>((resolve) => {
+        acquireControl.release = resolve;
+      });
+      return { status: "leased", lease };
+    },
+  });
+  let runnerCalls = 0;
+  let fetchedTerminal = false;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      orchestrator,
+      boxPool,
+      client: {
+        fetchCandidateIssues: async () => (fetchedTerminal ? [] : [issue]),
+        fetchIssuesByIds: async () => (fetchedTerminal ? [doneIssue] : [issue]),
+      },
+      runner: async () => {
+        runnerCalls += 1;
+        throw new Error("runner should not run after the reservation lapsed");
+      },
+    }),
+  );
+
+  try {
+    await runtime.pollOnce();
+    await waitFor(() => orchestrator.snapshot().reserving.length === 1, 1_000);
+
+    // The issue goes terminal while the acquire is in flight: the reconciler
+    // cancels the reservation (and aborts the run handle).
+    fetchedTerminal = true;
+    await runtime.pollOnce({ dryRun: true });
+    assert.equal(orchestrator.snapshot().reserving.length, 0);
+
+    // The acquire now resolves bound: late bind -> null -> release healthy + skip.
+    acquireControl.release?.();
+    await waitFor(() => lease.settles.length === 1, 2_000);
+
+    assert.deepEqual(lease.settles, [{ kind: "release", arg: "healthy" }]);
+    assert.equal(runnerCalls, 0);
+    const snapshot = runtime.snapshot();
+    assert.equal(snapshot.runHistory.length, 0);
+    assert.equal(
+      snapshot.recentEvents.some(
+        (event) =>
+          event.type === "dispatch_skipped" && event.message.includes("reservation_lapsed"),
+      ),
+      true,
+    );
+    assert.equal(
+      snapshot.recentEvents.some((event) => event.type === "run_started"),
+      false,
+    );
   } finally {
     runtime.stop();
   }
@@ -3051,18 +3308,17 @@ test("box pool undefined: byte-identical regression (acquire and classifier neve
   assert.equal(snapshot.runHistory[0]?.workerHost ?? null, null);
 });
 
-test("runtime reconcile skips remote workspace cleanup for a pending:// sentinel workerHost", async () => {
+test("runtime reconcile tracks a reserved (in-acquire) issue with a null workerHost and cleans it up", async () => {
   const workflow = workflowFixture();
-  // A capacity probe makes claim() assign the `pending://<id>/<slot>` sentinel as
-  // workerHost, reproducing the claim->acquire window where no real box is leased yet.
+  // A governing capacity probe makes claim() hold a host-less reservation,
+  // reproducing the claim->acquire window where no real box is bound yet.
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
     governs: () => true,
     canAcquire: () => true,
   });
-  const issue = issueFixture("issue-sentinel-terminal", "MT-SENTINEL-TERMINAL");
+  const issue = issueFixture("issue-reserved-terminal", "MT-RESERVED-TERMINAL");
   const claimed = orchestrator.claim(issue);
-  assert.ok(claimed);
-  assert.equal(claimed?.workerHost, "pending://issue-sentinel-terminal/0");
+  assert.equal(claimed?.kind, "reserved");
 
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   let removeCalls = 0;
@@ -3084,15 +3340,20 @@ test("runtime reconcile skips remote workspace cleanup for a pending:// sentinel
 
   await runtime.pollOnce({ dryRun: true });
 
-  // The terminal branch must still clean up the (local) workspace, but it must NOT
-  // hand the `pending://` sentinel to the cleanup sink as if it were a real remote
-  // host (which would trigger a doomed SSH to `pending://...`).
+  // The terminal branch must still clean up the (local) workspace, and the
+  // host-less reservation reconciles with a null workerHost - no fake host can
+  // ever reach the cleanup sink's SSH path.
   assert.equal(removeCalls, 1);
   assert.equal(observedWorkerHost ?? null, null);
   assert.equal(
     runtime.snapshot().recentEvents.some((event) => event.type === "workspace_cleanup"),
     true,
   );
+  // cleanupIssue cancelled the reservation, so a late bind is a guarded no-op.
+  assert.equal(orchestrator.state.reserved.size, 0);
+  if (claimed?.kind === "reserved") {
+    assert.equal(orchestrator.bindReservation(claimed.reservation, "ssh://late-box"), null);
+  }
 });
 
 test("runtime reconcile still passes a real workerHost to remote workspace cleanup", async () => {
@@ -3102,9 +3363,11 @@ test("runtime reconcile still passes a real workerHost to remote workspace clean
     canAcquire: () => true,
   });
   const issue = issueFixture("issue-real-terminal", "MT-REAL-TERMINAL");
-  assert.ok(orchestrator.claim(issue));
-  // A real lease has resolved: the sentinel was overwritten with the box address.
-  orchestrator.setWorkerHost(issue.id, 0, "ssh://box-real");
+  const claimed = orchestrator.claim(issue);
+  assert.equal(claimed?.kind, "reserved");
+  // The acquire resolved: the reservation bound to the concrete box address.
+  if (claimed?.kind !== "reserved") return;
+  assert.ok(orchestrator.bindReservation(claimed.reservation, "ssh://box-real"));
 
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   let observedWorkerHost: string | null | undefined = "unset";
@@ -3127,25 +3390,21 @@ test("runtime reconcile still passes a real workerHost to remote workspace clean
   assert.equal(observedWorkerHost, "ssh://box-real");
 });
 
-test("runtime reconcile skips remote resume-state delete for a pending:// sentinel workerHost", async () => {
+test("runtime reconcile of a reserved issue cancels the reservation without a remote resume-state delete", async () => {
   const workflow = workflowFixture();
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
     governs: () => true,
     canAcquire: () => true,
   });
-  const issue = issueFixture("issue-sentinel-resume", "MT-SENTINEL-RESUME");
+  const issue = issueFixture("issue-reserved-resume", "MT-RESERVED-RESUME");
   const claimed = orchestrator.claim(issue);
-  assert.ok(claimed);
-  assert.equal(claimed?.workerHost, "pending://issue-sentinel-resume/0");
-  // A workspace exists so the non-terminal reconcile branch invalidates resume state.
-  // The snapshot exposes the live running-entry reference.
-  claimed.workspacePath = "/tmp/symphony/MT-SENTINEL-RESUME";
+  assert.equal(claimed?.kind, "reserved");
 
-  // Non-terminal but inactive (state not in active_states, not terminal) -> reconciled,
-  // resume-state invalidated rather than workspace removed.
+  // Non-terminal but inactive (state not in active_states, not terminal) -> the
+  // reconciler cleans up the issue. A reservation has no workspace (no agent ever
+  // started), so there is no resume state to invalidate and no host to SSH to.
   const canceledIssue: Issue = { ...issue, state: "Canceled", stateType: "canceled" };
   let deleteCalls = 0;
-  let observedWorkerHost: string | null | undefined = "unset";
   const runtime = new SymphonyRuntime(
     runtimeOptions({
       workflow,
@@ -3154,21 +3413,25 @@ test("runtime reconcile skips remote resume-state delete for a pending:// sentin
         fetchCandidateIssues: async () => [],
         fetchIssuesByIds: async () => [canceledIssue],
       },
-      deleteResumeState: async (_workspace, workerHost) => {
+      deleteResumeState: async () => {
         deleteCalls += 1;
-        observedWorkerHost = workerHost;
       },
     }),
   );
 
   await runtime.pollOnce({ dryRun: true });
 
-  assert.equal(deleteCalls, 1);
-  assert.equal(observedWorkerHost ?? null, null);
+  assert.equal(deleteCalls, 0);
+  assert.equal(orchestrator.state.reserved.size, 0);
+  assert.equal(orchestrator.state.claimed.size, 0);
   assert.equal(
-    runtime.snapshot().recentEvents.some((event) => event.type === "resume_state_invalidated"),
+    runtime.snapshot().recentEvents.some((event) => event.type === "run_reconciled"),
     true,
   );
+  // The in-flight acquire's late bind no-ops against the cancelled reservation.
+  if (claimed?.kind === "reserved") {
+    assert.equal(orchestrator.bindReservation(claimed.reservation, "ssh://late-box"), null);
+  }
 });
 
 test("runtime replays retry timer due while a poll is active", async () => {
