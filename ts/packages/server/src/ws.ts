@@ -92,15 +92,19 @@ export function createWsHandler(
             const clientState = connections.get(ws);
             if (!clientState) return;
 
-            // Unsubscribe from previous ticket
-            if (clientState.subscribedIssueId && clientState.subscribedIssueId !== message.issueId) {
+            if (
+              clientState.subscribedIssueId &&
+              clientState.subscribedIssueId !== message.issueId
+            ) {
               watcher.unsubscribe(clientState.subscribedIssueId);
             }
 
-            // Subscribe to new ticket
-            watcher.subscribe(message.issueId);
+            if (clientState.subscribedIssueId !== message.issueId) {
+              watcher.subscribe(message.issueId);
+              clientState.subscribedIssueId = message.issueId;
+            }
+
             const events = watcher.getEventsForTicket(message.issueId);
-            clientState.subscribedIssueId = message.issueId;
             clientState.eventCursor = events.length;
             send(ws, { type: "events", issueId: message.issueId, events });
           }

@@ -199,13 +199,11 @@ export class TraceWatcher {
     return all.slice(fromIndex);
   }
 
-  /** Total cached event count for a ticket, or 0 if not cached. */
+  /** Total cached event count for a subscribed ticket, or 0 if not cached. */
   getEventCount(issueId: string): number {
     const cached = this.eventCaches.get(issueId);
     if (cached) return cached.events.length;
-    const state = this.fileStates.get(issueId);
-    if (!state) return 0;
-    return this.readAndParseSync(state.filePath).length;
+    return 0;
   }
 
   /**

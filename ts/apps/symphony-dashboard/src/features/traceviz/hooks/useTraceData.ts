@@ -8,6 +8,23 @@ import { fetchTickets, fetchEvents } from "../api/client";
 
 const FOLLOW_THRESHOLD_PX = 50;
 
+interface EventAppendReconcileResult {
+  events: DisplayEvent[];
+  needsRefresh: boolean;
+}
+
+export function reconcileEventAppend(
+  current: DisplayEvent[],
+  appended: DisplayEvent[],
+  fromIndex: number,
+): EventAppendReconcileResult {
+  if (fromIndex !== current.length) {
+    return { events: current, needsRefresh: true };
+  }
+
+  return { events: [...current, ...appended], needsRefresh: false };
+}
+
 function useFollowMode() {
   const [following, setFollowing] = useState(true);
   const [hasNewUpdates, setHasNewUpdates] = useState(false);
@@ -42,61 +59,110 @@ export function useTraceData() {
 
   const { status: wsStatus, lastMessage, sendMessage } = useWebSocket();
   const { following, hasNewUpdates, markNewUpdates, scrollToTop } = useFollowMode();
+  // The WS message effect must read state that may have changed since the effect was registered.
   const followingRef = useRef(following);
   followingRef.current = following;
   const needsCatchUpRef = useRef(false);
   const eventsRef = useRef(events);
   eventsRef.current = events;
+  const selectedTicketIdRef = useRef(selectedTicketId);
+  selectedTicketIdRef.current = selectedTicketId;
+  const streamRevisionRef = useRef(0);
+  const loadRequestIdRef = useRef(0);
 
   const loadTickets = useCallback(async () => {
     const data = await fetchTickets();
     setTickets(data);
   }, []);
 
-  const loadTicketData = useCallback(async (issueId: string) => {
-    setLoading(true);
-    setTraceExists(null);
-    try {
-      setError(null);
-      const eventsData = await fetchEvents(issueId);
-      setEvents(eventsData);
-      setStats(computeStats(eventsData));
-      setTraceExists(eventsData.length > 0);
-    } catch {
-      setError("Failed to load trace data");
-      setEvents([]);
-      setStats(null);
-      setTraceExists(false);
-    } finally {
-      setLoading(false);
-    }
+  const applyEvents = useCallback((eventsData: DisplayEvent[], exists = eventsData.length > 0) => {
+    eventsRef.current = eventsData;
+    streamRevisionRef.current += 1;
+    setEvents(eventsData);
+    setStats(computeStats(eventsData));
+    setTraceExists(exists);
   }, []);
 
-  const refreshTicketData = useCallback(async (issueId: string) => {
-    try {
-      const eventsData = await fetchEvents(issueId);
-      setEvents(eventsData);
-      setStats(computeStats(eventsData));
-      setTraceExists(eventsData.length > 0);
-    } catch {
-      // Stale data is better than flickering
-    }
-  }, []);
+  const loadTicketData = useCallback(
+    async (issueId: string, options?: { silent?: boolean }) => {
+      const requestId = ++loadRequestIdRef.current;
+      const startRevision = streamRevisionRef.current;
+      const silent = options?.silent ?? false;
+
+      if (!silent) {
+        setLoading(true);
+        setTraceExists(null);
+      }
+
+      try {
+        const eventsData = await fetchEvents(issueId);
+
+        if (selectedTicketIdRef.current !== issueId || requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        const currentLength = eventsRef.current.length;
+        if (streamRevisionRef.current !== startRevision && eventsData.length <= currentLength) {
+          return;
+        }
+
+        setError(null);
+        applyEvents(eventsData);
+      } catch {
+        if (selectedTicketIdRef.current !== issueId || requestId !== loadRequestIdRef.current) {
+          return;
+        }
+        if (!silent) {
+          setError("Failed to load trace data");
+          applyEvents([], false);
+        }
+      } finally {
+        if (
+          !silent &&
+          selectedTicketIdRef.current === issueId &&
+          requestId === loadRequestIdRef.current
+        ) {
+          setLoading(false);
+        }
+      }
+    },
+    [applyEvents],
+  );
+
+  const refreshTicketData = useCallback(
+    async (issueId: string) => {
+      await loadTicketData(issueId, { silent: true });
+    },
+    [loadTicketData],
+  );
 
   useEffect(() => {
     void loadTickets();
   }, [loadTickets]);
 
   useEffect(() => {
+    loadRequestIdRef.current += 1;
+    needsCatchUpRef.current = false;
     if (selectedTicketId) {
-      void loadTicketData(selectedTicketId);
-      sendMessage({ type: "subscribe", issueId: selectedTicketId });
-    } else {
+      eventsRef.current = [];
       setEvents([]);
       setStats(null);
       setTraceExists(null);
+      void loadTicketData(selectedTicketId);
+    } else {
+      eventsRef.current = [];
+      setEvents([]);
+      setStats(null);
+      setTraceExists(null);
+      setLoading(false);
     }
-  }, [selectedTicketId, loadTicketData, sendMessage]);
+  }, [selectedTicketId, loadTicketData]);
+
+  useEffect(() => {
+    if (wsStatus === "connected" && selectedTicketId) {
+      sendMessage({ type: "subscribe", issueId: selectedTicketId });
+    }
+  }, [wsStatus, selectedTicketId, sendMessage]);
 
   // Catch up when user scrolls back to top
   useEffect(() => {
@@ -117,9 +183,11 @@ export function useTraceData() {
     } else if (msg.type === "events" && msg.issueId === selectedTicketId) {
       // Full event payload (initial subscribe response)
       if (followingRef.current) {
-        setEvents(msg.events);
-        setStats(computeStats(msg.events));
-        setTraceExists(true);
+        if (msg.events.length < eventsRef.current.length) {
+          void refreshTicketData(selectedTicketId);
+          return;
+        }
+        applyEvents(msg.events);
       } else {
         needsCatchUpRef.current = true;
         markNewUpdates();
@@ -128,19 +196,18 @@ export function useTraceData() {
       // Delta: only new events since our last known index
       if (followingRef.current) {
         const current = eventsRef.current;
-        const merged =
-          msg.fromIndex === current.length
-            ? [...current, ...msg.events]
-            : [...current.slice(0, msg.fromIndex), ...msg.events];
-        setEvents(merged);
-        setStats(computeStats(merged));
-        setTraceExists(true);
+        const result = reconcileEventAppend(current, msg.events, msg.fromIndex);
+        if (result.needsRefresh) {
+          void refreshTicketData(selectedTicketId);
+          return;
+        }
+        applyEvents(result.events);
       } else {
         needsCatchUpRef.current = true;
         markNewUpdates();
       }
     }
-  }, [lastMessage, selectedTicketId, markNewUpdates]);
+  }, [lastMessage, selectedTicketId, markNewUpdates, refreshTicketData, applyEvents]);
 
   return {
     tickets,

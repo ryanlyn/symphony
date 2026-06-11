@@ -284,4 +284,44 @@ describe("TraceWatcher", () => {
 
     watcher.stop();
   });
+
+  it("keeps subscribed event caches hot and frees them after unsubscribe", async () => {
+    writeTraceLine(traceDir, "CACHE-1", {
+      type: "turn_started",
+      issueId: "id-cache",
+      issueIdentifier: "CACHE-1",
+      timestamp: "2026-01-01T00:00:00Z",
+    });
+
+    await scanOnce(watcher, () => {});
+
+    watcher.subscribe("id-cache");
+    const initialEvents = watcher.getEventsForTicket("id-cache");
+    const fromIndex = initialEvents.length;
+
+    expect(initialEvents.some((event) => event.kind === "turn_started")).toBe(true);
+    expect(watcher.getEventCount("id-cache")).toBe(fromIndex);
+
+    writeTraceLine(traceDir, "CACHE-1", {
+      type: "session_notification",
+      issueId: "id-cache",
+      issueIdentifier: "CACHE-1",
+      timestamp: "2026-01-01T00:00:05Z",
+      message: {
+        sessionId: "s1",
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "New" } },
+      },
+    });
+
+    await scanOnce(watcher, () => {});
+
+    const appendedEvents = watcher.getEventsSince("id-cache", fromIndex);
+    expect(appendedEvents.some((event) => event.kind === "message")).toBe(true);
+    expect(watcher.getEventCount("id-cache")).toBe(fromIndex + appendedEvents.length);
+
+    watcher.unsubscribe("id-cache");
+
+    expect(watcher.getEventCount("id-cache")).toBe(0);
+    expect(watcher.getEventsForTicket("id-cache").length).toBeGreaterThan(fromIndex);
+  });
 });
