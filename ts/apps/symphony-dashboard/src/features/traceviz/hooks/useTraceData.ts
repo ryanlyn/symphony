@@ -8,7 +8,7 @@ import { fetchTickets, fetchEvents, fetchStats } from "../api/client";
 
 const FOLLOW_THRESHOLD_PX = 50;
 
-export function useFollowMode() {
+function useFollowMode() {
   const [following, setFollowing] = useState(true);
   const [hasNewUpdates, setHasNewUpdates] = useState(false);
 
