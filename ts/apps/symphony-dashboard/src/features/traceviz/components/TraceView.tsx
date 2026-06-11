@@ -23,7 +23,6 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
     stats,
     loading,
     traceExists,
-    following,
     hasNewUpdates,
     scrollToTop,
   } = useTraceData();
@@ -71,7 +70,7 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
       {hasNewUpdates && (
         <button
           onClick={scrollToTop}
-          className="sticky top-[4.5rem] z-20 mx-auto flex items-center gap-1.5 rounded-full border border-accent-purple/30 bg-accent-purple/10 px-3 py-1.5 text-xs font-medium text-accent-purple backdrop-blur-sm transition-all hover:bg-accent-purple/20 hover:border-accent-purple/50"
+          className="fixed left-1/2 top-16 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-accent-purple/30 bg-background/95 px-3 py-1.5 text-xs font-medium text-accent-purple shadow-lg shadow-black/20 backdrop-blur-sm transition-colors hover:border-accent-purple/50 hover:bg-accent-purple/10"
         >
           <ArrowUp className="h-3 w-3" />
           New updates available
@@ -86,7 +85,6 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
           events={events}
           stats={stats}
           loading={loading}
-          following={following}
           onSelect={navigateToTrace}
         />
       </div>
@@ -100,7 +98,6 @@ interface TraceContentProps {
   events: DisplayEvent[];
   stats: Stats | null;
   loading: boolean;
-  following: boolean;
   onSelect: (id: string) => void;
 }
 
@@ -110,7 +107,6 @@ function TraceContent({
   events,
   stats,
   loading,
-  following,
   onSelect,
 }: TraceContentProps) {
   if (!selectedTicketId) {
@@ -133,7 +129,7 @@ function TraceContent({
   return (
     <div className="space-y-6">
       {stats && <TraceSummary stats={stats} />}
-      <Timeline key={selectedTicketId} events={events} loading={loading} following={following} />
+      <Timeline key={selectedTicketId} events={events} loading={loading} />
     </div>
   );
 }

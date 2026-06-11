@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { memo, useState, useMemo, useCallback, useEffect } from "react";
 import {
   ChevronsUpDown,
   ChevronsDownUp,
@@ -22,51 +22,58 @@ import { UnknownEvent } from "./events/UnknownEvent";
 interface TimelineProps {
   events: DisplayEvent[];
   loading: boolean;
-  following?: boolean;
 }
 
 type TimelineDisplayEvent = Exclude<DisplayEvent, { kind: "turn_started" }>;
+
+interface TimelineEventItem {
+  event: TimelineDisplayEvent;
+  sourceIndex: number;
+}
 
 function assertNever(event: never): never {
   throw new Error(`Unhandled display event: ${JSON.stringify(event)}`);
 }
 
-function eventKey(event: TimelineDisplayEvent, index: number): string {
-  return `${event.kind}-${event.timestamp}-${index}`;
+function eventKey(item: TimelineEventItem): string {
+  return `${item.sourceIndex}-${item.event.kind}`;
 }
 
-function renderEvent(event: TimelineDisplayEvent, index: number) {
-  const key = eventKey(event, index);
+const TimelineEventRow = memo(function TimelineEventRow({
+  event,
+}: {
+  event: TimelineDisplayEvent;
+}) {
   switch (event.kind) {
     case "thought":
-      return <ThoughtEvent key={key} event={event} />;
+      return <ThoughtEvent event={event} />;
     case "message":
-      return <MessageEvent key={key} event={event} />;
+      return <MessageEvent event={event} />;
     case "tool_call":
-      return <ToolCallEvent key={key} event={event} />;
+      return <ToolCallEvent event={event} />;
     case "turn_completed":
-      return <TurnCompletedEvent key={key} event={event} />;
+      return <TurnCompletedEvent event={event} />;
     case "turn_failed":
     case "notification":
-      return <NotificationEvent key={key} event={event} />;
+      return <NotificationEvent event={event} />;
     case "unknown":
-      return <UnknownEvent key={key} event={event} />;
+      return <UnknownEvent event={event} />;
     default:
       return assertNever(event);
   }
-}
+});
 
 interface TurnGroup {
   turnIndex: number;
-  events: TimelineDisplayEvent[];
+  events: TimelineEventItem[];
 }
 
 function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
   const groups: TurnGroup[] = [];
   let currentTurn = 0;
-  let currentEvents: TimelineDisplayEvent[] = [];
+  let currentEvents: TimelineEventItem[] = [];
 
-  for (const event of events) {
+  for (const [sourceIndex, event] of events.entries()) {
     if (event.kind === "turn_started") {
       if (currentEvents.length > 0) {
         groups.push({ turnIndex: currentTurn, events: currentEvents });
@@ -74,7 +81,7 @@ function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
       currentTurn = event.turnIndex;
       currentEvents = [];
     } else {
-      currentEvents.push(event);
+      currentEvents.push({ event, sourceIndex });
     }
   }
   if (currentEvents.length > 0) {
@@ -83,7 +90,7 @@ function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
   return groups;
 }
 
-export function Timeline({ events, loading, following = false }: TimelineProps) {
+export function Timeline({ events, loading }: TimelineProps) {
   const [sortNewest, setSortNewest] = useState(true);
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
 
@@ -98,10 +105,11 @@ export function Timeline({ events, loading, following = false }: TimelineProps) 
     return groups;
   }, [events, sortNewest]);
 
-  // Auto-expand the latest turn in follow mode
+  // Trace events only update while loading, following, or catching up, so a
+  // newest-first latest turn should open without depending on scroll state.
   const latestTurnIndex = grouped[0]?.turnIndex;
   useEffect(() => {
-    if (following && sortNewest && latestTurnIndex != null) {
+    if (sortNewest && latestTurnIndex != null) {
       setExpandedTurns((prev) => {
         if (prev.has(latestTurnIndex)) return prev;
         const next = new Set(prev);
@@ -109,7 +117,7 @@ export function Timeline({ events, loading, following = false }: TimelineProps) 
         return next;
       });
     }
-  }, [following, sortNewest, latestTurnIndex]);
+  }, [sortNewest, latestTurnIndex]);
 
   const allExpanded = useMemo(
     () => grouped.length > 0 && grouped.every((g) => expandedTurns.has(g.turnIndex)),
@@ -219,7 +227,9 @@ export function Timeline({ events, loading, following = false }: TimelineProps) 
             >
               <div className="overflow-hidden">
                 <div className="space-y-2 px-4 pb-3">
-                  {group.events.map((event, idx) => renderEvent(event, idx))}
+                  {group.events.map((item) => (
+                    <TimelineEventRow key={eventKey(item)} event={item.event} />
+                  ))}
                   <button
                     onClick={() => toggleTurn(group.turnIndex)}
                     className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted hover:text-foreground transition-colors"

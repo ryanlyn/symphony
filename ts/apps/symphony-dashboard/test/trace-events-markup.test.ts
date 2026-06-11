@@ -1,12 +1,18 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 import type { DisplayEvent } from "../src/features/traceviz/api/types";
 import { Timeline } from "../src/features/traceviz/components/Timeline";
 import { ThoughtEvent } from "../src/features/traceviz/components/events/ThoughtEvent";
 import { ToolCallEvent } from "../src/features/traceviz/components/events/ToolCallEvent";
 import { formatTimestamp } from "../src/lib/utils";
+
+afterEach(() => {
+  cleanup();
+});
 
 describe("trace event markup", () => {
   test("renders long thought markdown outside native buttons", () => {
@@ -83,5 +89,51 @@ describe("trace event markup", () => {
     expect(html).toContain(formatTimestamp(timestamp));
     expect(html).toContain("legacy_agent_update");
     expect(html).toContain("parser miss");
+  });
+
+  test("keeps newest-first event rows mounted when an append shifts display order", () => {
+    const longThought: DisplayEvent = {
+      kind: "thought",
+      timestamp: "2026-06-04T10:00:00.000Z",
+      text: "This thought is long enough to be expandable. ".repeat(8),
+    };
+    const initialEvents: DisplayEvent[] = [
+      {
+        kind: "turn_started",
+        turnIndex: 1,
+        timestamp: "2026-06-04T09:59:59.000Z",
+      },
+      longThought,
+    ];
+
+    const { rerender } = render(
+      createElement(Timeline, {
+        events: initialEvents,
+        loading: false,
+      }),
+    );
+
+    const thoughtToggle = screen.getByRole("button", { name: "Toggle thought details" });
+    fireEvent.click(thoughtToggle);
+
+    expect(thoughtToggle.getAttribute("aria-expanded")).toBe("true");
+
+    rerender(
+      createElement(Timeline, {
+        events: [
+          ...initialEvents,
+          {
+            kind: "message",
+            timestamp: "2026-06-04T10:00:01.000Z",
+            text: "A later event arrives.",
+          },
+        ] satisfies DisplayEvent[],
+        loading: false,
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Toggle thought details" }).getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });
