@@ -73,6 +73,7 @@ export interface SymphonyRuntimeOptions {
         settings: WorkflowDefinition["settings"],
         issueIdentifier?: string | null,
         workerHost?: string | null,
+        issue?: Issue,
       ) => Promise<void>)
     | undefined;
   deleteResumeState?:
@@ -565,6 +566,7 @@ export class SymphonyRuntime {
           this.workflow.settings,
           issue.identifier || tracked.get(issue.id)?.identifier,
           tracked.get(issue.id)?.workerHost,
+          issue,
         );
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
       } else {
@@ -644,7 +646,12 @@ export class SymphonyRuntime {
       );
       let cleaned = 0;
       for (const issue of terminalIssues) {
-        await this.removeIssueWorkspaces(this.workflow.settings, issue.identifier);
+        await this.removeIssueWorkspaces(
+          this.workflow.settings,
+          issue.identifier,
+          undefined,
+          issue,
+        );
         cleaned += 1;
       }
       if (cleaned > 0) this.addEvent("startup_workspace_cleanup", `terminal=${cleaned}`);
@@ -767,9 +774,10 @@ export class SymphonyRuntime {
     settings: WorkflowDefinition["settings"],
     issueIdentifier?: string | null,
     workerHost?: string | null,
+    issue?: Issue,
   ): Promise<void> {
     if (this.input.removeIssueWorkspaces) {
-      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost);
+      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost, issue);
     }
     throw new Error("runtime_adapter_missing: removeIssueWorkspaces");
   }
