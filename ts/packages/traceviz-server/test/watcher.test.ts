@@ -297,10 +297,10 @@ describe("TraceWatcher", () => {
 
     watcher.subscribe("id-cache");
     const initialEvents = watcher.getEventsForTicket("id-cache");
-    const fromIndex = initialEvents.length;
 
     expect(initialEvents.some((event) => event.kind === "turn_started")).toBe(true);
-    expect(watcher.getEventCount("id-cache")).toBe(fromIndex);
+    // While subscribed, repeated reads return the cached array, not a fresh file parse.
+    expect(watcher.getEventsForTicket("id-cache")).toBe(initialEvents);
 
     writeTraceLine(traceDir, "CACHE-1", {
       type: "session_notification",
@@ -315,13 +315,17 @@ describe("TraceWatcher", () => {
 
     await scanOnce(watcher, () => {});
 
-    const appendedEvents = watcher.getEventsSince("id-cache", fromIndex);
-    expect(appendedEvents.some((event) => event.kind === "message")).toBe(true);
-    expect(watcher.getEventCount("id-cache")).toBe(fromIndex + appendedEvents.length);
+    const refreshedEvents = watcher.getEventsForTicket("id-cache");
+    expect(refreshedEvents).not.toBe(initialEvents);
+    expect(refreshedEvents.length).toBeGreaterThan(initialEvents.length);
+    expect(refreshedEvents.some((event) => event.kind === "message")).toBe(true);
+    expect(watcher.getEventsForTicket("id-cache")).toBe(refreshedEvents);
 
     watcher.unsubscribe("id-cache");
 
-    expect(watcher.getEventCount("id-cache")).toBe(0);
-    expect(watcher.getEventsForTicket("id-cache").length).toBeGreaterThan(fromIndex);
+    // The cache is freed: reads fall back to parsing the file directly.
+    const uncachedEvents = watcher.getEventsForTicket("id-cache");
+    expect(uncachedEvents).not.toBe(refreshedEvents);
+    expect(uncachedEvents).toEqual(refreshedEvents);
   });
 });

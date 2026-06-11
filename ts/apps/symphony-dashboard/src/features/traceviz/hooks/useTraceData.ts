@@ -25,6 +25,14 @@ export function reconcileEventAppend(
   return { events: [...current.slice(0, fromIndex), ...appended], needsRefresh: false };
 }
 
+function eventsEqual(a: DisplayEvent[], b: DisplayEvent[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every(
+    (event, index) => event === b[index] || JSON.stringify(event) === JSON.stringify(b[index]),
+  );
+}
+
 function useFollowMode() {
   const [following, setFollowing] = useState(true);
   const [hasNewUpdates, setHasNewUpdates] = useState(false);
@@ -41,11 +49,12 @@ function useFollowMode() {
   }, []);
 
   const markNewUpdates = useCallback(() => setHasNewUpdates(true), []);
+  const clearNewUpdates = useCallback(() => setHasNewUpdates(false), []);
   const scrollToTop = useCallback(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
-  return { following, hasNewUpdates, markNewUpdates, scrollToTop };
+  return { following, hasNewUpdates, markNewUpdates, clearNewUpdates, scrollToTop };
 }
 
 export function useTraceData() {
@@ -58,8 +67,9 @@ export function useTraceData() {
   const [traceExists, setTraceExists] = useState<boolean | null>(null);
 
   const { status: wsStatus, lastMessage, sendMessage } = useWebSocket();
-  const { following, hasNewUpdates, markNewUpdates, scrollToTop } = useFollowMode();
-  // The WS message effect must read state that may have changed since the effect was registered.
+  const { following, hasNewUpdates, markNewUpdates, clearNewUpdates, scrollToTop } =
+    useFollowMode();
+  // The effects below must read state that may have changed since they were registered.
   const followingRef = useRef(following);
   followingRef.current = following;
   const needsCatchUpRef = useRef(false);
@@ -67,6 +77,10 @@ export function useTraceData() {
   eventsRef.current = events;
   const selectedTicketIdRef = useRef(selectedTicketId);
   selectedTicketIdRef.current = selectedTicketId;
+  const wsStatusRef = useRef(wsStatus);
+  wsStatusRef.current = wsStatus;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
   const streamRevisionRef = useRef(0);
   const loadRequestIdRef = useRef(0);
 
@@ -83,6 +97,10 @@ export function useTraceData() {
     setTraceExists(exists);
   }, []);
 
+  // REST load: covers the initial load while the socket is down and the
+  // catch-up fallback while disconnected. Connected flows go through
+  // subscribe snapshots instead, so trace data always arrives on the same
+  // ordered channel as the deltas.
   const loadTicketData = useCallback(
     async (issueId: string, options?: { silent?: boolean }) => {
       const requestId = ++loadRequestIdRef.current;
@@ -92,6 +110,7 @@ export function useTraceData() {
       if (!silent) {
         setLoading(true);
         setTraceExists(null);
+        setError(null);
       }
 
       try {
@@ -129,11 +148,19 @@ export function useTraceData() {
     [applyEvents],
   );
 
-  const refreshTicketData = useCallback(
-    async (issueId: string) => {
-      await loadTicketData(issueId, { silent: true });
+  // Ask the server for a fresh full snapshot. Re-subscribing keeps the
+  // response on the socket, where FIFO ordering guarantees it can never race
+  // the delta stream the way a REST response can; REST is the fallback while
+  // disconnected.
+  const requestSnapshot = useCallback(
+    (issueId: string) => {
+      if (wsStatusRef.current === "connected") {
+        sendMessage({ type: "subscribe", issueId });
+      } else {
+        void loadTicketData(issueId, { silent: true });
+      }
     },
-    [loadTicketData],
+    [sendMessage, loadTicketData],
   );
 
   useEffect(() => {
@@ -143,34 +170,42 @@ export function useTraceData() {
   useEffect(() => {
     loadRequestIdRef.current += 1;
     needsCatchUpRef.current = false;
-    if (selectedTicketId) {
-      eventsRef.current = [];
-      setEvents([]);
-      setStats(null);
-      setTraceExists(null);
-      void loadTicketData(selectedTicketId);
-    } else {
-      eventsRef.current = [];
-      setEvents([]);
-      setStats(null);
-      setTraceExists(null);
-      setLoading(false);
-    }
-  }, [selectedTicketId, loadTicketData]);
+    eventsRef.current = [];
+    setEvents([]);
+    setStats(null);
+    setTraceExists(null);
+    setError(null);
+    const isLoading = selectedTicketId !== null;
+    loadingRef.current = isLoading;
+    setLoading(isLoading);
+  }, [selectedTicketId]);
+
+  // While the socket is down, load over REST so the view does not have to
+  // wait for a reconnect. Also covers a socket that drops before the
+  // subscribe snapshot arrives.
+  useEffect(() => {
+    if (!selectedTicketId || wsStatus === "connected") return;
+    if (!loadingRef.current) return;
+    void loadTicketData(selectedTicketId);
+  }, [wsStatus, selectedTicketId, loadTicketData]);
 
   useEffect(() => {
-    if (wsStatus === "connected" && selectedTicketId) {
-      sendMessage({ type: "subscribe", issueId: selectedTicketId });
-    }
+    if (wsStatus !== "connected" || !selectedTicketId) return;
+    sendMessage({ type: "subscribe", issueId: selectedTicketId });
+    return () => {
+      // Dropped silently when the socket is already closed; the server also
+      // cleans up on disconnect.
+      sendMessage({ type: "unsubscribe", issueId: selectedTicketId });
+    };
   }, [wsStatus, selectedTicketId, sendMessage]);
 
-  // Catch up when user scrolls back to top
+  // Catch up when the user scrolls back to top.
   useEffect(() => {
     if (following && needsCatchUpRef.current && selectedTicketId) {
       needsCatchUpRef.current = false;
-      void refreshTicketData(selectedTicketId);
+      requestSnapshot(selectedTicketId);
     }
-  }, [following, selectedTicketId, refreshTicketData]);
+  }, [following, selectedTicketId, requestSnapshot]);
 
   useEffect(() => {
     if (!lastMessage) return;
@@ -181,13 +216,28 @@ export function useTraceData() {
     } else if (msg.type === "update") {
       setTickets(msg.tickets);
     } else if (msg.type === "events" && msg.issueId === selectedTicketId) {
-      // Full event payload (initial subscribe response)
-      if (followingRef.current) {
-        if (msg.events.length < eventsRef.current.length) {
-          void refreshTicketData(selectedTicketId);
-          return;
-        }
+      // Full snapshot: the response to a subscribe (initial load, reconnect,
+      // or catch-up after browsing).
+      if (loadingRef.current) {
+        loadingRef.current = false;
+        needsCatchUpRef.current = false;
+        setLoading(false);
+        setError(null);
+        clearNewUpdates();
         applyEvents(msg.events);
+      } else if (eventsEqual(msg.events, eventsRef.current)) {
+        // Nothing new (e.g. a re-subscribe after a reconnect); skip so a
+        // browsing user does not get a spurious "new updates" pill.
+        needsCatchUpRef.current = false;
+        clearNewUpdates();
+      } else if (followingRef.current) {
+        // A snapshot behind local events means the trace shrank or a REST
+        // fallback raced ahead; ignore it — the next delta reconciles us to
+        // the server's state either way.
+        if (msg.events.length >= eventsRef.current.length) {
+          setError(null);
+          applyEvents(msg.events);
+        }
       } else {
         needsCatchUpRef.current = true;
         markNewUpdates();
@@ -195,10 +245,9 @@ export function useTraceData() {
     } else if (msg.type === "events_append" && msg.issueId === selectedTicketId) {
       // Delta: replace the display-event suffix starting at fromIndex.
       if (followingRef.current) {
-        const current = eventsRef.current;
-        const result = reconcileEventAppend(current, msg.events, msg.fromIndex);
+        const result = reconcileEventAppend(eventsRef.current, msg.events, msg.fromIndex);
         if (result.needsRefresh) {
-          void refreshTicketData(selectedTicketId);
+          requestSnapshot(selectedTicketId);
           return;
         }
         applyEvents(result.events);
@@ -207,7 +256,14 @@ export function useTraceData() {
         markNewUpdates();
       }
     }
-  }, [lastMessage, selectedTicketId, markNewUpdates, refreshTicketData, applyEvents]);
+  }, [
+    lastMessage,
+    selectedTicketId,
+    markNewUpdates,
+    clearNewUpdates,
+    requestSnapshot,
+    applyEvents,
+  ]);
 
   return {
     tickets,

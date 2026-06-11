@@ -29,6 +29,15 @@ export interface TicketTraceResponse {
   events: DisplayEvent[];
 }
 
+/**
+ * Messages a trace client may send over the dashboard `/ws` connection.
+ * Shared by the ws handler in @symphony/server and the dashboard client so
+ * the two sides cannot drift.
+ */
+export type WsClientMessage =
+  | { type: "subscribe"; issueId: string }
+  | { type: "unsubscribe"; issueId: string };
+
 export interface ToolBreakdownEntry {
   toolName: string;
   count: number;

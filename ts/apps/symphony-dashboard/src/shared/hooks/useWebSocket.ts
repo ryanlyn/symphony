@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { OpsStatePayload } from "@symphony/presenter";
-import type { TicketInfo, DisplayEvent } from "@symphony/traceviz-server";
+import type { TicketInfo, DisplayEvent, WsClientMessage } from "@symphony/traceviz-server";
 
 /** Messages pushed by the server over the `/ws` connection. */
 export type WsMessage =
@@ -62,9 +62,9 @@ export function useWebSocket() {
     };
   }, []);
 
-  const sendMessage = useCallback((data: Record<string, unknown>) => {
+  const sendMessage = useCallback((message: WsClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+      wsRef.current.send(JSON.stringify(message));
     }
   }, []);
 

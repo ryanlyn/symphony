@@ -159,6 +159,47 @@ describe("observability /ws trace subscriptions", () => {
     expect(fake.unsubscribe).toHaveBeenCalledOnce();
     expect(fake.unsubscribe).toHaveBeenCalledWith("issue-1");
   });
+
+  test("releases the watcher subscription on an unsubscribe message and stops deltas", async () => {
+    const firstEvent = eventFixture("message", "2026-01-01T00:00:00.000Z", "a");
+    const secondEvent = eventFixture("message", "2026-01-01T00:00:01.000Z", "b");
+    const fake = createFakeWatcher([firstEvent]);
+    const server = await startWsTestServer(fake.watcher);
+    const ws = new WebSocket(server.url);
+    const messages: Array<Record<string, unknown>> = [];
+    ws.addEventListener("message", (event) => {
+      messages.push(JSON.parse(String(event.data)) as Record<string, unknown>);
+    });
+    const closed = new Promise<void>((resolve) => ws.addEventListener("close", () => resolve()));
+
+    try {
+      await waitFor(() => messages.some((message) => message.type === "init"));
+
+      ws.send(JSON.stringify({ type: "subscribe", issueId: "issue-1" }));
+      await waitFor(() => messages.some((message) => message.type === "events"));
+
+      ws.send(JSON.stringify({ type: "unsubscribe", issueId: "issue-1" }));
+      await waitFor(() => fake.unsubscribe.mock.calls.length === 1);
+
+      // Watcher changes still broadcast ticket updates but no longer send
+      // deltas to the unsubscribed client.
+      fake.setEvents([firstEvent, secondEvent]);
+      fake.emit();
+
+      await waitFor(() => messages.some((message) => message.type === "update"));
+      expect(messages.some((message) => message.type === "events_append")).toBe(false);
+
+      ws.close();
+      await closed;
+    } finally {
+      if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) ws.close();
+      await server.stop();
+    }
+
+    // Closing after an explicit unsubscribe must not release the ref twice.
+    expect(fake.unsubscribe).toHaveBeenCalledOnce();
+    expect(fake.unsubscribe).toHaveBeenCalledWith("issue-1");
+  });
 });
 
 function createFakeWatcher(initialEvents: DisplayEvent[]): {
@@ -188,10 +229,6 @@ function createFakeWatcher(initialEvents: DisplayEvent[]): {
     subscribe,
     unsubscribe,
     getEventsForTicket: vi.fn((issueId: string) => (issueId === ticket.issueId ? events : [])),
-    getEventCount: vi.fn((issueId: string) => (issueId === ticket.issueId ? events.length : 0)),
-    getEventsSince: vi.fn((issueId: string, fromIndex: number) =>
-      issueId === ticket.issueId ? events.slice(fromIndex) : [],
-    ),
   } as unknown as TraceWatcher;
 
   return {

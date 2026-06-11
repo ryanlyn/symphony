@@ -9,7 +9,12 @@
 import type { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { statePayload, type OpsStatePayload } from "@symphony/presenter";
-import type { DisplayEvent, TicketInfo, TraceWatcher } from "@symphony/traceviz-server";
+import type {
+  DisplayEvent,
+  TicketInfo,
+  TraceWatcher,
+  WsClientMessage,
+} from "@symphony/traceviz-server";
 import type { WSContext } from "hono/ws";
 
 import type { RuntimeServerSource } from "./index.js";
@@ -20,6 +25,21 @@ type WsServerMessage =
   | { type: "events"; issueId: string; events: DisplayEvent[] }
   | { type: "events_append"; issueId: string; events: DisplayEvent[]; fromIndex: number }
   | { type: "ops_state"; state: OpsStatePayload };
+
+function parseClientMessage(raw: string): WsClientMessage | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      (parsed.type === "subscribe" || parsed.type === "unsubscribe") &&
+      typeof parsed.issueId === "string"
+    ) {
+      return { type: parsed.type, issueId: parsed.issueId };
+    }
+  } catch {
+    // Malformed messages are ignored.
+  }
+  return null;
+}
 
 export interface WsSetupResult {
   /** Call after the HTTP server starts listening to enable WebSocket upgrades. */
@@ -33,7 +53,9 @@ export interface WsSetupResult {
  *
  * - On connect: sends { type: "init", tickets: [...] } followed by the current
  *   ops state as { type: "ops_state", state: {...} } when a snapshot is available
- * - On message "subscribe" with { issueId }: sends events for that ticket
+ * - On message "subscribe" with { issueId }: sends the full events snapshot
+ *   for that ticket (re-subscribing to the same ticket resends the snapshot)
+ * - On message "unsubscribe" with { issueId }: releases the trace subscription
  * - Broadcasts watcher updates and runtime ops-state updates to all clients
  */
 interface ClientState {
@@ -94,31 +116,34 @@ export function createWsHandler(
         if (state) send(ws, { type: "ops_state", state });
       },
       onMessage(event: { data: unknown }, ws: WSContext) {
-        try {
-          const data = typeof event.data === "string" ? event.data : String(event.data);
-          const message = JSON.parse(data) as Record<string, unknown>;
-          if (watcher && message.type === "subscribe" && typeof message.issueId === "string") {
-            const clientState = connections.get(ws);
-            if (!clientState) return;
+        if (!watcher) return;
+        const data = typeof event.data === "string" ? event.data : String(event.data);
+        const message = parseClientMessage(data);
+        if (!message) return;
+        const clientState = connections.get(ws);
+        if (!clientState) return;
 
-            if (
-              clientState.subscribedIssueId &&
-              clientState.subscribedIssueId !== message.issueId
-            ) {
-              watcher.unsubscribe(clientState.subscribedIssueId);
-            }
-
-            if (clientState.subscribedIssueId !== message.issueId) {
-              watcher.subscribe(message.issueId);
-              clientState.subscribedIssueId = message.issueId;
-            }
-
-            const events = watcher.getEventsForTicket(message.issueId);
-            clientState.sentEvents = events;
-            send(ws, { type: "events", issueId: message.issueId, events });
+        if (message.type === "subscribe") {
+          if (clientState.subscribedIssueId && clientState.subscribedIssueId !== message.issueId) {
+            watcher.unsubscribe(clientState.subscribedIssueId);
           }
-        } catch {
-          // Ignore malformed messages
+
+          if (clientState.subscribedIssueId !== message.issueId) {
+            watcher.subscribe(message.issueId);
+            clientState.subscribedIssueId = message.issueId;
+          }
+
+          const events = watcher.getEventsForTicket(message.issueId);
+          clientState.sentEvents = events;
+          try {
+            send(ws, { type: "events", issueId: message.issueId, events });
+          } catch {
+            cleanupClient(ws);
+          }
+        } else if (clientState.subscribedIssueId === message.issueId) {
+          watcher.unsubscribe(message.issueId);
+          clientState.subscribedIssueId = null;
+          clientState.sentEvents = [];
         }
       },
       onClose(_event: unknown, ws: WSContext) {
@@ -129,27 +154,37 @@ export function createWsHandler(
 
   // Wire up the watcher to broadcast trace updates
   watcher?.start((issueId) => {
-    const tickets = watcher.getTickets();
+    broadcast({ type: "update", issueId, tickets: watcher.getTickets() });
+
+    const events = watcher.getEventsForTicket(issueId);
+    // Subscribed clients converge on the same sentEvents array reference after
+    // their first delta, so memoize the diff and its serialized payload by
+    // that identity instead of redoing the O(events) comparison per client.
+    let memo: { previous: DisplayEvent[]; payload: string | null } | null = null;
 
     for (const [ws, clientState] of connections) {
-      try {
-        // Always send the ticket list update
-        send(ws, { type: "update", issueId, tickets });
+      if (clientState.subscribedIssueId !== issueId) continue;
 
-        // Send delta events to subscribed clients
-        if (clientState.subscribedIssueId === issueId) {
-          const events = watcher.getEventsForTicket(issueId);
-          const fromIndex = findFirstChangedEventIndex(clientState.sentEvents, events);
-          if (fromIndex !== null) {
-            send(ws, {
-              type: "events_append",
-              issueId,
-              events: events.slice(fromIndex),
-              fromIndex,
-            });
-            clientState.sentEvents = events;
-          }
-        }
+      if (memo === null || memo.previous !== clientState.sentEvents) {
+        const fromIndex = findFirstChangedEventIndex(clientState.sentEvents, events);
+        memo = {
+          previous: clientState.sentEvents,
+          payload:
+            fromIndex === null
+              ? null
+              : JSON.stringify({
+                  type: "events_append",
+                  issueId,
+                  events: events.slice(fromIndex),
+                  fromIndex,
+                } satisfies WsServerMessage),
+        };
+      }
+      if (memo.payload === null) continue;
+
+      try {
+        ws.send(memo.payload);
+        clientState.sentEvents = events;
       } catch {
         cleanupClient(ws);
       }

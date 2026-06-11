@@ -190,26 +190,12 @@ export class TraceWatcher {
   }
 
   /**
-   * Returns events appended since `fromIndex`. If the cache is cold
-   * (no subscribers), falls back to a full read and returns all events
-   * from that index onward.
-   */
-  getEventsSince(issueId: string, fromIndex: number): DisplayEvent[] {
-    const all = this.getEventsForTicket(issueId);
-    return all.slice(fromIndex);
-  }
-
-  /** Total cached event count for a subscribed ticket, or 0 if not cached. */
-  getEventCount(issueId: string): number {
-    const cached = this.eventCaches.get(issueId);
-    if (cached) return cached.events.length;
-    return 0;
-  }
-
-  /**
    * Register a subscriber for this ticket's event cache.
-   * While subscribers > 0 the parsed events stay in memory and are
-   * updated incrementally on each scan.
+   *
+   * While subscribers > 0 the parsed events stay in memory, so reads never
+   * touch disk. Each change detected by the scan loop still replaces the
+   * cache with a full re-read and re-parse of the trace file: streamed
+   * chunks merge into earlier events, so the parse cannot be incremental.
    */
   subscribe(issueId: string): void {
     const existing = this.eventCaches.get(issueId);

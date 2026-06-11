@@ -1,28 +1,88 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+// @vitest-environment jsdom
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi, type Mock } from "vitest";
 
 import type { DisplayEvent } from "../src/features/traceviz/api/types";
 import type { WsMessage } from "../src/shared/hooks/useWebSocket";
+import { reconcileEventAppend, useTraceData } from "../src/features/traceviz/hooks/useTraceData";
 
 type WsStatus = "connecting" | "connected" | "disconnected";
-type StateSetter<T> = (value: T | ((current: T) => T)) => void;
-type EffectCleanup = () => void;
-type EffectCallback = () => void | EffectCleanup;
 
-let activeRenderer: HookRenderer<unknown> | null = null;
+interface SentWsMessage {
+  type: string;
+  issueId: string;
+}
+
+/**
+ * Reactive stand-in for the real useWebSocket hook. Status and message
+ * changes notify subscribed components through useSyncExternalStore, so the
+ * hook under test re-renders exactly like it would against the real socket.
+ */
+const wsControl = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const state = {
+    version: 0,
+    status: "disconnected" as "connecting" | "connected" | "disconnected",
+    lastMessage: null as unknown,
+    sendMessage: undefined as unknown,
+  };
+  const notify = () => {
+    state.version += 1;
+    for (const listener of [...listeners]) listener();
+  };
+  return {
+    listeners,
+    state,
+    setStatus(status: typeof state.status) {
+      state.status = status;
+      notify();
+    },
+    emit(message: unknown) {
+      state.lastMessage = message;
+      notify();
+    },
+  };
+});
+
+const apiControl = vi.hoisted(() => ({
+  fetchTickets: (() => Promise.resolve([])) as () => Promise<unknown[]>,
+  fetchEvents: ((_issueId: string) => Promise.resolve([])) as (
+    issueId: string,
+  ) => Promise<unknown[]>,
+}));
+
+vi.mock("../src/shared/hooks/useWebSocket", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useWebSocket: () => {
+      useSyncExternalStore(
+        (onStoreChange: () => void) => {
+          wsControl.listeners.add(onStoreChange);
+          return () => wsControl.listeners.delete(onStoreChange);
+        },
+        () => wsControl.state.version,
+      );
+      return {
+        status: wsControl.state.status,
+        lastMessage: wsControl.state.lastMessage,
+        sendMessage: wsControl.state.sendMessage,
+      };
+    },
+  };
+});
+
+vi.mock("../src/features/traceviz/api/client", () => ({
+  fetchTickets: () => apiControl.fetchTickets(),
+  fetchEvents: (issueId: string) => apiControl.fetchEvents(issueId),
+}));
 
 afterEach(() => {
-  activeRenderer?.cleanup();
-  activeRenderer = null;
-  vi.doUnmock("react");
-  vi.doUnmock("../src/shared/hooks/useWebSocket");
-  vi.doUnmock("../src/features/traceviz/api/client");
-  vi.resetModules();
-  vi.unstubAllGlobals();
+  cleanup();
+  Object.defineProperty(window, "scrollY", { configurable: true, writable: true, value: 0 });
 });
 
 describe("reconcileEventAppend", () => {
-  test("replaces the local event suffix from the server cursor", async () => {
-    const { reconcileEventAppend } = await setupTraceDataTest();
+  test("replaces the local event suffix from the server cursor", () => {
     const first = eventFixture("first");
     const second = eventFixture("second");
     const updatedSecond = eventFixture("updated second");
@@ -49,344 +109,486 @@ describe("reconcileEventAppend", () => {
 
 describe("useTraceData", () => {
   test("sends subscribe only after the socket connects and re-subscribes after reconnect", async () => {
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connecting" });
+    const { sendMessage, fetchEvents } = setupTraceDataTest({ status: "connecting" });
     fetchEvents.mockResolvedValue([eventFixture("initial")]);
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    await act(flushAsync);
 
-    expect(ws.sendMessage).not.toHaveBeenCalled();
+    expect(sentMessages(sendMessage, "subscribe")).toHaveLength(0);
 
-    ws.status = "connected";
-    traceData = renderer.render();
+    act(() => {
+      wsControl.setStatus("connected");
+    });
 
-    expect(traceData.selectedTicketId).toBe("issue-1");
-    expect(ws.sendMessage).toHaveBeenCalledOnce();
-    expect(ws.sendMessage).toHaveBeenLastCalledWith({ type: "subscribe", issueId: "issue-1" });
+    expect(result.current.selectedTicketId).toBe("issue-1");
+    expect(sentMessages(sendMessage, "subscribe")).toEqual([
+      { type: "subscribe", issueId: "issue-1" },
+    ]);
 
-    ws.status = "disconnected";
-    renderer.render();
-    ws.status = "connected";
-    renderer.render();
+    act(() => {
+      wsControl.setStatus("disconnected");
+    });
+    act(() => {
+      wsControl.setStatus("connected");
+    });
 
-    expect(ws.sendMessage).toHaveBeenCalledTimes(2);
-    expect(ws.sendMessage).toHaveBeenLastCalledWith({ type: "subscribe", issueId: "issue-1" });
+    expect(sentMessages(sendMessage, "subscribe")).toEqual([
+      { type: "subscribe", issueId: "issue-1" },
+      { type: "subscribe", issueId: "issue-1" },
+    ]);
   });
 
   test("does not let an older REST snapshot overwrite newer WebSocket events", async () => {
     const first = eventFixture("first");
     const second = eventFixture("second");
+    const { fetchEvents } = setupTraceDataTest({ status: "connecting" });
     const staleRest = deferred<DisplayEvent[]>();
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connected" });
     fetchEvents.mockReturnValueOnce(staleRest.promise);
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
 
-    ws.lastMessage = { type: "events", issueId: "issue-1", events: [first, second] };
-    renderer.render();
-    traceData = renderer.render();
+    // Disconnected selection falls back to REST...
+    expect(fetchEvents).toHaveBeenCalledTimes(1);
 
-    expect(traceData.events).toEqual([first, second]);
+    // ...but the socket recovers first and delivers the subscribe snapshot.
+    act(() => {
+      wsControl.setStatus("connected");
+    });
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second],
+      } satisfies WsMessage);
+    });
 
-    staleRest.resolve([first]);
-    await flushAsync();
-    traceData = renderer.render();
+    expect(result.current.events).toEqual([first, second]);
+    expect(result.current.loading).toBe(false);
 
-    expect(traceData.events).toEqual([first, second]);
+    await act(async () => {
+      staleRest.resolve([first]);
+      await flushAsync();
+    });
+
+    expect(result.current.events).toEqual([first, second]);
   });
 
-  test("refreshes when a full WebSocket response is behind local events", async () => {
+  test("ignores a full snapshot behind local events until a delta reconciles", async () => {
     const first = eventFixture("first");
     const second = eventFixture("second");
     const third = eventFixture("third");
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connected" });
-    fetchEvents
-      .mockResolvedValueOnce([first, second])
-      .mockResolvedValueOnce([first, second, third]);
+    const updatedSecond = eventFixture("updated second");
+    const { fetchEvents } = setupTraceDataTest({ status: "connected" });
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second, third],
+      } satisfies WsMessage);
+    });
+    await act(flushAsync);
 
-    expect(traceData.events).toEqual([first, second]);
+    expect(result.current.events).toEqual([first, second, third]);
 
-    ws.lastMessage = { type: "events", issueId: "issue-1", events: [first] };
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    // A snapshot behind local events (trace shrank or a REST fallback raced
+    // ahead) is not applied as a visible regression.
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [first] } satisfies WsMessage);
+    });
 
-    expect(fetchEvents).toHaveBeenCalledTimes(2);
-    expect(traceData.events).toEqual([first, second, third]);
+    expect(result.current.events).toEqual([first, second, third]);
+
+    // The next delta carries the server's authoritative suffix.
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [updatedSecond],
+        fromIndex: 1,
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.events).toEqual([first, updatedSecond]);
+    expect(fetchEvents).not.toHaveBeenCalled();
   });
 
   test("applies suffix replacements from WebSocket deltas", async () => {
     const first = eventFixture("first");
     const updatedFirst = eventFixture("updated first");
     const third = eventFixture("third");
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connected" });
-    fetchEvents.mockResolvedValueOnce([first]);
+    const { fetchEvents } = setupTraceDataTest({ status: "connected" });
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [first] } satisfies WsMessage);
+    });
+    await act(flushAsync);
 
-    expect(traceData.events).toEqual([first]);
+    expect(result.current.events).toEqual([first]);
 
-    ws.lastMessage = {
-      type: "events_append",
-      issueId: "issue-1",
-      events: [updatedFirst, third],
-      fromIndex: 0,
-    };
-    renderer.render();
-    traceData = renderer.render();
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [updatedFirst, third],
+        fromIndex: 0,
+      } satisfies WsMessage);
+    });
 
-    expect(fetchEvents).toHaveBeenCalledTimes(1);
-    expect(traceData.events).toEqual([updatedFirst, third]);
+    expect(result.current.events).toEqual([updatedFirst, third]);
+    expect(fetchEvents).not.toHaveBeenCalled();
   });
 
-  test("refreshes from REST when a delta cursor is beyond local events", async () => {
+  test("re-subscribes when a delta cursor is beyond local events", async () => {
     const first = eventFixture("first");
     const second = eventFixture("second");
     const third = eventFixture("third");
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connected" });
-    fetchEvents.mockResolvedValueOnce([first]).mockResolvedValueOnce([first, second, third]);
+    const { sendMessage, fetchEvents } = setupTraceDataTest({ status: "connected" });
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [first] } satisfies WsMessage);
+    });
+    await act(flushAsync);
 
-    expect(traceData.events).toEqual([first]);
+    expect(sentMessages(sendMessage, "subscribe")).toHaveLength(1);
 
-    ws.lastMessage = { type: "events_append", issueId: "issue-1", events: [third], fromIndex: 2 };
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [third],
+        fromIndex: 2,
+      } satisfies WsMessage);
+    });
 
-    expect(fetchEvents).toHaveBeenCalledTimes(2);
-    expect(traceData.events).toEqual([first, second, third]);
+    // The cursor does not fit local events: the hook requests a fresh
+    // snapshot on the socket instead of racing a REST request against the
+    // delta stream.
+    expect(sentMessages(sendMessage, "subscribe")).toHaveLength(2);
+    expect(result.current.events).toEqual([first]);
+
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second, third],
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.events).toEqual([first, second, third]);
+    expect(fetchEvents).not.toHaveBeenCalled();
   });
 
   test("defers append handling while browsing and catches up when follow mode resumes", async () => {
     const first = eventFixture("first");
     const second = eventFixture("second");
-    const { renderer, ws, windowMock, fetchEvents } = await setupTraceDataTest({
-      status: "connected",
+    const { sendMessage, fetchEvents } = setupTraceDataTest({ status: "connected" });
+
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
     });
-    fetchEvents.mockResolvedValueOnce([first]).mockResolvedValueOnce([first, second]);
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [first] } satisfies WsMessage);
+    });
+    await act(flushAsync);
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    expect(result.current.events).toEqual([first]);
 
-    expect(traceData.events).toEqual([first]);
+    act(() => {
+      setWindowScrollY(100);
+    });
 
-    windowMock.scrollY = 100;
-    windowMock.dispatchScroll();
-    traceData = renderer.render();
+    expect(result.current.following).toBe(false);
 
-    expect(traceData.following).toBe(false);
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [second],
+        fromIndex: 1,
+      } satisfies WsMessage);
+    });
 
-    ws.lastMessage = { type: "events_append", issueId: "issue-1", events: [second], fromIndex: 1 };
-    renderer.render();
-    traceData = renderer.render();
+    expect(result.current.events).toEqual([first]);
+    expect(result.current.hasNewUpdates).toBe(true);
 
-    expect(traceData.events).toEqual([first]);
-    expect(traceData.hasNewUpdates).toBe(true);
+    // Scrolling back to top requests a fresh snapshot on the socket...
+    act(() => {
+      setWindowScrollY(0);
+    });
 
-    windowMock.scrollY = 0;
-    windowMock.dispatchScroll();
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    expect(result.current.following).toBe(true);
+    expect(result.current.hasNewUpdates).toBe(false);
+    expect(sentMessages(sendMessage, "subscribe")).toHaveLength(2);
 
-    expect(traceData.following).toBe(true);
-    expect(traceData.hasNewUpdates).toBe(false);
-    expect(traceData.events).toEqual([first, second]);
+    // ...and the server's answer brings the trace current.
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second],
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.events).toEqual([first, second]);
+    expect(fetchEvents).not.toHaveBeenCalled();
+  });
+
+  test("unsubscribes when the selection changes or the hook unmounts", async () => {
+    const first = eventFixture("first");
+    const { sendMessage } = setupTraceDataTest({ status: "connected" });
+
+    const { result, unmount } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [first] } satisfies WsMessage);
+    });
+    await act(flushAsync);
+
+    expect(sentMessages(sendMessage, "subscribe")).toEqual([
+      { type: "subscribe", issueId: "issue-1" },
+    ]);
+
+    act(() => {
+      result.current.setSelectedTicketId(null);
+    });
+
+    expect(sentMessages(sendMessage, "unsubscribe")).toEqual([
+      { type: "unsubscribe", issueId: "issue-1" },
+    ]);
+    expect(result.current.events).toEqual([]);
+
+    act(() => {
+      result.current.setSelectedTicketId("issue-2");
+    });
+
+    expect(sentMessages(sendMessage, "subscribe")).toEqual([
+      { type: "subscribe", issueId: "issue-1" },
+      { type: "subscribe", issueId: "issue-2" },
+    ]);
+
+    unmount();
+
+    expect(sentMessages(sendMessage, "unsubscribe")).toEqual([
+      { type: "unsubscribe", issueId: "issue-1" },
+      { type: "unsubscribe", issueId: "issue-2" },
+    ]);
+  });
+
+  test("does not flag new updates for an identical snapshot after a reconnect while browsing", async () => {
+    const first = eventFixture("first");
+    const second = eventFixture("second");
+    const third = eventFixture("third");
+    const { sendMessage } = setupTraceDataTest({ status: "connected" });
+
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second],
+      } satisfies WsMessage);
+    });
+    await act(flushAsync);
+
+    act(() => {
+      setWindowScrollY(100);
+    });
+
+    expect(result.current.following).toBe(false);
+
+    // Reconnect: the subscribe effect re-subscribes and the server answers
+    // with a snapshot identical to what the client already shows.
+    act(() => {
+      wsControl.setStatus("disconnected");
+    });
+    act(() => {
+      wsControl.setStatus("connected");
+    });
+
+    expect(sentMessages(sendMessage, "subscribe")).toHaveLength(2);
+
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [eventFixture("first"), eventFixture("second")],
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.hasNewUpdates).toBe(false);
+
+    // A snapshot that actually differs keeps deferring and shows the pill.
+    act(() => {
+      wsControl.emit({
+        type: "events",
+        issueId: "issue-1",
+        events: [first, second, third],
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.events).toEqual([first, second]);
+    expect(result.current.hasNewUpdates).toBe(true);
+  });
+
+  test("recovers a mutated event skipped while browsing even when a delta races the catch-up", async () => {
+    const a = eventFixture("a");
+    const b = eventFixture("b");
+    const bUpdated = eventFixture("b updated");
+    const c = eventFixture("c");
+    const cUpdated = eventFixture("c updated");
+    const { sendMessage, fetchEvents } = setupTraceDataTest({ status: "connected" });
+    fetchEvents.mockResolvedValueOnce([a, b, c]);
+
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    // The server answers the initial subscribe with the same snapshot a REST
+    // load would return.
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [a, b, c] } satisfies WsMessage);
+    });
+    await waitFor(() => expect(result.current.events).toEqual([a, b, c]));
+    const initialSubscribes = sentMessages(sendMessage, "subscribe").length;
+
+    // Browse away. The server-side trace mutates in place to [a, bUpdated, c]
+    // and the delta is deferred client-side.
+    act(() => {
+      setWindowScrollY(100);
+    });
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [bUpdated, c],
+        fromIndex: 1,
+      } satisfies WsMessage);
+    });
+
+    expect(result.current.events).toEqual([a, b, c]);
+    expect(result.current.hasNewUpdates).toBe(true);
+
+    // Any catch-up REST read is slow: it stays in flight while more deltas stream in.
+    const catchUpRest = deferred<DisplayEvent[]>();
+    fetchEvents.mockReturnValueOnce(catchUpRest.promise);
+
+    act(() => {
+      setWindowScrollY(0);
+    });
+
+    // Before the catch-up lands, the trailing event mutates again. The server
+    // diffs against what it already sent, so the cursor sits past the
+    // mutation the client never applied.
+    act(() => {
+      wsControl.emit({
+        type: "events_append",
+        issueId: "issue-1",
+        events: [cUpdated],
+        fromIndex: 2,
+      } satisfies WsMessage);
+    });
+
+    // The server answers any re-subscribe with its current snapshot, and the
+    // REST read resolves with the same data.
+    const serverSnapshot = [a, bUpdated, cUpdated];
+    if (sentMessages(sendMessage, "subscribe").length > initialSubscribes) {
+      act(() => {
+        wsControl.emit({
+          type: "events",
+          issueId: "issue-1",
+          events: serverSnapshot,
+        } satisfies WsMessage);
+      });
+    }
+    await act(async () => {
+      catchUpRest.resolve(serverSnapshot);
+      await flushAsync();
+    });
+
+    expect(result.current.events).toEqual(serverSnapshot);
   });
 
   test("keeps an empty WebSocket events response in the missing trace state", async () => {
-    const { renderer, ws, fetchEvents } = await setupTraceDataTest({ status: "connected" });
-    fetchEvents.mockResolvedValueOnce([]);
+    const { fetchEvents } = setupTraceDataTest({ status: "connected" });
 
-    let traceData = renderer.render();
-    traceData.setSelectedTicketId("issue-1");
-    renderer.render();
-    await flushAsync();
-    traceData = renderer.render();
+    const { result } = renderHook(() => useTraceData());
+    act(() => {
+      result.current.setSelectedTicketId("issue-1");
+    });
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [] } satisfies WsMessage);
+    });
+    await act(flushAsync);
 
-    expect(traceData.traceExists).toBe(false);
+    expect(result.current.traceExists).toBe(false);
+    expect(result.current.loading).toBe(false);
 
-    ws.lastMessage = { type: "events", issueId: "issue-1", events: [] };
-    renderer.render();
-    traceData = renderer.render();
+    act(() => {
+      wsControl.emit({ type: "events", issueId: "issue-1", events: [] } satisfies WsMessage);
+    });
 
-    expect(traceData.events).toEqual([]);
-    expect(traceData.traceExists).toBe(false);
+    expect(result.current.events).toEqual([]);
+    expect(result.current.traceExists).toBe(false);
+    expect(fetchEvents).not.toHaveBeenCalled();
   });
 });
 
-async function setupTraceDataTest(initialWs?: {
-  status?: WsStatus;
-  lastMessage?: WsMessage | null;
-}) {
-  vi.resetModules();
-
-  const ws = {
-    status: initialWs?.status ?? "disconnected",
-    lastMessage: initialWs?.lastMessage ?? null,
-    sendMessage: vi.fn(),
-  };
-  const fetchTickets = vi.fn().mockResolvedValue([]);
-  const fetchEvents = vi.fn().mockResolvedValue([]);
-  const windowMock = createWindowMock();
-
-  vi.stubGlobal("window", windowMock);
-  vi.doMock("react", () => ({
-    useCallback: <T>(callback: T, deps?: readonly unknown[]) =>
-      currentRenderer().useCallback(callback, deps),
-    useEffect: (effect: EffectCallback, deps?: readonly unknown[]) =>
-      currentRenderer().useEffect(effect, deps),
-    useRef: <T>(initial: T) => currentRenderer().useRef(initial),
-    useState: <T>(initial: T) => currentRenderer().useState(initial),
-  }));
-  vi.doMock("../src/shared/hooks/useWebSocket", () => ({
-    useWebSocket: () => ws,
-  }));
-  vi.doMock("../src/features/traceviz/api/client", () => ({
-    fetchTickets,
-    fetchEvents,
-  }));
-
-  const { reconcileEventAppend, useTraceData } =
-    await import("../src/features/traceviz/hooks/useTraceData");
-  const renderer = new HookRenderer(() => useTraceData());
-  activeRenderer = renderer;
-
-  return { renderer, ws, fetchTickets, fetchEvents, windowMock, reconcileEventAppend };
-}
-
-class HookRenderer<TReturn> {
-  private hookIndex = 0;
-  private states: unknown[] = [];
-  private refs: Array<{ current: unknown } | undefined> = [];
-  private callbacks: Array<{ value: unknown; deps: readonly unknown[] | undefined } | undefined> =
-    [];
-  private effects: Array<
-    | { callback: EffectCallback; deps: readonly unknown[] | undefined; cleanup?: EffectCleanup }
-    | undefined
-  > = [];
-  private pendingEffectIndexes = new Set<number>();
-
-  constructor(private readonly hook: () => TReturn) {}
-
-  render(): TReturn {
-    this.hookIndex = 0;
-    const result = this.hook();
-    this.flushEffects();
-    return result;
-  }
-
-  cleanup(): void {
-    for (const effect of this.effects) {
-      effect?.cleanup?.();
-    }
-    this.effects = [];
-    this.pendingEffectIndexes.clear();
-  }
-
-  useState<T>(initial: T): readonly [T, StateSetter<T>] {
-    const index = this.hookIndex++;
-    if (!(index in this.states)) this.states[index] = initial;
-
-    const setState: StateSetter<T> = (value) => {
-      const current = this.states[index] as T;
-      this.states[index] =
-        typeof value === "function" ? (value as (current: T) => T)(current) : value;
-    };
-
-    return [this.states[index] as T, setState] as const;
-  }
-
-  useRef<T>(initial: T): { current: T } {
-    const index = this.hookIndex++;
-    if (!this.refs[index]) this.refs[index] = { current: initial };
-    return this.refs[index] as { current: T };
-  }
-
-  useCallback<T>(callback: T, deps?: readonly unknown[]): T {
-    const index = this.hookIndex++;
-    const previous = this.callbacks[index];
-    if (previous && !depsChanged(previous.deps, deps)) return previous.value as T;
-    this.callbacks[index] = { value: callback, deps };
-    return callback;
-  }
-
-  useEffect(callback: EffectCallback, deps?: readonly unknown[]): void {
-    const index = this.hookIndex++;
-    const previous = this.effects[index];
-    if (previous && !depsChanged(previous.deps, deps)) return;
-    this.effects[index] = { callback, deps, cleanup: previous?.cleanup };
-    this.pendingEffectIndexes.add(index);
-  }
-
-  private flushEffects(): void {
-    const indexes = Array.from(this.pendingEffectIndexes);
-    this.pendingEffectIndexes.clear();
-
-    for (const index of indexes) {
-      const effect = this.effects[index];
-      if (!effect) continue;
-
-      effect.cleanup?.();
-      const cleanup = effect.callback();
-      if (cleanup) effect.cleanup = cleanup;
-      else delete effect.cleanup;
-    }
-  }
-}
-
-function currentRenderer(): HookRenderer<unknown> {
-  if (!activeRenderer) throw new Error("React hook called outside test renderer");
-  return activeRenderer;
-}
-
-function createWindowMock(): {
-  scrollY: number;
-  addEventListener: ReturnType<typeof vi.fn>;
-  removeEventListener: ReturnType<typeof vi.fn>;
-  scrollTo: ReturnType<typeof vi.fn>;
-  dispatchScroll(): void;
+function setupTraceDataTest(options?: { status?: WsStatus }): {
+  sendMessage: Mock<(message: SentWsMessage) => void>;
+  fetchTickets: Mock<() => Promise<unknown[]>>;
+  fetchEvents: Mock<(issueId: string) => Promise<DisplayEvent[]>>;
 } {
-  const listeners = new Set<() => void>();
-  return {
-    scrollY: 0,
-    addEventListener: vi.fn((event: string, listener: unknown) => {
-      if (event === "scroll" && typeof listener === "function") {
-        listeners.add(listener as () => void);
-      }
-    }),
-    removeEventListener: vi.fn((event: string, listener: unknown) => {
-      if (event === "scroll" && typeof listener === "function") {
-        listeners.delete(listener as () => void);
-      }
-    }),
-    scrollTo: vi.fn(),
-    dispatchScroll() {
-      for (const listener of listeners) listener();
-    },
-  };
+  const sendMessage = vi.fn<(message: SentWsMessage) => void>();
+  const fetchTickets = vi.fn<() => Promise<unknown[]>>().mockResolvedValue([]);
+  const fetchEvents = vi.fn<(issueId: string) => Promise<DisplayEvent[]>>().mockResolvedValue([]);
+
+  wsControl.listeners.clear();
+  wsControl.state.version = 0;
+  wsControl.state.status = options?.status ?? "disconnected";
+  wsControl.state.lastMessage = null;
+  wsControl.state.sendMessage = sendMessage;
+  apiControl.fetchTickets = fetchTickets;
+  apiControl.fetchEvents = fetchEvents;
+
+  return { sendMessage, fetchTickets, fetchEvents };
+}
+
+function sentMessages(
+  sendMessage: Mock<(message: SentWsMessage) => void>,
+  type: "subscribe" | "unsubscribe",
+): SentWsMessage[] {
+  return sendMessage.mock.calls.map(([message]) => message).filter((m) => m.type === type);
+}
+
+function setWindowScrollY(y: number): void {
+  Object.defineProperty(window, "scrollY", { configurable: true, writable: true, value: y });
+  window.dispatchEvent(new Event("scroll"));
 }
 
 function eventFixture(text: string): DisplayEvent {
@@ -413,13 +615,4 @@ function deferred<T>(): {
 
 async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-function depsChanged(
-  previous: readonly unknown[] | undefined,
-  next: readonly unknown[] | undefined,
-): boolean {
-  if (!previous || !next) return true;
-  if (previous.length !== next.length) return true;
-  return next.some((value, index) => !Object.is(value, previous[index]));
 }
