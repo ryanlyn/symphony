@@ -27,6 +27,11 @@ function isWithinRoot(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+interface EventCache {
+  events: DisplayEvent[];
+  subscribers: number;
+}
+
 interface FileState {
   issueId: string;
   issueIdentifier: string;
@@ -136,6 +141,7 @@ export class TraceWatcher {
   private readonly pollIntervalMs: number;
   private fileStates = new Map<string, FileState>();
   private fileStatesByPath = new Map<string, FileState>();
+  private eventCaches = new Map<string, EventCache>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private scanning = false;
@@ -175,9 +181,52 @@ export class TraceWatcher {
   }
 
   getEventsForTicket(issueId: string): DisplayEvent[] {
+    const cached = this.eventCaches.get(issueId);
+    if (cached) return cached.events;
+
     const state = this.fileStates.get(issueId);
     if (!state) return [];
     return this.readAndParseSync(state.filePath);
+  }
+
+  /**
+   * Register a subscriber for this ticket's event cache.
+   *
+   * While subscribers > 0 the parsed events stay in memory, so reads never
+   * touch disk. Each change detected by the scan loop still replaces the
+   * cache with a full re-read and re-parse of the trace file: streamed
+   * chunks merge into earlier events, so the parse cannot be incremental.
+   */
+  subscribe(issueId: string): void {
+    const existing = this.eventCaches.get(issueId);
+    if (existing) {
+      existing.subscribers++;
+      return;
+    }
+    const state = this.fileStates.get(issueId);
+    const events = state ? this.readAndParseSync(state.filePath) : [];
+    this.eventCaches.set(issueId, { events, subscribers: 1 });
+  }
+
+  /**
+   * Unregister a subscriber. When no subscribers remain the cache is freed.
+   */
+  unsubscribe(issueId: string): void {
+    const cached = this.eventCaches.get(issueId);
+    if (!cached) return;
+    cached.subscribers--;
+    if (cached.subscribers <= 0) {
+      this.eventCaches.delete(issueId);
+    }
+  }
+
+  /** Refresh the event cache for a subscribed ticket (called after scan detects changes). */
+  refreshCache(issueId: string): void {
+    const cached = this.eventCaches.get(issueId);
+    if (!cached) return;
+    const state = this.fileStates.get(issueId);
+    if (!state) return;
+    cached.events = this.readAndParseSync(state.filePath);
   }
 
   private readAndParseSync(filePath: string): DisplayEvent[] {
@@ -257,6 +306,7 @@ export class TraceWatcher {
             const previousLineCount = existing?.lineCount ?? 0;
             this.setFileState(realFilePath, result.state);
             if (result.state.lineCount !== previousLineCount) {
+              this.refreshCache(result.state.issueId);
               callback(result.state.issueId, result.state.cachedTicketInfo);
             }
           }

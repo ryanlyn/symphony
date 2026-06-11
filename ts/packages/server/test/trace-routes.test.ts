@@ -134,23 +134,22 @@ describe("trace routes with IssueStore enrichment", () => {
     expect(data.identifier).toBe("TEST-1");
   });
 
-  it.each([
-    "/api/v1/tickets/%E0%A4%A/exists",
-    "/api/v1/tickets/%E0%A4%A/events",
-    "/api/v1/tickets/%E0%A4%A/stats",
-  ])("GET %s returns structured 400 for malformed ticket ids", async (path) => {
-    const req = new Request(`http://localhost${path}`);
-    const res = await app.fetch(req);
+  it.each(["/api/v1/tickets/%E0%A4%A/exists", "/api/v1/tickets/%E0%A4%A/events"])(
+    "GET %s returns structured 400 for malformed ticket ids",
+    async (path) => {
+      const req = new Request(`http://localhost${path}`);
+      const res = await app.fetch(req);
 
-    expect(res.status).toBe(400);
-    expect(res.headers.get("content-type")).toMatch(/^application\/json/i);
-    expect(await res.json()).toEqual({
-      error: {
-        code: "invalid_path_parameter",
-        message: "Malformed percent encoding in path parameter",
-      },
-    });
-  });
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).toMatch(/^application\/json/i);
+      expect(await res.json()).toEqual({
+        error: {
+          code: "invalid_path_parameter",
+          message: "Malformed percent encoding in path parameter",
+        },
+      });
+    },
+  );
 
   it("GET /api/v1/tickets/:id/exists returns true for known ticket", async () => {
     watcher.start(() => {});

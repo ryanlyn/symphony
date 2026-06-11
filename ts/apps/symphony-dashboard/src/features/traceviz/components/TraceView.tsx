@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ArrowLeft, Archive } from "lucide-react";
+import { ArrowLeft, Archive, ArrowUp } from "lucide-react";
 
 import type { DisplayEvent, Stats } from "../api/types";
 import { useTraceData } from "../hooks/useTraceData";
@@ -15,8 +15,18 @@ interface TraceViewProps {
 }
 
 export function TraceView({ issueId, onBack }: TraceViewProps) {
-  const { tickets, selectedTicketId, setSelectedTicketId, events, stats, loading, traceExists } =
-    useTraceData();
+  const {
+    tickets,
+    selectedTicketId,
+    setSelectedTicketId,
+    events,
+    stats,
+    loading,
+    traceExists,
+    following,
+    hasNewUpdates,
+    scrollToTop,
+  } = useTraceData();
 
   useEffect(() => {
     if (issueId && selectedTicketId !== issueId) {
@@ -57,6 +67,17 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
         )}
       </div>
 
+      {/* New updates indicator */}
+      {hasNewUpdates && (
+        <button
+          onClick={scrollToTop}
+          className="sticky top-[4.5rem] z-20 mx-auto flex items-center gap-1.5 rounded-full border border-accent-purple/30 bg-accent-purple/10 px-3 py-1.5 text-xs font-medium text-accent-purple backdrop-blur-sm transition-all hover:bg-accent-purple/20 hover:border-accent-purple/50"
+        >
+          <ArrowUp className="h-3 w-3" />
+          New updates available
+        </button>
+      )}
+
       {/* Trace content */}
       <div aria-live="polite" aria-atomic="true">
         <TraceContent
@@ -65,6 +86,7 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
           events={events}
           stats={stats}
           loading={loading}
+          following={following}
           onSelect={navigateToTrace}
         />
       </div>
@@ -78,6 +100,7 @@ interface TraceContentProps {
   events: DisplayEvent[];
   stats: Stats | null;
   loading: boolean;
+  following: boolean;
   onSelect: (id: string) => void;
 }
 
@@ -87,6 +110,7 @@ function TraceContent({
   events,
   stats,
   loading,
+  following,
   onSelect,
 }: TraceContentProps) {
   if (!selectedTicketId) {
@@ -109,7 +133,7 @@ function TraceContent({
   return (
     <div className="space-y-6">
       {stats && <TraceSummary stats={stats} />}
-      <Timeline key={selectedTicketId} events={events} loading={loading} />
+      <Timeline key={selectedTicketId} events={events} loading={loading} following={following} />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   ChevronsUpDown,
   ChevronsDownUp,
@@ -22,6 +22,7 @@ import { UnknownEvent } from "./events/UnknownEvent";
 interface TimelineProps {
   events: DisplayEvent[];
   loading: boolean;
+  following?: boolean;
 }
 
 type TimelineDisplayEvent = Exclude<DisplayEvent, { kind: "turn_started" }>;
@@ -82,7 +83,7 @@ function groupByTurn(events: DisplayEvent[]): TurnGroup[] {
   return groups;
 }
 
-export function Timeline({ events, loading }: TimelineProps) {
+export function Timeline({ events, loading, following = false }: TimelineProps) {
   const [sortNewest, setSortNewest] = useState(true);
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
 
@@ -96,6 +97,19 @@ export function Timeline({ events, loading }: TimelineProps) {
     }
     return groups;
   }, [events, sortNewest]);
+
+  // Auto-expand the latest turn in follow mode
+  const latestTurnIndex = grouped[0]?.turnIndex;
+  useEffect(() => {
+    if (following && sortNewest && latestTurnIndex != null) {
+      setExpandedTurns((prev) => {
+        if (prev.has(latestTurnIndex)) return prev;
+        const next = new Set(prev);
+        next.add(latestTurnIndex);
+        return next;
+      });
+    }
+  }, [following, sortNewest, latestTurnIndex]);
 
   const allExpanded = useMemo(
     () => grouped.length > 0 && grouped.every((g) => expandedTurns.has(g.turnIndex)),
