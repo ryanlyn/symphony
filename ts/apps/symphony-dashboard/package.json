@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@symphony/presenter": "workspace:*",
     "@symphony/traceviz-server": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",

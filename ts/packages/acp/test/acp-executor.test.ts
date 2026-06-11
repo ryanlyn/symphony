@@ -3,12 +3,16 @@ import net from "node:net";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { Executor, acquireAgentMcpEndpoint, parseConfig, shellEscape } from "@symphony/cli";
+import {
+  Executor,
+  acquireAgentMcpEndpoint,
+  parseConfig,
+  resolveBridgeCommand,
+  shellEscape,
+} from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
 import type { AgentMcpEndpointLease } from "@symphony/mcp";
-
-import { assert } from "../../../test/assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
 let nextAcpServerPort = 45_000 + (process.pid % 1_000);
 
@@ -64,7 +68,7 @@ test("ACP executor starts a session, translates updates, approves permissions, a
   const newSession = traceEvents.find((event) => event.method === "newSession");
   assert.ok(newSession);
   assert.match(JSON.stringify(newSession.params), /"type":"http"/);
-  assert.match(JSON.stringify(newSession.params), /"name":"symphony_linear"/);
+  assert.match(JSON.stringify(newSession.params), /"name":"symphony_tracker"/);
   assert.match(
     JSON.stringify(newSession.params),
     /"headers":\[\{"name":"Authorization","value":"Bearer /,
@@ -101,6 +105,89 @@ test("ACP executor can pass through cumulative bridge usage without double count
     inputTokens: 14,
     outputTokens: 6,
     totalTokens: 20,
+  });
+});
+
+test("ACP executor accumulates per-call usage buckets incrementally", async () => {
+  const root = await tempDir("symphony-ts-acp-call-usage");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "call-usage");
+  const executor = new Executor("claude");
+  const updates: AgentUpdate[] = [];
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+    onUpdate: (update) => updates.push(update),
+  });
+  const firstTurn = await executor.runTurn(session, "hello", sampleIssue);
+  const secondTurn = await executor.runTurn(session, "hello again", sampleIssue);
+  await session.stop();
+
+  // Three unique buckets stream during the first turn (the duplicate seq and
+  // the plain usage_update carry no usage), each carrying running totals.
+  const firstTurnUsage = firstTurn
+    .filter((update) => update.type === "session_notification" && update.usage)
+    .map((update) => update.usage);
+  assert.deepEqual(firstTurnUsage, [
+    { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+    { inputTokens: 14, outputTokens: 6, totalTokens: 20 },
+    { inputTokens: 21, outputTokens: 9, totalTokens: 30 },
+  ]);
+  assert.ok(
+    firstTurn
+      .filter((update) => update.type === "session_notification" && update.usage)
+      .every((update) => update.usageKind === "cumulative"),
+  );
+
+  // Turn end must not re-add the bridge's turn aggregate on top of buckets.
+  const firstCompleted = firstTurn.find((update) => update.type === "turn_completed");
+  assert.equal(firstCompleted?.usageKind, "cumulative");
+  assert.deepEqual(firstCompleted?.usage, { inputTokens: 21, outputTokens: 9, totalTokens: 30 });
+
+  // The second turn's bucket accumulates on top of the first turn.
+  const secondCompleted = secondTurn.find((update) => update.type === "turn_completed");
+  assert.deepEqual(secondCompleted?.usage, { inputTokens: 28, outputTokens: 12, totalTokens: 40 });
+});
+
+test("ACP executor reconciles bucket undercount against the turn aggregate", async () => {
+  const root = await tempDir("symphony-ts-acp-call-usage-undercount");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "call-usage-undercount");
+  const executor = new Executor("claude");
+  const session = await executor.startSession({ workspace: root, settings, issue: sampleIssue });
+  const turnUpdates = await executor.runTurn(session, "hello", sampleIssue);
+  await session.stop();
+
+  // Two buckets arrived (20 tokens) but the bridge reported a 30-token turn;
+  // the shortfall tops the totals up instead of being dropped or re-added.
+  assert.deepEqual(turnUpdates.find((update) => update.type === "turn_completed")?.usage, {
+    inputTokens: 21,
+    outputTokens: 9,
+    totalTokens: 30,
+  });
+});
+
+test("ACP executor floors bucket totals with the bridge cumulative counter", async () => {
+  const root = await tempDir("symphony-ts-acp-call-usage-floor");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "call-usage-total-floor", 5_000, {
+    agentKind: "codex",
+  });
+  const executor = new Executor("codex");
+  const session = await executor.startSession({ workspace: root, settings, issue: sampleIssue });
+  const turnUpdates = await executor.runTurn(session, "hello", sampleIssue);
+  await session.stop();
+
+  // The seq-2 bucket never arrived and the bridge reported no turn usage, but
+  // symphony/totalUsage recovers the missing call.
+  assert.deepEqual(turnUpdates.find((update) => update.type === "turn_completed")?.usage, {
+    inputTokens: 21,
+    outputTokens: 9,
+    totalTokens: 30,
   });
 });
 
@@ -363,8 +450,8 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
     const second = await acquireAgentMcpEndpoint(settings, "worker-acp");
     leases.push(second);
 
-    assert.equal(first.url, "http://127.0.0.1:46000/claude-mcp");
-    assert.equal(second.url, "http://127.0.0.1:46000/claude-mcp");
+    assert.equal(first.url, "http://127.0.0.1:46000/mcp");
+    assert.equal(second.url, "http://127.0.0.1:46000/mcp");
     assert.notEqual(first.token, second.token);
     assert.notEqual(acpAuthHeader(first.acpServer()), acpAuthHeader(second.acpServer()));
     await waitForTunnelTrace(trace, 1);
@@ -430,21 +517,21 @@ test("ACP executor acquires AND releases its OWN endpoint when no mcpEndpoint is
     issue: sampleIssue,
   });
   // acp owns its own endpoint on the local path: it acquired a real one (the
-  // default symphony_linear server) and releasing the session releases it.
-  assert.match(JSON.stringify(session.mcpEndpoint.acpServer()), /"name":"symphony_linear"/);
+  // default symphony_tracker server) and releasing the session releases it.
+  assert.match(JSON.stringify(session.mcpEndpoint.acpServer()), /"name":"symphony_tracker"/);
   await session.stop();
 
   const traceEvents = await readTrace(trace);
   const newSession = traceEvents.find((event) => event.method === "newSession");
   assert.ok(newSession);
-  assert.match(JSON.stringify(newSession.params), /"name":"symphony_linear"/);
+  assert.match(JSON.stringify(newSession.params), /"name":"symphony_tracker"/);
 });
 
-test("writeProviderConfig writes .claude/settings.local.json for claude bridge", async () => {
+test("provider config rides session/new _meta as a claude settings overlay", async () => {
   const root = await tempDir("symphony-ts-acp-provider-claude");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const providerConfig = { permission_mode: "dontAsk" };
+  const providerConfig = { model: "claude-opus-4-6", permissions: { defaultMode: "dontAsk" } };
   const settings = acpSettings(root, fake, trace, "new", 5_000, { providerConfig });
   const executor = new Executor("claude");
   const session = await executor.startSession({
@@ -454,21 +541,39 @@ test("writeProviderConfig writes .claude/settings.local.json for claude bridge",
   });
   await session.stop();
 
-  const written = JSON.parse(
-    await fs.readFile(path.join(root, ".claude", "settings.local.json"), "utf8"),
-  );
-  assert.deepEqual(written, { permission_mode: "dontAsk" });
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/settings"], providerConfig);
+  await assert.rejects(() => fs.access(path.join(root, ".claude", "settings.local.json")));
 });
 
-test("writeProviderConfig writes .codex/config.toml for codex bridge", async () => {
+test("provider config pins the default claude model via session _meta", async () => {
+  const root = await tempDir("symphony-ts-acp-provider-claude-model");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "new", 5_000);
+  const executor = new Executor("claude");
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+  });
+  await session.stop();
+
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/settings"], {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
+});
+
+test("provider config rides session/new _meta as codex config overrides", async () => {
   const root = await tempDir("symphony-ts-acp-provider-codex");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = {
-    "bad key": "literal-space",
     model: "gpt-5.5",
-    "model.provider": "literal-dot",
     model_reasoning_effort: "xhigh",
+    shell_environment_policy: { inherit: "all" },
   };
   const settings = acpSettings(root, fake, trace, "new", 5_000, {
     agentKind: "codex",
@@ -482,44 +587,31 @@ test("writeProviderConfig writes .codex/config.toml for codex bridge", async () 
   });
   await session.stop();
 
-  const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
-  assert.match(toml, /"bad key" = "literal-space"/);
-  assert.match(toml, /model = "gpt-5.5"/);
-  assert.match(toml, /"model.provider" = "literal-dot"/);
-  assert.match(toml, /model_reasoning_effort = "xhigh"/);
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/config"], providerConfig);
+  await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
 });
 
-test("writeProviderConfig writes nested TOML sections", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-toml-nested");
+test("provider config _meta also rides session/resume", async () => {
+  const root = await tempDir("symphony-ts-acp-provider-resume");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
-  const providerConfig = {
-    model: "gpt-5.5",
-    history: { "max.entries": 100, persistence: true },
-    "history.options": { "save mode": "all" },
-  };
-  const settings = acpSettings(root, fake, trace, "new", 5_000, {
-    agentKind: "codex",
-    providerConfig,
-  });
-  const executor = new Executor("codex");
+  const providerConfig = { permissions: { defaultMode: "dontAsk" } };
+  const settings = acpSettings(root, fake, trace, "resume", 5_000, { providerConfig });
+  const executor = new Executor("claude");
   const session = await executor.startSession({
     workspace: root,
     settings,
     issue: sampleIssue,
+    resumeId: "acp-existing",
   });
   await session.stop();
 
-  const toml = await fs.readFile(path.join(root, ".codex", "config.toml"), "utf8");
-  assert.match(toml, /model = "gpt-5.5"/);
-  assert.match(toml, /\[history\]/);
-  assert.match(toml, /"max.entries" = 100/);
-  assert.match(toml, /persistence = true/);
-  assert.match(toml, /\["history.options"\]/);
-  assert.match(toml, /"save mode" = "all"/);
+  const resume = (await readTrace(trace)).find((event) => event.method === "resumeSession");
+  assert.deepEqual(resume?.params?._meta?.["symphony/settings"], providerConfig);
 });
 
-test("writeProviderConfig is skipped when providerConfig is absent from agent config", async () => {
+test("session requests omit _meta when providerConfig is absent", async () => {
   const root = await tempDir("symphony-ts-acp-provider-none");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
@@ -533,7 +625,35 @@ test("writeProviderConfig is skipped when providerConfig is absent from agent co
   });
   await session.stop();
 
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.equal(newSession?.params?._meta, undefined);
   await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
+});
+
+test("resolveBridgeCommand points bare bridge names at the vendored packages", async () => {
+  const codex = resolveBridgeCommand("codex-acp", null);
+  assert.notEqual(codex, "codex-acp");
+  assert.match(codex, /vendor\/codex-acp\/dist\/index\.js/);
+  assert.ok(codex.startsWith(shellEscape(process.execPath)));
+  await fs.access(codex.split(" ")[1]?.replace(/^'|'$/g, "") ?? "");
+
+  const claude = resolveBridgeCommand("claude-agent-acp", null);
+  assert.match(claude, /vendor\/claude-agent-acp\/dist\/bundle\.js/);
+  await fs.access(claude.split(" ")[1]?.replace(/^'|'$/g, "") ?? "");
+});
+
+test("resolveBridgeCommand preserves arguments, custom commands, and remote hosts", () => {
+  assert.match(resolveBridgeCommand("codex-acp --flag value", null), /index\.js'? --flag value$/);
+  assert.match(
+    resolveBridgeCommand("claude-agent-acp --flag value", null),
+    /bundle\.js'? --flag value$/,
+  );
+  assert.equal(
+    resolveBridgeCommand("my-custom-bridge --port 1", null),
+    "my-custom-bridge --port 1",
+  );
+  assert.equal(resolveBridgeCommand("/usr/local/bin/codex-acp", null), "/usr/local/bin/codex-acp");
+  assert.equal(resolveBridgeCommand("codex-acp", "worker-1"), "codex-acp");
 });
 
 interface FakeEndpointLease extends AgentMcpEndpointLease {
@@ -658,6 +778,60 @@ class FakeAgent {
   async prompt(params) {
     record({ method: "prompt", params });
     this.promptCount += 1;
+    if (mode.startsWith("call-usage")) {
+      const bucket = (seq) => ({
+        seq,
+        inputTokens: 2,
+        outputTokens: 3,
+        cachedReadTokens: 4,
+        cachedWriteTokens: 1,
+        totalTokens: 10
+      });
+      const turnUsage = (calls) => ({
+        inputTokens: 2 * calls,
+        cachedReadTokens: 4 * calls,
+        cachedWriteTokens: 1 * calls,
+        outputTokens: 3 * calls,
+        totalTokens: 10 * calls
+      });
+      const sendBucket = async (seq, totalUsage) => {
+        await this.connection.sessionUpdate({
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "usage_update",
+            used: 10 * seq,
+            size: 100,
+            _meta: {
+              "symphony/callUsage": bucket(seq),
+              ...(totalUsage ? { "symphony/totalUsage": totalUsage } : {})
+            }
+          }
+        });
+      };
+      if (mode === "call-usage") {
+        if (this.promptCount === 1) {
+          await sendBucket(1);
+          await sendBucket(2);
+          await sendBucket(2);
+          await sendBucket(3);
+          await this.connection.sessionUpdate({
+            sessionId: params.sessionId,
+            update: { sessionUpdate: "usage_update", used: 50, size: 100 }
+          });
+          return { stopReason: "end_turn", usage: turnUsage(3) };
+        }
+        await sendBucket(4);
+        return { stopReason: "end_turn", usage: turnUsage(1) };
+      }
+      if (mode === "call-usage-undercount") {
+        await sendBucket(1);
+        await sendBucket(2);
+        return { stopReason: "end_turn", usage: turnUsage(3) };
+      }
+      await sendBucket(1, turnUsage(1));
+      await sendBucket(3, turnUsage(3));
+      return { stopReason: "end_turn" };
+    }
     if (mode === "stall") {
       await new Promise(() => {});
     }

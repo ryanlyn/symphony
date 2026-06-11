@@ -3,8 +3,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { beforeEach, test, vi } from "vitest";
 import { startReverseTunnel } from "@symphony/ssh";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { WorkerHostPool } from "@symphony/worker-host-pool";
 

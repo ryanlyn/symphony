@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import { systemClock, type ClockPort } from "@symphony/ports";
-
-import { assert } from "../../../test/assert.js";
+import { systemClock, type ClockPort } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 import { createState } from "@symphony/orchestrator";
 

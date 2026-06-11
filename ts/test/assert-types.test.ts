@@ -1,6 +1,5 @@
 import { test } from "vitest";
-
-import { assert } from "./assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("assert.equal accepts an optional assertion message", () => {
   assert.equal("matching", "matching");

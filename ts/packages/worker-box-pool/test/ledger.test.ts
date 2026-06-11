@@ -4,9 +4,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { test, beforeEach, afterEach } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { createLedger } from "../src/ledger.js";
 import type { LedgerRow } from "../src/types.js";
 

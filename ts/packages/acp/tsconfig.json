@@ -11,7 +11,7 @@
   ],
   "references": [
     {
-      "path": "../child-process"
+      "path": "../agent-sdk"
     },
     {
       "path": "../domain"

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import type { ClockPort } from "@symphony/ports";
+import type { ClockPort } from "@symphony/domain";
 
 import { createMutex } from "./mutex.js";
 import type { LedgerRow } from "./types.js";

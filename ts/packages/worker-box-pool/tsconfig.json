@@ -14,10 +14,10 @@
       "path": "../domain"
     },
     {
-      "path": "../ports"
+      "path": "../ssh"
     },
     {
-      "path": "../ssh"
+      "path": "../test-utils"
     }
   ]
 }

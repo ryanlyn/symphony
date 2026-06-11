@@ -20,6 +20,9 @@ import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { defaultToolRegistry } from "@symphony/tool-sdk";
+import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
 import { TraceEmitter } from "@symphony/traceviz-emitter";
 import { defaultIssueStorePath, IssueStore } from "@symphony/server";
 import { errorMessage, type Settings, type WorkflowDefinition } from "@symphony/domain";
@@ -34,6 +37,7 @@ import {
   buildDispatchCoordinator,
   createTrackerClient,
   runAgentAttempt,
+  registerBuiltinBackends,
   runtimeAdapters,
   runtimeDefaultSettingsOptions,
 } from "./daemon.js";
@@ -73,6 +77,7 @@ export function parseCliArgs(args: string[]): CliParseResult {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
+  registerBuiltinBackends();
   let status = 0;
   const command = configureCommandForMain(createRootCommand());
 
@@ -101,17 +106,22 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
 }
 
 export async function runDaemon(options: CliOptions): Promise<number> {
+  registerBuiltinBackends();
   try {
     let boundServerPort: number | null = null;
     const loadRuntimeWorkflow = async () => {
-      const workflow = await loadWorkflow(
-        options.workflowPath ?? undefined,
-        process.env,
-        runtimeDefaultSettingsOptions(),
-      );
+      const workflow = await loadWorkflow(options.workflowPath ?? undefined, process.env, {
+        ...runtimeDefaultSettingsOptions(),
+        trackers: defaultTrackerRegistry,
+      });
       applyCliOverrides(workflow, options);
       if (boundServerPort !== null) workflow.settings.server.port = boundServerPort;
-      validateDispatchConfig(workflow.settings);
+      validateDispatchConfig(
+        workflow.settings,
+        defaultTrackerRegistry,
+        defaultAgentExecutorRegistry,
+        defaultToolRegistry,
+      );
       return workflow;
     };
     const workflow = await loadRuntimeWorkflow();
@@ -133,6 +143,13 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       reloadWorkflow: loadRuntimeWorkflow,
       runner: runAgentAttempt,
       coordinator,
+      validateDispatch: (settings) =>
+        validateDispatchConfig(
+          settings,
+          defaultTrackerRegistry,
+          defaultAgentExecutorRegistry,
+          defaultToolRegistry,
+        ),
       onAgentUpdate: (issue, update) => {
         traceEmitter.emit(issue.id, issue.identifier, update);
       },
@@ -181,6 +198,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
             staticDir: workflow.settings.server.staticDir,
           }),
           issueStore,
+          tools: defaultToolRegistry,
         });
         workflow.settings.server.port = server.port;
         boundServerPort = server.port;
@@ -272,9 +290,7 @@ function applyCliOverrides(workflow: WorkflowDefinition, options: CliOptions): v
 }
 
 export function projectUrlForSettings(settings: Settings): string | undefined {
-  const slug = settings.tracker.projectSlug?.trim();
-  if (!slug) return undefined;
-  return `https://linear.app/project/${encodeURIComponent(slug)}/issues`;
+  return defaultTrackerRegistry.providerFor(settings)?.projectUrl?.(settings);
 }
 
 /**

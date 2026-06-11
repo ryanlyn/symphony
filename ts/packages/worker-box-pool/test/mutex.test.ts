@@ -1,6 +1,6 @@
 import { test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { createMutex } from "../src/mutex.js";
 
 // A deferred promise we can resolve from the outside so the test controls when

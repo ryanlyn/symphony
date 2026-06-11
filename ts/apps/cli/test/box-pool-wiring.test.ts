@@ -1,8 +1,8 @@
 import { afterEach, test } from "vitest";
 import { parseConfig } from "@symphony/config";
 import { clearBoxProviderRegistry, registerBuiltInBoxProviders } from "@symphony/worker-box-pool";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { assertSlotsPerMachineGate } from "../src/main.js";
 
 import {

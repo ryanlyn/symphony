@@ -12,8 +12,7 @@ import {
   slotKey,
   sortForDispatch,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("normalizes Linear issue fields used by dispatch", () => {
   const issue = normalizeIssue(

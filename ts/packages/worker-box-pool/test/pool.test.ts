@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { assert } from "@symphony/test-utils";
 import { afterEach, beforeEach, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
 import { withDerivedMaxInFlight } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 
-import { assert } from "../../../test/assert.js";
 import { createBoxPool, POOL_OWNED_LABEL } from "../src/pool.js";
 import { FakeBoxProvider } from "../src/providers/fake.js";
 import { clearBoxProviderRegistry, registerBoxProvider } from "../src/registry.js";

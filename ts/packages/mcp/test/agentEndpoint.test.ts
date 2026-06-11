@@ -6,8 +6,8 @@ import { afterEach, beforeEach, test, vi } from "vitest";
 import { startReverseTunnel } from "@symphony/ssh";
 import { workerHostPool } from "@symphony/worker-host-pool";
 import type { Settings } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { acquireAgentMcpEndpointForRun } from "../src/agentEndpoint.js";
 import { mcpAuthScopeForSettings, validMcpToken } from "../src/auth.js";
 
@@ -56,7 +56,7 @@ async function freeLocalPort(): Promise<number> {
 
 async function mcpServerReachable(host: string, port: number): Promise<boolean> {
   try {
-    const response = await fetch(`http://${host}:${port}/claude-mcp`, {
+    const response = await fetch(`http://${host}:${port}/mcp`, {
       method: "GET",
       signal: AbortSignal.timeout(500),
     });
@@ -71,7 +71,7 @@ function settingsWithPort(port: number): Settings {
   // tracker for mcpAuthScopeForSettings.
   return {
     server: { host: "127.0.0.1", port },
-    tracker: { kind: "memory", activeStates: ["Todo"], terminalStates: ["Done"] },
+    tracker: { kind: "memory", options: {}, activeStates: ["Todo"], terminalStates: ["Done"] },
   } as unknown as Settings;
 }
 
@@ -100,7 +100,7 @@ test("acquireAgentMcpEndpointForRun.release() revokes the token, drops the local
   // Sub-resource (1): an auth token was issued and is currently valid.
   assert.equal(validMcpToken(lease.token, tokenScope(settings, port)), true);
   // Sub-resource (3): a per-run reverse tunnel was opened for this run.
-  assert.match(lease.url, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/claude-mcp$`));
+  assert.match(lease.url, new RegExp(`^http://127\\.0\\.0\\.1:\\d+/mcp$`));
   assert.equal(mockStartReverseTunnel.mock.calls.length, 1);
   // Sub-resource (2): the refcounted local MCP server is up and reachable.
   assert.equal(await mcpServerReachable("127.0.0.1", port), true);

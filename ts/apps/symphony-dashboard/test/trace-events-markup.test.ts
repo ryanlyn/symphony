@@ -1,12 +1,18 @@
+// @vitest-environment jsdom
 import { createElement } from "react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
 import type { DisplayEvent } from "../src/features/traceviz/api/types";
 import { Timeline } from "../src/features/traceviz/components/Timeline";
 import { ThoughtEvent } from "../src/features/traceviz/components/events/ThoughtEvent";
 import { ToolCallEvent } from "../src/features/traceviz/components/events/ToolCallEvent";
 import { formatTimestamp } from "../src/lib/utils";
+
+afterEach(() => {
+  cleanup();
+});
 
 describe("trace event markup", () => {
   test("renders long thought markdown outside native buttons", () => {
@@ -54,6 +60,30 @@ describe("trace event markup", () => {
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Toggle shell details");
+    expect(html).toContain("Input");
+    expect(html).toContain("echo hello");
+  });
+
+  test("omits empty tool call input details", () => {
+    const html = renderToStaticMarkup(
+      createElement(ToolCallEvent, {
+        event: {
+          kind: "tool_call",
+          timestamp: "2026-06-04T10:00:01.000Z",
+          toolName: "shell",
+          input: {},
+          output: "hello",
+          isError: false,
+          durationMs: 24,
+          nestedEvents: [],
+        },
+      }),
+    );
+
+    expect(html).not.toContain("Input");
+    expect(html).not.toContain("{}");
+    expect(html).toContain("Output");
+    expect(html).toContain("hello");
   });
 
   test("renders unknown timeline events with raw payload", () => {
@@ -83,5 +113,77 @@ describe("trace event markup", () => {
     expect(html).toContain(formatTimestamp(timestamp));
     expect(html).toContain("legacy_agent_update");
     expect(html).toContain("parser miss");
+  });
+
+  test("keeps existing timeline events mounted during a refresh", () => {
+    const events: DisplayEvent[] = [
+      {
+        kind: "turn_started",
+        turnIndex: 1,
+        timestamp: "2026-06-04T09:59:59.000Z",
+      },
+      {
+        kind: "message",
+        timestamp: "2026-06-04T10:00:00.000Z",
+        text: "Existing trace event",
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      createElement(Timeline, {
+        events,
+        loading: true,
+      }),
+    );
+
+    expect(html).toContain("Timeline (2 events)");
+    expect(html).toContain("Existing trace event");
+    expect(html).not.toContain("Loading events...");
+  });
+
+  test("keeps newest-first event rows mounted when an append shifts display order", () => {
+    const longThought: DisplayEvent = {
+      kind: "thought",
+      timestamp: "2026-06-04T10:00:00.000Z",
+      text: "This thought is long enough to be expandable. ".repeat(8),
+    };
+    const initialEvents: DisplayEvent[] = [
+      {
+        kind: "turn_started",
+        turnIndex: 1,
+        timestamp: "2026-06-04T09:59:59.000Z",
+      },
+      longThought,
+    ];
+
+    const { rerender } = render(
+      createElement(Timeline, {
+        events: initialEvents,
+        loading: false,
+      }),
+    );
+
+    const thoughtToggle = screen.getByRole("button", { name: "Toggle thought details" });
+    fireEvent.click(thoughtToggle);
+
+    expect(thoughtToggle.getAttribute("aria-expanded")).toBe("true");
+
+    rerender(
+      createElement(Timeline, {
+        events: [
+          ...initialEvents,
+          {
+            kind: "message",
+            timestamp: "2026-06-04T10:00:01.000Z",
+            text: "A later event arrives.",
+          },
+        ] satisfies DisplayEvent[],
+        loading: false,
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Toggle thought details" }).getAttribute("aria-expanded"),
+    ).toBe("true");
   });
 });

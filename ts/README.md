@@ -61,11 +61,22 @@ records a `workflow_reload_failed` event.
 
 ## Workspace Layout
 
-- `apps/cli` wires configuration, tracker clients, agent runners, the runtime, the TUI, and the
-  observability server into the shipped binary.
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the layering rules and the tracker extension
+contract (including the recipe for adding a new tracker backend).
+
+- `apps/cli` is the composition root: it invokes the built-in extensions' registration and wires
+  configuration, agent runners, the runtime, the TUI, and the observability server into the
+  shipped binary.
 - `apps/traceviz` renders trace event streams for local inspection.
-- `packages/*` contains the protocol, domain model, configuration loader, prompt renderer, runtime,
-  policies, adapters, dashboards, logging, SSH, and support libraries.
+- `packages/tracker-sdk` is the extension SDK: the `TrackerProvider` contract, the provider
+  registry, and the helpers tracker backends build on.
+- `extensions/*` are the backend extensions: `linear-tracker`, `local-tracker`,
+  `memory-tracker`, and `jira-tracker` are self-contained tracker providers (config
+  parsing, runtime client, tool packs) that each export their own registration; the CLI
+  invokes the built-in set at its composition root.
+- The remaining `packages/*` are the provider-agnostic engine: domain model, configuration
+  loader, prompt renderer, runtime, policies, MCP server, dashboards, logging, SSH, and
+  support libraries.
 - `test/` contains workspace-level integration, contract, sandbox, and live tests.
 - Package- and app-owned unit tests live under `packages/<name>/test/` or `apps/<name>/test/` as
   `.test.ts` or `.test.tsx` files.
@@ -106,7 +117,7 @@ Set `LINEAR_API_KEY` in your environment before running a Linear workflow.
 ```yaml
 ---
 tracker:
-  kind: linear # "linear" for Linear, "memory" for fixtures and tests
+  kind: linear # linear, jira, jira-mcp, local, or memory
   api_key: $LINEAR_API_KEY # defaults to $LINEAR_API_KEY when unset
   endpoint: "https://api.linear.app/graphql"
   project_slug: "my-project" # right-click a Linear project and copy the URL slug
@@ -209,7 +220,8 @@ logging:
 
 Notes:
 
-- `tracker.kind` is always required. `tracker.project_slug` is required for Linear workflows.
+- `tracker.kind` is always required. `tracker.project_slug`, `tracker.project_slugs`, or
+  `tracker.project_labels` is required for Linear workflows.
 - `tracker.api_key` falls back to `LINEAR_API_KEY`; `tracker.assignee` falls back to
   `LINEAR_ASSIGNEE`.
 - `tracker.api_key` and `tracker.assignee` can use `op://` references when the 1Password CLI is
@@ -251,10 +263,27 @@ descriptions are self-documenting and surface to the agent via the MCP `tools/li
 Supported kinds:
 
 - `linear` - issues live in a Linear project. Read access uses `tracker.api_key` (resolved from
-  `LINEAR_API_KEY`) and `tracker.project_slug`; the agent both reads and writes through the
-  `linear_graphql` tool. This is the original backend and is unchanged.
+  `LINEAR_API_KEY`) and project selection uses `tracker.project_slug`, `tracker.project_slugs`, or
+  `tracker.project_labels`. Agents can use provider-neutral `tracker_*` tools or the legacy
+  `linear_graphql` tool.
+- `jira` - issues live in Jira Cloud and are accessed directly over Jira REST. Configure
+  `tracker.base_url`, `tracker.email`, `tracker.api_key`, and either `tracker.project_keys` or
+  `tracker.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_KEY` are used as fallbacks.
+- `jira-mcp` - issues live in Jira, but Symphony reaches them through an external MCP server.
+  Configure `tracker.mcp.url` and either `tracker.project_keys` or `tracker.jql`. Tool names can be
+  overridden under `tracker.mcp.tools`.
 - `local` - issues live as Markdown files on disk. No external service required.
 - `memory` - an in-process tracker used for tests and dry runs.
+
+All non-memory providers expose the provider-neutral agent tools:
+
+- `tracker_read_issue`
+- `tracker_query`
+- `tracker_update_status`
+- `tracker_comment`
+- `tracker_create_issue`
+
+Provider-specific tools are compatibility escape hatches, not the preferred workflow contract.
 
 All kinds share the dispatch routing block under `tracker.dispatch`:
 
@@ -264,6 +293,44 @@ tracker:
     accept_unrouted: true # process issues that carry no matching route label (default)
     only_routes: null # or a list of route names this instance handles
     route_label_prefix: "Symphony:" # the label prefix that names a route
+```
+
+### Jira tracker
+
+For both `jira` and `jira-mcp`, Symphony only picks up issues that are assigned to the configured
+user (`tracker.assignee`, defaulting to the authenticated user via `assignee = currentUser()`) and
+labeled `agent`. This holds even when `tracker.jql` widens the scope, so issues must be explicitly
+delegated before Symphony will dispatch them.
+
+Direct Jira REST configuration:
+
+```yaml
+tracker:
+  kind: jira
+  base_url: https://example.atlassian.net
+  email: $JIRA_EMAIL
+  api_key: $JIRA_API_KEY
+  project_keys: ["ENG"]
+  # Optional provider-native scope. When present, Symphony combines it with active_states.
+  # jql: 'project = ENG AND labels in ("symphony")'
+```
+
+Jira via an external MCP server:
+
+```yaml
+tracker:
+  kind: jira-mcp
+  base_url: https://example.atlassian.net # optional; used for issue URLs when MCP payloads omit them
+  project_keys: ["ENG"]
+  mcp:
+    url: http://127.0.0.1:5123/mcp
+    token: $JIRA_MCP_TOKEN
+    tools:
+      search: atlassian_search_jira
+      read_issue: atlassian_get_jira_issue
+      update_status: atlassian_transition_jira_issue
+      comment: atlassian_add_jira_comment
+      create_issue: atlassian_create_jira_issue
 ```
 
 ### Local tracker (filesystem board)
@@ -395,7 +462,7 @@ workflow files:
 
 Copy the skills into the target repo's `.codex/skills/` directory when your workflow references
 them. The `symphony-linear` skill uses the injected `linear_graphql` tool for Codex or the
-`/claude-mcp` endpoint for Claude.
+`/mcp` endpoint for Claude.
 
 ## Observability
 
@@ -413,13 +480,14 @@ API routes:
 
 - `/`
 - `/api/v1/state`
-- `/api/v1/events`
 - `/api/v1/runs`
 - `/api/v1/runs?id=<run-id>`
 - `/api/v1/refresh`
 - `/api/v1/:issue_identifier`
 
-Claude sessions use `/claude-mcp` for injected dynamic tools when the runtime has started an
+Live updates (ops state and trace events) stream over the `/ws` WebSocket endpoint.
+
+Claude sessions use `/mcp` for injected dynamic tools when the runtime has started an
 observability server. The server also starts automatically for Claude workflows so the ACP bridge
 can reach those tools.
 
@@ -468,7 +536,7 @@ Environment knobs:
 - `SYMPHONY_TS_CODEX_ACP_COMMAND` overrides the Codex ACP bridge command for live tests.
 - `SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND` enables Claude live tests.
 - `SYMPHONY_TS_CLAUDE_ACP_BRIDGE_ARGS` supplies Claude ACP bridge args as a JSON string array.
-- `LINEAR_API_KEY` is required for Linear live tests and Claude MCP canaries.
+- `LINEAR_API_KEY` is required for Linear live tests and MCP canaries.
 - `LINEAR_PROJECT_SLUG` selects the Linear project for `pnpm test:live:linear-codex`.
 - `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is a comma-separated list of real SSH workers.
 - When `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is unset, the SSH live test can use disposable local

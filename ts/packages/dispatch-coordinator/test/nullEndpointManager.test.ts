@@ -1,7 +1,7 @@
 import { test } from "vitest";
 import type { Settings } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { createNullEndpointManager, nullEndpointManager } from "../src/nullEndpointManager.js";
 import type { McpEndpointManager } from "../src/types.js";
 

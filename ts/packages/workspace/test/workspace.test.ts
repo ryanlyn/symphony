@@ -8,14 +8,14 @@ import {
   ensureInsideRoot,
   validateWorkspaceCwd,
   createWorkspaceForIssue,
+  listIssueWorkspaceIdentifiers,
   removeWorkspace,
   removeIssueWorkspaces,
   shellEscape,
 } from "@symphony/cli";
-import type { Settings } from "@symphony/domain";
+import type { HookExecutionMessage, Settings } from "@symphony/domain";
+import { assert, tempDir, sampleIssue } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir, sampleIssue } from "../../../test/helpers.js";
 import { runHook } from "../src/index.js";
 
 function makeSettings(
@@ -236,6 +236,236 @@ test("createWorkspaceForIssue — forceSlotSuffix shards two co-resident same-is
   assert.ok((await fs.stat(slot1)).isDirectory());
 });
 
+test("createWorkspaceForIssue — renders Liquid template variables in afterCreate hook", async () => {
+  const root = await tempDir("ws-create-tpl");
+  const settings = makeSettings(root, {
+    afterCreate: "printf '%s' {{ issue.identifier }} > .issue-id",
+  });
+  const ws = await createWorkspaceForIssue(settings, sampleIssue);
+  const content = await fs.readFile(path.join(ws, ".issue-id"), "utf8");
+  assert.equal(content, sampleIssue.identifier);
+});
+
+test("runHook — renders Liquid template variables when issue is provided", async () => {
+  const root = await tempDir("ws-hook-tpl");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "title.txt");
+  await runHook(
+    `printf '%s' {{ issue.title }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, sampleIssue.title);
+});
+
+test("runHook — shell-escapes issue fields to prevent injection", async () => {
+  const root = await tempDir("ws-hook-inject");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "escaped.txt");
+  const maliciousIssue = {
+    ...sampleIssue,
+    title: '"; rm -rf / #',
+  };
+  await runHook(
+    `printf '%s' {{ issue.title }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    maliciousIssue,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, '"; rm -rf / #');
+});
+
+test("runHook — keeps raw issue values for Liquid conditionals and comparisons", async () => {
+  const root = await tempDir("ws-hook-logic");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "logic.txt");
+  const command = [
+    `{% if issue.branch_name %}printf branch{% else %}printf no-branch{% endif %} > ${JSON.stringify(outFile)}`,
+    `{% if issue.state == "Todo" %}printf ":todo"{% endif %} >> ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, { ...sampleIssue, branchName: null });
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "no-branch:todo");
+});
+
+test("runHook — renders loops over issue arrays as shell-safe words", async () => {
+  const root = await tempDir("ws-hook-loop");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "labels.txt");
+  const issue = { ...sampleIssue, labels: ["backend", "needs review"] };
+  const command = [
+    `for label in {% for label in issue.labels %}{{ label }} {% endfor %}; do`,
+    '  printf "<%s>" "$label"',
+    `done > ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, issue);
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "<backend><needs review>");
+});
+
+test("runHook — exposes blocked_by issue refs in hook templates", async () => {
+  const root = await tempDir("ws-hook-blockers");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "blockers.txt");
+  const issue = {
+    ...sampleIssue,
+    blockers: [{ identifier: "MT-0", state: "Todo", stateType: "unstarted" as const }],
+  };
+  const command = [
+    `for blocker in {% for blocker in issue.blocked_by %}{{ blocker.identifier }} {% endfor %}; do`,
+    '  printf "%s" "$blocker"',
+    `done > ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, issue);
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "MT-0");
+});
+
+test("runHook — supports raw filter for deliberate unescaped output", async () => {
+  const root = await tempDir("ws-hook-raw");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "raw-filter.txt");
+  await runHook(
+    `printf '%s' "{{ issue.identifier | raw }}" > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, sampleIssue.identifier);
+});
+
+test("runHook — supports explicit shell_escape filter without double escaping", async () => {
+  const root = await tempDir("ws-hook-shell-escape-filter");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "shell-escape-filter.txt");
+  const issue = { ...sampleIssue, title: "quoted ' value" };
+  await runHook(
+    `printf '%s' {{ issue.title | shell_escape }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    issue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, issue.title);
+});
+
+test("runHook — fails loudly for unknown issue template variables", async () => {
+  const root = await tempDir("ws-hook-unknown");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "unknown.txt");
+
+  await assert.rejects(
+    () =>
+      runHook(
+        `printf '%s' {{ issue.not_a_field }} > ${JSON.stringify(outFile)}`,
+        root,
+        settings.hooks,
+        null,
+        {},
+        sampleIssue,
+      ),
+    /undefined variable|not_a_field/i,
+  );
+});
+
+test("runHook — leaves non-issue double-brace syntax untouched", async () => {
+  const root = await tempDir("ws-hook-non-issue");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "go-template.txt");
+  await runHook(
+    `printf '%s' '{{.State.Running}}' > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "{{.State.Running}}");
+});
+
+test("runHook — passes command through unmodified when no issue context", async () => {
+  const root = await tempDir("ws-hook-no-tpl");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "raw.txt");
+  await runHook(
+    `printf "%s" "{{ issue.identifier }}" > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "{{ issue.identifier }}");
+});
+
+test("runHook — emits start and completion hook execution events", async () => {
+  const root = await tempDir("ws-hook-events");
+  const settings = makeSettings(root);
+  const events: HookExecutionMessage[] = [];
+  const command = `printf "%s" "ok"`;
+
+  await runHook(command, root, settings.hooks, null, {
+    hookName: "before_run",
+    onHookEvent: (event) => events.push(event),
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.status),
+    ["started", "completed"],
+  );
+  assert.equal(events[0]!.command, command);
+  assert.equal(events[0]!.cwd, root);
+  assert.equal(events[0]!.hookName, "before_run");
+  assert.equal(events[1]!.exitCode, 0);
+  assert.equal(events[1]!.output, "ok");
+  assert.equal(events[1]!.outputTruncated, false);
+});
+
+test("runHook — emits exit code and error details on hook failure", async () => {
+  const root = await tempDir("ws-hook-failure-events");
+  const settings = makeSettings(root);
+  const events: HookExecutionMessage[] = [];
+  const command = `printf "%s" "failed"; exit 17`;
+
+  await assert.rejects(
+    () =>
+      runHook(command, root, settings.hooks, null, {
+        hookName: "after_run",
+        onHookEvent: (event) => events.push(event),
+      }),
+    /hook failed with status 17: failed/,
+  );
+
+  assert.deepEqual(
+    events.map((event) => event.status),
+    ["started", "failed"],
+  );
+  assert.equal(events[1]!.hookName, "after_run");
+  assert.equal(events[1]!.exitCode, 17);
+  assert.equal(events[1]!.output, "failed");
+  assert.match(events[1]!.error ?? "", /hook failed with status 17: failed/);
+});
+
 test("createWorkspaceForIssue — refuses afterCreate when cwd is swapped to an out-of-root symlink", async () => {
   const root = await tempDir("ws-create");
   const canonicalRoot = await fs.realpath(root);
@@ -419,13 +649,36 @@ test("removeWorkspace — refuses to remove workspace root", async () => {
 test("removeWorkspace — runs beforeRemove hook before deletion", async () => {
   const root = await tempDir("ws-remove");
   const markerFile = path.join(root, "hook-marker");
+  const events: HookExecutionMessage[] = [];
   const settings = makeSettings(root, {
     beforeRemove: `touch ${JSON.stringify(markerFile)}`,
   });
   const ws = await createWorkspaceForIssue(settings, sampleIssue);
-  await removeWorkspace(settings, ws);
+  await removeWorkspace(settings, ws, undefined, {
+    onHookEvent: (event) => events.push(event),
+  });
   const stat = await fs.stat(markerFile);
   assert.ok(stat.isFile());
+  assert.deepEqual(
+    events.map((event) => event.status),
+    ["started", "completed"],
+  );
+  assert.equal(events[0]!.hookName, "before_remove");
+  assert.equal(events[1]!.exitCode, 0);
+});
+
+test("removeIssueWorkspaces — passes issue context to beforeRemove hook", async () => {
+  const root = await tempDir("ws-remove-issue-context");
+  const markerFile = path.join(root, "issue-marker");
+  const settings = makeSettings(root, {
+    beforeRemove: `printf '%s' {{ issue.identifier }} > ${JSON.stringify(markerFile)}`,
+  });
+  await createWorkspaceForIssue(settings, sampleIssue);
+
+  await removeIssueWorkspaces(settings, sampleIssue.identifier, null, sampleIssue);
+
+  const content = await fs.readFile(markerFile, "utf8");
+  assert.equal(content, sampleIssue.identifier);
 });
 
 test("removeWorkspace — nonexistent workspace returns empty array", async () => {
@@ -433,4 +686,25 @@ test("removeWorkspace — nonexistent workspace returns empty array", async () =
   const settings = makeSettings(root);
   const result = await removeWorkspace(settings, path.join(root, "does-not-exist"));
   assert.deepEqual(result, []);
+});
+
+test("listIssueWorkspaceIdentifiers returns existing workspace directory names", async () => {
+  const root = await tempDir("ws-list");
+  const settings = makeSettings(root);
+  await createWorkspaceForIssue(settings, "MT-7");
+  await createWorkspaceForIssue(settings, "MT-9");
+  await fs.writeFile(path.join(root, "not-a-workspace.txt"), "ignore me\n");
+
+  const names = await listIssueWorkspaceIdentifiers(settings);
+  assert.deepEqual(names.sort(), ["MT-7", "MT-9"]);
+});
+
+test("listIssueWorkspaceIdentifiers is empty for missing roots and shared workspaces", async () => {
+  const missing = makeSettings(path.join(await tempDir("ws-list-missing"), "nope"));
+  assert.deepEqual(await listIssueWorkspaceIdentifiers(missing), []);
+
+  const sharedRoot = await tempDir("ws-list-shared");
+  const shared = makeSettings(sharedRoot, {}, { isolation: "none" });
+  await fs.mkdir(path.join(sharedRoot, "MT-1"), { recursive: true });
+  assert.deepEqual(await listIssueWorkspaceIdentifiers(shared), []);
 });

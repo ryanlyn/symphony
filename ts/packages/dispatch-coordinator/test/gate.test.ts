@@ -1,8 +1,8 @@
 import { test } from "vitest";
 import { parseConfig } from "@symphony/config";
 import type { BoxPoolSettings } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { checkSlotsPerMachineGate } from "../src/gate.js";
 
 // `checkSlotsPerMachineGate` is the PURE predicate behind the slots-per-machine

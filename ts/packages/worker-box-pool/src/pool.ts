@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 
 import { createLedger, type Ledger } from "./ledger.js";
 import { createLease } from "./lease.js";

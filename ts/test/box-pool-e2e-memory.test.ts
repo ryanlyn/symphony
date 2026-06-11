@@ -1,19 +1,22 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 import { afterEach, beforeEach, test } from "vitest";
 import {
   buildBoxPool,
   createTrackerClient,
   parseConfig,
+  registerBuiltinBackends,
   runAgentAttempt,
   runtimeAdapters,
   SymphonyRuntime,
 } from "@symphony/cli";
 import type { BoxLease, BoxPool, Settings, WorkflowDefinition } from "@symphony/cli";
 
-import { assert } from "./assert.js";
-import { tempDir, writeExecutable } from "./helpers.js";
+// The composition root decides which tracker/executor backends exist; the e2e
+// harness mirrors the CLI entrypoints and registers the built-ins once.
+registerBuiltinBackends();
 
 // ---------------------------------------------------------------------------
 // Always-on end-to-end demo (T17): the REAL `runDaemon` wiring with a

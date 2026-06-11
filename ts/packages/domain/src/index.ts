@@ -74,9 +74,12 @@ export const AGENT_USAGE_ACCOUNTING_VALUES = ["per-turn", "cumulative"] as const
 
 export type AgentUsageAccounting = (typeof AGENT_USAGE_ACCOUNTING_VALUES)[number];
 
-export const TRACKER_KINDS = ["linear", "memory", "local"] as const;
-
-export type TrackerKind = (typeof TRACKER_KINDS)[number];
+/**
+ * Identifies a tracker backend by name (e.g. `"linear"`, `"local"`, `"memory"`).
+ * Open-ended: the set of supported kinds is whatever the composition root registered
+ * in its tracker provider registry, not a closed union owned by the domain.
+ */
+export type TrackerKind = string;
 
 /**
  * Box-pool provider backends. Each entry is its own kind (the cloud drivers are not collapsed
@@ -128,6 +131,26 @@ export function normalizeStateType(value: string | null | undefined): IssueState
 export function durationMs(startedAt: string, endedAt: string): number {
   return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
 }
+
+// --- Clock ---
+
+export interface ClockPort {
+  now(): Date;
+  monotonicMs(): number;
+  setTimeout(callback: () => void, delayMs: number): TimerHandle;
+  clearTimeout(handle: TimerHandle): void;
+}
+
+export interface TimerHandle {
+  unref?: (() => void) | undefined;
+}
+
+export const systemClock: ClockPort = {
+  now: () => new Date(),
+  monotonicMs: () => performance.now(),
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 
 export const PRIORITY_VALUES = [1, 2, 3, 4] as const;
 
@@ -200,32 +223,31 @@ export interface DispatchSettings {
 
 /**
  * Connection and filtering rules for the issue tracker that feeds work into this instance.
+ *
+ * Only fields every backend shares live here. Provider-specific keys of the `tracker:`
+ * config section (e.g. Linear's `project_slug`, the local board's `path`) are normalized
+ * and validated by the registered tracker provider and carried opaquely in {@link options}.
  */
 export interface TrackerSettings {
   /** Backend adapter selector. `"memory"` is an in-process fixture used for tests. */
   kind?: TrackerKind | undefined;
-  endpoint: string;
+  /** Tracker API endpoint; when unset, the provider's default endpoint applies. */
+  endpoint?: string | undefined;
+  /** Tracker credential; supports `$VAR` and `op://` references plus provider env fallbacks. */
   apiKey?: string | undefined;
-  /** @deprecated Use `projectSlugs` instead. Single Linear project slug; required when `kind === "linear"`. */
-  projectSlug?: string | undefined;
-  /** Linear project slugs to monitor. Mutually exclusive with `projectLabels`. */
-  projectSlugs?: string[] | undefined;
-  /** Linear project labels for dynamic discovery. Mutually exclusive with `projectSlugs`. */
-  projectLabels?: string[] | undefined;
   /** Tracker assignee identity (or `$VAR`) used to scope candidate queries to one user. */
   assignee?: string | undefined;
-  /** Local tracker board directory (e.g. `.symphony/local`). Used when `kind === "local"`. */
-  path?: string | undefined;
-  /**
-   * Local tracker issue-id prefix (e.g. `"BOARD-"`, `"XXX-"`). Issue files are `<prefix><n>.md`
-   * and new ids are minted with this prefix. Defaults to `"BOARD-"`. Used when `kind === "local"`.
-   */
-  idPrefix?: string | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */
   activeStates: string[];
   /** Tracker state names that mark an issue as finished; running agents on these issues are stopped and their workspaces cleaned up. */
   terminalStates: string[];
   dispatch: DispatchSettings;
+  /**
+   * Provider-specific settings, normalized and validated by the tracker provider registered
+   * for {@link kind}. Read through the provider package's typed accessor (e.g.
+   * `linearTrackerOptions(settings)`), never by key from core code.
+   */
+  options: Record<string, unknown>;
 }
 
 /**
@@ -392,11 +414,16 @@ export interface AgentSettings {
 }
 
 /**
- * Agent record selecting the Agent Client Protocol (ACP) executor, which drives an external
- * bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
+ * Per-kind agent record: how to run sessions for one entry of {@link Settings.agents}.
+ *
+ * `executor` selects the runtime driver by name and is open-ended - the supported set is
+ * whatever the composition root registered in its agent executor registry. The remaining
+ * fields are interpreted by that executor; today's built-in `"acp"` executor drives an
+ * external bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
  */
 export interface AgentConfig {
-  executor: "acp";
+  /** Runtime driver selector (e.g. `"acp"`), resolved through the agent executor registry. */
+  executor: string;
   /** Shell command launched per session (run via `bash -lc` in the workspace, or over SSH on remote workers). Also determines the provider config format: `claude-agent-acp` → `.claude/settings.local.json`, `codex-acp` → `.codex/config.toml`. */
   bridgeCommand: string;
   /** Shape of `PromptResponse.usage` emitted by this ACP bridge. Symphony always converts it to cumulative per-run totals before handing it to the orchestrator. */
@@ -409,33 +436,6 @@ export interface AgentConfig {
   stallTimeoutMs: number;
   /** When true, launch the bridge with only the MCP servers Symphony injected (no user-side MCP config). */
   strictMcpConfig?: boolean | undefined;
-}
-
-/** Legacy top-level codex configuration section that feeds defaults into `agents.codex`. */
-export interface CodexSettings {
-  /** Shell command launched per session; invoked via `bash -lc` in the workspace directory. */
-  command: string;
-  /** Hard limit (ms) on a single Codex turn before it is treated as timed out. */
-  turnTimeoutMs: number;
-  /** Inactivity window (ms) before a session with no events is force-aborted as stalled. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
-}
-
-/**
- * Runtime knobs for the Claude Code backend, driven via an ACP bridge subprocess.
- * Mirrored into the `claude` entry of {@link Settings.agents} as an {@link AgentConfig}.
- */
-export interface ClaudeSettings {
-  /** Shell command for the Claude Code ACP bridge; invoked via `bash -lc` in the workspace. */
-  command: string;
-  /** Hard limit (ms) on a single Claude turn before it is force-cancelled. */
-  turnTimeoutMs: number;
-  /** Inactivity window (ms) before a stalled session is aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
-  /** When true, launch Claude with only Symphony's injected MCP servers (ignore user MCP config). */
-  strictMcpConfig: boolean;
-  /** Provider-specific settings written to `.claude/settings.local.json` in the workspace. */
-  providerConfig?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -542,20 +542,25 @@ export interface Settings {
   /**
    * Per-kind executor configuration keyed by agent kind (the same string used as
    * {@link AgentSettings.kind}). When an issue is dispatched to kind `K`, `agents[K]` is the
-   * source of truth for how to run the executor; the top-level `codex` / `claude` blocks are
-   * kept in sync for those two well-known kinds and act as convenience views.
+   * single source of truth for how to run the executor. The top-level `codex:` / `claude:`
+   * workflow sections are parse-time conveniences that merge into `agents.codex` /
+   * `agents.claude`; they do not exist at runtime.
    */
   agents: Record<string, AgentConfig>;
-  codex: CodexSettings;
-  claude: ClaudeSettings;
+  /**
+   * Tool packs mounted on the MCP endpoint, by pack name. When unset, the composition root
+   * mounts the provider-neutral `tracker` pack plus the dispatch tracker's own pack. Several
+   * packs can be mounted while a single tracker drives dispatch.
+   */
+  tools?: string[] | undefined;
   observability: ObservabilitySettings;
   server: ServerSettings;
   logging: LoggingSettings;
   /**
    * Partial settings layered on top of the base config while an issue sits in a given tracker
    * state. Keys are normalized state names (trimmed, lowercased, e.g. `"in progress"`); a
-   * matching entry's `agent` / `codex` / `claude` fragments are merged over the defaults for
-   * the duration of that issue's stay in the state.
+   * matching entry's `agent` scheduling fragment and per-kind `agents` record fragments are
+   * merged over the defaults for the duration of that issue's stay in the state.
    */
   statusOverrides: Map<string, PartialRuntimeSettings>;
 }
@@ -568,8 +573,8 @@ export interface Settings {
  */
 export interface PartialRuntimeSettings {
   agent?: Partial<AgentSettings> | undefined;
-  codex?: Partial<CodexSettings> | undefined;
-  claude?: Partial<ClaudeSettings> | undefined;
+  /** Per-kind overrides merged into the matching {@link Settings.agents} records. */
+  agents?: Record<string, Partial<AgentConfig>> | undefined;
 }
 
 export interface WorkflowContentStamp {
@@ -795,6 +800,27 @@ export interface StringMessageUpdate extends AgentUpdateBase {
   message: string;
 }
 
+export type WorkspaceHookName = "after_create" | "before_run" | "after_run" | "before_remove";
+export type HookExecutionStatus = "started" | "completed" | "failed";
+
+export interface HookExecutionMessage {
+  status: HookExecutionStatus;
+  command: string;
+  cwd: string;
+  hookName?: WorkspaceHookName | undefined;
+  workerHost?: string | null | undefined;
+  exitCode?: number | null | undefined;
+  output?: string | undefined;
+  outputTruncated?: boolean | undefined;
+  error?: string | undefined;
+  errorTruncated?: boolean | undefined;
+}
+
+export interface HookExecutionUpdate extends AgentUpdateBase {
+  type: "hook_execution";
+  message: HookExecutionMessage;
+}
+
 export interface SessionReplaySuppressedUpdate extends AgentUpdateBase {
   type: "session_replay_suppressed";
   message: { replayedUpdateCount: number };
@@ -843,6 +869,7 @@ export interface FsWriteUpdate extends AgentUpdateBase {
 export type AgentUpdate =
   | AgentSessionNotificationUpdate
   | StringMessageUpdate
+  | HookExecutionUpdate
   | SessionReplaySuppressedUpdate
   | TurnStartedUpdate
   | TurnCompletedUpdate
@@ -874,6 +901,7 @@ export const AGENT_UPDATE_TYPES = [
   "resume_state_warning",
   "session_replay_suppressed",
   "fs_write",
+  "hook_execution",
   "session_notification",
 ] as const satisfies readonly AgentUpdateType[];
 

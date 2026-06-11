@@ -1,12 +1,12 @@
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { SymphonyRuntime } from "@symphony/runtime";
 import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@symphony/cli";
-import type {
-  RuntimeEvent,
-  RuntimeSnapshot,
-  SymphonyRuntimeOptions,
-} from "@symphony/runtime";
+import type { RuntimeEvent, RuntimeSnapshot, SymphonyRuntimeOptions } from "@symphony/runtime";
 
 import { ChaosLinearClient, type ChaosConfig } from "./chaos-client.js";
+import { createFakeClock, type FakeClock } from "./fake-clock.js";
 import { createFakeAgentRunner, type FakeRunnerConfig } from "./fake-runner.js";
 import { makeIssue, makeSettings, sleep } from "./fixtures.js";
 import type { Assertion } from "./assertions.js";
@@ -51,6 +51,26 @@ export interface SandboxScenario {
   postRunDelayMs?: number;
   /** Assertions to check after scenario completes. */
   assertions?: Assertion[];
+  /**
+   * Clock mode. Defaults to "fake": all retry/backoff/latency/tick timing runs
+   * in virtual time via an injected clock, so scenarios complete near-instantly
+   * and deterministically. Use "real" for wall-clock timing (e.g. the sandbox
+   * CLI driving a live chaos demo).
+   */
+  clockMode?: "real" | "fake";
+}
+
+/**
+ * The sandbox harness is its own composition root: the runtime validates dispatch
+ * config against the process-default registries on every poll. Scenario settings
+ * always dispatch on the memory tracker, so that backend and the ACP executor must
+ * be registered before a scenario runs. Idempotent.
+ */
+function registerSandboxBackends(): void {
+  registerMemoryTracker();
+  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
+    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+  }
 }
 
 /**
@@ -59,9 +79,11 @@ export interface SandboxScenario {
  * the full history.
  */
 export async function runScenario(scenario: SandboxScenario): Promise<SandboxResult> {
+  registerSandboxBackends();
   const settings = makeSettings(scenario.settingsOverrides ?? {});
   const client = new ChaosLinearClient(scenario.issues, scenario.chaosConfig);
-  const runner = createFakeAgentRunner(scenario.runnerConfig ?? {});
+  const fakeClock = (scenario.clockMode ?? "fake") === "fake" ? createFakeClock() : undefined;
+  const runner = createFakeAgentRunner(scenario.runnerConfig ?? {}, fakeClock);
 
   const workflow: WorkflowDefinition = {
     path: "/tmp/sandbox_workflow.md",
@@ -78,6 +100,7 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     workflow,
     client,
     runner,
+    clock: fakeClock,
     removeIssueWorkspaces: async () => {},
     deleteResumeState: async () => {},
     appendLogEvent: async () => {},
@@ -93,26 +116,42 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     snapshots.push(snapshot);
     for (const event of snapshot.recentEvents) {
       if (
-        !events.some((e) => e.at === event.at && e.type === event.type && e.message === event.message)
+        !events.some(
+          (e) => e.at === event.at && e.type === event.type && e.message === event.message,
+        )
       ) {
         events.push(event);
       }
     }
   });
 
-  const timedMutationTimers: ReturnType<typeof setTimeout>[] = [];
+  const cancelTimedMutations: Array<() => void> = [];
   if (scenario.timedMutations && scenario.timedMutations.length > 0) {
     for (const tm of scenario.timedMutations) {
-      const timer = setTimeout(() => {
-        applyMutationDescriptor(client, tm.mutate);
-      }, tm.afterMs);
-      timedMutationTimers.push(timer);
+      const apply = (): void => applyMutationDescriptor(client, tm.mutate);
+      if (fakeClock) {
+        const handle = fakeClock.setTimeout(apply, tm.afterMs);
+        cancelTimedMutations.push(() => fakeClock.clearTimeout(handle));
+      } else {
+        const handle = setTimeout(apply, tm.afterMs);
+        cancelTimedMutations.push(() => clearTimeout(handle));
+      }
     }
   }
 
   const ticks = scenario.pollTicks ?? 1;
   const waitForRuns = scenario.waitForRuns ?? true;
   let ticksExecuted = 0;
+
+  // In fake-clock mode, "waiting" advances virtual time (firing due timers);
+  // in real mode it sleeps on the wall clock.
+  const waitMs = async (ms: number): Promise<void> => {
+    if (fakeClock) {
+      await fakeClock.advance(ms);
+    } else {
+      await sleep(ms);
+    }
+  };
 
   try {
     for (let tick = 0; tick < ticks; tick++) {
@@ -122,11 +161,22 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
       }
 
       try {
-        await pollOnceWithScenarioTimeout(runtime, { waitForRuns }, {
-          tick,
-          timeoutMs: scenarioPollTimeoutMs(settings, waitForRuns),
-          lastActivityAt: () => lastAgentActivityAt,
-        });
+        if (fakeClock) {
+          await pollOnceWithFakeClock(runtime, { waitForRuns }, fakeClock, {
+            tick,
+            timeoutMs: scenarioPollTimeoutMs(settings, waitForRuns),
+          });
+        } else {
+          await pollOnceWithScenarioTimeout(
+            runtime,
+            { waitForRuns },
+            {
+              tick,
+              timeoutMs: scenarioPollTimeoutMs(settings, waitForRuns),
+              lastActivityAt: () => lastAgentActivityAt,
+            },
+          );
+        }
       } catch (err) {
         errors.push(err instanceof Error ? err : new Error(String(err)));
       }
@@ -134,15 +184,15 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
       ticksExecuted += 1;
 
       if (scenario.tickDelayMs && scenario.tickDelayMs > 0 && tick < ticks - 1) {
-        await sleep(scenario.tickDelayMs);
+        await waitMs(scenario.tickDelayMs);
       }
     }
     if (scenario.postRunDelayMs && scenario.postRunDelayMs > 0) {
-      await sleep(scenario.postRunDelayMs);
+      await waitMs(scenario.postRunDelayMs);
     }
   } finally {
-    for (const timer of timedMutationTimers) {
-      clearTimeout(timer);
+    for (const cancel of cancelTimedMutations) {
+      cancel();
     }
     runtime.stop();
     unsubscribe();
@@ -158,6 +208,68 @@ export async function runScenario(scenario: SandboxScenario): Promise<SandboxRes
     ticksExecuted,
     clientCallCount: client.callCount,
   };
+}
+
+/**
+ * Drive an in-progress poll to completion under a fake clock.
+ *
+ * When the poll waits for in-flight runs, those runs' latency timers live on the
+ * fake clock, so nothing advances unless we pump virtual time forward. Each step
+ * we first fully drain the real microtask queue (via a real `setTimeout(0)`) so
+ * `settled` reflects whether the poll can finish on its own; only if it is still
+ * blocked do we fire the earliest pending timer. This guarantees we never skip
+ * past work that would have completed without a timer, while still unblocking
+ * runner latency / retry timers that the poll is genuinely waiting on.
+ *
+ * If the poll is blocked with no pending timer at all, the in-flight run is
+ * stalled (e.g. a runner that never resolves). We mirror the real-mode stall
+ * watchdog: stop the runtime and surface the same "stall timeout" error, just
+ * without waiting out the wall clock.
+ */
+async function pollOnceWithFakeClock(
+  runtime: SymphonyRuntime,
+  options: { waitForRuns: boolean },
+  clock: FakeClock,
+  stall: { tick: number; timeoutMs: number },
+): Promise<void> {
+  if (!options.waitForRuns) {
+    await runtime.pollOnce(options);
+    return;
+  }
+
+  const poll = runtime.pollOnce(options);
+  let settled = false;
+  void poll.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    },
+  );
+
+  // Consecutive full microtask drains with no progress and no pending timer:
+  // the run is stalled. A small bound keeps stall detection near-instant while
+  // tolerating multi-stage immediately-resolving promise chains.
+  let idleFlushes = 0;
+  for (let guard = 0; guard < 1_000_000 && !settled; guard++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (settled) break;
+    if (clock.hasPending()) {
+      idleFlushes = 0;
+      await clock.fireNext();
+    } else if (++idleFlushes > 3) {
+      runtime.stop();
+      void poll.catch(() => {});
+      throw new Error(
+        stall.timeoutMs > 0
+          ? `sandbox poll tick ${stall.tick} exceeded stall timeout of ${stall.timeoutMs}ms while waiting for runs`
+          : `sandbox poll tick ${stall.tick} stalled with no pending timers`,
+      );
+    }
+  }
+
+  await poll;
 }
 
 async function pollOnceWithScenarioTimeout(

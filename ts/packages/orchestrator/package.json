@@ -13,7 +13,6 @@
     "@symphony/dispatch": "workspace:*",
     "@symphony/domain": "workspace:*",
     "@symphony/issue": "workspace:*",
-    "@symphony/policies": "workspace:*",
-    "@symphony/ports": "workspace:*"
+    "@symphony/policies": "workspace:*"
   }
 }

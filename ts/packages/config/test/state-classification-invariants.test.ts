@@ -1,8 +1,7 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
 import { normalizeStateName, isTerminalState } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 describe("INVARIANT: When states are normalized, normalization SHALL be case-insensitive.", () => {
   test("normalizeStateName — mixed case variants all normalize to the same value", () => {

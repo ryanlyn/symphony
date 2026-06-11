@@ -30,8 +30,8 @@ import type {
   BoxPoolSnapshot,
 } from "@symphony/worker-box-pool";
 import type { AgentMcpEndpointLease } from "@symphony/mcp";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import {
   createDispatchCoordinator,
   EndpointOpenError,
@@ -609,7 +609,7 @@ test("capabilities.perRunEndpoint reflects a manager advertising perRunEndpoint=
 function makeFakeEndpoint(id: string): AgentMcpEndpointLease & { released: { count: number } } {
   const released = { count: 0 };
   return {
-    url: `http://127.0.0.1:46000/claude-mcp#${id}`,
+    url: `http://127.0.0.1:46000/mcp#${id}`,
     token: `tok-${id}`,
     acpServer: () => ({ type: "http", name: "symphony_linear", url: "", headers: [] }),
     async release(): Promise<void> {
@@ -1629,7 +1629,7 @@ test("tunnel ceiling: two CONCURRENT acquires with DELAYED opens never exceed ma
 // ---------------------------------------------------------------------------
 //
 // A Codex/appserver run runs its dynamic tools in-process and IGNORES the per-run
-// mcpEndpoint - only ACP/Claude needs /claude-mcp over the reverse tunnel. So a
+// mcpEndpoint - only ACP/Claude needs /mcp over the reverse tunnel. So a
 // box-pool run for an executor that needs NO endpoint must NOT open one, must NOT
 // take a tunnel-ceiling reservation, and must NOT be gated by maxConcurrentTunnels
 // (it consumes no `ssh -N` child). It dispatches as a normal bound slot whose

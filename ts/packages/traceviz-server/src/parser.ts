@@ -55,6 +55,36 @@ function extractTextFromUpdate(update: Record<string, unknown>): string {
   return "";
 }
 
+function formatHookExecutionMessage(message: unknown): string {
+  if (!isRecord(message)) return "Hook execution update";
+  const status = typeof message.status === "string" ? message.status : "updated";
+  const hookName = typeof message.hookName === "string" ? message.hookName : "hook";
+  const parts = [`${hookName} hook ${status}`];
+  if (typeof message.command === "string" && message.command.length > 0) {
+    parts.push(`command: ${inlineText(message.command)}`);
+  }
+  if ("exitCode" in message) {
+    parts.push(`exit code: ${hookExitCodeText(message.exitCode)}`);
+  }
+  if (typeof message.error === "string" && message.error.length > 0) {
+    const suffix = message.errorTruncated === true ? " (truncated)" : "";
+    parts.push(`error: ${inlineText(message.error)}${suffix}`);
+  }
+  if (typeof message.output === "string" && message.output.length > 0) {
+    const suffix = message.outputTruncated === true ? " (truncated)" : "";
+    parts.push(`output: ${inlineText(message.output)}${suffix}`);
+  }
+  return parts.join("; ");
+}
+
+function inlineText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function hookExitCodeText(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "unknown";
+}
+
 function getToolCallId(update: { toolCallId?: unknown }): string | null {
   return typeof update.toolCallId === "string" && update.toolCallId.length > 0
     ? update.toolCallId
@@ -79,6 +109,22 @@ function extractTextFromToolCallContent(content: ToolCallContent[]): string | nu
     .filter(Boolean);
 
   return texts.join("\n") || null;
+}
+
+function displayEventTimestampMs(event: DisplayEvent): number {
+  const timestampMs = new Date(event.timestamp).getTime();
+  return Number.isNaN(timestampMs) ? Infinity : timestampMs;
+}
+
+function sortDisplayEventsChronologically(events: DisplayEvent[]): DisplayEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const timestampDiff =
+        displayEventTimestampMs(left.event) - displayEventTimestampMs(right.event);
+      return timestampDiff === 0 ? left.index - right.index : timestampDiff;
+    })
+    .map(({ event }) => event);
 }
 
 /**
@@ -196,6 +242,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               const endMs = new Date(ts).getTime();
               toolCallEvent.durationMs =
                 Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+              toolCallEvent.timestamp = ts;
               events.push(toolCallEvent);
             } else {
               events.push({
@@ -288,6 +335,16 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
+      case "hook_execution": {
+        flushPendingText();
+        events.push({
+          kind: "notification",
+          text: formatHookExecutionMessage(raw.message),
+          timestamp: ts,
+        });
+        break;
+      }
+
       case "rate_limit":
       case "workspace_prepared":
       case "session_started":
@@ -314,12 +371,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
   flushPendingText();
 
-  // Flush any remaining pending tool calls that never got a result
-  for (const [, pending] of pendingToolCalls) {
-    events.push(pending.event);
-  }
-
-  return events;
+  return sortDisplayEventsChronologically(events);
 }
 
 export interface TicketMetadata {

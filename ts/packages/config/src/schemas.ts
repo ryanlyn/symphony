@@ -95,9 +95,11 @@ const optionalHookScript = z.string().nullable().optional();
 
 const usageAccountingSchema = z.enum(AGENT_USAGE_ACCOUNTING_VALUES);
 
-export const acpAgentRecordSchema = z
+// The executor selector is open-ended; whether it is supported is decided by the agent
+// executor registry at dispatch validation, not by the schema.
+export const agentRecordSchema = z
   .object({
-    executor: z.literal("acp"),
+    executor: z.string().min(1).optional(),
     bridgeCommand: z.string().optional(),
     command: z.string().optional(),
     usageAccounting: usageAccountingSchema.optional(),
@@ -109,17 +111,17 @@ export const acpAgentRecordSchema = z
   })
   .strict();
 
+/** Per-state agent record override: like an agent record, minus the executor selector. */
+export const agentRecordOverrideSchema = agentRecordSchema.omit({ executor: true }).strict();
+
+// Common keys are validated here; any other key in the tracker section is provider-specific
+// and is passed through (`catchall`) to the registered tracker provider's option parser.
 const trackerRawSchema = z
   .object({
     kind: z.string().optional(),
     endpoint: z.string().optional(),
     apiKey: z.string().optional(),
-    projectSlug: z.string().optional(),
-    projectSlugs: z.array(z.string()).optional(),
-    projectLabels: z.array(z.string()).optional(),
     assignee: z.string().optional(),
-    path: z.string().optional(),
-    idPrefix: z.string().optional(),
     activeStates: z.array(z.string()).optional(),
     terminalStates: z.array(z.string()).optional(),
     dispatch: z
@@ -131,7 +133,7 @@ const trackerRawSchema = z
       .strict()
       .optional(),
   })
-  .strict();
+  .catchall(z.unknown());
 
 const pollingRawSchema = z.object({ intervalMs: coercedIntervalMs.optional() }).strict();
 const workspaceRawSchema = z
@@ -206,6 +208,7 @@ const codexRawSchema = z
 const claudeRawSchema = z
   .object({
     command: z.string().optional(),
+    model: z.string().optional(),
     turnTimeoutMs: coercedTimeoutMs.optional(),
     stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
     strictMcpConfig: coercedBoolean.optional(),
@@ -235,6 +238,7 @@ const partialClaudeRawSchema = claudeRawSchema.partial().strict();
 const statusOverrideRawSchema = z
   .object({
     agent: partialAgentRawSchema.optional(),
+    agents: z.record(z.string(), z.unknown()).optional(),
     codex: partialCodexRawSchema.optional(),
     claude: partialClaudeRawSchema.optional(),
   })
@@ -256,6 +260,7 @@ export const workflowConfigSchema = z.preprocess(
       observability: observabilityRawSchema.optional(),
       server: serverRawSchema.optional(),
       logging: loggingRawSchema.optional(),
+      tools: z.array(z.string()).optional(),
       statusOverrides: z.record(z.string(), statusOverrideRawSchema).optional(),
     })
     .passthrough(),
@@ -270,5 +275,6 @@ export type AgentsRaw = z.infer<typeof agentsRawSchema>;
 export type CodexRaw = z.infer<typeof codexRawSchema>;
 export type ClaudeRaw = z.infer<typeof claudeRawSchema>;
 export type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;
-export type AcpAgentRecordRaw = z.infer<typeof acpAgentRecordSchema>;
+export type AgentRecordRaw = z.infer<typeof agentRecordSchema>;
+export type AgentRecordOverrideRaw = z.infer<typeof agentRecordOverrideSchema>;
 export type BoxPoolRaw = z.infer<typeof boxPoolRawSchema>;

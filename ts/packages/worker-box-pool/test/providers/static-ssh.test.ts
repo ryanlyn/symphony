@@ -4,10 +4,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 import type { SshRunOptions, SshRunResult } from "@symphony/ssh";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../../test/assert.js";
 import { runProviderConformanceSuite } from "../../src/conformance.js";
 import { createBoxPool } from "../../src/pool.js";
 import { StaticSshBoxProvider } from "../../src/providers/static-ssh.js";

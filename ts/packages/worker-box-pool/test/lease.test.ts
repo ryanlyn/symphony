@@ -1,6 +1,6 @@
 import { test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { createLease } from "../src/lease.js";
 import { createMutex } from "../src/mutex.js";
 import type { BoxOutcome, BoxRecord } from "../src/types.js";

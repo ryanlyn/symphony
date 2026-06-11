@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../../test/assert.js";
 import { runProviderConformanceSuite } from "../../src/conformance.js";
 import { FakeBoxProvider } from "../../src/providers/fake.js";
 import type { ProviderDeps } from "../../src/types.js";

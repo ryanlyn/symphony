@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { BoardStore } from "@symphony/local-tracker";
-import { test } from "vitest";
+import { beforeAll, test } from "vitest";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
+import { registerBuiltinBackends } from "../src/daemon.js";
 
 import {
   createTrackerClient,
@@ -15,6 +16,12 @@ import {
   type SymphonyRuntimeOptions,
   type WorkflowDefinition,
 } from "@symphony/cli";
+
+// createTrackerClient resolves the configured kind through the process-default tracker
+// registry, so populate it the same way the CLI entrypoints do.
+beforeAll(() => {
+  registerBuiltinBackends();
+});
 
 function runtimeOptions(options: SymphonyRuntimeOptions): SymphonyRuntimeOptions {
   return { ...runtimeAdapters, ...options };

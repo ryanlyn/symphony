@@ -1,17 +1,22 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { test, vi } from "vitest";
+import { beforeAll, test, vi } from "vitest";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   createDispatchCoordinator,
   createWorkspaceForIssue,
+  listIssueWorkspaceIdentifiers,
   loadWorkflow,
   normalizeIssue,
   Orchestrator,
   parseConfig,
+  removeIssueWorkspaces,
   runtimeAdapters,
   slotKey,
 } from "@symphony/cli";
+import { registerLinearTracker } from "@symphony/linear-tracker";
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME_EVENTS,
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
@@ -27,9 +32,7 @@ import type {
 import type { BoxPoolSettings } from "@symphony/domain";
 import type { AgentMcpEndpointLease } from "@symphony/mcp";
 import type { AcquireResult, BoxLease, BoxOutcome, BoxPool } from "@symphony/worker-box-pool";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,
@@ -37,8 +40,23 @@ import {
   SymphonyRuntime,
 } from "@symphony/runtime";
 
+// The runtime validates dispatch config against the process-default registries, which the
+// CLI composition root populates before constructing a runtime. Mirror that wiring here (in
+// a hook rather than at module scope) for the backends this suite dispatches on - the
+// linear tracker and the ACP executor - so polling resolves the same providers as
+// production.
+beforeAll(() => {
+  registerLinearTracker();
+  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
+    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+  }
+});
+
 function runtimeOptions(options: SymphonyRuntimeOptions): SymphonyRuntimeOptions {
-  return { ...runtimeAdapters, ...options };
+  // Startup cleanup scans the workspace root and consumes a fetchIssuesByIds call;
+  // default it off so call-counting tests stay deterministic. Cleanup tests pass the
+  // real lister explicitly.
+  return { ...runtimeAdapters, listIssueWorkspaces: async () => [], ...options };
 }
 
 test("runtime exports canonical runtime-events vocabulary values", () => {
@@ -516,7 +534,6 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   const issue = issueFixture("issue-stalled", "MT-STALLED");
   const root = await tempDir("symphony-ts-runtime-stall-resume");
   const workflow = workflowFixture(root);
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
   const deletedResumeStates: string[] = [];
@@ -590,7 +607,6 @@ test("runtime stall reconciliation uses agents-level stall timeout defaults", as
     workspace: { root },
     agents: { stall_timeout_ms: 50 },
   });
-  assert.equal(settings.codex.stallTimeoutMs, 50);
   assert.equal(settings.agents.codex.stallTimeoutMs, 50);
   const workflow: WorkflowDefinition = {
     path: "/tmp/WORKFLOW.md",
@@ -656,7 +672,6 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
   const root = await tempDir("symphony-ts-runtime-ensemble-stall-race");
   const workflow = workflowFixture(root);
   workflow.settings.agent.ensembleSize = 2;
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   workflow.settings.worker.sshTimeoutMs = 2_000;
   const orchestrator = new Orchestrator(workflow.settings);
@@ -759,7 +774,6 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
 test("runtime does not record late success after stall reconciliation wins", async () => {
   const issue = issueFixture("issue-late-success", "MT-LATE-SUCCESS");
   const workflow = workflowFixture();
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let aborted = false;
@@ -819,7 +833,6 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   const root = await tempDir("symphony-ts-runtime-stale-finally");
   const workflow = workflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let attempts = 0;
@@ -1082,6 +1095,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
   const orchestrator = new Orchestrator(workflow.settings);
   assert.ok(orchestrator.claim(activeIssue));
   orchestrator.finish(activeIssue.id, 0, true);
+  const cleanupIssues: Array<Issue | undefined> = [];
 
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -1091,6 +1105,10 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
         fetchCandidateIssues: async () => [],
         fetchIssuesByIds: async (ids) => (ids.includes(activeIssue.id) ? [doneIssue] : []),
       },
+      removeIssueWorkspaces: async (settings, identifier, workerHost, issue) => {
+        cleanupIssues.push(issue);
+        await removeIssueWorkspaces(settings, identifier, workerHost, issue);
+      },
     }),
   );
 
@@ -1098,6 +1116,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
 
   assert.equal(orchestrator.snapshot().retrying.length, 0);
   await assert.rejects(() => fs.stat(workspace), /ENOENT/);
+  assert.equal(cleanupIssues[0]?.id, doneIssue.id);
   assert.equal(runtime.snapshot().recentEvents[0]?.type, "dry_run");
   assert.ok(runtime.snapshot().recentEvents.some((event) => event.type === "workspace_cleanup"));
 });
@@ -1126,7 +1145,7 @@ test("runtime reconcile refreshes the running stage when the tracker state chang
   assert.equal(runtime.snapshot().running[0]?.state, "In Progress");
 });
 
-test("runtime performs startup terminal workspace cleanup through tracker state queries", async () => {
+test("runtime startup cleanup looks up only on-disk workspaces and removes terminal ones", async () => {
   const root = await tempDir("symphony-ts-runtime-startup-cleanup");
   const workflow = workflowFixture(root);
   const doneIssue: Issue = {
@@ -1134,45 +1153,68 @@ test("runtime performs startup terminal workspace cleanup through tracker state 
     state: "Done",
     stateType: "completed",
   };
-  const workspace = await createWorkspaceForIssue(workflow.settings, doneIssue);
-  await fs.writeFile(path.join(workspace, "scratch.txt"), "remove me\n");
-  let stateQueries = 0;
+  const activeIssue = issueFixture("issue-startup-active", "MT-STARTUP-ACTIVE");
+  const doneWorkspace = await createWorkspaceForIssue(workflow.settings, doneIssue);
+  await fs.writeFile(path.join(doneWorkspace, "scratch.txt"), "remove me\n");
+  const activeWorkspace = await createWorkspaceForIssue(workflow.settings, activeIssue);
+  const lookups: string[][] = [];
 
   const runtime = new SymphonyRuntime(
     runtimeOptions({
       workflow,
+      listIssueWorkspaces: listIssueWorkspaceIdentifiers,
       client: {
         fetchCandidateIssues: async () => [],
-        fetchIssuesByIds: async () => [],
-        fetchIssuesByStates: async (states) => {
-          stateQueries += 1;
-          assert.deepEqual(states, workflow.settings.tracker.terminalStates);
-          return [doneIssue];
+        fetchIssuesByIds: async (ids) => {
+          lookups.push([...ids].sort());
+          return [doneIssue, activeIssue];
         },
       },
     }),
   );
 
   await runtime.pollOnce({ dryRun: true });
-  await assert.rejects(() => fs.stat(workspace), /ENOENT/);
-  assert.equal(stateQueries, 1);
+  await assert.rejects(() => fs.stat(doneWorkspace), /ENOENT/);
+  await fs.stat(activeWorkspace);
+  assert.deepEqual(lookups, [["MT-STARTUP-ACTIVE", "MT-STARTUP-DONE"]]);
   assert.equal(
     runtime.snapshot().recentEvents.some((event) => event.type === "startup_workspace_cleanup"),
     true,
   );
 
   await runtime.pollOnce({ dryRun: true });
-  assert.equal(stateQueries, 1);
+  assert.equal(lookups.length, 1);
 });
 
-test("runtime treats startup terminal cleanup fetch failures as non-fatal", async () => {
+test("runtime startup cleanup skips the tracker entirely when no workspaces exist", async () => {
+  const root = await tempDir("symphony-ts-runtime-startup-cleanup-empty");
+  let lookups = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(root),
+      listIssueWorkspaces: listIssueWorkspaceIdentifiers,
+      client: {
+        fetchCandidateIssues: async () => [],
+        fetchIssuesByIds: async () => {
+          lookups += 1;
+          return [];
+        },
+      },
+    }),
+  );
+
+  await runtime.pollOnce({ dryRun: true });
+  assert.equal(lookups, 0);
+});
+
+test("runtime treats startup cleanup lookup failures as non-fatal", async () => {
   const runtime = new SymphonyRuntime(
     runtimeOptions({
       workflow: workflowFixture(),
+      listIssueWorkspaces: async () => ["MT-STALE"],
       client: {
         fetchCandidateIssues: async () => [],
-        fetchIssuesByIds: async () => [],
-        fetchIssuesByStates: async () => {
+        fetchIssuesByIds: async () => {
           throw new Error("tracker unavailable");
         },
       },
@@ -2166,7 +2208,6 @@ test("box pool: a stall-finished run poisons the box and keeps accounting correc
   const issue = issueFixture("issue-bp-stall", "MT-BP-STALL");
   const root = await tempDir("symphony-ts-runtime-boxpool-stall");
   const workflow = boxPoolWorkflowFixture(root);
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
     governs: () => true,
@@ -2236,7 +2277,6 @@ test("box pool: a stall-aborted run that RESOLVES SUCCESSFULLY still poisons the
   const issue = issueFixture("issue-bp-stall-success", "MT-BP-STALL-SUCCESS");
   const root = await tempDir("symphony-ts-runtime-boxpool-stall-success");
   const workflow = boxPoolWorkflowFixture(root);
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
     governs: () => true,
@@ -2313,7 +2353,6 @@ test("box pool: a stale-generation late resolve is a lease no-op (leaseId guard)
   const root = await tempDir("symphony-ts-runtime-boxpool-stale-gen");
   const workflow = boxPoolWorkflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
     governs: () => true,

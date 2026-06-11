@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "vitest";
 import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 import type { SshRunOptions, SshRunResult } from "@symphony/ssh";
 
 import { runProviderConformanceSuite } from "../../src/conformance.js";

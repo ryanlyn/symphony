@@ -5,8 +5,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { Hono, type Context } from "hono";
-import { streamSSE } from "hono/streaming";
+import { Hono } from "hono";
 import {
   errorMessage,
   httpUrlHost,
@@ -14,7 +13,8 @@ import {
   normalizeHttpBindHost,
   type Settings,
 } from "@symphony/domain";
-import { createMcpAuthScope, mcpAuthScopeForSettings, mountClaudeMcp } from "@symphony/mcp";
+import { createMcpAuthScope, mcpAuthScopeForSettings, mountMcp } from "@symphony/mcp";
+import type { ToolRegistry } from "@symphony/tool-sdk";
 import { issuePayload, runsPayload, statePayload, type PresenterParams } from "@symphony/presenter";
 import type { RuntimeSnapshot } from "@symphony/runtime-events";
 import type { TraceWatcher } from "@symphony/traceviz-server";
@@ -23,17 +23,12 @@ import { createTraceRoutes } from "./trace-routes.js";
 import { createWsHandler } from "./ws.js";
 import { defaultIssueStorePath, IssueStore } from "./issue-store.js";
 import { decodePathParam, invalidPathParameterError } from "./path-params.js";
+import type { RuntimeServerSource } from "./source.js";
 
 export { defaultIssueStorePath, IssueStore };
-export { startClaudeMcpServer } from "@symphony/mcp";
+export { startMcpServer } from "@symphony/mcp";
 export type { IssueRecord } from "./issue-store.js";
-
-export interface RuntimeServerSource {
-  workflow?: { settings?: Settings } | undefined;
-  snapshot(): RuntimeSnapshot;
-  subscribe(listener: (snapshot: RuntimeSnapshot) => void): () => void;
-  requestRefresh(): Record<string, unknown>;
-}
+export type { RuntimeServerSource } from "./source.js";
 
 export interface ObservabilityServerOptions {
   host: string;
@@ -41,6 +36,8 @@ export interface ObservabilityServerOptions {
   traceDir?: string;
   staticDir?: string;
   issueStore?: IssueStore;
+  /** Tool packs served on the MCP mount; defaults to the process-wide registry. */
+  tools?: ToolRegistry;
 }
 
 export interface ObservabilityServerHandle {
@@ -62,39 +59,29 @@ export async function startObservabilityServer(
       ? mcpAuthScopeForSettings(settings, bindHost, options.port)
       : createMcpAuthScope();
   const { app, watcher } = buildObservabilityApp(runtime, options, authScope, settings);
-  const internals: HonoServerInternals = {};
+  const wsSetup = createWsHandler(app, runtime, watcher);
 
   try {
-    if (watcher) {
-      const wsSetup = createWsHandler(app, watcher);
-      internals.injectWebSocket = wsSetup.injectWebSocket;
-      internals.stopWatcher = () => {
-        watcher.stop();
-      };
-    }
-
-    return await startHonoServer(
-      app,
-      options,
-      authScope,
-      hasInternals(internals) ? internals : undefined,
-    );
+    return await startHonoServer(app, options, authScope, {
+      injectWebSocket: wsSetup.injectWebSocket,
+      stop: wsSetup.stop,
+    });
   } catch (error) {
-    internals.stopWatcher?.();
+    wsSetup.stop();
     throw error;
   }
 }
 
 interface HonoServerInternals {
-  injectWebSocket?: (server: unknown) => void;
-  stopWatcher?: () => void;
+  injectWebSocket: (server: unknown) => void;
+  stop: () => void;
 }
 
 async function startHonoServer(
   app: Hono,
   options: ObservabilityServerOptions,
   authScope: string,
-  internals?: HonoServerInternals,
+  internals: HonoServerInternals,
 ): Promise<ObservabilityServerHandle> {
   let server!: ServerType;
   const bindHost = normalizeHttpBindHost(options.host);
@@ -108,9 +95,7 @@ async function startHonoServer(
   const activeServer = server;
 
   // Inject WebSocket support after server starts listening
-  if (internals?.injectWebSocket) {
-    internals.injectWebSocket(activeServer);
-  }
+  internals.injectWebSocket(activeServer);
 
   const address = activeServer.address();
   const port = typeof address === "object" && address !== null ? address.port : options.port;
@@ -122,14 +107,10 @@ async function startHonoServer(
       return `http://${httpUrlHost(bindHost)}:${port}${urlPath}`;
     },
     stop: async () => {
-      internals?.stopWatcher?.();
+      internals.stop();
       await stopServer(activeServer);
     },
   };
-}
-
-function hasInternals(internals: HonoServerInternals): boolean {
-  return internals.injectWebSocket !== undefined || internals.stopWatcher !== undefined;
 }
 
 interface BuildResult {
@@ -144,7 +125,15 @@ function buildObservabilityApp(
   settings = runtimeSettings(runtime),
 ): BuildResult {
   const app = new Hono();
-  if (settings) mountClaudeMcp(app, settings, { authScope });
+  // Resolve settings per request so the MCP endpoint reflects workflow settings the runtime
+  // has hot-reloaded since the server was built.
+  if (settings) {
+    const initialSettings = settings;
+    mountMcp(app, () => runtimeSettings(runtime) ?? initialSettings, {
+      authScope,
+      tools: options.tools,
+    });
+  }
 
   // Health endpoint
   app.get("/health", () => jsonResponse({ status: "ok" }));
@@ -182,9 +171,6 @@ function buildObservabilityApp(
     return jsonResponse(statePayload(snapshot.snapshot));
   });
   app.all("/api/v1/state", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
-
-  app.get("/api/v1/events", (c) => stateEventsResponse(c, runtime));
-  app.all("/api/v1/events", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
 
   app.get("/api/v1/runs", (c) => {
     const snapshot = snapshotResult(runtime);
@@ -249,40 +235,6 @@ function runtimeSettings(runtime: RuntimeServerSource): Settings | null {
 function resolveStaticDir(): string {
   const thisFile = fileURLToPath(import.meta.url);
   return path.resolve(path.dirname(thisFile), "../../../apps/symphony-dashboard/dist");
-}
-
-function stateEventsResponse(c: Context, runtime: RuntimeServerSource): Response {
-  const response = streamSSE(
-    c,
-    async (stream) => {
-      await stream.write(": connected\n\n");
-      let unsubscribe: (() => void) | null = null;
-      const aborted = new Promise<void>((resolve) => stream.onAbort(resolve));
-      try {
-        unsubscribe = runtime.subscribe((snapshot) => {
-          void stream
-            .writeSSE({ event: "state", data: JSON.stringify(statePayload(snapshot)) })
-            .catch(() => stream.abort());
-        });
-      } catch (error) {
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify(observabilityErrorBody(observabilityErrorCode(error))),
-        });
-      }
-      await aborted;
-      unsubscribe?.();
-    },
-    async (error, stream) => {
-      await stream.writeSSE({
-        event: "error",
-        data: JSON.stringify(observabilityErrorBody(observabilityErrorCode(error))),
-      });
-    },
-  );
-  response.headers.set("content-type", "text/event-stream; charset=utf-8");
-  response.headers.set("cache-control", "no-cache, no-transform");
-  return response;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

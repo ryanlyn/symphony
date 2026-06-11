@@ -18,6 +18,9 @@
     },
     {
       "path": "../worker-box-pool"
+    },
+    {
+      "path": "../test-utils"
     }
   ]
 }

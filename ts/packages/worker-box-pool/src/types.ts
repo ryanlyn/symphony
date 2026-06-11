@@ -1,18 +1,10 @@
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort } from "@symphony/ports";
-
-// Type-only imports (erased at runtime, so no import cycle through the provider
-// modules) for the optional injected cloud transports the built-in e2b/modal
-// factories thread through `ProviderDeps`.
-import type { E2BSandboxClient } from "./providers/e2b.js";
-import type { ModalTransport } from "./providers/modal.js";
+import type { BoxPoolProvider, BoxPoolSettings, ClockPort } from "@symphony/domain";
 
 /**
  * Shared types for the embedded warm box pool. Every implementation file imports
  * from this module so concrete files (pool, lease, reaper, providers, ledger,
  * registry) never form import cycles. Keep this file dependency-light: it pulls
- * `BoxPoolProvider`/`BoxPoolSettings` from `@symphony/domain` and `ClockPort`
- * from `@symphony/ports` only.
+ * `BoxPoolProvider`/`BoxPoolSettings`/`ClockPort` from `@symphony/domain` only.
  */
 
 /**
@@ -109,19 +101,13 @@ export interface BoxProvider {
 
 /**
  * Dependencies a provider factory receives. Deliberately excludes any workspace
- * or hook deps: providers manage box lifecycle only.
- *
- * `e2bClient` / `modalTransport` are the injected cloud transports this package
- * does NOT depend on. They are absent for the stock daemon, so the built-in
- * e2b/modal factories fail loud at construction when they are missing; a real
- * deployment supplies them by registering a custom factory (see
- * `registerBoxProvider`) that injects a client/transport.
+ * or hook deps: providers manage box lifecycle only. Cloud transports the pool
+ * does not depend on (e.g. the E2B client or Modal transport) are closed over by
+ * a custom registered factory, never threaded through these deps.
  */
 export interface ProviderDeps {
   clock: ClockPort;
   logEvent: (event: Record<string, unknown>) => void;
-  e2bClient?: E2BSandboxClient;
-  modalTransport?: ModalTransport;
 }
 
 /** Constructs a provider from settings + deps. Registered by `kind`. */

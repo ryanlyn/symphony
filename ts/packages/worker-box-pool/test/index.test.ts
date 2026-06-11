@@ -1,8 +1,8 @@
+import { assert } from "@symphony/test-utils";
 import { afterEach, beforeEach, test } from "vitest";
 import { PROVIDER_KINDS, type BoxPoolSettings } from "@symphony/domain";
-import { systemClock } from "@symphony/ports";
+import { systemClock } from "@symphony/domain";
 
-import { assert } from "../../../test/assert.js";
 // Importing the public barrel is what self-registers EVERY built-in provider
 // (fake + static-ssh + the four cloud kinds); everything else under test is
 // pulled from the same barrel so this file exercises the package exactly as a

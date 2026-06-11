@@ -1,7 +1,10 @@
 node_modules/
 dist/
+vendor/claude-agent-acp/dist/bundle.js
 log/
 .vscode/
 .claude/workflows/
 .env
 *.tsbuildinfo
+.eslintcache
+.prettiercache

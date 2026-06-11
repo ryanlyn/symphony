@@ -274,6 +274,130 @@ describe("parseTraceLines chunk combining", () => {
     expect(events[2]).toMatchObject({ kind: "message", text: "Done." });
   });
 
+  it("does not emit tool calls before they complete", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Bash",
+            toolCallId: "tc1",
+            rawInput: { command: "sleep 10" },
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "still working", "2026-01-01T00:00:01Z"),
+    ];
+
+    const events = parseTraceLines(lines);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "message", text: "still working" });
+  });
+
+  it("timestamps completed tool calls at completion time", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Bash",
+            toolCallId: "tc1",
+            rawInput: { command: "sleep 2" },
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "while tool runs", "2026-01-01T00:00:02Z"),
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tc1",
+            status: "completed",
+            rawOutput: "ok",
+          },
+        },
+      }),
+    ];
+
+    const events = parseTraceLines(lines);
+
+    expect(events[0]).toMatchObject({
+      kind: "message",
+      text: "while tool runs",
+      timestamp: "2026-01-01T00:00:02Z",
+    });
+    expect(events[1]).toMatchObject({
+      kind: "tool_call",
+      toolName: "Bash",
+      output: "ok",
+      durationMs: 2000,
+      timestamp: "2026-01-01T00:00:03Z",
+    });
+  });
+
+  it("returns display events in nondecreasing timestamp order", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Slow",
+            toolCallId: "slow",
+            rawInput: {},
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "middle", "2026-01-01T00:00:02Z"),
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "slow",
+            status: "completed",
+            rawOutput: "done",
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "turn_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:04Z",
+      }),
+    ];
+
+    const events = parseTraceLines(lines);
+    const timestamps = events.map((event) => new Date(event.timestamp).getTime());
+
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+  });
+
   it("skips malformed tool calls without toolCallId", () => {
     const makeToolCall = (title: string, timestamp: string): string =>
       JSON.stringify({
@@ -400,20 +524,20 @@ describe("parseTraceLines turn handling", () => {
   });
 
   it("renders malformed turn_cancelled records without dropping valid events", () => {
-    const makeTurnCancelled = (message: Record<string, unknown>): string =>
+    const makeTurnCancelled = (message: Record<string, unknown>, timestamp: string): string =>
       JSON.stringify({
         type: "turn_cancelled",
         issueId: "id",
         issueIdentifier: "T-1",
-        timestamp: "2026-01-01T00:00:01Z",
+        timestamp,
         message,
       });
 
     const lines = [
       makeChunk("agent_message_chunk", "before", "2026-01-01T00:00:00Z"),
-      makeTurnCancelled({}),
+      makeTurnCancelled({}, "2026-01-01T00:00:01Z"),
       makeChunk("agent_message_chunk", "after", "2026-01-01T00:00:02Z"),
-      makeTurnCancelled({ response: null }),
+      makeTurnCancelled({ response: null }, "2026-01-01T00:00:03Z"),
     ];
 
     expect(() => parseTraceLines(lines)).not.toThrow();
@@ -427,6 +551,38 @@ describe("parseTraceLines turn handling", () => {
 });
 
 describe("parseTraceLines noise filtering", () => {
+  it("emits hook execution notifications with command results", () => {
+    const lines = [
+      JSON.stringify({
+        type: "hook_execution",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          status: "failed",
+          hookName: "before_run",
+          command: "mise run check",
+          exitCode: 17,
+          output: "tests failed",
+          error: "hook failed with status 17: tests failed",
+        },
+      }),
+    ];
+
+    const events = parseTraceLines(lines);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      kind: "notification",
+      text: expect.stringContaining("before_run hook failed"),
+    });
+    expect(events[0]).toMatchObject({
+      text: expect.stringContaining("exit code: 17"),
+    });
+    expect(events[0]).toMatchObject({
+      text: expect.stringContaining("output: tests failed"),
+    });
+  });
+
   it("does not emit unknown events for usage/session/workspace/stderr/process_exit", () => {
     const lines = [
       JSON.stringify({

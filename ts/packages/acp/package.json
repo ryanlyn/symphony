@@ -9,13 +9,15 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "workspace:*",
+    "@agentclientprotocol/codex-acp": "workspace:*",
     "@agentclientprotocol/sdk": "catalog:",
-    "execa": "catalog:",
-    "@symphony/child-process": "workspace:*",
+    "@symphony/agent-sdk": "workspace:*",
     "@symphony/domain": "workspace:*",
     "@symphony/mcp": "workspace:*",
     "@symphony/policies": "workspace:*",
     "@symphony/ssh": "workspace:*",
-    "@symphony/workspace": "workspace:*"
+    "@symphony/workspace": "workspace:*",
+    "execa": "catalog:"
   }
 }

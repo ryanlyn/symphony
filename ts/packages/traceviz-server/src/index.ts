@@ -20,6 +20,7 @@ export type {
   ToolBreakdownEntry,
   TraceStats,
   HealthResponse,
+  WsClientMessage,
 } from "./models/api.js";
 
 export type {

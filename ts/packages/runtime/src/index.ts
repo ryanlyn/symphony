@@ -15,7 +15,13 @@ import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
 import { workflowFileChanged, workflowStampsEqual } from "@symphony/workflow";
-import { durationMs, errorMessage, withDerivedMaxInFlight } from "@symphony/domain";
+import {
+  durationMs,
+  errorMessage,
+  systemClock,
+  withDerivedMaxInFlight,
+  type ClockPort,
+} from "@symphony/domain";
 import type {
   RuntimeAppStatus,
   RuntimeEventType,
@@ -30,6 +36,7 @@ import type {
   AgentKind,
   AgentUpdate,
   BoxPoolSettings,
+  HookExecutionMessage,
   Issue,
   RunningEntry,
   RuntimeTrackerClient,
@@ -83,7 +90,12 @@ export interface SymphonyRuntimeOptions {
         settings: WorkflowDefinition["settings"],
         issueIdentifier?: string | null,
         workerHost?: string | null,
+        issue?: Issue,
+        options?: { onHookEvent?: ((event: HookExecutionMessage) => void) | undefined },
       ) => Promise<void>)
+    | undefined;
+  listIssueWorkspaces?:
+    | ((settings: WorkflowDefinition["settings"]) => Promise<string[]>)
     | undefined;
   deleteResumeState?:
     | ((workspace: string, workerHost?: string | null, timeoutMs?: number) => Promise<void>)
@@ -91,7 +103,12 @@ export interface SymphonyRuntimeOptions {
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
   onAgentUpdate?: ((issue: Issue, update: AgentUpdate) => void) | undefined;
   onIssueDispatched?: ((issue: Issue) => void) | undefined;
-  now?: (() => Date) | undefined;
+  clock?: ClockPort | undefined;
+  /**
+   * Settings validation run before each poll, after any workflow reload. The composition
+   * root binds this to its registries; the default validates against the process-wide ones.
+   */
+  validateDispatch?: ((settings: WorkflowDefinition["settings"]) => void) | undefined;
   /**
    * Optional embedded box pool. When present, the orchestrator is constructed with a capacity
    * probe backed by the pool's `canAcquire` (bypassing the static `sshHosts` selection), and
@@ -233,9 +250,10 @@ export class SymphonyRuntime {
   private client: RuntimeTrackerClient;
   private readonly orchestrator: Orchestrator;
   private readonly runner: RuntimeRunner;
-  private readonly now: () => Date;
+  private readonly clock: ClockPort;
+  private readonly validateDispatch: (settings: WorkflowDefinition["settings"]) => void;
   private readonly listeners = new Set<(snapshot: RuntimeSnapshot) => void>();
-  private readonly retryScheduler = new RetryScheduler();
+  private readonly retryScheduler: RetryScheduler;
   private readonly inFlight = new Set<Promise<void>>();
   private stopped = false;
   private appStatus: RuntimeAppStatus = "starting";
@@ -265,6 +283,7 @@ export class SymphonyRuntime {
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
+    this.clock = input.clock ?? systemClock;
     // Prefer the pre-built coordinator; otherwise wrap a bare boxPool in a
     // null-endpoint passthrough so `acquireRunSlot`/`capacityProbe`/`reconcile`/
     // `drain` drive a uniform surface (default slotsPerMachine=1 + mcpEndpoint=null
@@ -277,7 +296,7 @@ export class SymphonyRuntime {
       input.orchestrator ??
       new Orchestrator(
         input.workflow.settings,
-        undefined,
+        this.clock,
         undefined,
         // The probe is installed for the orchestrator's lifetime whenever a coordinator exists,
         // but a reload can disable the underlying pool (draining it to zero) without tearing the
@@ -288,7 +307,8 @@ export class SymphonyRuntime {
         coordinator?.capacityProbe(),
       );
     this.runner = input.runner ?? runAgentAttempt;
-    this.now = input.now ?? (() => new Date());
+    this.validateDispatch = input.validateDispatch ?? validateDispatchConfig;
+    this.retryScheduler = new RetryScheduler(this.clock);
     this.appStatus = "idle";
   }
 
@@ -347,7 +367,7 @@ export class SymphonyRuntime {
       } catch {
         // Intentionally ignored: the error is already logged as poll_error.
       }
-      await delay(this.workflow.settings.polling.intervalMs, () => this.stopped);
+      await delay(this.clock, this.workflow.settings.polling.intervalMs, () => this.stopped);
     } while (!this.stopped);
   }
 
@@ -420,14 +440,14 @@ export class SymphonyRuntime {
   private async pollOnceUnlocked(options: PollOptions = {}): Promise<void> {
     this.pollStatus = "checking";
     this.appStatus = this.inFlight.size > 0 ? "running" : "polling";
-    this.lastPollAt = this.now().toISOString();
+    this.lastPollAt = this.clock.now().toISOString();
     this.lastError = null;
     this.emit();
 
     const dispatched: Array<Promise<void>> = [];
     try {
       await this.reloadWorkflowIfConfigured();
-      validateDispatchConfig(this.workflow.settings);
+      this.validateDispatch(this.workflow.settings);
       await this.cleanupTerminalWorkspacesOnce();
       await this.reconcileStalledRuns();
       await this.reconcileTrackedIssues();
@@ -452,7 +472,7 @@ export class SymphonyRuntime {
       this.pollStatus = "idle";
       this.appStatus = this.inFlight.size > 0 ? "running" : "idle";
       this.nextPollAt = new Date(
-        this.now().getTime() + this.workflow.settings.polling.intervalMs,
+        this.clock.now().getTime() + this.workflow.settings.polling.intervalMs,
       ).toISOString();
     } catch (error) {
       this.pollStatus = "error";
@@ -524,7 +544,7 @@ export class SymphonyRuntime {
     handle: ActiveRunHandle,
     affinityHost: string | null = null,
   ): Promise<void> {
-    const startedAt = this.now().toISOString();
+    const startedAt = this.clock.now().toISOString();
     let effectiveWorkerHost = workerHost;
     let slot: RunSlot | null = null;
     let boxOutcome: BoxOutcome = "healthy";
@@ -606,7 +626,7 @@ export class SymphonyRuntime {
         onUpdate: (update) => {
           heartbeatSlot?.heartbeat();
           this.orchestrator.applyUpdate(issue.id, slotIndex, update);
-          this.addEvent(update.type, `${issue.identifier} ${update.type}`);
+          this.addEvent(update.type, agentUpdateRuntimeMessage(issue.identifier, update));
           this.input.onAgentUpdate?.(issue, update);
         },
         fetchIssue: async (current) => {
@@ -634,8 +654,8 @@ export class SymphonyRuntime {
           resumeId: result.resumeId,
           workspacePath: result.workspace,
           startedAt,
-          endedAt: this.now().toISOString(),
-          durationMs: durationMs(startedAt, this.now().toISOString()),
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
         }),
       );
       this.addEvent("run_completed", `${issue.identifier} turns=${result.turnCount}`);
@@ -665,8 +685,8 @@ export class SymphonyRuntime {
           turnCount: entry?.turnCount ?? 0,
           runningEntry: entry,
           startedAt,
-          endedAt: this.now().toISOString(),
-          durationMs: durationMs(startedAt, this.now().toISOString()),
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
           error: errorMessage(error),
           fallbackLastEvent: "turn_failed",
         }),
@@ -805,6 +825,7 @@ export class SymphonyRuntime {
           this.workflow.settings,
           issue.identifier || tracked.get(issue.id)?.identifier,
           tracked.get(issue.id)?.workerHost,
+          issue,
         );
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
       } else {
@@ -832,7 +853,7 @@ export class SymphonyRuntime {
       const timeoutMs = agent.stallTimeoutMs;
       if (timeoutMs <= 0) continue;
       const lastActivity = currentEntry.lastAgentTimestamp ?? currentEntry.startedAt;
-      const elapsedMs = this.now().getTime() - lastActivity.getTime();
+      const elapsedMs = this.clock.now().getTime() - lastActivity.getTime();
       if (elapsedMs <= timeoutMs) continue;
 
       const key = slotKey(currentEntry.issue.id, currentEntry.slotIndex);
@@ -846,7 +867,7 @@ export class SymphonyRuntime {
       this.syncRetryTimer(entry.issue.id);
       activeHandle?.finishExternally("stalled");
       await this.invalidateResumeStateForRunningEntry(currentEntry, "stalled");
-      const endedAt = this.now().toISOString();
+      const endedAt = this.clock.now().toISOString();
       this.recordHistory(
         buildRunHistoryEntry({
           id: runId,
@@ -874,17 +895,27 @@ export class SymphonyRuntime {
       .running.find((entry) => entry.issue.id === issueId && entry.slotIndex === slotIndex);
   }
 
+  // Cleanup is driven by what is actually on disk: list existing per-issue workspace
+  // directories and look up just those issues, instead of enumerating every terminal
+  // issue the tracker has ever seen (which scales with project history, not with
+  // leftover workspaces, and can blow the tracker request budget on large projects).
   private async cleanupTerminalWorkspacesOnce(): Promise<void> {
     if (this.startupCleanupDone) return;
     this.startupCleanupDone = true;
-    if (!this.client.fetchIssuesByStates) return;
+    if (!this.input.listIssueWorkspaces) return;
     try {
-      const terminalIssues = await this.client.fetchIssuesByStates(
-        this.workflow.settings.tracker.terminalStates,
-      );
+      const identifiers = await this.input.listIssueWorkspaces(this.workflow.settings);
+      if (identifiers.length === 0) return;
+      const issues = await this.client.fetchIssuesByIds(identifiers);
       let cleaned = 0;
-      for (const issue of terminalIssues) {
-        await this.removeIssueWorkspaces(this.workflow.settings, issue.identifier);
+      for (const issue of issues) {
+        if (!isTerminalState(issue.state, this.workflow.settings.tracker.terminalStates)) continue;
+        await this.removeIssueWorkspaces(
+          this.workflow.settings,
+          issue.identifier,
+          undefined,
+          issue,
+        );
         cleaned += 1;
       }
       if (cleaned > 0) this.addEvent("startup_workspace_cleanup", `terminal=${cleaned}`);
@@ -991,7 +1022,7 @@ export class SymphonyRuntime {
   }
 
   private addEvent(type: RuntimeEventType, message: string): void {
-    const event = { type, message, at: this.now().toISOString() };
+    const event = { type, message, at: this.clock.now().toISOString() };
     this.projection.recordEvent(event);
     void this.appendLogEvent(this.workflow.settings.logging.logFile, {
       at: event.at,
@@ -1007,9 +1038,16 @@ export class SymphonyRuntime {
     settings: WorkflowDefinition["settings"],
     issueIdentifier?: string | null,
     workerHost?: string | null,
+    issue?: Issue,
   ): Promise<void> {
     if (this.input.removeIssueWorkspaces) {
-      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost);
+      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost, issue, {
+        onHookEvent: (message) =>
+          this.addEvent(
+            "hook_execution",
+            hookExecutionRuntimeMessage(issue?.identifier ?? issueIdentifier ?? "unknown", message),
+          ),
+      });
     }
     throw new Error("runtime_adapter_missing: removeIssueWorkspaces");
   }
@@ -1052,7 +1090,7 @@ export class SymphonyRuntime {
       });
     }
     return {
-      requested_at: this.now().toISOString(),
+      requested_at: this.clock.now().toISOString(),
       queued: true,
       coalesced,
       operations: ["poll", "reconcile"],
@@ -1164,11 +1202,41 @@ function runtimeRetryEntry(entry: {
   };
 }
 
-async function delay(ms: number, stopped: () => boolean): Promise<void> {
+function agentUpdateRuntimeMessage(issueIdentifier: string, update: AgentUpdate): string {
+  if (update.type !== "hook_execution") return `${issueIdentifier} ${update.type}`;
+  return hookExecutionRuntimeMessage(issueIdentifier, update.message);
+}
+
+function hookExecutionRuntimeMessage(
+  issueIdentifier: string,
+  message: HookExecutionMessage,
+): string {
+  const hookName = message.hookName ?? "hook";
+  const parts = [
+    `${issueIdentifier} ${hookName} hook ${message.status}`,
+    `command=${inlineLogValue(message.command)}`,
+  ];
+  if (message.exitCode !== undefined) parts.push(`exit_code=${message.exitCode ?? "unknown"}`);
+  if (message.error) {
+    const suffix = message.errorTruncated ? " (truncated)" : "";
+    parts.push(`error=${inlineLogValue(message.error)}${suffix}`);
+  }
+  if (message.output) {
+    const suffix = message.outputTruncated ? " (truncated)" : "";
+    parts.push(`output=${inlineLogValue(message.output)}${suffix}`);
+  }
+  return parts.join(" ");
+}
+
+function inlineLogValue(value: string): string {
+  return JSON.stringify(value.replace(/\s+/g, " ").trim());
+}
+
+async function delay(clock: ClockPort, ms: number, stopped: () => boolean): Promise<void> {
   const stepMs = Math.min(Math.max(ms, 25), 250);
   let remaining = ms;
   while (remaining > 0 && !stopped()) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(stepMs, remaining)));
+    await new Promise<void>((resolve) => clock.setTimeout(resolve, Math.min(stepMs, remaining)));
     remaining -= stepMs;
   }
 }

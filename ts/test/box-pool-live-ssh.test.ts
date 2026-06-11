@@ -5,10 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
 import { test, vi } from "vitest";
-import { withDerivedMaxInFlight } from "@symphony/domain";
+import { systemClock, withDerivedMaxInFlight } from "@symphony/domain";
 import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { systemClock } from "@symphony/ports";
 import { createWorkspaceForIssue, parseConfig, runSsh, shellEscape } from "@symphony/cli";
 import type { Issue } from "@symphony/cli";
 
@@ -34,9 +34,6 @@ import {
   type ProvisionRequest,
   type TeardownReason,
 } from "../packages/worker-box-pool/dist/index.js";
-
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir } from "./helpers.js";
 
 const execFileAsync = promisify(execFile);
 const runLiveSsh = process.env.SYMPHONY_TS_RUN_LIVE_SSH_E2E === "1";

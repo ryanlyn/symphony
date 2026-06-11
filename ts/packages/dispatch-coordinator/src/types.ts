@@ -97,7 +97,7 @@ export interface AcquireRunSlotRequest {
   /**
    * Whether THIS run actually consumes a per-run MCP endpoint over the reverse
    * tunnel. Only the ACP/Claude executor reads the threaded `mcpEndpoint` (its
-   * `/claude-mcp` server is reached through the reverse tunnel); the Codex/appserver
+   * `/mcp` server is reached through the reverse tunnel); the Codex/appserver
    * executor runs its dynamic tools IN-PROCESS and IGNORES the endpoint entirely.
    *
    * When `false`, the coordinator SKIPS `mcpEndpointManager.open` AND the

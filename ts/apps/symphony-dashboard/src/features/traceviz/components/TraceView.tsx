@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ArrowLeft, Archive } from "lucide-react";
+import { ArrowLeft, Archive, ArrowUp } from "lucide-react";
 
 import type { DisplayEvent, Stats } from "../api/types";
 import { useTraceData } from "../hooks/useTraceData";
@@ -15,8 +15,17 @@ interface TraceViewProps {
 }
 
 export function TraceView({ issueId, onBack }: TraceViewProps) {
-  const { tickets, selectedTicketId, setSelectedTicketId, events, stats, loading, traceExists } =
-    useTraceData();
+  const {
+    tickets,
+    selectedTicketId,
+    setSelectedTicketId,
+    events,
+    stats,
+    loading,
+    traceExists,
+    hasNewUpdates,
+    scrollToTop,
+  } = useTraceData();
 
   useEffect(() => {
     if (issueId && selectedTicketId !== issueId) {
@@ -56,6 +65,17 @@ export function TraceView({ issueId, onBack }: TraceViewProps) {
           </>
         )}
       </div>
+
+      {/* New updates indicator */}
+      {hasNewUpdates && (
+        <button
+          onClick={scrollToTop}
+          className="fixed left-1/2 top-16 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-accent-purple/30 bg-background/95 px-3 py-1.5 text-xs font-medium text-accent-purple shadow-lg shadow-black/20 backdrop-blur-sm transition-colors hover:border-accent-purple/50 hover:bg-accent-purple/10"
+        >
+          <ArrowUp className="h-3 w-3" />
+          New updates available
+        </button>
+      )}
 
       {/* Trace content */}
       <div aria-live="polite" aria-atomic="true">

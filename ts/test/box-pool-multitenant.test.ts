@@ -47,9 +47,8 @@ import type { BoxPool, McpEndpointManager } from "@symphony/cli";
 import type { BoxPoolSettings } from "@symphony/domain";
 import { withDerivedMaxInFlight } from "@symphony/domain";
 import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
-
-import { assert } from "./assert.js";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 // ---------------------------------------------------------------------------
 // A controllable clock: `now`/`advance` drive the pool's spend/ttl/idle logical
@@ -154,7 +153,7 @@ function makeDistinctPortManager(
       nextPort += 1;
       const released = { count: 0 };
       const endpoint: FakeEndpoint = {
-        url: `http://127.0.0.1:${remotePort}/claude-mcp`,
+        url: `http://127.0.0.1:${remotePort}/mcp`,
         token: `tok-${key}`,
         acpServer: () => ({ type: "http", name: "symphony_linear", url: "", headers: [] }),
         remotePort,

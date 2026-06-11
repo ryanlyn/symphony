@@ -469,7 +469,7 @@ export function createDispatchCoordinator(
       // run that needs none must SKIP the open AND the tunnel reservation/ceiling
       // entirely (it would otherwise be SKIPPED by an open failure / port-forward
       // restriction / maxConcurrentTunnels for an endpoint it never uses). Only
-      // ACP/Claude reads `/claude-mcp` over the reverse tunnel. Defaults to `true`
+      // ACP/Claude reads `/mcp` over the reverse tunnel. Defaults to `true`
       // (the existing ACP behaviour) when a legacy caller omits the field.
       const needsMcpEndpoint = req.needsMcpEndpoint ?? true;
       const wouldOpenTunnel =

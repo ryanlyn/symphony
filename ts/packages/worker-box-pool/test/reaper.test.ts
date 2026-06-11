@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { createBoxPool } from "../src/pool.js";
 import { FakeBoxProvider } from "../src/providers/fake.js";
 import { runReaperTick, type ReaperInternals } from "../src/reaper.js";

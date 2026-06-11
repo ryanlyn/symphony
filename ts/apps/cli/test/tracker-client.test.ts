@@ -2,17 +2,26 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { LocalTrackerClient } from "@symphony/local-tracker";
-import { test } from "vitest";
+import { beforeAll, test } from "vitest";
 import { parse as parseYaml } from "yaml";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
+import { registerBuiltinBackends } from "../src/daemon.js";
 
 import {
   createTrackerClient,
+  JiraClient,
+  JiraMcpClient,
   memoryIssuesFromEnv,
   MemoryTrackerClient,
   parseConfig,
 } from "@symphony/cli";
+
+// createTrackerClient resolves the configured kind through the process-default tracker
+// registry, so populate it the same way the CLI entrypoints do.
+beforeAll(() => {
+  registerBuiltinBackends();
+});
 
 function frontmatter(raw: string): Record<string, unknown> {
   const end = raw.indexOf("\n---", 3);
@@ -73,6 +82,42 @@ test("tracker factory selects memory adapter from workflow settings and JSON env
   );
 });
 
+test("tracker factory selects Jira adapters from workflow settings", () => {
+  const jira = parseConfig(
+    {
+      tracker: {
+        kind: "jira",
+        base_url: "https://example.atlassian.net",
+        email: "bot@example.com",
+        api_key: "jira-token",
+        project_keys: ["ENG"],
+      },
+    },
+    {},
+  );
+  assert.ok(createTrackerClient(jira) instanceof JiraClient);
+
+  const jiraMcp = parseConfig(
+    {
+      tracker: {
+        kind: "jira-mcp",
+        project_keys: ["ENG"],
+        mcp: { url: "http://127.0.0.1:5123/mcp" },
+      },
+    },
+    {},
+  );
+  assert.ok(createTrackerClient(jiraMcp) instanceof JiraMcpClient);
+});
+
+test("tracker factory rejects unregistered tracker kinds with the known kinds", () => {
+  const settings = parseConfig({ tracker: { kind: "github" } }, {});
+  assert.throws(
+    () => createTrackerClient(settings),
+    /unsupported tracker\.kind: github \(known kinds: jira, jira-mcp, linear, local, memory\)/,
+  );
+});
+
 test("tracker factory selects local adapter from the workflow-local fixture", async () => {
   const raw = await readFile(
     path.join(import.meta.dirname, "../../../test/fixtures/workflow-local.md"),
@@ -87,7 +132,7 @@ test("shipped WORKFLOW.local.md selects a local tracker client with a real playb
   const raw = await readFile(path.join(import.meta.dirname, "../../../WORKFLOW.local.md"), "utf8");
   const settings = parseConfig(frontmatter(raw), {});
   assert.equal(settings.tracker.kind, "local");
-  assert.equal(settings.tracker.path, ".symphony/local/symphony");
+  assert.equal(settings.tracker.options.path, ".symphony/local/symphony");
   assert.ok(createTrackerClient(settings) instanceof LocalTrackerClient);
 
   const prose = body(raw);

@@ -1,7 +1,6 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { parseWorkflowContent } from "@symphony/workflow";
 

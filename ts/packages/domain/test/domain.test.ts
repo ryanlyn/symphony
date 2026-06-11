@@ -1,6 +1,5 @@
+import { assert } from "@symphony/test-utils";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
 
 import { PROVIDER_KINDS, withDerivedMaxInFlight } from "@symphony/domain";
 import type {

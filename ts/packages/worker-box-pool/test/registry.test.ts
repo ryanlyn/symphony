@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, test } from "vitest";
 import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { systemClock } from "@symphony/ports";
+import { systemClock } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { clearBoxProviderRegistry, registerBoxProvider, resolveProvider } from "../src/registry.js";
 import type { BoxProvider, ProviderDeps } from "../src/types.js";
 

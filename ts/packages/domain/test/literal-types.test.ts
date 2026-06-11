@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES, RUNTIME_EVENT_TYPES } from "@symphony/cli";
 import type { AgentUpdate, CodexSettings, Issue, RuntimeEvent } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 const codexSettingsFixture: CodexSettings = {
   command: "codex-acp",
@@ -98,7 +97,7 @@ test("typed fixture values are accepted by their respective runtime arrays", () 
   // Exhaustiveness: verify array lengths match expected union member counts.
   // If a value is added to or removed from the array without updating the type,
   // the length assertion fails, catching drift that single-value includes checks miss.
-  assert.equal(AGENT_UPDATE_TYPES.length, 18, "AGENT_UPDATE_TYPES length mismatch");
+  assert.equal(AGENT_UPDATE_TYPES.length, 19, "AGENT_UPDATE_TYPES length mismatch");
   assert.equal(ISSUE_STATE_TYPES.length, 6, "ISSUE_STATE_TYPES length mismatch");
   // RUNTIME_EVENT_TYPES = AGENT_UPDATE_TYPES + runtime-only entries
   assert.equal(

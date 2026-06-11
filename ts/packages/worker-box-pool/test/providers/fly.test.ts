@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
 import { parseSshTarget, sshArgs, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../../test/assert.js";
 import { runProviderConformanceSuite } from "../../src/conformance.js";
 import { FlyBoxProvider, type FlyFetch, type FlyFetchResponse } from "../../src/providers/fly.js";
 import {

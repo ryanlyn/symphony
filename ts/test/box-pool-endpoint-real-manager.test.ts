@@ -26,13 +26,12 @@ import { parseConfig } from "@symphony/config";
 import type { BoxPoolSettings } from "@symphony/domain";
 import type { AgentMcpEndpointLease } from "@symphony/mcp";
 import type { AcquireResult, BoxLease, BoxPool, BoxPoolSnapshot, Settings } from "@symphony/cli";
+import { assert } from "@symphony/test-utils";
 
 import {
   createDispatchCoordinator,
   createPerRunEndpointManager,
 } from "../packages/dispatch-coordinator/dist/index.js";
-
-import { assert } from "./assert.js";
 
 // The REAL coordinator + per-run endpoint manager. `@symphony/dispatch-coordinator`
 // is a transitive dep (not declared at the workspace root), so it is imported via
@@ -50,7 +49,7 @@ import { assert } from "./assert.js";
 
 function makeFakeEndpoint(port: number): AgentMcpEndpointLease & { readonly localPort: number } {
   return {
-    url: `http://127.0.0.1:46000/claude-mcp#${port}`,
+    url: `http://127.0.0.1:46000/mcp#${port}`,
     token: `tok-${port}`,
     acpServer: () => ({ type: "http", name: "symphony_linear", url: "", headers: [] }),
     localPort: port,

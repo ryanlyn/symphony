@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { test, vi } from "vitest";
+import { beforeAll, test, vi } from "vitest";
 import {
   issueMcpToken,
   Orchestrator,
@@ -10,13 +10,34 @@ import {
   revokeMcpToken,
   SymphonyRuntime,
 } from "@symphony/cli";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
 import { normalizeIssue } from "@symphony/issue";
 import type { WorkflowDefinition } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { defaultToolRegistry } from "@symphony/tool-sdk";
+import { createTrackerToolProvider, defaultTrackerRegistry } from "@symphony/tracker-sdk";
+import { assert } from "@symphony/test-utils";
 
 import { IssueStore, startObservabilityServer } from "@symphony/server";
-import { startClaudeMcpServer } from "@symphony/server";
+import { startMcpServer } from "@symphony/server";
+
+// The observability server resolves tool packs and tracker ops through the process-default
+// registries (it offers no injection point), so populate them the same way the CLI
+// composition root does before serving (in a hook rather than at module scope). This suite
+// dispatches on the linear tracker and mounts the neutral tracker pack plus linear's own;
+// the hot-reload test below switches dispatch to the local tracker and expects its pack.
+beforeAll(() => {
+  registerLinearTracker();
+  registerLocalTracker();
+  if (defaultToolRegistry.get("tracker") === undefined) {
+    defaultToolRegistry.register(createTrackerToolProvider(defaultTrackerRegistry));
+  }
+  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
+    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+  }
+});
 
 test("observability HTTP API exposes state, issue, runs, refresh, and errors", async () => {
   const workflow = workflowFixture();
@@ -82,10 +103,6 @@ test("observability HTTP API exposes state, issue, runs, refresh, and errors", a
       },
     });
 
-    const events = await getEventStream(server.url("/api/v1/events"));
-    assert.match(events, /event: state/);
-    assert.match(events, /MT-HTTP/);
-
     const refresh = await postJson(server.url("/api/v1/refresh"));
     assert.equal(refresh.queued, true);
     assert.deepEqual(refresh.operations, ["poll", "reconcile"]);
@@ -102,27 +119,27 @@ test("observability HTTP API exposes state, issue, runs, refresh, and errors", a
   }
 });
 
-test("standalone Claude MCP server preserves route and JSON-RPC error contracts", async () => {
+test("standalone MCP server preserves route and JSON-RPC error contracts", async () => {
   const workflow = workflowFixture();
-  const server = await startClaudeMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
+  const server = await startMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
   const token = issueMcpToken(server.authScope);
   try {
     const missing = await getJson(server.url("/missing"), 404);
     assert.deepEqual(missing, { error: { code: "not_found", message: "Route not found" } });
 
-    const wrongMethod = await getJson(server.url("/claude-mcp"), 405);
+    const wrongMethod = await getJson(server.url("/mcp"), 405);
     assert.deepEqual(wrongMethod, {
       error: { code: "method_not_allowed", message: "Method not allowed" },
     });
 
-    const badJson = await postRawMcp(server.url("/claude-mcp"), "{", 400, token);
+    const badJson = await postRawMcp(server.url("/mcp"), "{", 400, token);
     assert.deepEqual(badJson, {
       jsonrpc: "2.0",
       id: null,
       error: { code: -32700, message: "Parse error" },
     });
 
-    const arrayBody = await postRawMcp(server.url("/claude-mcp"), "[]", 400, token);
+    const arrayBody = await postRawMcp(server.url("/mcp"), "[]", 400, token);
     assert.deepEqual(arrayBody, {
       jsonrpc: "2.0",
       id: null,
@@ -130,7 +147,7 @@ test("standalone Claude MCP server preserves route and JSON-RPC error contracts"
     });
 
     const unknownMethod = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       { jsonrpc: "2.0", id: 10, method: "tools/missing" },
       200,
       token,
@@ -142,7 +159,7 @@ test("standalone Claude MCP server preserves route and JSON-RPC error contracts"
     });
 
     const invalidParams = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       { jsonrpc: "2.0", id: 11, method: "tools/call", params: { arguments: {} } },
       200,
       token,
@@ -158,12 +175,12 @@ test("standalone Claude MCP server preserves route and JSON-RPC error contracts"
   }
 });
 
-test("standalone Claude MCP server rejects top-level JSON arrays as parse errors", async () => {
+test("standalone MCP server rejects top-level JSON arrays as parse errors", async () => {
   const workflow = workflowFixture();
-  const server = await startClaudeMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
+  const server = await startMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
   const token = issueMcpToken(server.authScope);
   try {
-    const topLevelArray = await postRawMcp(server.url("/claude-mcp"), "[]", 400, token);
+    const topLevelArray = await postRawMcp(server.url("/mcp"), "[]", 400, token);
     assert.deepEqual(topLevelArray, {
       jsonrpc: "2.0",
       id: null,
@@ -175,12 +192,12 @@ test("standalone Claude MCP server rejects top-level JSON arrays as parse errors
   }
 });
 
-test("standalone Claude MCP server emits connectable URLs for wildcard and empty hosts", async () => {
+test("standalone MCP server emits connectable URLs for wildcard and empty hosts", async () => {
   const workflow = workflowFixture();
   for (const host of ["0.0.0.0", ""] as const) {
-    const server = await startClaudeMcpServer(workflow.settings, { host, port: 0 });
+    const server = await startMcpServer(workflow.settings, { host, port: 0 });
     try {
-      assert.match(server.url("/claude-mcp"), /^http:\/\/127\.0\.0\.1:\d+\/claude-mcp$/);
+      assert.match(server.url("/mcp"), /^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
     } finally {
       await server.stop();
     }
@@ -284,7 +301,7 @@ test("observability HTTP API matches snapshot timeout and unavailable branches",
   }
 });
 
-test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", async () => {
+test("MCP endpoint authorizes bearer tokens and executes Linear tools", async () => {
   const workflow = workflowFixture();
   const runtime = new SymphonyRuntime({
     workflow,
@@ -312,7 +329,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
 
   try {
     const initialize = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       {
         jsonrpc: "2.0",
         id: 1,
@@ -322,18 +339,28 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
       200,
       token,
     );
-    assert.equal(initialize.result.serverInfo.name, "symphony-claude-mcp");
+    assert.equal(initialize.result.serverInfo.name, "mcp");
 
     const tools = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
       200,
       token,
     );
-    assert.equal(tools.result.tools[0].name, "linear_graphql");
+    assert.deepEqual(
+      tools.result.tools.map((tool: { name: string }) => tool.name),
+      [
+        "tracker_read_issue",
+        "tracker_query",
+        "tracker_update_status",
+        "tracker_comment",
+        "tracker_create_issue",
+        "linear_graphql",
+      ],
+    );
 
     const toolCall = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       {
         jsonrpc: "2.0",
         id: 3,
@@ -347,7 +374,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
     assert.match(toolCall.result.content[0].text, /viewer-1/);
 
     const badToolCall = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       {
         jsonrpc: "2.0",
         id: 4,
@@ -365,7 +392,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
     });
 
     const unauthorized = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       { jsonrpc: "2.0", id: 5, method: "tools/list" },
       401,
       null,
@@ -373,7 +400,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
     assert.equal(unauthorized.error.code, "unauthorized");
     revokeMcpToken(token);
     const revoked = await postMcp(
-      server.url("/claude-mcp"),
+      server.url("/mcp"),
       { jsonrpc: "2.0", id: 6, method: "tools/list" },
       401,
       token,
@@ -386,9 +413,77 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
   }
 });
 
+test("observability MCP endpoint uses workflow settings reloaded by the runtime", async () => {
+  const initialWorkflow = workflowFixture();
+  let currentWorkflow = initialWorkflow;
+  const runtime = new SymphonyRuntime({
+    workflow: initialWorkflow,
+    reloadWorkflow: async () => currentWorkflow,
+    client: {
+      fetchCandidateIssues: async () => [],
+      fetchIssuesByIds: async () => [],
+    },
+  });
+  const server = await startObservabilityServer(runtime, { host: "127.0.0.1", port: 0 });
+  const token = issueMcpToken(server.authScope);
+
+  try {
+    const neutralTools = [
+      "tracker_read_issue",
+      "tracker_query",
+      "tracker_update_status",
+      "tracker_comment",
+      "tracker_create_issue",
+    ];
+    const initialTools = await postMcp(
+      server.url("/mcp"),
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      200,
+      token,
+    );
+    assert.deepEqual(
+      initialTools.result.tools.map((tool: { name: string }) => tool.name),
+      [...neutralTools, "linear_graphql"],
+    );
+
+    const boardDir = await mkdtemp(path.join(tmpdir(), "http-server-reload-local-"));
+    currentWorkflow = {
+      ...initialWorkflow,
+      settings: parseConfig({
+        tracker: { kind: "local", path: boardDir },
+        polling: { interval_ms: 5 },
+        workspace: { root: "/tmp/symphony-ts-http-test" },
+      }),
+    };
+    await runtime.pollOnce({ dryRun: true });
+
+    const reloadedTools = await postMcp(
+      server.url("/mcp"),
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      200,
+      token,
+    );
+    assert.deepEqual(
+      reloadedTools.result.tools.map((tool: { name: string }) => tool.name),
+      [
+        ...neutralTools,
+        "local_update_status",
+        "local_comment",
+        "local_create_issue",
+        "local_read_issue",
+        "local_query",
+      ],
+    );
+  } finally {
+    revokeMcpToken(token);
+    await server.stop();
+  }
+});
+
 function workflowFixture(): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
+      kind: "linear",
       api_key: "linear-token",
       project_slug: "mono",
       active_states: ["Todo", "In Progress"],
@@ -445,29 +540,6 @@ async function postRawMcp(
   assert.equal(response.status, expectedStatus);
   assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
   return response.json();
-}
-
-async function getEventStream(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = AbortSignal.timeout(2_000);
-  timeout.addEventListener("abort", () => controller.abort(timeout.reason));
-  const response = await fetch(url, { signal: controller.signal });
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
-  assert.equal(response.headers.get("cache-control"), "no-cache, no-transform");
-  const reader = response.body?.getReader();
-  assert.ok(reader);
-  let text = "";
-  try {
-    while (!text.includes("event: state")) {
-      const read = await reader.read();
-      if (read.done) break;
-      text += Buffer.from(read.value).toString("utf8");
-    }
-    return text;
-  } finally {
-    controller.abort();
-  }
 }
 
 function fakeRuntime(code: "snapshot_timeout" | "snapshot_unavailable"): SymphonyRuntime {

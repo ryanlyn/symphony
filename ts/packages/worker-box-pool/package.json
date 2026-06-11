@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@symphony/domain": "workspace:*",
-    "@symphony/ports": "workspace:*",
     "@symphony/ssh": "workspace:*"
+  },
+  "devDependencies": {
+    "@symphony/test-utils": "workspace:*"
   }
 }

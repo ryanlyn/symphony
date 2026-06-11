@@ -8,11 +8,11 @@ import {
 } from "@symphony/domain";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
-import { startClaudeMcpServer, type ObservabilityServerHandle } from "./server.js";
+import { startMcpServer, type ObservabilityServerHandle } from "./server.js";
 import { issueMcpToken, mcpAuthScopeForSettings, revokeMcpToken } from "./auth.js";
 
 export function trackerMcpServerName(kind: TrackerKind | undefined): string {
-  return `symphony_${kind ?? "linear"}`;
+  return `symphony_${(kind ?? "tracker").replace(/[^A-Za-z0-9_]/g, "_")}`;
 }
 
 export interface AgentMcpEndpointLease {
@@ -45,7 +45,7 @@ interface IssuedMcpToken {
   token: string;
 }
 
-const mcpPath = "/claude-mcp";
+const mcpPath = "/mcp";
 const configuredMcpProbeId = "symphony-configured-mcp-probe";
 const localMcpServers = new Map<string, LocalMcpServerEntry>();
 const localMcpServerLocks = new Map<string, Promise<void>>();
@@ -228,7 +228,7 @@ async function ensureLocalMcpServer(
         return { key, handle: existing.handle };
       }
       if (await configuredMcpServerReachable(settings, configuredToken.token)) return null;
-      const handle = await startClaudeMcpServer(settings, {
+      const handle = await startMcpServer(settings, {
         host: serverHost,
         port: configuredPort,
         authScope: identity,
@@ -238,7 +238,7 @@ async function ensureLocalMcpServer(
     });
   }
 
-  const handle = await startClaudeMcpServer(settings, { host: serverHost, port: 0 });
+  const handle = await startMcpServer(settings, { host: serverHost, port: 0 });
   return { key: null, handle };
 }
 

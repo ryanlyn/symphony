@@ -1,7 +1,6 @@
 import { test } from "vitest";
 import { issueMcpToken, revokeMcpToken, validMcpToken } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("issueMcpToken — returns a unique, non-empty cryptographically strong string", () => {
   const tokens: string[] = [];

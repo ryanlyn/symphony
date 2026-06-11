@@ -42,6 +42,7 @@ import EventEmitter from "node:events";
 import { createServer } from "node:net";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
+import { assert } from "@symphony/test-utils";
 import { afterEach, beforeEach, test, vi } from "vitest";
 import { startReverseTunnel } from "@symphony/ssh";
 import { parseConfig } from "@symphony/config";
@@ -62,8 +63,6 @@ import type {
   McpEndpointManager,
   Settings,
 } from "@symphony/cli";
-
-import { assert } from "./assert.js";
 
 // The reverse-tunnel child is the ONE seam we replace: a fake EventEmitter whose
 // `kill()` is observable, so a surviving (un-killed) child is a leaked ssh -N.
