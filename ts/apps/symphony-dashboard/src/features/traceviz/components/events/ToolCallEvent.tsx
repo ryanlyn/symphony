@@ -10,8 +10,13 @@ interface ToolCallEventProps {
   event: ToolCallEventType;
 }
 
+function hasDisplayableInput(input: ToolCallEventType["input"]): boolean {
+  return Object.keys(input).length > 0;
+}
+
 export function ToolCallEvent({ event }: ToolCallEventProps) {
   const [expanded, setExpanded] = useState(false);
+  const hasInput = hasDisplayableInput(event.input);
   const toggleExpanded = () => setExpanded((value) => !value);
   const handleToggleKeyDown = (keyboardEvent: KeyboardEvent<HTMLDivElement>) => {
     if (!isActivationKey(keyboardEvent.key)) return;
@@ -76,12 +81,14 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
         )}
       >
         <div className="space-y-2 pl-6">
-          <div>
-            <span className="text-xs font-medium text-muted">Input</span>
-            <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-background p-2 text-xs font-mono text-foreground/80">
-              {JSON.stringify(event.input, null, 2)}
-            </pre>
-          </div>
+          {hasInput && (
+            <div>
+              <span className="text-xs font-medium text-muted">Input</span>
+              <pre className="mt-1 max-h-64 overflow-auto rounded-md bg-background p-2 text-xs font-mono text-foreground/80">
+                {JSON.stringify(event.input, null, 2)}
+              </pre>
+            </div>
+          )}
           {event.output != null && (
             <div>
               <span className="text-xs font-medium text-muted">Output</span>
