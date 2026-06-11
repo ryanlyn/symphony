@@ -1,7 +1,6 @@
 import { test, vi } from "vitest";
 import { executeTool, parseConfig, toolSpecs } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 test("linear_graphql tool validates name, input, and API key before network", async () => {
   const settings = parseConfig({ tracker: { project_slug: "mono" } }, {});
@@ -17,7 +16,14 @@ test("linear_graphql tool validates name, input, and API key before network", as
     result: {
       error: {
         message: 'Unsupported tool: "unknown".',
-        supportedTools: ["linear_graphql"],
+        supportedTools: [
+          "tracker_read_issue",
+          "tracker_query",
+          "tracker_update_status",
+          "tracker_comment",
+          "tracker_create_issue",
+          "linear_graphql",
+        ],
       },
     },
   });
@@ -126,7 +132,8 @@ test("linear_graphql tool accepts null variables and rejects blank queries", asy
 });
 
 test("linear_graphql tool advertises the expected input schema", () => {
-  assert.deepEqual(toolSpecs(linearSettings())[0]?.inputSchema, {
+  const spec = toolSpecs(linearSettings()).find((tool) => tool.name === "linear_graphql");
+  assert.deepEqual(spec?.inputSchema, {
     type: "object",
     additionalProperties: false,
     required: ["query"],

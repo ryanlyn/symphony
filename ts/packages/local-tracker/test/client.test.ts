@@ -4,8 +4,7 @@ import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { BoardStore, LocalTrackerClient } from "@symphony/local-tracker";
 

@@ -1,7 +1,6 @@
 import { test, vi } from "vitest";
 import { parseConfig } from "@symphony/config";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { main, parseCliArgs, projectUrlForSettings } from "@symphony/cli";
 
@@ -97,6 +96,18 @@ test("CLI dashboard options derive project URL from tracker project slug", () =>
   assert.equal(
     projectUrlForSettings(parseConfig({ tracker: { project_slug: "mono dev" } })),
     "https://linear.app/project/mono%20dev/issues",
+  );
+  assert.equal(
+    projectUrlForSettings(
+      parseConfig({
+        tracker: {
+          kind: "jira",
+          base_url: "https://example.atlassian.net/",
+          project_keys: ["ENG"],
+        },
+      }),
+    ),
+    "https://example.atlassian.net/jira/software/c/projects/ENG/issues",
   );
   assert.equal(projectUrlForSettings(parseConfig()), undefined);
 });

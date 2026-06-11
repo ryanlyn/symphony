@@ -9,8 +9,7 @@ import {
   shouldDispatchIssue,
   slotKey,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return normalizeIssue({

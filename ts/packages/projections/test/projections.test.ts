@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import type { RuntimeEvent, RuntimeRunHistoryEntry } from "@symphony/runtime-events";
 import type { UsageTotals } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import type { RuntimeProjectionInput } from "@symphony/projections";
 import { ProjectionActor } from "@symphony/projections";

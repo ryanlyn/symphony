@@ -8,8 +8,8 @@ import type {
   Settings,
 } from "@symphony/domain";
 import { defaultSettings } from "@symphony/config";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
 import { runAgentAttempt, type RunAgentAttemptAdapters } from "../src/index.js";
 
 // ---------------------------------------------------------------------------

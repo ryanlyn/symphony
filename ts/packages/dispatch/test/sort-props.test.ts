@@ -2,8 +2,7 @@ import { test } from "vitest";
 import fc from "fast-check";
 import { sortForDispatch } from "@symphony/cli";
 import type { Issue, Priority } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 const arbSortableIssue = (): fc.Arbitrary<Issue> =>
   fc.record({

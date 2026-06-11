@@ -1,7 +1,6 @@
 import { beforeEach, test } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/ports";
-
-import { assert } from "../../../test/assert.js";
+import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 import { RetryScheduler } from "@symphony/retry-scheduler";
 import { RETRY_SCHEDULER_SYNC_DELAY_MS } from "@symphony/retry-scheduler";

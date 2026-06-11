@@ -1,8 +1,7 @@
 import path from "node:path";
 
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { DEFAULT_BOARD_DIR, resolveBoardDir } from "@symphony/local-tracker";
 

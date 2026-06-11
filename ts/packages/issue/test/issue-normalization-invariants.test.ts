@@ -1,8 +1,7 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
 import { ISSUE_STATE_TYPES } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { normalizeIssue } from "@symphony/issue";
 

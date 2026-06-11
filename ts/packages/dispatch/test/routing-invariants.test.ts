@@ -1,55 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import type { Issue, Settings } from "@symphony/domain";
-import { normalizeRouteName, defaultSettings } from "@symphony/config";
-
-import { assert } from "../../../test/assert.js";
+import { normalizeRouteName } from "@symphony/config";
+import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
 
 import { routeNames, routedToThisWorker } from "@symphony/dispatch";
-
-function makeSettings(
-  overrides: {
-    acceptUnrouted?: boolean;
-    onlyRoutes?: string[] | null;
-    routeLabelPrefix?: string;
-    activeStates?: string[];
-    terminalStates?: string[];
-    maxConcurrentAgents?: number;
-    ensembleSize?: number;
-  } = {},
-): Settings {
-  const s = defaultSettings();
-  s.tracker.dispatch.acceptUnrouted = overrides.acceptUnrouted ?? true;
-  s.tracker.dispatch.onlyRoutes = overrides.onlyRoutes ?? null;
-  s.tracker.dispatch.routeLabelPrefix = overrides.routeLabelPrefix ?? "Symphony:";
-  if (overrides.activeStates) s.tracker.activeStates = overrides.activeStates;
-  if (overrides.terminalStates) s.tracker.terminalStates = overrides.terminalStates;
-  if (overrides.maxConcurrentAgents !== undefined)
-    s.agent.maxConcurrentAgents = overrides.maxConcurrentAgents;
-  if (overrides.ensembleSize !== undefined) s.agent.ensembleSize = overrides.ensembleSize;
-  return s;
-}
-
-function issueWith(overrides: Partial<Issue>): Issue {
-  return {
-    id: "id-1",
-    identifier: "TEST-1",
-    title: "Test issue",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: 1,
-    createdAt: null,
-    updatedAt: null,
-    labels: [],
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-    ...overrides,
-  };
-}
 
 const arbRouteName = fc.oneof(
   fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim().length > 0),

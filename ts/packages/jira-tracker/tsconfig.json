@@ -6,8 +6,14 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.ts"
   ],
-  "references": []
+  "references": [
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../issue"
+    }
+  ]
 }

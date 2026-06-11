@@ -105,8 +105,20 @@ export function settingsForIssueState(settings: Settings, state: string): Settin
   const merged = cloneSettings(settings);
   if (override.agent) merged.agent = { ...merged.agent, ...override.agent };
   if (override.codex) merged.codex = { ...merged.codex, ...override.codex };
-  if (override.claude) merged.claude = { ...merged.claude, ...override.claude };
+  if (override.claude) merged.claude = mergeClaudeOverride(merged.claude, override.claude);
   applyStateBackendOverridesToAgentRecords(merged, override);
+  return merged;
+}
+
+function mergeClaudeOverride(
+  base: ClaudeSettings,
+  override: Partial<ClaudeSettings>,
+): ClaudeSettings {
+  const merged = { ...base, ...override };
+  // A model override re-pins the provider config unless the override supplies its own.
+  if (override.model !== undefined && override.providerConfig === undefined) {
+    merged.providerConfig = { ...base.providerConfig, model: merged.model };
+  }
   return merged;
 }
 
@@ -132,6 +144,17 @@ export function validateDispatchConfig(settings: Settings): void {
     if (!settings.tracker.path || settings.tracker.path.trim() === "") {
       throw new Error("tracker.path (board directory) is required for the local tracker");
     }
+  }
+  if (settings.tracker.kind === "jira") {
+    if (!settings.tracker.baseUrl) throw new Error("tracker.base_url is required for jira tracker");
+    if (!settings.tracker.email) throw new Error("tracker.email is required for jira tracker");
+    if (!settings.tracker.apiKey) throw new Error("tracker.api_key is required for jira tracker");
+    assertJiraScopeConfig(settings);
+  }
+  if (settings.tracker.kind === "jira-mcp") {
+    if (!settings.tracker.mcp?.url)
+      throw new Error("tracker.mcp.url is required for jira-mcp tracker");
+    assertJiraScopeConfig(settings);
   }
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
@@ -176,6 +199,14 @@ function assertValidLocalIdPrefix(prefix: string): void {
   }
 }
 
+function assertJiraScopeConfig(settings: Settings): void {
+  const hasJql = !!settings.tracker.jql?.trim();
+  const hasProjectKeys = !!settings.tracker.projectKeys && settings.tracker.projectKeys.length > 0;
+  if (!hasJql && !hasProjectKeys) {
+    throw new Error("tracker.jql or tracker.project_keys is required for jira trackers");
+  }
+}
+
 function parseTracker(
   defaults: TrackerSettings,
   trackerRaw: TrackerRaw,
@@ -186,10 +217,15 @@ function parseTracker(
   const kind = kindUnspecified ? defaults.kind : trackerKindValue(kindRaw, "tracker.kind");
 
   const resolveLinearFallbacks = kindUnspecified || kind === "linear";
-  const apiKey = resolveConfiguredSecret(
-    trackerRaw.apiKey,
+  const resolveJiraFallbacks = kind === "jira" || kind === "jira-mcp";
+  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, apiKeyFallback(kind));
+  const baseUrl =
+    resolveEnv(trackerRaw.baseUrl ?? (resolveJiraFallbacks ? "$JIRA_BASE_URL" : ""), env) ||
+    undefined;
+  const email = resolveConfiguredSecret(
+    trackerRaw.email,
     env,
-    resolveLinearFallbacks ? "LINEAR_API_KEY" : undefined,
+    resolveJiraFallbacks ? "JIRA_EMAIL" : undefined,
   );
   const projectSlug = resolveEnv(trackerRaw.projectSlug ?? "", env) || undefined;
   const assignee = resolveConfiguredSecret(
@@ -202,21 +238,62 @@ function parseTracker(
 
   const projectSlugs = trackerRaw.projectSlugs?.length ? trackerRaw.projectSlugs : undefined;
   const projectLabels = trackerRaw.projectLabels?.length ? trackerRaw.projectLabels : undefined;
+  const projectKeys = trackerRaw.projectKeys?.length ? trackerRaw.projectKeys : undefined;
 
   return {
     ...defaults,
     kind,
     endpoint: trackerRaw.endpoint ?? defaults.endpoint,
+    baseUrl,
+    email,
     path: trackerRaw.path ?? defaults.path ?? ".symphony/local",
     idPrefix,
     apiKey,
     projectSlug,
     projectSlugs,
     projectLabels,
+    projectKeys,
+    jql: trackerRaw.jql ?? defaults.jql,
+    issueType: trackerRaw.issueType ?? defaults.issueType,
+    mcp: parseTrackerMcp(defaults.mcp, trackerRaw.mcp, env),
     assignee,
     activeStates: trackerRaw.activeStates ?? defaults.activeStates,
     terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
     dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
+  };
+}
+
+function apiKeyFallback(kind: TrackerSettings["kind"]): string | undefined {
+  if (kind === undefined || kind === "linear") return "LINEAR_API_KEY";
+  if (kind === "jira") return "JIRA_API_KEY";
+  return undefined;
+}
+
+function parseTrackerMcp(
+  defaults: TrackerSettings["mcp"],
+  raw: TrackerRaw["mcp"],
+  env: NodeJS.ProcessEnv,
+): TrackerSettings["mcp"] {
+  if (!raw && !defaults) return undefined;
+  const source = raw ?? {};
+  return {
+    ...(defaults ?? {}),
+    ...(source.url !== undefined ? { url: resolveEnv(source.url, env) || undefined } : {}),
+    ...(source.token !== undefined
+      ? { token: resolveConfiguredSecret(source.token, env) }
+      : defaults?.token !== undefined
+        ? { token: defaults.token }
+        : {}),
+    ...(source.headers !== undefined
+      ? { headers: { ...source.headers } }
+      : defaults?.headers !== undefined
+        ? { headers: { ...defaults.headers } }
+        : {}),
+    ...(source.tools !== undefined
+      ? { tools: { ...source.tools } }
+      : defaults?.tools !== undefined
+        ? { tools: { ...defaults.tools } }
+        : {}),
   };
 }
 
@@ -408,6 +485,7 @@ function applyKnownAgentRecords(settings: Settings): void {
   if (claude?.executor === "acp") {
     settings.claude = {
       command: claude.bridgeCommand,
+      model: settings.claude.model,
       turnTimeoutMs: claude.turnTimeoutMs,
       stallTimeoutMs: claude.stallTimeoutMs,
       strictMcpConfig: claude.strictMcpConfig ?? settings.claude.strictMcpConfig,
@@ -425,12 +503,19 @@ function parseCodex(defaults: CodexSettings, codexRaw: CodexRaw): CodexSettings 
 }
 
 function parseClaude(defaults: ClaudeSettings, claudeRaw: ClaudeRaw): ClaudeSettings {
+  const model = claudeRaw.model ?? defaults.model;
+  // The model setting pins the `model` key of the provider config; an explicit `model` key
+  // inside a configured provider config takes precedence.
+  const providerConfig = claudeRaw.providerConfig
+    ? { model, ...claudeRaw.providerConfig }
+    : { ...defaults.providerConfig, model };
   return {
     command: claudeRaw.command ?? defaults.command,
+    model,
     turnTimeoutMs: claudeRaw.turnTimeoutMs ?? defaults.turnTimeoutMs,
     stallTimeoutMs: claudeRaw.stallTimeoutMs ?? defaults.stallTimeoutMs,
     strictMcpConfig: claudeRaw.strictMcpConfig ?? defaults.strictMcpConfig,
-    providerConfig: claudeRaw.providerConfig ?? defaults.providerConfig,
+    providerConfig,
   };
 }
 
@@ -472,6 +557,7 @@ function parsePartialCodex(raw: Partial<CodexRaw>): Partial<CodexSettings> {
 function parsePartialClaude(raw: Partial<ClaudeRaw>): Partial<ClaudeSettings> {
   const next: Partial<ClaudeSettings> = {};
   if (raw.command !== undefined) next.command = raw.command;
+  if (raw.model !== undefined) next.model = raw.model;
   if (raw.strictMcpConfig !== undefined) next.strictMcpConfig = raw.strictMcpConfig;
   if (raw.turnTimeoutMs !== undefined) next.turnTimeoutMs = raw.turnTimeoutMs;
   if (raw.stallTimeoutMs !== undefined) next.stallTimeoutMs = raw.stallTimeoutMs;
@@ -535,7 +621,7 @@ function applyStateBackendOverridesToAgentRecords(
         ...(override.claude.strictMcpConfig !== undefined
           ? { strictMcpConfig: settings.claude.strictMcpConfig }
           : {}),
-        ...(override.claude.providerConfig !== undefined
+        ...(override.claude.providerConfig !== undefined || override.claude.model !== undefined
           ? { providerConfig: settings.claude.providerConfig }
           : {}),
       };
@@ -553,6 +639,16 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
     dispatch: { ...tracker.dispatch },
     activeStates: [...tracker.activeStates],
     terminalStates: [...tracker.terminalStates],
+    projectSlugs: tracker.projectSlugs ? [...tracker.projectSlugs] : undefined,
+    projectLabels: tracker.projectLabels ? [...tracker.projectLabels] : undefined,
+    projectKeys: tracker.projectKeys ? [...tracker.projectKeys] : undefined,
+    mcp: tracker.mcp
+      ? {
+          ...tracker.mcp,
+          headers: tracker.mcp.headers ? { ...tracker.mcp.headers } : undefined,
+          tools: tracker.mcp.tools ? { ...tracker.mcp.tools } : undefined,
+        }
+      : undefined,
   };
 }
 

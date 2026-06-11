@@ -15,7 +15,7 @@ import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
 import { workflowFileChanged, workflowStampsEqual } from "@symphony/workflow";
-import { durationMs, errorMessage } from "@symphony/domain";
+import { durationMs, errorMessage, systemClock, type ClockPort } from "@symphony/domain";
 import type {
   RuntimeAppStatus,
   RuntimeEventType,
@@ -73,6 +73,7 @@ export interface SymphonyRuntimeOptions {
         settings: WorkflowDefinition["settings"],
         issueIdentifier?: string | null,
         workerHost?: string | null,
+        issue?: Issue,
       ) => Promise<void>)
     | undefined;
   deleteResumeState?:
@@ -81,7 +82,7 @@ export interface SymphonyRuntimeOptions {
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
   onAgentUpdate?: ((issue: Issue, update: AgentUpdate) => void) | undefined;
   onIssueDispatched?: ((issue: Issue) => void) | undefined;
-  now?: (() => Date) | undefined;
+  clock?: ClockPort | undefined;
 }
 
 export interface RuntimeStartOptions {
@@ -169,9 +170,9 @@ export class SymphonyRuntime {
   private client: RuntimeTrackerClient;
   private readonly orchestrator: Orchestrator;
   private readonly runner: RuntimeRunner;
-  private readonly now: () => Date;
+  private readonly clock: ClockPort;
   private readonly listeners = new Set<(snapshot: RuntimeSnapshot) => void>();
-  private readonly retryScheduler = new RetryScheduler();
+  private readonly retryScheduler: RetryScheduler;
   private readonly inFlight = new Set<Promise<void>>();
   private stopped = false;
   private appStatus: RuntimeAppStatus = "starting";
@@ -192,9 +193,10 @@ export class SymphonyRuntime {
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
-    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings);
+    this.clock = input.clock ?? systemClock;
+    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings, this.clock);
     this.runner = input.runner ?? runAgentAttempt;
-    this.now = input.now ?? (() => new Date());
+    this.retryScheduler = new RetryScheduler(this.clock);
     this.appStatus = "idle";
   }
 
@@ -253,7 +255,7 @@ export class SymphonyRuntime {
       } catch {
         // Intentionally ignored: the error is already logged as poll_error.
       }
-      await delay(this.workflow.settings.polling.intervalMs, () => this.stopped);
+      await delay(this.clock, this.workflow.settings.polling.intervalMs, () => this.stopped);
     } while (!this.stopped);
   }
 
@@ -314,7 +316,7 @@ export class SymphonyRuntime {
   private async pollOnceUnlocked(options: PollOptions = {}): Promise<void> {
     this.pollStatus = "checking";
     this.appStatus = this.inFlight.size > 0 ? "running" : "polling";
-    this.lastPollAt = this.now().toISOString();
+    this.lastPollAt = this.clock.now().toISOString();
     this.lastError = null;
     this.emit();
 
@@ -346,7 +348,7 @@ export class SymphonyRuntime {
       this.pollStatus = "idle";
       this.appStatus = this.inFlight.size > 0 ? "running" : "idle";
       this.nextPollAt = new Date(
-        this.now().getTime() + this.workflow.settings.polling.intervalMs,
+        this.clock.now().getTime() + this.workflow.settings.polling.intervalMs,
       ).toISOString();
     } catch (error) {
       this.pollStatus = "error";
@@ -416,7 +418,7 @@ export class SymphonyRuntime {
     workerHost: string | null,
     handle: ActiveRunHandle,
   ): Promise<void> {
-    const startedAt = this.now().toISOString();
+    const startedAt = this.clock.now().toISOString();
     try {
       const result = await this.runner({
         issue,
@@ -453,8 +455,8 @@ export class SymphonyRuntime {
           resumeId: result.resumeId,
           workspacePath: result.workspace,
           startedAt,
-          endedAt: this.now().toISOString(),
-          durationMs: durationMs(startedAt, this.now().toISOString()),
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
         }),
       );
       this.addEvent("run_completed", `${issue.identifier} turns=${result.turnCount}`);
@@ -479,8 +481,8 @@ export class SymphonyRuntime {
           turnCount: entry?.turnCount ?? 0,
           runningEntry: entry,
           startedAt,
-          endedAt: this.now().toISOString(),
-          durationMs: durationMs(startedAt, this.now().toISOString()),
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
           error: errorMessage(error),
           fallbackLastEvent: "turn_failed",
         }),
@@ -564,6 +566,7 @@ export class SymphonyRuntime {
           this.workflow.settings,
           issue.identifier || tracked.get(issue.id)?.identifier,
           tracked.get(issue.id)?.workerHost,
+          issue,
         );
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
       } else {
@@ -591,7 +594,7 @@ export class SymphonyRuntime {
       const timeoutMs = agent.stallTimeoutMs;
       if (timeoutMs <= 0) continue;
       const lastActivity = currentEntry.lastAgentTimestamp ?? currentEntry.startedAt;
-      const elapsedMs = this.now().getTime() - lastActivity.getTime();
+      const elapsedMs = this.clock.now().getTime() - lastActivity.getTime();
       if (elapsedMs <= timeoutMs) continue;
 
       const key = slotKey(currentEntry.issue.id, currentEntry.slotIndex);
@@ -605,7 +608,7 @@ export class SymphonyRuntime {
       this.syncRetryTimer(entry.issue.id);
       activeHandle?.finishExternally();
       await this.invalidateResumeStateForRunningEntry(currentEntry, "stalled");
-      const endedAt = this.now().toISOString();
+      const endedAt = this.clock.now().toISOString();
       this.recordHistory(
         buildRunHistoryEntry({
           id: runId,
@@ -643,7 +646,12 @@ export class SymphonyRuntime {
       );
       let cleaned = 0;
       for (const issue of terminalIssues) {
-        await this.removeIssueWorkspaces(this.workflow.settings, issue.identifier);
+        await this.removeIssueWorkspaces(
+          this.workflow.settings,
+          issue.identifier,
+          undefined,
+          issue,
+        );
         cleaned += 1;
       }
       if (cleaned > 0) this.addEvent("startup_workspace_cleanup", `terminal=${cleaned}`);
@@ -750,7 +758,7 @@ export class SymphonyRuntime {
   }
 
   private addEvent(type: RuntimeEventType, message: string): void {
-    const event = { type, message, at: this.now().toISOString() };
+    const event = { type, message, at: this.clock.now().toISOString() };
     this.projection.recordEvent(event);
     void this.appendLogEvent(this.workflow.settings.logging.logFile, {
       at: event.at,
@@ -766,9 +774,10 @@ export class SymphonyRuntime {
     settings: WorkflowDefinition["settings"],
     issueIdentifier?: string | null,
     workerHost?: string | null,
+    issue?: Issue,
   ): Promise<void> {
     if (this.input.removeIssueWorkspaces) {
-      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost);
+      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost, issue);
     }
     throw new Error("runtime_adapter_missing: removeIssueWorkspaces");
   }
@@ -811,7 +820,7 @@ export class SymphonyRuntime {
       });
     }
     return {
-      requested_at: this.now().toISOString(),
+      requested_at: this.clock.now().toISOString(),
       queued: true,
       coalesced,
       operations: ["poll", "reconcile"],
@@ -923,11 +932,11 @@ function runtimeRetryEntry(entry: {
   };
 }
 
-async function delay(ms: number, stopped: () => boolean): Promise<void> {
+async function delay(clock: ClockPort, ms: number, stopped: () => boolean): Promise<void> {
   const stepMs = Math.min(Math.max(ms, 25), 250);
   let remaining = ms;
   while (remaining > 0 && !stopped()) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(stepMs, remaining)));
+    await new Promise<void>((resolve) => clock.setTimeout(resolve, Math.min(stepMs, remaining)));
     remaining -= stepMs;
   }
 }

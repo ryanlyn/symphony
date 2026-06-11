@@ -8,6 +8,7 @@ import {
   normalizeIssue,
   Orchestrator,
   parseConfig,
+  removeIssueWorkspaces,
   runtimeAdapters,
   slotKey,
 } from "@symphony/cli";
@@ -16,9 +17,7 @@ import {
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
 } from "@symphony/runtime-events";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,
@@ -1071,6 +1070,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
   const orchestrator = new Orchestrator(workflow.settings);
   assert.ok(orchestrator.claim(activeIssue));
   orchestrator.finish(activeIssue.id, 0, true);
+  const cleanupIssues: Array<Issue | undefined> = [];
 
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -1080,6 +1080,10 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
         fetchCandidateIssues: async () => [],
         fetchIssuesByIds: async (ids) => (ids.includes(activeIssue.id) ? [doneIssue] : []),
       },
+      removeIssueWorkspaces: async (settings, identifier, workerHost, issue) => {
+        cleanupIssues.push(issue);
+        await removeIssueWorkspaces(settings, identifier, workerHost, issue);
+      },
     }),
   );
 
@@ -1087,6 +1091,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
 
   assert.equal(orchestrator.snapshot().retrying.length, 0);
   await assert.rejects(() => fs.stat(workspace), /ENOENT/);
+  assert.equal(cleanupIssues[0]?.id, doneIssue.id);
   assert.equal(runtime.snapshot().recentEvents[0]?.type, "dry_run");
   assert.ok(runtime.snapshot().recentEvents.some((event) => event.type === "workspace_cleanup"));
 });

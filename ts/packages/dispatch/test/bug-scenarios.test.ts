@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import { issueHasOpenBlockers, normalizeIssue, parseConfig } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 function makeSettings(overrides: Record<string, unknown> = {}) {
   return parseConfig({

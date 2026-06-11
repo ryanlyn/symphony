@@ -1,7 +1,6 @@
 import { describe, test } from "vitest";
 import fc from "fast-check";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { MIN_RETRY_DELAY_MS, retryBackoffMs } from "@symphony/policies";
 

@@ -11,9 +11,7 @@ import {
   validateDispatchConfig,
   workflowFilePath,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import { assert, tempDir } from "@symphony/test-utils";
 
 test("config resolves env-backed Linear token and assignee", () => {
   const settings = parseConfig(
@@ -122,6 +120,56 @@ test("non-Linear tracker configs still resolve explicitly configured secrets", a
   assert.equal(settings.tracker.assignee, "resolved-secret");
 });
 
+test("jira tracker config resolves canonical env fallbacks", () => {
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira",
+        project_keys: ["ENG"],
+      },
+    },
+    {
+      JIRA_BASE_URL: "https://example.atlassian.net",
+      JIRA_EMAIL: "bot@example.com",
+      JIRA_API_KEY: "jira-token",
+    },
+  );
+
+  assert.equal(settings.tracker.baseUrl, "https://example.atlassian.net");
+  assert.equal(settings.tracker.email, "bot@example.com");
+  assert.equal(settings.tracker.apiKey, "jira-token");
+  assert.deepEqual(settings.tracker.projectKeys, ["ENG"]);
+  validateDispatchConfig(settings);
+});
+
+test("jira-mcp tracker config parses MCP settings and tool aliases", () => {
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira-mcp",
+        project_keys: ["ENG"],
+        mcp: {
+          url: "http://127.0.0.1:5123/mcp",
+          token: "$MCP_TOKEN",
+          tools: {
+            read_issue: "jira_get",
+            update_status: "jira_transition",
+            create_issue: "jira_create",
+          },
+        },
+      },
+    },
+    { MCP_TOKEN: "mcp-token" },
+  );
+
+  assert.equal(settings.tracker.mcp?.url, "http://127.0.0.1:5123/mcp");
+  assert.equal(settings.tracker.mcp?.token, "mcp-token");
+  assert.equal(settings.tracker.mcp?.tools?.readIssue, "jira_get");
+  assert.equal(settings.tracker.mcp?.tools?.updateStatus, "jira_transition");
+  assert.equal(settings.tracker.mcp?.tools?.createIssue, "jira_create");
+  validateDispatchConfig(settings);
+});
+
 test("config throws when op:// reference used but op CLI not installed", () => {
   assert.throws(
     () => parseConfig({ tracker: { api_key: "op://vault/item/field" } }, { PATH: "/nonexistent" }),
@@ -153,9 +201,69 @@ test("config defaults and validation match expected defaults", () => {
   const settings = parseConfig({}, {});
 
   assert.equal(settings.tracker.kind, undefined);
-  assert.deepEqual(settings.claude.providerConfig, { permissions: { defaultMode: "dontAsk" } });
+  assert.equal(settings.claude.model, "claude-opus-4-6[1m]");
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
   assert.equal(settings.observability.renderIntervalMs, 16);
   assert.throws(() => validateDispatchConfig(settings), /tracker.kind is required/);
+});
+
+test("claude.model overrides the pinned model in the provider config", () => {
+  const settings = parseConfig({ claude: { model: "claude-haiku-4-5" } });
+
+  assert.equal(settings.claude.model, "claude-haiku-4-5");
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+  assert.deepEqual(settings.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+});
+
+test("claude provider_config without a model key picks up claude.model", () => {
+  const settings = parseConfig({
+    claude: {
+      model: "claude-haiku-4-5",
+      provider_config: { permissions: { defaultMode: "acceptEdits" } },
+    },
+  });
+
+  assert.deepEqual(settings.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "acceptEdits" },
+  });
+});
+
+test("explicit claude provider_config model wins over claude.model", () => {
+  const settings = parseConfig({
+    claude: { provider_config: { model: "claude-sonnet-4-6" } },
+  });
+
+  assert.equal(settings.claude.model, "claude-opus-4-6[1m]");
+  assert.deepEqual(settings.claude.providerConfig, { model: "claude-sonnet-4-6" });
+});
+
+test("status override of claude.model re-pins the provider config", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      "In Review": { claude: { model: "claude-haiku-4-5" } },
+    },
+  });
+
+  const effective = settingsForIssueState(settings, "In Review");
+  assert.equal(effective.claude.model, "claude-haiku-4-5");
+  assert.deepEqual(effective.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+  assert.deepEqual(effective.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde paths", () => {
@@ -385,6 +493,7 @@ test("custom ACP agents default to cumulative usage unless using a known per-tur
   assert.equal(settings.agents.codex_alias.providerConfig, undefined);
   assert.equal(settings.agents.claude_alias.usageAccounting, "per-turn");
   assert.deepEqual(settings.agents.claude_alias.providerConfig, {
+    model: "claude-opus-4-6[1m]",
     permissions: { defaultMode: "dontAsk" },
   });
 });

@@ -3,27 +3,10 @@ import fc from "fast-check";
 import { ensembleSize, isTerminalState } from "@symphony/cli";
 import { ENSEMBLE_SIZE_MAX } from "@symphony/domain";
 import type { Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith as baseIssue } from "@symphony/test-utils";
 
 function issueWith(labels: string[]): Issue {
-  return {
-    id: "id-1",
-    identifier: "TEST-1",
-    title: "Test",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: null,
-    createdAt: null,
-    updatedAt: null,
-    labels,
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-  };
+  return baseIssue({ title: "Test", priority: null, labels });
 }
 
 test("INVARIANT: When a valid ensemble label with a positive integer is present, ensembleSize SHALL return that integer.", () => {

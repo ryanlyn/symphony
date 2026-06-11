@@ -11,9 +11,6 @@
   ],
   "references": [
     {
-      "path": "../child-process"
-    },
-    {
       "path": "../domain"
     },
     {

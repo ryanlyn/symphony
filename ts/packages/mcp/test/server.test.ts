@@ -1,7 +1,6 @@
 import { parseConfig } from "@symphony/config";
 import { test } from "vitest";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { claudeMcpResponse } from "@symphony/mcp";
 

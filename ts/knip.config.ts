@@ -15,6 +15,7 @@ const config: KnipConfig = {
         "@agentclientprotocol/codex-acp",
         "@symphony/dispatch",
         "@symphony/humanize",
+        "@symphony/jira-tracker",
         "@symphony/log-file",
         "@symphony/mcp",
         "@symphony/memory-tracker",

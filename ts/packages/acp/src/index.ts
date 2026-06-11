@@ -20,7 +20,6 @@ import {
   type WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
 import { acquireAgentMcpEndpoint, type AgentMcpEndpointLease } from "@symphony/mcp";
-import { stopChild, withTimeout } from "@symphony/child-process";
 import { actionForStopReason } from "@symphony/policies/stopReason";
 import { shellEscape, startSshProcess } from "@symphony/ssh";
 import { validateWorkspaceCwd } from "@symphony/workspace";
@@ -38,6 +37,8 @@ import {
   type UsageTokenUpdate,
   type UsageTotals,
 } from "@symphony/domain";
+
+import { stopChild, withTimeout } from "./childProcess.js";
 
 interface Session extends AgentSession {
   connection: ClientSideConnection;

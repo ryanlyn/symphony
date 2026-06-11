@@ -8,6 +8,9 @@ export interface DefaultSettingsOptions {
   tmpdir?: string | undefined;
 }
 
+/** Model id Claude sessions are pinned to unless overridden via `claude.model` or a provider config. */
+const DEFAULT_CLAUDE_MODEL = "claude-opus-4-6[1m]";
+
 export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings => {
   const tmpdir = options.tmpdir ?? "/tmp";
   const workspaceRoot = joinPath(tmpdir, "symphony_workspaces");
@@ -18,10 +21,12 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
   };
   const claude: ClaudeSettings = {
     command: "claude-agent-acp",
+    model: DEFAULT_CLAUDE_MODEL,
     turnTimeoutMs: 3_600_000,
     stallTimeoutMs: 300_000,
     strictMcpConfig: true,
     providerConfig: {
+      model: DEFAULT_CLAUDE_MODEL,
       permissions: { defaultMode: "dontAsk" },
     },
   };

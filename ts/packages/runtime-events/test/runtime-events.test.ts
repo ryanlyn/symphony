@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
 import type { DispatchBlockEntry } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@symphony/runtime-events";
 import type {

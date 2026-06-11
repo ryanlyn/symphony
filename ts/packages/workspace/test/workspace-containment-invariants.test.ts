@@ -1,8 +1,7 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
 import { safeIdentifier, workspacePath, ensureInsideRoot } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 /**
  * Arbitrary that generates non-empty identifiers whose safeIdentifier output

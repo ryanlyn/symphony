@@ -11,9 +11,7 @@ import {
   shellEscape,
 } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "../../../test/helpers.js";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
 let nextAcpServerPort = 45_000 + (process.pid % 1_000);
 
@@ -493,6 +491,26 @@ test("provider config rides session/new _meta as a claude settings overlay", asy
   const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
   assert.deepEqual(newSession?.params?._meta?.["symphony/settings"], providerConfig);
   await assert.rejects(() => fs.access(path.join(root, ".claude", "settings.local.json")));
+});
+
+test("provider config pins the default claude model via session _meta", async () => {
+  const root = await tempDir("symphony-ts-acp-provider-claude-model");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  const settings = acpSettings(root, fake, trace, "new", 5_000);
+  const executor = new Executor("claude");
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+  });
+  await session.stop();
+
+  const newSession = (await readTrace(trace)).find((event) => event.method === "newSession");
+  assert.deepEqual(newSession?.params?._meta?.["symphony/settings"], {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("provider config rides session/new _meta as codex config overrides", async () => {

@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import type { OpsStatePayload } from "@symphony/presenter";
+import type { TicketInfo, DisplayEvent, WsClientMessage } from "@symphony/traceviz-server";
 
-import type { WsMessage } from "../api/types";
+/** Messages pushed by the server over the `/ws` connection. */
+export type WsMessage =
+  | { type: "init"; tickets: TicketInfo[] }
+  | { type: "update"; issueId: string; tickets: TicketInfo[] }
+  | { type: "events"; issueId: string; events: DisplayEvent[] }
+  | { type: "events_append"; issueId: string; events: DisplayEvent[]; fromIndex: number }
+  | { type: "ops_state"; state: OpsStatePayload }
+  | { type: "ping" };
 
 type WsStatus = "connecting" | "connected" | "disconnected";
 
@@ -53,6 +62,12 @@ export function useWebSocket() {
     };
   }, []);
 
+  const sendMessage = useCallback((message: WsClientMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    }
+  }, []);
+
   useEffect(() => {
     disposedRef.current = false;
     connect();
@@ -65,5 +80,5 @@ export function useWebSocket() {
     };
   }, [connect]);
 
-  return { status, lastMessage };
+  return { status, lastMessage, sendMessage };
 }
