@@ -1,18 +1,18 @@
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { runSsh as defaultRunSsh, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
-
-import { POOL_OWNED_LABEL } from "../types.js";
+import { POOL_OWNED_LABEL, defaultBoxDriverRegistry } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  BoxDriverRegistry,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
+  DriverCapabilities,
+  DriverDeps,
   ProvisionRequest,
+  SshRunner,
   TeardownReason,
-} from "../types.js";
+} from "@symphony/box-sdk";
 
-const KIND: BoxPoolProvider = "e2b";
+const KIND = "e2b";
 
 /**
  * SSH-ADDRESSABLE TRANSPORT ASSUMPTION
@@ -25,7 +25,7 @@ const KIND: BoxPoolProvider = "e2b";
  * transport (e.g. the E2B command API) would require executor changes and is
  * OUT OF SCOPE; it is noted in the design as a future extension.
  */
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: true,
   ephemeral: true,
   usesLedger: true,
@@ -75,8 +75,9 @@ export interface E2BSandboxInfo {
 
 /**
  * The small surface this driver needs from the E2B SDK. It is INJECTED so the
- * package takes NO hard dependency on `@e2b/sdk`: the always-on tests pass a
- * fake, and a real deployment wires a thin adapter over the SDK.
+ * extension takes NO hard dependency on `@e2b/sdk`: the always-on tests pass a
+ * fake, and a real deployment wires a thin adapter over the SDK via
+ * `registerE2bBoxDriver(registries, { client })`.
  */
 export interface E2BSandboxClient {
   create(opts: {
@@ -89,13 +90,9 @@ export interface E2BSandboxClient {
   list(): Promise<E2BSandboxInfo[]>;
 }
 
-/** Injectable SSH transport so tests can spy on the probe argv/timeout. */
-type RunSsh = (host: string, command: string, options?: SshRunOptions) => Promise<SshRunResult>;
-
-/** Optional dependency overrides (test seams for the SDK client + SSH transport). */
-export interface E2BProviderOverrides {
+/** Optional dependency overrides (the injected E2B SDK client seam). */
+export interface E2BDriverOverrides {
   client?: E2BSandboxClient;
-  runSsh?: RunSsh;
 }
 
 /** Renders an SSH endpoint into the canonical `user@host:port` workerHost. */
@@ -125,21 +122,21 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * A {@link BoxProvider} backed by E2B sandboxes (kind `e2b`). It provisions an
+ * A {@link BoxDriver} backed by E2B sandboxes (kind `e2b`). It provisions an
  * ephemeral sandbox via an INJECTED {@link E2BSandboxClient} (no hard SDK dep),
  * tags it with a pool-owned marker label + the `boxId` so survivors can be
  * re-adopted across daemon restarts, and returns the sandbox's SSH endpoint as
  * the `workerHost`. `destroy` kills the sandbox (idempotent: an already-gone
  * sandbox is tolerated); `list` returns ONLY pool-owned running sandboxes;
  * `probe` runs `printf ready` over SSH against the advertised endpoint. As an
- * ephemeral cloud provider it is ledger-backed (`usesLedger: true`).
+ * ephemeral cloud driver it is ledger-backed (`usesLedger: true`).
  */
-export class E2BBoxProvider implements BoxProvider {
+export class E2BBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
   private readonly client: E2BSandboxClient;
-  private readonly runSsh: RunSsh;
+  private readonly runSsh: SshRunner;
   private readonly template: string | undefined;
 
   // Endpoints learned from sandboxes this instance created, keyed on sandboxId,
@@ -147,9 +144,9 @@ export class E2BBoxProvider implements BoxProvider {
   private readonly endpoints = new Map<string, E2BSshEndpoint>();
 
   constructor(
-    settings: BoxPoolSettings,
-    private readonly deps: ProviderDeps,
-    overrides: E2BProviderOverrides = {},
+    options: Readonly<Record<string, unknown>>,
+    private readonly deps: DriverDeps,
+    overrides: E2BDriverOverrides = {},
   ) {
     // No hard SDK dependency: with no injected client and no resolvable default,
     // fail loud rather than silently no-op.
@@ -157,8 +154,8 @@ export class E2BBoxProvider implements BoxProvider {
       throw new Error("e2b_client_unavailable");
     }
     this.client = overrides.client;
-    this.runSsh = overrides.runSsh ?? defaultRunSsh;
-    const image = settings.providerOptions?.["image"];
+    this.runSsh = deps.runSsh;
+    const image = options["image"];
     this.template = typeof image === "string" && image.length > 0 ? image : undefined;
   }
 
@@ -237,7 +234,7 @@ export class E2BBoxProvider implements BoxProvider {
     box: BoxDescriptor,
     _opts: { timeoutMs: number; reason: TeardownReason },
   ): Promise<void> {
-    const sandboxId = box.providerRef;
+    const sandboxId = box.driverRef;
     try {
       await this.client.kill(sandboxId);
     } catch (error) {
@@ -326,10 +323,53 @@ export class E2BBoxProvider implements BoxProvider {
     return {
       boxId,
       workerHost: renderWorkerHost(endpoint),
-      providerRef: sandboxId,
+      driverRef: sandboxId,
       createdAtMs: this.deps.clock.now().getTime(),
       labels,
       metadata: { sandboxId },
     };
+  }
+}
+
+/**
+ * Builds the `e2b` factory over an injected {@link E2BSandboxClient}. The
+ * extension carries no E2B SDK dependency, so a working factory only exists
+ * once the composition root supplies the client adapter.
+ */
+export function e2bBoxDriverFactory(io: { client: E2BSandboxClient }): BoxDriverFactory {
+  return {
+    kind: KIND,
+    create: (options, deps) => new E2BBoxDriver(options, deps, io),
+  };
+}
+
+/**
+ * The fail-loud `e2b` factory registered when no client is injected: enabling
+ * the kind then fails at pool construction with an actionable message instead
+ * of failing at first provision.
+ */
+const failLoudFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: () => {
+    throw new Error(
+      "box_pool_driver_unavailable: e2b requires an injected client; register a configured e2b driver via registerE2bBoxDriver(registries, { client }) before enabling it",
+    );
+  },
+};
+
+/**
+ * Register this extension's box driver. Idempotent; called by the composition
+ * root (or a test) against its registry, defaulting to the process-wide one.
+ * With `io` it registers a working factory closing over the supplied client;
+ * without `io` it registers a fail-loud factory so the stock daemon (which
+ * ships no E2B client) surfaces an actionable error if the kind is enabled.
+ */
+export function registerE2bBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+  io?: { client: E2BSandboxClient },
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(io ? e2bBoxDriverFactory(io) : failLoudFactory);
   }
 }

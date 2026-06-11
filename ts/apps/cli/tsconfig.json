@@ -20,6 +20,9 @@
       "path": "../../packages/agent-sdk"
     },
     {
+      "path": "../../packages/box-sdk"
+    },
+    {
       "path": "../../packages/cli-kit"
     },
     {
@@ -32,7 +35,16 @@
       "path": "../../packages/dispatch-coordinator"
     },
     {
+      "path": "../../extensions/docker-box-driver"
+    },
+    {
       "path": "../../packages/domain"
+    },
+    {
+      "path": "../../extensions/e2b-box-driver"
+    },
+    {
+      "path": "../../extensions/fly-box-driver"
     },
     {
       "path": "../../packages/humanize"
@@ -57,6 +69,9 @@
     },
     {
       "path": "../../extensions/memory-tracker"
+    },
+    {
+      "path": "../../extensions/modal-box-driver"
     },
     {
       "path": "../../packages/orchestrator"
@@ -87,6 +102,9 @@
     },
     {
       "path": "../../packages/ssh"
+    },
+    {
+      "path": "../../extensions/static-ssh-box-driver"
     },
     {
       "path": "../../packages/tool-sdk"

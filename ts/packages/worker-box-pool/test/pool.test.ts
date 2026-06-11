@@ -7,20 +7,18 @@ import { afterEach, beforeEach, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
 import { withDerivedMaxInFlight } from "@symphony/domain";
 import type { ClockPort, TimerHandle } from "@symphony/domain";
-
-import { createBoxPool, POOL_OWNED_LABEL } from "../src/pool.js";
-import { FakeBoxProvider } from "../src/providers/fake.js";
-import { clearBoxProviderRegistry, registerBoxProvider } from "../src/registry.js";
+import { BoxDriverRegistry, FakeBoxDriver, POOL_OWNED_LABEL } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
   BoxHealth,
-  BoxLease,
-  BoxProvider,
-  LedgerRow,
-  ProviderCapabilities,
+  DriverCapabilities,
   ProvisionRequest,
   TeardownReason,
-} from "../src/types.js";
+} from "@symphony/box-sdk";
+
+import { createBoxPool } from "../src/pool.js";
+import type { BoxLease, LedgerRow } from "../src/types.js";
 
 // A manual clock for accounting math (`now`/`advance`/`set` control the logical
 // wall clock that spend/ttl/idle read) while `setTimeout`/`clearTimeout` use the
@@ -35,6 +33,7 @@ function controllableClock(startMs: number): {
   return {
     clock: {
       now: () => new Date(current),
+      monotonicMs: () => current,
       setTimeout: (callback, delayMs): TimerHandle => setTimeout(callback, delayMs),
       clearTimeout: (handle) => clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
     },
@@ -53,7 +52,7 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   const { maxInFlight, slotsPerMachine, ...rest } = overrides;
   return withDerivedMaxInFlight({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     min: 0,
     max: 1,
     warm: 0,
@@ -68,24 +67,40 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   });
 }
 
-// A fresh fake provider registered under the `fake` kind so createBoxPool can
+// Each test wires the pool to its OWN registry (passed via `deps.drivers`), so
+// nothing here relies on the process-wide default registry being pre-populated.
+let drivers: BoxDriverRegistry;
+
+// A fresh fake driver registered under the `fake` kind so createBoxPool can
 // resolve it. Returns the instance so a test can inject failures / inspect it.
-let lastProvider: FakeBoxProvider | null = null;
+let lastDriver: FakeBoxDriver | null = null;
 function registerFake(): void {
-  registerBoxProvider("fake", (_settings, deps) => {
-    lastProvider = new FakeBoxProvider(deps);
-    return lastProvider;
+  drivers = new BoxDriverRegistry();
+  drivers.register({
+    kind: "fake",
+    create: (_options, driverDeps) => {
+      lastDriver = new FakeBoxDriver(driverDeps);
+      return lastDriver;
+    },
   });
 }
 
-// A provider whose `list()` is fully controllable so a test can stage the boxes
+// Replaces the per-test registry with one resolving each instance by its kind.
+function registerDrivers(...instances: BoxDriver[]): void {
+  drivers = new BoxDriverRegistry();
+  for (const instance of instances) {
+    drivers.register({ kind: instance.kind, create: () => instance });
+  }
+}
+
+// A driver whose `list()` is fully controllable so a test can stage the boxes
 // that "survived" a restart (carrying the pool-owned label so the pool re-adopts
 // them) plus an unlabeled foreign instance (never adopted). `usesLedger` is
 // togglable so the hydrate-orphan test can exercise the live ledger path. Tracks
 // every `destroy` so a test can assert what the pool tore down.
-class SurvivorProvider implements BoxProvider {
+class SurvivorDriver implements BoxDriver {
   readonly kind = "fake" as const;
-  readonly capabilities: ProviderCapabilities;
+  readonly capabilities: DriverCapabilities;
   readonly destroyed: string[] = [];
   // A PERMANENT list() failure (set once, never cleared): every list() rejects.
   listError: Error | null = null;
@@ -109,7 +124,7 @@ class SurvivorProvider implements BoxProvider {
     return Promise.resolve({
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: 0,
       labels: [...req.labels],
       metadata: {},
@@ -138,19 +153,19 @@ class SurvivorProvider implements BoxProvider {
   }
 }
 
-// Registers a survivor provider under the `fake` kind so createBoxPool resolves it.
-function registerSurvivor(provider: SurvivorProvider): void {
-  registerBoxProvider("fake", () => provider);
+// Registers a survivor driver under the `fake` kind so createBoxPool resolves it.
+function registerSurvivor(driver: SurvivorDriver): void {
+  registerDrivers(driver);
 }
 
-// A provider whose `provision` is deferred behind an externally-resolved gate, so
+// A driver whose `provision` is deferred behind an externally-resolved gate, so
 // a test can interleave an event (drain start, a second concurrent acquire) IN
 // BETWEEN the pool deciding to grow and the provision resolving. Every live box
 // is tracked so a test can assert what actually got created/destroyed (a leaked
 // paid box shows up as a box that was provisioned but never destroyed).
-class DeferredProvider implements BoxProvider {
+class DeferredDriver implements BoxDriver {
   readonly kind = "fake" as const;
-  readonly capabilities: ProviderCapabilities = {
+  readonly capabilities: DriverCapabilities = {
     sshAddressable: false,
     ephemeral: true,
     usesLedger: false,
@@ -171,7 +186,7 @@ class DeferredProvider implements BoxProvider {
     return {
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: 0,
       labels: [...req.labels],
       metadata: {},
@@ -195,7 +210,7 @@ class DeferredProvider implements BoxProvider {
         return {
           boxId,
           workerHost,
-          providerRef: workerHost,
+          driverRef: workerHost,
           createdAtMs: 0,
           labels: [POOL_OWNED_LABEL],
           metadata: {},
@@ -221,18 +236,18 @@ class DeferredProvider implements BoxProvider {
   }
 }
 
-function registerDeferred(provider: DeferredProvider): void {
-  registerBoxProvider("fake", () => provider);
+function registerDeferred(driver: DeferredDriver): void {
+  registerDrivers(driver);
 }
 
-// A provider whose `destroy` parks on an externally-resolved gate, so a test can
+// A driver whose `destroy` parks on an externally-resolved gate, so a test can
 // interleave a late lease settle IN BETWEEN the drain's force-destroy starting
-// (record set DESTROYING, provider.destroy awaited) and the destroy completing.
+// (record set DESTROYING, driver.destroy awaited) and the destroy completing.
 // `provision` is immediate; `list()` mirrors the live boxes so a hydrate/reconcile
-// over this provider stays coherent.
-class DeferredDestroyProvider implements BoxProvider {
+// over this driver stays coherent.
+class DeferredDestroyDriver implements BoxDriver {
   readonly kind = "fake" as const;
-  readonly capabilities: ProviderCapabilities = {
+  readonly capabilities: DriverCapabilities = {
     sshAddressable: false,
     ephemeral: true,
     usesLedger: false,
@@ -248,7 +263,7 @@ class DeferredDestroyProvider implements BoxProvider {
     return Promise.resolve({
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: this.seq++,
       labels: [...req.labels],
       metadata: {},
@@ -273,7 +288,7 @@ class DeferredDestroyProvider implements BoxProvider {
       [...this.boxes].map((boxId) => ({
         boxId,
         workerHost: `fake://box-${boxId}`,
-        providerRef: `fake://box-${boxId}`,
+        driverRef: `fake://box-${boxId}`,
         createdAtMs: 0,
         labels: [POOL_OWNED_LABEL],
         metadata: {},
@@ -291,16 +306,16 @@ class DeferredDestroyProvider implements BoxProvider {
   }
 }
 
-function registerDeferredDestroy(provider: DeferredDestroyProvider): void {
-  registerBoxProvider("fake", () => provider);
+function registerDeferredDestroy(driver: DeferredDestroyDriver): void {
+  registerDrivers(driver);
 }
 
-// A ledger-backed (usesLedger:true) provider whose `provision` parks on a gate so
+// A ledger-backed (usesLedger:true) driver whose `provision` parks on a gate so
 // a test can read the on-disk WAL AFTER the provisional row is written but BEFORE
 // the post-provision correlate upsert. Mirrors live boxes in `list()`.
-class LedgerDeferredProvider implements BoxProvider {
+class LedgerDeferredDriver implements BoxDriver {
   readonly kind = "fake" as const;
-  readonly capabilities: ProviderCapabilities = {
+  readonly capabilities: DriverCapabilities = {
     sshAddressable: false,
     ephemeral: true,
     usesLedger: true,
@@ -317,7 +332,7 @@ class LedgerDeferredProvider implements BoxProvider {
     return {
       boxId: req.boxId,
       workerHost,
-      providerRef: `ref-${req.boxId}`,
+      driverRef: `ref-${req.boxId}`,
       createdAtMs: 0,
       labels: [...req.labels],
       metadata: {},
@@ -338,7 +353,7 @@ class LedgerDeferredProvider implements BoxProvider {
       [...this.boxes].map((boxId) => ({
         boxId,
         workerHost: `fake://box-${boxId}`,
-        providerRef: `ref-${boxId}`,
+        driverRef: `ref-${boxId}`,
         createdAtMs: 0,
         labels: [POOL_OWNED_LABEL],
         metadata: {},
@@ -362,7 +377,7 @@ function survivorBox(boxId: string): BoxDescriptor {
   return {
     boxId,
     workerHost,
-    providerRef: workerHost,
+    driverRef: workerHost,
     createdAtMs: 0,
     labels: [POOL_OWNED_LABEL],
     metadata: {},
@@ -398,14 +413,12 @@ function acquireReq(
 let tmpDir: string | null = null;
 
 beforeEach(() => {
-  clearBoxProviderRegistry();
   registerFake();
-  lastProvider = null;
+  lastDriver = null;
   tmpDir = null;
 });
 
 afterEach(async () => {
-  clearBoxProviderRegistry();
   // The pool's ledger I/O is fire-and-forget (e.g. `void ledger.delete(...)` on a
   // drain recycle), so a write can briefly race the cleanup and recreate a file
   // mid-removal (ENOTEMPTY). Retry the removal a few times to absorb that race.
@@ -426,6 +439,7 @@ test("acquire grows under max when no warm box", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -446,21 +460,22 @@ test("acquire grows a box that never becomes ready: probes, destroys it, reports
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, min: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
-  assert.ok(lastProvider);
-  const provider = lastProvider as FakeBoxProvider;
+  assert.ok(lastDriver);
+  const driver = lastDriver as FakeBoxDriver;
   // The first on-demand grow mints box-0; force its readiness probe to fail so the
   // box is never SSH-reachable (a cold cloud box whose sshd never comes up). Without
   // the readiness gate this unready host would be leased to the runner.
-  provider.injectProbeFailure("box-0", "sshd_not_up");
+  driver.injectProbeFailure("box-0", "sshd_not_up");
 
   const result = await pool.acquire(acquireReq());
 
   // The unready box is NOT leased - the acquire reports capacity-unavailable...
   assert.equal(result.status, "no_capacity");
   // ...the box was destroyed (no paid-box leak: the fake daemon holds none)...
-  assert.equal((await provider.list()).length, 0);
+  assert.equal((await driver.list()).length, 0);
   // ...and it never entered inventory.
   assert.equal(pool.snapshot().total, 0);
 
@@ -470,10 +485,11 @@ test("acquire grows a box that never becomes ready: probes, destroys it, reports
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("reconcile to disabled drains even when the target provider would fail to construct", async () => {
+test("reconcile to disabled drains even when the target driver would fail to construct", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, min: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   const first = await pool.acquire(acquireReq());
@@ -482,11 +498,11 @@ test("reconcile to disabled drains even when the target provider would fail to c
   await first.lease.release("healthy");
   assert.equal(pool.snapshot().total, 1);
 
-  // Disable the pool AND point it at a provider kind NOT registered in this test (so
-  // swapProvider would throw resolving it). reconcile must NOT throw - it skips the
+  // Disable the pool AND point it at a driver kind NOT registered in this test (so
+  // swapDriver would throw resolving it). reconcile must NOT throw - it skips the
   // swap when disabled - and must still drain the live box to zero. Without the fix it
-  // would throw in swapProvider and strand the pool enabled with the box still alive.
-  pool.reconcile(poolSettings({ enabled: false, provider: "modal", max: 1, warm: 0, min: 0 }));
+  // would throw in swapDriver and strand the pool enabled with the box still alive.
+  pool.reconcile(poolSettings({ enabled: false, driver: "modal", max: 1, warm: 0, min: 0 }));
   await pool.drain({ deadlineMs: 1_000 });
   assert.equal(pool.snapshot().total, 0);
 });
@@ -495,6 +511,7 @@ test("acquire leased when warm box free (release returns it to WARM_IDLE)", asyn
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -523,6 +540,7 @@ test("acquire blocks to acquireTimeoutMs then no_capacity:acquire_timeout", asyn
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 30 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -543,6 +561,7 @@ test("released box wakes a blocked waiter (FIFO) before the timeout", async () =
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 10_000 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -568,6 +587,7 @@ test("abort signal resolves acquire to no_capacity promptly", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 10_000 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -593,6 +613,7 @@ test("no_capacity:pool_disabled when enabled false", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ enabled: false }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -608,6 +629,7 @@ test("no_capacity:spend_cap when maxConcurrentBoxes reached BEFORE leasing", asy
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 4, warm: 0, spend: { maxConcurrentBoxes: 1 } }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -629,6 +651,7 @@ test("no_capacity:spend_cap when dailyBoxSeconds exhausted", async () => {
   const { clock, advance } = controllableClock(start);
   const pool = createBoxPool(poolSettings({ max: 4, warm: 0, spend: { dailyBoxSeconds: 5 } }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -651,6 +674,7 @@ test("canAcquire false when full and cannot grow; true when can grow under caps"
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -673,6 +697,7 @@ test("sticky affinityKey re-acquires same boxId", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 2, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -703,6 +728,7 @@ test("two concurrent acquires never select same warm slot (synchronous stamp)", 
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 2, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -730,6 +756,7 @@ test("TWO concurrent growth decisions never exceed max (reservation counter)", a
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 50 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -750,15 +777,16 @@ test("reservation released on provision reject (no permanent block)", async () =
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 30 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
-  assert.ok(lastProvider);
+  assert.ok(lastDriver);
   // Make every provision reject by injecting failures for the deterministic ids
   // the pool will mint. The reservation must be released on reject so a later
   // acquire (after clearing the failure) can still grow under max.
-  const provider = lastProvider as FakeBoxProvider;
+  const driver = lastDriver as FakeBoxDriver;
   for (let i = 0; i < 8; i += 1) {
-    provider.injectProvisionFailure(`box-${i}`, "boom");
+    driver.injectProvisionFailure(`box-${i}`, "boom");
   }
 
   const failed = await pool.acquire(acquireReq({ timeoutMs: 30 }));
@@ -766,30 +794,31 @@ test("reservation released on provision reject (no permanent block)", async () =
 
   // Reservation released: a subsequent successful provision can grow.
   for (let i = 0; i < 8; i += 1) {
-    provider.clearProvisionFailure(`box-${i}`);
+    driver.clearProvisionFailure(`box-${i}`);
   }
   const ok = await pool.acquire(acquireReq({ issueId: "issue-2" }));
   assert.equal(ok.status, "leased");
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("provider_error returned when growth provision rejects and no warm box exists", async () => {
+test("driver_error returned when growth provision rejects and no warm box exists", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 30 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
-  const provider = lastProvider as FakeBoxProvider;
+  const driver = lastDriver as FakeBoxDriver;
   for (let i = 0; i < 8; i += 1) {
-    provider.injectProvisionFailure(`box-${i}`, "boom");
+    driver.injectProvisionFailure(`box-${i}`, "boom");
   }
 
   const result = await pool.acquire(acquireReq({ timeoutMs: 30 }));
   assert.equal(result.status, "no_capacity");
   if (result.status === "no_capacity") {
-    // A failed growth with nothing else to wait on surfaces a provider_error
+    // A failed growth with nothing else to wait on surfaces a driver_error
     // (distinct from a pure timeout) so the caller can log the cause.
-    assert.ok(result.reason === "provider_error" || result.reason === "acquire_timeout");
+    assert.ok(result.reason === "driver_error" || result.reason === "acquire_timeout");
   }
   await pool.drain({ deadlineMs: 1_000 });
 });
@@ -800,6 +829,7 @@ test("maxInFlight>1 allows N leases on one box; N+1 blocks", async () => {
     poolSettings({ max: 1, warm: 0, maxInFlight: 2, acquireTimeoutMs: 30 }),
     {
       clock,
+      drivers,
       logEvent: () => undefined,
     },
   );
@@ -823,7 +853,7 @@ test("maxBoxesPerIssue caps one issue's boxes so an ensemble cannot monopolize",
   const { clock } = controllableClock(0);
   const pool = createBoxPool(
     poolSettings({ max: 4, warm: 0, maxBoxesPerIssue: 1, acquireTimeoutMs: 30 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // issue-A's first slot leases one box.
@@ -845,7 +875,7 @@ test("maxBoxesPerIssue releases the per-issue slot when a lease is returned", as
   const { clock } = controllableClock(0);
   const pool = createBoxPool(
     poolSettings({ max: 4, warm: 0, maxBoxesPerIssue: 1, acquireTimeoutMs: 30 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   const a0 = await pool.acquire(acquireReq({ issueId: "issue-A", slotIndex: 0 }));
@@ -864,6 +894,7 @@ test("snapshot reports total/warmIdle/leased/inFlight/spend/markedForDestroy acc
   const { clock, advance } = controllableClock(start);
   const pool = createBoxPool(poolSettings({ max: 2, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -875,7 +906,7 @@ test("snapshot reports total/warmIdle/leased/inFlight/spend/markedForDestroy acc
 
   let snap = pool.snapshot();
   assert.equal(snap.enabled, true);
-  assert.equal(snap.provider, "fake");
+  assert.equal(snap.driver, "fake");
   assert.equal(snap.total, 2);
   assert.equal(snap.leased, 2);
   assert.equal(snap.warmIdle, 0);
@@ -904,6 +935,7 @@ test("a long heartbeating run accrues box-seconds from its own acquire time (hea
   const { clock, advance } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -929,6 +961,7 @@ test("two overlapping leases on one box (maxInFlight=2) each accrue their own wi
   const { clock, advance } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, maxInFlight: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -961,6 +994,7 @@ test("a heartbeating run that exceeds maxBoxSeconds is denied on the next acquir
   const { clock, advance } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, spend: { maxBoxSeconds: 500 } }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -989,6 +1023,7 @@ test("drain rejects new acquires, force-destroys ALL boxes (zero remain even wit
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 2, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -1014,6 +1049,7 @@ test("drain is idempotent and resolves", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   await pool.acquire(acquireReq());
@@ -1028,6 +1064,7 @@ test("drain waits for an in-flight lease released before the deadline", async ()
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   const held = await pool.acquire(acquireReq());
@@ -1047,10 +1084,11 @@ test("drain waits for an in-flight lease released before the deadline", async ()
 
 test("a late settle during a deadline-exceeded drain cannot flip a destroyed box back to WARM_IDLE", async () => {
   const { clock } = controllableClock(0);
-  const provider = new DeferredDestroyProvider();
-  registerDeferredDestroy(provider);
+  const driver = new DeferredDestroyDriver();
+  registerDeferredDestroy(driver);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -1061,9 +1099,9 @@ test("a late settle during a deadline-exceeded drain cannot flip a destroyed box
 
   // Drain with a deadline that fires (the in-flight lease never settles in time),
   // so runDrain proceeds into the force-destroy loop and parks on the gated
-  // provider.destroy with the record set DESTROYING.
+  // driver.destroy with the record set DESTROYING.
   const drainPromise = pool.drain({ deadlineMs: 10 });
-  await waitUntil(() => provider.pendingDestroys() === 1);
+  await waitUntil(() => driver.pendingDestroys() === 1);
 
   // While the drain's recycle is parked mid-destroy (record set DESTROYING), a
   // late healthy settle runs. Its onLeaseSettle, while draining, flips the box to
@@ -1080,7 +1118,7 @@ test("a late settle during a deadline-exceeded drain cannot flip a destroyed box
   // settle flips DESTROYING->WARM_IDLE; under the fix the mutex holds the settle
   // behind the destroy so WARM_IDLE is never observed once teardown has begun.
   let resurrectedToWarmIdle = false;
-  for (let i = 0; i < 25 && provider.pendingDestroys() === 1; i += 1) {
+  for (let i = 0; i < 25 && driver.pendingDestroys() === 1; i += 1) {
     const row = pool.snapshot().boxes.find((b) => b.boxId === held.lease.boxId);
     if (row?.state === "WARM_IDLE") {
       resurrectedToWarmIdle = true;
@@ -1091,17 +1129,17 @@ test("a late settle during a deadline-exceeded drain cannot flip a destroyed box
   assert.equal(resurrectedToWarmIdle, false);
 
   // Let the parked destroy complete, then both the drain and the late settle.
-  provider.releaseNextDestroy();
+  driver.releaseNextDestroy();
   await Promise.all([drainPromise, settlePromise]);
 
-  // Zero boxes remain, none flipped back to WARM_IDLE, and the provider's box set
+  // Zero boxes remain, none flipped back to WARM_IDLE, and the driver's box set
   // is empty (no paid box leaked), with exactly one destroy issued.
   const snap = pool.snapshot();
   assert.equal(snap.total, 0);
   assert.equal(snap.warmIdle, 0);
   assert.equal(snap.inFlight, 0);
-  assert.equal(provider.boxes.size, 0);
-  assert.equal(provider.destroyed.length, 1);
+  assert.equal(driver.boxes.size, 0);
+  assert.equal(driver.destroyed.length, 1);
 });
 
 test("reaper-vs-release on inFlight->0 destroys exactly once (per-box mutex)", async () => {
@@ -1111,6 +1149,7 @@ test("reaper-vs-release on inFlight->0 destroys exactly once (per-box mutex)", a
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   const held = await pool.acquire(acquireReq());
@@ -1146,6 +1185,7 @@ test("reconcile false->true grows from zero; true->false drains to zero", async 
   // The pool starts DISABLED (no boxes, acquire rejected).
   const pool = createBoxPool(poolSettings({ enabled: false, min: 2, max: 3, warm: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   assert.equal(pool.snapshot().total, 0);
@@ -1181,6 +1221,7 @@ test("reconcile disable then re-enable resets draining so acquire serves again",
   // The pool starts ENABLED and serves a lease.
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   const first = await pool.acquire(acquireReq());
@@ -1207,6 +1248,7 @@ test("reconcile raising warm tops up; lowering max defers shrink to reaper (olde
   const { clock, advance } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -1251,23 +1293,24 @@ test("reconcile raising warm tops up; lowering max defers shrink to reaper (olde
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("hydrate replays ledger + provider.list() and re-adopts boxes", async () => {
+test("hydrate replays ledger + driver.list() and re-adopts boxes", async () => {
   const { clock } = controllableClock(0);
   // Two pool-owned survivors plus one UNLABELED foreign instance the pool must
   // never adopt.
   const foreign: BoxDescriptor = {
     boxId: "foreign-1",
     workerHost: "fake://box-foreign-1",
-    providerRef: "fake://box-foreign-1",
+    driverRef: "fake://box-foreign-1",
     createdAtMs: 0,
     labels: [],
     metadata: {},
   };
-  const provider = new SurvivorProvider([survivorBox("box-A"), survivorBox("box-B"), foreign]);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-A"), survivorBox("box-B"), foreign]);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -1301,16 +1344,16 @@ test("hydrate force-returns orphan leased rows whose run is gone", async () => {
   const ledgerPath = path.join(tmpDir, "box-pool", "ledger.json");
   const { clock } = controllableClock(0);
 
-  // The provider's authoritative list still shows box-survivor but NOT box-gone:
+  // The driver's authoritative list still shows box-survivor but NOT box-gone:
   // the machine that hosted box-gone vanished while its run is gone.
-  const provider = new SurvivorProvider([survivorBox("box-survivor")], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-survivor")], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   // Seed the ledger with a row for the survivor AND an orphan row for the gone box.
   const rows: LedgerRow[] = [
     {
       boxId: "box-survivor",
-      providerRef: "fake://box-box-survivor",
+      driverRef: "fake://box-box-survivor",
       workerHost: "fake://box-box-survivor",
       labels: [POOL_OWNED_LABEL],
       status: "active",
@@ -1319,7 +1362,7 @@ test("hydrate force-returns orphan leased rows whose run is gone", async () => {
     },
     {
       boxId: "box-gone",
-      providerRef: "fake://box-box-gone",
+      driverRef: "fake://box-box-gone",
       workerHost: "fake://box-box-gone",
       labels: [POOL_OWNED_LABEL],
       status: "active",
@@ -1332,6 +1375,7 @@ test("hydrate force-returns orphan leased rows whose run is gone", async () => {
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
     ledgerPath,
   });
@@ -1358,13 +1402,14 @@ test("drain durably flushes the daily total: persisted spend equals in-memory to
   const ledgerPath = path.join(tmpDir, "box-pool", "ledger.json");
   const { clock, advance } = controllableClock(Date.UTC(2026, 4, 29, 12, 0, 0));
 
-  // A ledger-backed provider so the spend sidecar (spend.json) is live. `list()`
+  // A ledger-backed driver so the spend sidecar (spend.json) is live. `list()`
   // starts empty; the short test completes before any reaper reconcile fires.
-  const provider = new SurvivorProvider([], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
     ledgerPath,
   });
@@ -1405,16 +1450,17 @@ test("drain durably flushes the daily total: persisted spend equals in-memory to
 
 test("a box provisioned mid-drain does not leak past the force-destroy loop", async () => {
   const { clock } = controllableClock(0);
-  const provider = new DeferredProvider();
-  registerDeferred(provider);
+  const driver = new DeferredDriver();
+  registerDeferred(driver);
   const pool = createBoxPool(poolSettings({ max: 2, warm: 0, acquireTimeoutMs: 5_000 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
   // Start an acquire that decides to grow; its provision parks on the gate.
   const acquiring = pool.acquire(acquireReq());
-  await waitUntil(() => provider.pendingCount() === 1);
+  await waitUntil(() => driver.pendingCount() === 1);
 
   // Drain begins WHILE the provision is in flight. runDrain snapshots inventory
   // (currently empty) and waits for in-flight to settle.
@@ -1422,12 +1468,12 @@ test("a box provisioned mid-drain does not leak past the force-destroy loop", as
 
   // Now the provision resolves. The pool must NOT add a leased, paid box to a
   // pool that is already draining (or it must immediately destroy it).
-  provider.releaseNext();
+  driver.releaseNext();
   const result = await acquiring;
   await draining;
 
-  // The drain completed; the box the provider created must not survive it.
-  assert.equal(provider.boxes.size, 0);
+  // The drain completed; the box the driver created must not survive it.
+  assert.equal(driver.boxes.size, 0);
   assert.equal(pool.snapshot().total, 0);
   // If the acquire was leased on a now-draining pool, that lease is dead: a box
   // outliving a completed drain is the leak. A no_capacity result is acceptable.
@@ -1435,18 +1481,18 @@ test("a box provisioned mid-drain does not leak past the force-destroy loop", as
     // It was leased: then the box MUST have been destroyed by drain (asserted
     // above) - releasing it must not resurrect it.
     await result.lease.release("healthy");
-    assert.equal(provider.boxes.size, 0);
+    assert.equal(driver.boxes.size, 0);
     assert.equal(pool.snapshot().total, 0);
   }
 });
 
 test("maxBoxesPerIssue is not exceeded by two concurrent same-issue grows", async () => {
   const { clock } = controllableClock(0);
-  const provider = new DeferredProvider();
-  registerDeferred(provider);
+  const driver = new DeferredDriver();
+  registerDeferred(driver);
   const pool = createBoxPool(
     poolSettings({ max: 4, warm: 0, maxBoxesPerIssue: 1, acquireTimeoutMs: 80 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // Two concurrent acquires for the SAME issue against an empty pool. Both reach
@@ -1456,8 +1502,8 @@ test("maxBoxesPerIssue is not exceeded by two concurrent same-issue grows", asyn
   const second = pool.acquire(acquireReq({ issueId: "issue-1", slotIndex: 1, timeoutMs: 80 }));
 
   // Wait for at least one provision to park, then release everything that parked.
-  await waitUntil(() => provider.pendingCount() >= 1);
-  provider.releaseAll();
+  await waitUntil(() => driver.pendingCount() >= 1);
+  driver.releaseAll();
   const [a, b] = await Promise.all([first, second]);
 
   // Exactly ONE of the two concurrent same-issue acquires may lease a distinct
@@ -1475,16 +1521,16 @@ test("a lease straddling UTC midnight bills the NEXT day and the next-day acquir
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "box-pool-midnight-test-"));
   const ledgerPath = path.join(tmpDir, "box-pool", "ledger.json");
 
-  // Start at 23:59:50 UTC on day N. A ledger-backed provider keeps the spend
+  // Start at 23:59:50 UTC on day N. A ledger-backed driver keeps the spend
   // sidecar live so the persisted total can be compared against in-memory.
   const dayN = Date.UTC(2026, 4, 29, 23, 59, 50);
   const { clock, set } = controllableClock(dayN);
-  const provider = new SurvivorProvider([], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 1, warm: 0, spend: { dailyBoxSeconds: 100 } }),
-    { clock, logEvent: () => undefined, ledgerPath },
+    { clock, drivers, logEvent: () => undefined, ledgerPath },
   );
 
   // Acquire at 23:59:50 day N, then advance the clock 600s INTO day N+1 and
@@ -1527,7 +1573,7 @@ test("an orphaned drain whose deadline fires after a re-enable does NOT destroy 
   const { clock } = controllableClock(0);
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 2, warm: 0, drainDeadlineMs: 40 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // Hold a lease so the disable-driven drain CANNOT settle before its deadline:
@@ -1575,11 +1621,12 @@ test("hydrate advances boxSeq past adopted box-<n> ids so the next grow does not
   const { clock } = controllableClock(0);
   // Survivors: a numeric box-3 (the highest numeric suffix) and a non-numeric
   // box-foo that must be tolerated (ignored when computing the max suffix).
-  const provider = new SurvivorProvider([survivorBox("box-3"), survivorBox("box-foo")]);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-3"), survivorBox("box-foo")]);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -1609,33 +1656,34 @@ test("grow writes a provisional ledger row BEFORE provision then upserts active 
   const ledgerPath = path.join(tmpDir, "box-pool", "ledger.json");
   const { clock } = controllableClock(0);
 
-  // A ledger-backed deferred provider: its provision parks on a gate so a test can
+  // A ledger-backed deferred driver: its provision parks on a gate so a test can
   // read the on-disk ledger AFTER the provisional write but BEFORE the correlate.
-  const provider = new LedgerDeferredProvider();
-  registerBoxProvider("fake", () => provider);
+  const driver = new LedgerDeferredDriver();
+  registerDrivers(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
     ledgerPath,
   });
 
   const acquiring = pool.acquire(acquireReq());
   // Wait until the provision has parked: by now the WAL provisional row must be on
-  // disk (written BEFORE provider.provision is awaited).
-  await waitUntil(() => provider.pendingCount() === 1);
+  // disk (written BEFORE driver.provision is awaited).
+  await waitUntil(() => driver.pendingCount() === 1);
 
   const beforeCorrelate = JSON.parse(await fs.readFile(ledgerPath, "utf8")) as {
     rows: LedgerRow[];
   };
   assert.equal(beforeCorrelate.rows.length, 1);
   assert.equal(beforeCorrelate.rows[0]?.status, "provisional");
-  assert.equal(beforeCorrelate.rows[0]?.providerRef, null);
+  assert.equal(beforeCorrelate.rows[0]?.driverRef, null);
   assert.equal(beforeCorrelate.rows[0]?.workerHost, null);
   const provisionalBoxId = beforeCorrelate.rows[0]?.boxId;
 
   // Let provision resolve; the pool upserts the correlated active row.
-  provider.releaseNext();
+  driver.releaseNext();
   const result = await acquiring;
   assert.equal(result.status, "leased");
 
@@ -1643,7 +1691,7 @@ test("grow writes a provisional ledger row BEFORE provision then upserts active 
   assert.equal(afterCorrelate.rows.length, 1);
   assert.equal(afterCorrelate.rows[0]?.boxId, provisionalBoxId);
   assert.equal(afterCorrelate.rows[0]?.status, "active");
-  assert.ok(afterCorrelate.rows[0]?.providerRef);
+  assert.ok(afterCorrelate.rows[0]?.driverRef);
   assert.ok(afterCorrelate.rows[0]?.workerHost);
 
   await pool.drain({ deadlineMs: 1_000 });
@@ -1661,15 +1709,15 @@ test("crash-before-correlate: hydrate reconciles a provisional row against a lis
 
   // The prior process crashed AFTER provision succeeded but BEFORE it upserted the
   // correlated row, so the ledger holds a PROVISIONAL row. The box did get created
-  // at the provider (labeled), and now list() shows it. Hydrate must re-adopt the
+  // at the driver (labeled), and now list() shows it. Hydrate must re-adopt the
   // survivor (label-driven) and not drop the row as an orphan.
-  const provider = new SurvivorProvider([survivorBox("box-7")], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-7")], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   const rows: LedgerRow[] = [
     {
       boxId: "box-7",
-      providerRef: null,
+      driverRef: null,
       workerHost: null,
       labels: [POOL_OWNED_LABEL],
       status: "provisional",
@@ -1682,6 +1730,7 @@ test("crash-before-correlate: hydrate reconciles a provisional row against a lis
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
     ledgerPath,
   });
@@ -1709,15 +1758,15 @@ test("crash-before-correlate: a stale provisional row with no surviving box is r
   const { clock } = controllableClock(1_000_000);
 
   // list() shows NO survivor: the provision never actually created a box (or it
-  // already vanished). A young provisional row would be kept (the provider may be
+  // already vanished). A young provisional row would be kept (the driver may be
   // briefly inconsistent), but one older than ttlMs is a dead row and is reaped.
-  const provider = new SurvivorProvider([], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   const rows: LedgerRow[] = [
     {
       boxId: "box-stale",
-      providerRef: null,
+      driverRef: null,
       workerHost: null,
       labels: [POOL_OWNED_LABEL],
       status: "provisional",
@@ -1730,7 +1779,7 @@ test("crash-before-correlate: a stale provisional row with no surviving box is r
 
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 4, warm: 0, ttlMs: 1_000 }),
-    { clock, logEvent: () => undefined, ledgerPath },
+    { clock, drivers, logEvent: () => undefined, ledgerPath },
   );
 
   await pool.hydrate();
@@ -1743,24 +1792,24 @@ test("crash-before-correlate: a stale provisional row with no surviving box is r
 
 test("reaper firing before hydrate does NOT destroy a labeled survivor; hydrate then adopts it", async () => {
   const { clock } = controllableClock(0);
-  // A labeled pool-owned survivor sits at the provider, as it would right after a
+  // A labeled pool-owned survivor sits at the driver, as it would right after a
   // restart. The constructor arms the recurring reaper immediately, but hydrate()
   // (which re-adopts survivors) is called later. A reaper tick that fires in that
   // gap must NOT reap the survivor (it has the pool-owned label and is one of
   // ours), or the restart destroys its own warm box.
-  const provider = new SurvivorProvider([survivorBox("box-survivor")]);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-survivor")]);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 4, warm: 0, reapIntervalMs: 5 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // Let the reaper tick fire at least once BEFORE hydrate runs.
   await new Promise((resolve) => setTimeout(resolve, 30));
 
   // The survivor was never destroyed by the pre-hydrate reaper tick.
-  assert.deepEqual(provider.destroyed, []);
+  assert.deepEqual(driver.destroyed, []);
 
   // Hydrate now re-adopts the survivor as a warm idle box.
   await pool.hydrate();
@@ -1772,37 +1821,37 @@ test("reaper firing before hydrate does NOT destroy a labeled survivor; hydrate 
   // And it is still present (not reaped) after a few more post-hydrate ticks,
   // because it is now in inventory (known), so the reconcile leaves it alone.
   await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.deepEqual(provider.destroyed, []);
+  assert.deepEqual(driver.destroyed, []);
   assert.equal(pool.snapshot().total, 1);
 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("hydrate on a usesLedger provider whose list() always fails REJECTS (startup fails loud) and never opens the reaper destroy-unknown gate", async () => {
-  // FINDING (HIGH): a usesLedger (paid, ephemeral) provider may have provisioned
+test("hydrate on a usesLedger driver whose list() always fails REJECTS (startup fails loud) and never opens the reaper destroy-unknown gate", async () => {
+  // FINDING (HIGH): a usesLedger (paid, ephemeral) driver may have provisioned
   // real survivors before the restart. If hydrate() swallows a list() failure and
   // returns as if startup succeeded, those paid boxes are neither adopted nor
   // reaped (the reaper's destroy-unknown gate stays closed because hydrated never
   // flips) AND they are invisible to drain -> unmanaged paid boxes leak. hydrate()
   // must instead RETRY a bounded number of times and, if list() still fails for a
-  // usesLedger provider, THROW so the daemon's `await boxPool.hydrate()` fails
+  // usesLedger driver, THROW so the daemon's `await boxPool.hydrate()` fails
   // startup loudly rather than running blind over unmanaged paid machines.
   const { clock } = controllableClock(0);
-  const provider = new SurvivorProvider([survivorBox("box-paid")], /* usesLedger */ true);
-  provider.listError = new Error("provider list() outage");
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-paid")], /* usesLedger */ true);
+  driver.listError = new Error("driver list() outage");
+  registerSurvivor(driver);
 
-  // A labeled survivor sits at the provider, as it would right after a restart.
+  // A labeled survivor sits at the driver, as it would right after a restart.
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 4, warm: 0, reapIntervalMs: 5 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // hydrate() must REJECT (startup fails loud) rather than silently returning.
   await assert.rejects(() => pool.hydrate(), /box_pool_hydrate_failed/);
 
   // It retried list() a bounded number of times before giving up (more than once).
-  assert.equal(provider.listCalls > 1, true);
+  assert.equal(driver.listCalls > 1, true);
 
   // The reaper destroy-unknown gate stayed CLOSED (hydrated never flipped): a few
   // reaper ticks must NOT destroy the labeled-but-unknown paid survivor, since the
@@ -1810,28 +1859,29 @@ test("hydrate on a usesLedger provider whose list() always fails REJECTS (startu
   // reaper too, so the reconcile cannot run, but the gate being closed is the
   // belt-and-braces guarantee.)
   await new Promise((resolve) => setTimeout(resolve, 30));
-  assert.deepEqual(provider.destroyed, []);
+  assert.deepEqual(driver.destroyed, []);
 
   // The pool was never marked drained-safe; tear it down so the recurring reaper
   // timer stops. (drain force-destroys nothing because inventory is empty.)
   await pool.drain({ deadlineMs: 50 });
 });
 
-test("hydrate on a NON-ledger (fake) provider whose list() fails stays TOLERANT (resolves, no throw)", async () => {
-  // A fake / static-ssh provider owns no paid survivors, so a transient list()
+test("hydrate on a NON-ledger (fake) driver whose list() fails stays TOLERANT (resolves, no throw)", async () => {
+  // A fake / static-ssh driver owns no paid survivors, so a transient list()
   // failure on hydrate is harmless: there is nothing to leak. hydrate() must stay
   // tolerant here (resolve, log the skip) so a non-cloud pool still starts up.
   const { clock } = controllableClock(0);
-  const provider = new SurvivorProvider([], /* usesLedger */ false);
-  provider.listError = new Error("provider list() outage");
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([], /* usesLedger */ false);
+  driver.listError = new Error("driver list() outage");
+  registerSurvivor(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 4, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
-  // Resolves (does not throw) for a non-ledger provider.
+  // Resolves (does not throw) for a non-ledger driver.
   await pool.hydrate();
   assert.equal(pool.snapshot().total, 0);
 
@@ -1839,23 +1889,23 @@ test("hydrate on a NON-ledger (fake) provider whose list() fails stays TOLERANT 
 });
 
 test("hydrate retries list() and, once it succeeds, adopts the survivors and opens the reaper cleanup gate", async () => {
-  // A usesLedger provider whose list() fails the first couple of attempts then
+  // A usesLedger driver whose list() fails the first couple of attempts then
   // recovers: the bounded retry loop must re-attempt (via the injected clock's
   // backoff) until list() succeeds, then re-adopt the labeled survivor as WARM_IDLE
   // and flip `hydrated` so the reaper's destroy-unknown reconcile may resume.
   const { clock } = controllableClock(0);
-  const provider = new SurvivorProvider([survivorBox("box-recovered")], /* usesLedger */ true);
-  provider.listFailsRemaining = 2;
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([survivorBox("box-recovered")], /* usesLedger */ true);
+  driver.listFailsRemaining = 2;
+  registerSurvivor(driver);
 
   const pool = createBoxPool(
     poolSettings({ enabled: true, min: 0, max: 4, warm: 0, reapIntervalMs: 5 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // hydrate() resolves once list() recovers after the bounded retries.
   await pool.hydrate();
-  assert.equal(provider.listCalls >= 3, true);
+  assert.equal(driver.listCalls >= 3, true);
 
   // The survivor was re-adopted as a warm idle box.
   const snap = pool.snapshot();
@@ -1878,13 +1928,14 @@ test("drain accrues in-flight box-seconds for a lease still held at the deadline
   const start = Date.UTC(2026, 4, 29, 12, 0, 0);
   const { clock, advance } = controllableClock(start);
 
-  // A ledger-backed provider so the spend sidecar (spend.json) is live and the
+  // A ledger-backed driver so the spend sidecar (spend.json) is live and the
   // persisted total can be compared against the in-memory daily total.
-  const provider = new SurvivorProvider([], /* usesLedger */ true);
-  registerSurvivor(provider);
+  const driver = new SurvivorDriver([], /* usesLedger */ true);
+  registerSurvivor(driver);
 
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
     ledgerPath,
   });
@@ -1919,29 +1970,29 @@ test("drain accrues in-flight box-seconds for a lease still held at the deadline
 });
 
 // ---------------------------------------------------------------------------
-// T4a/T4b: provider rebuilt in place on a reconcile that changes provider
+// T4a/T4b: driver rebuilt in place on a reconcile that changes driver
 // construction (Finding #1), with per-box origin capture so an in-flight lease
 // settling AFTER the swap routes destroy() to its ORIGINAL backend.
 // ---------------------------------------------------------------------------
 
-// A tracking provider whose every box `provision`/`destroy` is recorded so a
+// A tracking driver whose every box `provision`/`destroy` is recorded so a
 // test can assert WHICH backend a box was created on and torn down against. Its
-// `kind`/`tag` distinguish two provider objects, and `list()` mirrors the live
-// boxes so a reaper reconcile over this provider stays coherent. `provisioned`
-// stamps the provider tag into the descriptor metadata so a swap test can prove
-// a box was created by the OLD provider yet destroyed against that same OLD one.
-class TrackingProvider implements BoxProvider {
+// `kind`/`tag` distinguish two driver objects, and `list()` mirrors the live
+// boxes so a reaper reconcile over this driver stays coherent. `provisioned`
+// stamps the driver tag into the descriptor metadata so a swap test can prove
+// a box was created by the OLD driver yet destroyed against that same OLD one.
+class TrackingDriver implements BoxDriver {
   readonly destroyed: string[] = [];
   readonly provisioned: string[] = [];
   readonly boxes = new Set<string>();
 
   constructor(
-    readonly kind: BoxProvider["kind"],
+    readonly kind: BoxDriver["kind"],
     readonly tag: string,
     private readonly usesLedger = false,
   ) {}
 
-  get capabilities(): ProviderCapabilities {
+  get capabilities(): DriverCapabilities {
     return { sshAddressable: false, ephemeral: true, usesLedger: this.usesLedger };
   }
 
@@ -1952,10 +2003,10 @@ class TrackingProvider implements BoxProvider {
     return Promise.resolve({
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: 0,
       labels: [...req.labels],
-      metadata: { providerTag: this.tag },
+      metadata: { driverTag: this.tag },
     });
   }
 
@@ -1974,57 +2025,65 @@ class TrackingProvider implements BoxProvider {
       [...this.boxes].map((boxId) => ({
         boxId,
         workerHost: `${this.tag}://box-${boxId}`,
-        providerRef: `${this.tag}://box-${boxId}`,
+        driverRef: `${this.tag}://box-${boxId}`,
         createdAtMs: 0,
         labels: [POOL_OWNED_LABEL],
-        metadata: { providerTag: this.tag },
+        metadata: { driverTag: this.tag },
       })),
     );
   }
 }
 
-// Registers two tracking providers, one per kind, each remembering how many
-// times its factory ran so a test can prove a reconcile rebuilds the provider
+// Registers two tracking drivers, one per kind, each remembering how many
+// times its factory ran so a test can prove a reconcile rebuilds the driver
 // in place (factory re-invoked) or skips the rebuild (factory not re-invoked).
 function registerTracking(): {
   builds: { fake: number; "static-ssh": number };
-  fake: () => TrackingProvider;
-  staticSsh: () => TrackingProvider;
+  fake: () => TrackingDriver;
+  staticSsh: () => TrackingDriver;
 } {
   const builds = { fake: 0, "static-ssh": 0 };
-  let fakeInstance: TrackingProvider | null = null;
-  let staticInstance: TrackingProvider | null = null;
-  registerBoxProvider("fake", () => {
-    builds.fake += 1;
-    fakeInstance = new TrackingProvider("fake", "fake");
-    return fakeInstance;
+  let fakeInstance: TrackingDriver | null = null;
+  let staticInstance: TrackingDriver | null = null;
+  drivers = new BoxDriverRegistry();
+  drivers.register({
+    kind: "fake",
+    create: () => {
+      builds.fake += 1;
+      fakeInstance = new TrackingDriver("fake", "fake");
+      return fakeInstance;
+    },
   });
-  registerBoxProvider("static-ssh", () => {
-    builds["static-ssh"] += 1;
-    staticInstance = new TrackingProvider("static-ssh", "static");
-    return staticInstance;
+  drivers.register({
+    kind: "static-ssh",
+    create: () => {
+      builds["static-ssh"] += 1;
+      staticInstance = new TrackingDriver("static-ssh", "static");
+      return staticInstance;
+    },
   });
   return {
     builds,
     fake: () => {
       assert.ok(fakeInstance);
-      return fakeInstance as TrackingProvider;
+      return fakeInstance as TrackingDriver;
     },
     staticSsh: () => {
       assert.ok(staticInstance);
-      return staticInstance as TrackingProvider;
+      return staticInstance as TrackingDriver;
     },
   };
 }
 
-test("reconcile changing provider rebuilds it in place (resolveProvider re-run, singleton not reconstructed); new provisions route to the new provider", async () => {
+test("reconcile changing driver rebuilds it in place (resolveDriver re-run, singleton not reconstructed); new provisions route to the new driver", async () => {
   const { clock } = controllableClock(0);
   const tracking = registerTracking();
-  const pool = createBoxPool(poolSettings({ enabled: true, provider: "fake", min: 0, max: 2 }), {
+  const pool = createBoxPool(poolSettings({ enabled: true, driver: "fake", min: 0, max: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
-  // The provider was resolved exactly once in the ctor.
+  // The driver was resolved exactly once in the ctor.
   assert.equal(tracking.builds.fake, 1);
   assert.equal(tracking.builds["static-ssh"], 0);
 
@@ -2035,18 +2094,18 @@ test("reconcile changing provider rebuilds it in place (resolveProvider re-run, 
   assert.equal(before.lease.workerHost.startsWith("fake://"), true);
   await before.lease.release("healthy");
 
-  // Reconcile to a DIFFERENT provider kind. The pool is NOT reconstructed (same
-  // object) but the provider is rebuilt in place: the static-ssh factory runs.
+  // Reconcile to a DIFFERENT driver kind. The pool is NOT reconstructed (same
+  // object) but the driver is rebuilt in place: the static-ssh factory runs.
   const same = pool;
-  pool.reconcile(poolSettings({ enabled: true, provider: "static-ssh", min: 0, max: 2 }));
+  pool.reconcile(poolSettings({ enabled: true, driver: "static-ssh", min: 0, max: 2 }));
   assert.equal(same, pool);
   assert.equal(tracking.builds["static-ssh"], 1);
   // The fake factory was NOT re-invoked by the swap (no singleton churn).
   assert.equal(tracking.builds.fake, 1);
-  assert.equal(pool.snapshot().provider, "static-ssh");
+  assert.equal(pool.snapshot().driver, "static-ssh");
 
   // The OLD "fake" warm box left over from before the swap is reconciled away by
-  // the reaper (its providerRef no longer matches the new provider's list()), so
+  // the reaper (its driverRef no longer matches the new driver's list()), so
   // a fresh provision routes to the NEW ("static") backend.
   await waitUntil(() => {
     const snap = pool.snapshot();
@@ -2062,116 +2121,119 @@ test("reconcile changing provider rebuilds it in place (resolveProvider re-run, 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("same-provider reconcile skips the swap (no rebuild)", async () => {
+test("same-driver reconcile skips the swap (no rebuild)", async () => {
   const { clock } = controllableClock(0);
   const tracking = registerTracking();
-  const pool = createBoxPool(poolSettings({ enabled: true, provider: "fake", min: 0, max: 2 }), {
+  const pool = createBoxPool(poolSettings({ enabled: true, driver: "fake", min: 0, max: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   assert.equal(tracking.builds.fake, 1);
 
-  // A reconcile that changes a knob but NOT the provider construction (same kind,
-  // same providerOptions) must not rebuild the provider: the factory count holds.
-  pool.reconcile(poolSettings({ enabled: true, provider: "fake", min: 0, max: 3 }));
+  // A reconcile that changes a knob but NOT the driver construction (same kind,
+  // same driverOptions) must not rebuild the driver: the factory count holds.
+  pool.reconcile(poolSettings({ enabled: true, driver: "fake", min: 0, max: 3 }));
   assert.equal(tracking.builds.fake, 1);
   assert.equal(tracking.builds["static-ssh"], 0);
 
   // A no-op reconcile (identical settings) likewise never rebuilds.
-  pool.reconcile(poolSettings({ enabled: true, provider: "fake", min: 0, max: 3 }));
+  pool.reconcile(poolSettings({ enabled: true, driver: "fake", min: 0, max: 3 }));
   assert.equal(tracking.builds.fake, 1);
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("changing providerOptions (same kind) rebuilds the provider in place", async () => {
+test("changing driverOptions (same kind) rebuilds the driver in place", async () => {
   const { clock } = controllableClock(0);
   const tracking = registerTracking();
   const pool = createBoxPool(
     poolSettings({
       enabled: true,
-      provider: "fake",
+      driver: "fake",
       min: 0,
       max: 2,
-      providerOptions: { region: "a" },
+      driverOptions: { region: "a" },
     }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
   assert.equal(tracking.builds.fake, 1);
 
-  // Same kind but a DEEP-changed providerOptions must rebuild the provider so the
+  // Same kind but a DEEP-changed driverOptions must rebuild the driver so the
   // new options take effect.
   pool.reconcile(
     poolSettings({
       enabled: true,
-      provider: "fake",
+      driver: "fake",
       min: 0,
       max: 2,
-      providerOptions: { region: "b" },
+      driverOptions: { region: "b" },
     }),
   );
   assert.equal(tracking.builds.fake, 2);
 
-  // Re-applying the SAME providerOptions does not rebuild again.
+  // Re-applying the SAME driverOptions does not rebuild again.
   pool.reconcile(
     poolSettings({
       enabled: true,
-      provider: "fake",
+      driver: "fake",
       min: 0,
       max: 2,
-      providerOptions: { region: "b" },
+      driverOptions: { region: "b" },
     }),
   );
   assert.equal(tracking.builds.fake, 2);
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("an in-flight lease settling AFTER a provider swap destroys its box against the ORIGINAL provider (never orphaned)", async () => {
+test("an in-flight lease settling AFTER a driver swap destroys its box against the ORIGINAL driver (never orphaned)", async () => {
   const { clock } = controllableClock(0);
   const tracking = registerTracking();
-  const pool = createBoxPool(poolSettings({ enabled: true, provider: "fake", min: 0, max: 2 }), {
+  const pool = createBoxPool(poolSettings({ enabled: true, driver: "fake", min: 0, max: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
-  // Acquire a box on the OLD ("fake") provider and HOLD the lease across the swap.
+  // Acquire a box on the OLD ("fake") driver and HOLD the lease across the swap.
   const held = await pool.acquire(acquireReq());
   assert.equal(held.status, "leased");
   if (held.status !== "leased") return;
   const oldBoxId = held.lease.boxId;
   assert.equal(held.lease.workerHost.startsWith("fake://"), true);
-  const oldProvider = tracking.fake();
-  assert.equal(oldProvider.provisioned.includes(oldBoxId), true);
+  const oldDriver = tracking.fake();
+  assert.equal(oldDriver.provisioned.includes(oldBoxId), true);
 
-  // Reconcile to a NEW provider while the lease is still in flight. swapProvider
-  // captures originProvider on the still-leased box BEFORE reassigning this.provider.
-  pool.reconcile(poolSettings({ enabled: true, provider: "static-ssh", min: 0, max: 2 }));
-  const newProvider = tracking.staticSsh();
-  assert.equal(pool.snapshot().provider, "static-ssh");
+  // Reconcile to a NEW driver while the lease is still in flight. swapDriver
+  // captures originDriver on the still-leased box BEFORE reassigning this.driver.
+  pool.reconcile(poolSettings({ enabled: true, driver: "static-ssh", min: 0, max: 2 }));
+  const newDriver = tracking.staticSsh();
+  assert.equal(pool.snapshot().driver, "static-ssh");
 
   // Now the in-flight lease settles as poison so its box is recycled at settle
-  // time. recycle() must destroy against the box's captured ORIGINAL provider
-  // ("fake"), NOT the new this.provider ("static"), so the paid box is not
+  // time. recycle() must destroy against the box's captured ORIGINAL driver
+  // ("fake"), NOT the new this.driver ("static"), so the paid box is not
   // orphaned on the old backend.
   await held.lease.fail("ssh_timeout");
 
-  // The OLD provider tore the box down; the NEW provider never saw a destroy for
+  // The OLD driver tore the box down; the NEW driver never saw a destroy for
   // a box it never provisioned.
-  assert.equal(oldProvider.destroyed.includes(oldBoxId), true);
-  assert.equal(newProvider.destroyed.includes(oldBoxId), false);
+  assert.equal(oldDriver.destroyed.includes(oldBoxId), true);
+  assert.equal(newDriver.destroyed.includes(oldBoxId), false);
   // No paid box orphaned on the old backend.
-  assert.equal(oldProvider.boxes.has(oldBoxId), false);
+  assert.equal(oldDriver.boxes.has(oldBoxId), false);
 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("a reconcile to an UNAVAILABLE provider throws and mutates NOTHING (last-good boxes survive: neither warm-idle nor leased box is marked for destroy, this.provider unchanged, the leased box settles healthy and is NOT recycled)", async () => {
+test("a reconcile to an UNAVAILABLE driver throws and mutates NOTHING (last-good boxes survive: neither warm-idle nor leased box is marked for destroy, this.driver unchanged, the leased box settles healthy and is NOT recycled)", async () => {
   const { clock } = controllableClock(0);
-  // Old provider ("fake") is registered; the NEW kind ("static-ssh") is NOT, so
-  // the swap's resolveProvider(next.provider, ...) THROWS box_pool_provider_unavailable.
-  const oldProvider = new TrackingProvider("fake", "fake");
-  registerBoxProvider("fake", () => oldProvider);
-  const pool = createBoxPool(poolSettings({ enabled: true, provider: "fake", min: 0, max: 3 }), {
+  // Old driver ("fake") is registered; the NEW kind ("static-ssh") is NOT, so
+  // the swap's registry require(next.driver) THROWS box_pool_driver_unavailable.
+  const oldDriver = new TrackingDriver("fake", "fake");
+  registerDrivers(oldDriver);
+  const pool = createBoxPool(poolSettings({ enabled: true, driver: "fake", min: 0, max: 3 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2188,20 +2250,20 @@ test("a reconcile to an UNAVAILABLE provider throws and mutates NOTHING (last-go
   assert.notEqual(warmBoxId, heldBoxId);
   await warm.lease.release("healthy");
 
-  const beforeProvisioned = oldProvider.provisioned.length;
+  const beforeProvisioned = oldDriver.provisioned.length;
 
-  // Reconcile to the UNAVAILABLE provider. swapProvider must do ALL throwing work
-  // (resolveProvider) BEFORE mutating any record / this.provider, so a rejected
+  // Reconcile to the UNAVAILABLE driver. swapDriver must do ALL throwing work
+  // (resolveDriver) BEFORE mutating any record / this.driver, so a rejected
   // reload leaves the inventory byte-identical and the failure propagates.
   assert.throws(
-    () => pool.reconcile(poolSettings({ enabled: true, provider: "static-ssh", min: 0, max: 3 })),
-    /box_pool_provider_unavailable/,
+    () => pool.reconcile(poolSettings({ enabled: true, driver: "static-ssh", min: 0, max: 3 })),
+    /box_pool_driver_unavailable/,
   );
 
-  // NOTHING was mutated: this.provider is unchanged (snapshot still reports the
+  // NOTHING was mutated: this.driver is unchanged (snapshot still reports the
   // old kind) and NEITHER box was flagged for destroy.
   const after = pool.snapshot();
-  assert.equal(after.provider, "fake");
+  assert.equal(after.driver, "fake");
   assert.equal(after.total, 2);
   const warmRow = after.boxes.find((box) => box.boxId === warmBoxId);
   const heldRow = after.boxes.find((box) => box.boxId === heldBoxId);
@@ -2211,9 +2273,9 @@ test("a reconcile to an UNAVAILABLE provider throws and mutates NOTHING (last-go
   assert.equal(heldRow?.markedForDestroy, false);
   assert.equal(warmRow?.state, "WARM_IDLE");
   assert.equal(heldRow?.state, "LEASED");
-  // The old provider provisioned no replacement and destroyed nothing.
-  assert.equal(oldProvider.provisioned.length, beforeProvisioned);
-  assert.equal(oldProvider.destroyed.length, 0);
+  // The old driver provisioned no replacement and destroyed nothing.
+  assert.equal(oldDriver.provisioned.length, beforeProvisioned);
+  assert.equal(oldDriver.destroyed.length, 0);
 
   // The still-leased box settles HEALTHY: because it was never markedForDestroy,
   // onLeaseSettle returns it to WARM_IDLE instead of recycling it. The warm idle
@@ -2223,31 +2285,31 @@ test("a reconcile to an UNAVAILABLE provider throws and mutates NOTHING (last-go
   assert.equal(settled.total, 2);
   assert.equal(settled.warmIdle, 2);
   assert.equal(settled.leased, 0);
-  assert.equal(oldProvider.destroyed.length, 0);
-  assert.equal(oldProvider.boxes.has(warmBoxId), true);
-  assert.equal(oldProvider.boxes.has(heldBoxId), true);
+  assert.equal(oldDriver.destroyed.length, 0);
+  assert.equal(oldDriver.boxes.has(warmBoxId), true);
+  assert.equal(oldDriver.boxes.has(heldBoxId), true);
 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-// A tracking provider whose `provision` parks on an externally-resolved gate, so a
-// test can drive a provider SWAP IN BETWEEN the pool deciding to grow (provision
-// called on this provider) and the provision resolving (the box landing in
-// inventory under the NOW-stale provider). Tags every workerHost so a test can tell
+// A tracking driver whose `provision` parks on an externally-resolved gate, so a
+// test can drive a driver SWAP IN BETWEEN the pool deciding to grow (provision
+// called on this driver) and the provision resolving (the box landing in
+// inventory under the NOW-stale driver). Tags every workerHost so a test can tell
 // which backend created / tore down a box, and tracks every destroy.
-class DeferredTrackingProvider implements BoxProvider {
+class DeferredTrackingDriver implements BoxDriver {
   readonly destroyed: string[] = [];
   readonly provisioned: string[] = [];
   readonly boxes = new Set<string>();
   private readonly gates: Array<() => void> = [];
 
   constructor(
-    readonly kind: BoxProvider["kind"],
+    readonly kind: BoxDriver["kind"],
     readonly tag: string,
     private readonly usesLedger = false,
   ) {}
 
-  get capabilities(): ProviderCapabilities {
+  get capabilities(): DriverCapabilities {
     return { sshAddressable: false, ephemeral: true, usesLedger: this.usesLedger };
   }
 
@@ -2261,10 +2323,10 @@ class DeferredTrackingProvider implements BoxProvider {
     return {
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: 0,
       labels: [...req.labels],
-      metadata: { providerTag: this.tag },
+      metadata: { driverTag: this.tag },
     };
   }
 
@@ -2283,10 +2345,10 @@ class DeferredTrackingProvider implements BoxProvider {
       [...this.boxes].map((boxId) => ({
         boxId,
         workerHost: `${this.tag}://box-${boxId}`,
-        providerRef: `${this.tag}://box-${boxId}`,
+        driverRef: `${this.tag}://box-${boxId}`,
         createdAtMs: 0,
         labels: [POOL_OWNED_LABEL],
-        metadata: { providerTag: this.tag },
+        metadata: { driverTag: this.tag },
       })),
     );
   }
@@ -2301,152 +2363,158 @@ class DeferredTrackingProvider implements BoxProvider {
   }
 }
 
-test("a provider swap DURING an in-flight grow provision records the box against the ORIGINAL provider and marks it for destroy (no orphan)", async () => {
+test("a driver swap DURING an in-flight grow provision records the box against the ORIGINAL driver and marks it for destroy (no orphan)", async () => {
   // FINDING (MEDIUM): grow() awaits provision() then inserts the descriptor without
-  // capturing which provider created it. A swapProvider DURING the await records a
-  // provider-A box under the new provider B with no originProvider, so a later
+  // capturing which driver created it. A swapDriver DURING the await records a
+  // driver-A box under the new driver B with no originDriver, so a later
   // recycle/destroy routes to B and A's paid machine leaks. The grow must capture
-  // the provider (and its generation) BEFORE the await, then on return stamp
-  // record.originProvider = the CAPTURED provider and (because a swap happened) mark
+  // the driver (and its generation) BEFORE the await, then on return stamp
+  // record.originDriver = the CAPTURED driver and (because a swap happened) mark
   // the box for destroy.
   const { clock } = controllableClock(0);
-  const oldProvider = new DeferredTrackingProvider("fake", "fake", /* usesLedger */ true);
-  const newProvider = new DeferredTrackingProvider("static-ssh", "static", /* usesLedger */ true);
-  registerBoxProvider("fake", () => oldProvider);
-  registerBoxProvider("static-ssh", () => newProvider);
+  const oldDriver = new DeferredTrackingDriver("fake", "fake", /* usesLedger */ true);
+  const newDriver = new DeferredTrackingDriver("static-ssh", "static", /* usesLedger */ true);
+  registerDrivers(oldDriver, newDriver);
 
-  const pool = createBoxPool(poolSettings({ enabled: true, provider: "fake", min: 0, max: 2 }), {
+  const pool = createBoxPool(poolSettings({ enabled: true, driver: "fake", min: 0, max: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
-  // Kick off an acquire that grows a box on the OLD ("fake") provider; its
+  // Kick off an acquire that grows a box on the OLD ("fake") driver; its
   // provision parks on the gate (the box is NOT yet in inventory).
   const acquiring = pool.acquire(acquireReq());
-  await waitUntil(() => oldProvider.pendingCount() === 1);
+  await waitUntil(() => oldDriver.pendingCount() === 1);
 
-  // SWAP to the new provider WHILE the old provision is still in flight.
-  pool.reconcile(poolSettings({ enabled: true, provider: "static-ssh", min: 0, max: 2 }));
-  assert.equal(pool.snapshot().provider, "static-ssh");
+  // SWAP to the new driver WHILE the old provision is still in flight.
+  pool.reconcile(poolSettings({ enabled: true, driver: "static-ssh", min: 0, max: 2 }));
+  assert.equal(pool.snapshot().driver, "static-ssh");
 
   // Now let the OLD provision resolve: the box lands in inventory AFTER the swap.
-  oldProvider.releaseNext();
+  oldDriver.releaseNext();
   const result = await acquiring;
   assert.equal(result.status, "leased");
   if (result.status !== "leased") return;
   const boxId = result.lease.boxId;
   // The box was provisioned on the OLD ("fake") backend, so its workerHost is fake.
   assert.equal(result.lease.workerHost.startsWith("fake://"), true);
-  assert.equal(oldProvider.provisioned.includes(boxId), true);
+  assert.equal(oldDriver.provisioned.includes(boxId), true);
 
-  // The box was marked for destroy (it was provisioned on the now-stale provider).
+  // The box was marked for destroy (it was provisioned on the now-stale driver).
   const snapBox = pool.snapshot().boxes.find((box) => box.boxId === boxId);
   assert.ok(snapBox);
   assert.equal(snapBox?.markedForDestroy, true);
 
   // Settle the lease: recycle must destroy the box against its ORIGINAL ("fake")
-  // provider, NOT the new ("static") provider, so the paid machine is not orphaned.
+  // driver, NOT the new ("static") driver, so the paid machine is not orphaned.
   await result.lease.release("healthy");
-  await waitUntil(() => oldProvider.destroyed.includes(boxId));
-  assert.equal(oldProvider.destroyed.includes(boxId), true);
-  assert.equal(newProvider.destroyed.includes(boxId), false);
+  await waitUntil(() => oldDriver.destroyed.includes(boxId));
+  assert.equal(oldDriver.destroyed.includes(boxId), true);
+  assert.equal(newDriver.destroyed.includes(boxId), false);
   // No paid box orphaned on the old backend.
-  assert.equal(oldProvider.boxes.has(boxId), false);
+  assert.equal(oldDriver.boxes.has(boxId), false);
 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("a provider swap DURING an in-flight WARM provision records the box against the ORIGINAL provider and marks it for destroy (no orphan)", async () => {
+test("a driver swap DURING an in-flight WARM provision records the box against the ORIGINAL driver and marks it for destroy (no orphan)", async () => {
   // Same orphaned-in-flight-grow shape as above, but for the reaper-driven
-  // provisionWarm() path: a warm box provisioned on provider A whose insert lands
-  // after a swap to B must still carry originProvider=A and be marked for destroy.
+  // provisionWarm() path: a warm box provisioned on driver A whose insert lands
+  // after a swap to B must still carry originDriver=A and be marked for destroy.
   const { clock } = controllableClock(0);
-  const oldProvider = new DeferredTrackingProvider("fake", "fake", /* usesLedger */ true);
-  const newProvider = new DeferredTrackingProvider("static-ssh", "static", /* usesLedger */ true);
-  registerBoxProvider("fake", () => oldProvider);
-  registerBoxProvider("static-ssh", () => newProvider);
+  const oldDriver = new DeferredTrackingDriver("fake", "fake", /* usesLedger */ true);
+  const newDriver = new DeferredTrackingDriver("static-ssh", "static", /* usesLedger */ true);
+  registerDrivers(oldDriver, newDriver);
 
   // warm=1 so a reconcile's growTowardTarget drives provisionWarm() on the OLD
-  // provider; its provision parks on the gate. A short reapIntervalMs so the
+  // driver; its provision parks on the gate. A short reapIntervalMs so the
   // recurring reaper promptly recycles the (flagged, idle) stale box once it lands.
   const pool = createBoxPool(
-    poolSettings({ enabled: true, provider: "fake", min: 0, max: 2, warm: 1, reapIntervalMs: 5 }),
-    { clock, logEvent: () => undefined },
+    poolSettings({ enabled: true, driver: "fake", min: 0, max: 2, warm: 1, reapIntervalMs: 5 }),
+    { clock, drivers, logEvent: () => undefined },
   );
 
-  // Trigger a warm top-up on the OLD provider (reconcile with the same provider so
+  // Trigger a warm top-up on the OLD driver (reconcile with the same driver so
   // no swap yet; growTowardTarget calls provisionWarm which parks on the gate).
   pool.reconcile(
-    poolSettings({ enabled: true, provider: "fake", min: 0, max: 2, warm: 1, reapIntervalMs: 5 }),
+    poolSettings({ enabled: true, driver: "fake", min: 0, max: 2, warm: 1, reapIntervalMs: 5 }),
   );
-  await waitUntil(() => oldProvider.pendingCount() >= 1);
+  await waitUntil(() => oldDriver.pendingCount() >= 1);
 
-  // SWAP to the new provider WHILE the warm provision is still in flight.
+  // SWAP to the new driver WHILE the warm provision is still in flight.
   pool.reconcile(
     poolSettings({
       enabled: true,
-      provider: "static-ssh",
+      driver: "static-ssh",
       min: 0,
       max: 2,
       warm: 1,
       reapIntervalMs: 5,
     }),
   );
-  assert.equal(pool.snapshot().provider, "static-ssh");
+  assert.equal(pool.snapshot().driver, "static-ssh");
 
   // Let the OLD warm provision resolve: the box lands in inventory AFTER the swap,
-  // flagged for destroy with origin captured to the OLD provider.
-  oldProvider.releaseNext();
-  await waitUntil(() => oldProvider.provisioned.length === 1);
-  const boxId = oldProvider.provisioned[0]!;
+  // flagged for destroy with origin captured to the OLD driver.
+  oldDriver.releaseNext();
+  await waitUntil(() => oldDriver.provisioned.length === 1);
+  const boxId = oldDriver.provisioned[0]!;
 
   // The stale idle box is recycled against its ORIGINAL ("fake") backend (NOT the
-  // new "static" provider), so the paid machine is torn down where it was created
+  // new "static" driver), so the paid machine is torn down where it was created
   // rather than orphaned by the reaper's list-reconcile dropping the record.
-  await waitUntil(() => oldProvider.destroyed.includes(boxId));
-  assert.equal(oldProvider.destroyed.includes(boxId), true);
-  assert.equal(newProvider.destroyed.includes(boxId), false);
-  assert.equal(oldProvider.boxes.has(boxId), false);
-  // And it never lingers in inventory under the new provider.
+  await waitUntil(() => oldDriver.destroyed.includes(boxId));
+  assert.equal(oldDriver.destroyed.includes(boxId), true);
+  assert.equal(newDriver.destroyed.includes(boxId), false);
+  assert.equal(oldDriver.boxes.has(boxId), false);
+  // And it never lingers in inventory under the new driver.
   await waitUntil(() => !pool.snapshot().boxes.some((b) => b.boxId === boxId));
 
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("provider swap re-threads the reaper provider and the ledger usesLedger gate (no singleton reconstruction)", async () => {
+test("driver swap re-threads the reaper driver and the ledger usesLedger gate (no singleton reconstruction)", async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "box-pool-swap-ledger-test-"));
   const ledgerPath = path.join(tmpDir, "box-pool", "ledger.json");
   const { clock } = controllableClock(0);
 
-  // Old provider: NON-ledger ("fake"). New provider: ledger-backed ("static-ssh")
+  // Old driver: NON-ledger ("fake"). New driver: ledger-backed ("static-ssh")
   // so the swap must rebuild the ledger gate (usesLedger false -> true) in place.
   const builds = { fake: 0, "static-ssh": 0 };
-  let staticInstance: TrackingProvider | null = null;
-  registerBoxProvider("fake", () => {
-    builds.fake += 1;
-    return new TrackingProvider("fake", "fake", /* usesLedger */ false);
+  let staticInstance: TrackingDriver | null = null;
+  drivers = new BoxDriverRegistry();
+  drivers.register({
+    kind: "fake",
+    create: () => {
+      builds.fake += 1;
+      return new TrackingDriver("fake", "fake", /* usesLedger */ false);
+    },
   });
-  registerBoxProvider("static-ssh", () => {
-    builds["static-ssh"] += 1;
-    staticInstance = new TrackingProvider("static-ssh", "static", /* usesLedger */ true);
-    return staticInstance;
+  drivers.register({
+    kind: "static-ssh",
+    create: () => {
+      builds["static-ssh"] += 1;
+      staticInstance = new TrackingDriver("static-ssh", "static", /* usesLedger */ true);
+      return staticInstance;
+    },
   });
 
   const pool = createBoxPool(
-    poolSettings({ enabled: true, provider: "fake", min: 0, max: 2, reapIntervalMs: 5 }),
-    { clock, logEvent: () => undefined, ledgerPath },
+    poolSettings({ enabled: true, driver: "fake", min: 0, max: 2, reapIntervalMs: 5 }),
+    { clock, drivers, logEvent: () => undefined, ledgerPath },
   );
 
-  // Swap to the ledger-backed provider in place.
+  // Swap to the ledger-backed driver in place.
   pool.reconcile(
-    poolSettings({ enabled: true, provider: "static-ssh", min: 0, max: 2, reapIntervalMs: 5 }),
+    poolSettings({ enabled: true, driver: "static-ssh", min: 0, max: 2, reapIntervalMs: 5 }),
   );
   assert.equal(builds["static-ssh"], 1);
   assert.ok(staticInstance);
 
-  // The reaper now drives the NEW provider: a box provisioned post-swap lands on
+  // The reaper now drives the NEW driver: a box provisioned post-swap lands on
   // the static backend and the recurring reaper's list() reconcile (which reads
-  // reaperInternals.provider) keeps it, proving the reaper provider was re-threaded.
+  // reaperInternals.driver) keeps it, proving the reaper driver was re-threaded.
   const leased = await pool.acquire(acquireReq());
   assert.equal(leased.status, "leased");
   if (leased.status !== "leased") return;
@@ -2471,15 +2539,16 @@ test("provider swap re-threads the reaper provider and the ledger usesLedger gat
 // onMachineRecycling: the recycle-vs-endpoint ordering invariant (T2c)
 // ---------------------------------------------------------------------------
 
-test("onMachineRecycling fires with the boxId on a poison-driven recycle (before the provider.destroy completes)", async () => {
-  // A provider whose destroy parks on a gate so the test can prove the recycling
+test("onMachineRecycling fires with the boxId on a poison-driven recycle (before the driver.destroy completes)", async () => {
+  // A driver whose destroy parks on a gate so the test can prove the recycling
   // callback fired BEFORE the machine is actually torn down (the ordering
   // invariant: the coordinator must see the recycle before the host dies).
-  const provider = new DeferredDestroyProvider();
-  registerDeferredDestroy(provider);
+  const driver = new DeferredDestroyDriver();
+  registerDeferredDestroy(driver);
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2487,9 +2556,9 @@ test("onMachineRecycling fires with the boxId on a poison-driven recycle (before
   let destroyedAtCallback: string[] = [];
   pool.onMachineRecycling((boxId) => {
     recycling.push(boxId);
-    // Snapshot what the provider has destroyed AT callback time: the destroy is
+    // Snapshot what the driver has destroyed AT callback time: the destroy is
     // parked on the gate, so nothing is torn down yet (callback fires first).
-    destroyedAtCallback = [...provider.destroyed];
+    destroyedAtCallback = [...driver.destroyed];
   });
 
   const held = await pool.acquire(acquireReq());
@@ -2502,13 +2571,13 @@ test("onMachineRecycling fires with the boxId on a poison-driven recycle (before
   await waitUntil(() => recycling.length === 1);
 
   assert.deepEqual(recycling, [boxId]);
-  // The callback ran BEFORE provider.destroy completed (the destroy is gated).
+  // The callback ran BEFORE driver.destroy completed (the destroy is gated).
   assert.deepEqual(destroyedAtCallback, []);
 
   // Let the destroy complete and the settle resolve.
-  provider.releaseNextDestroy();
+  driver.releaseNextDestroy();
   await settle;
-  await waitUntil(() => provider.destroyed.includes(boxId));
+  await waitUntil(() => driver.destroyed.includes(boxId));
   await pool.drain({ deadlineMs: 1_000 });
 });
 
@@ -2516,6 +2585,7 @@ test("onMachineRecycling fires on the drain force-destroy path too (every teardo
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2536,6 +2606,7 @@ test("onMachineRecycling supports multiple registered callbacks (all fire)", asy
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2561,6 +2632,7 @@ test("onMachineRecycling fires exactly once per box even when a poisoned, marked
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2585,6 +2657,7 @@ test("co-resident poison is remembered: the box recycles when the last sibling s
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, min: 0, slotsPerMachine: 2 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
 
@@ -2620,11 +2693,12 @@ test("co-resident poison is remembered: the box recycles when the last sibling s
   await pool.drain({ deadlineMs: 1_000 });
 });
 
-test("a failed provider.destroy keeps the paid box tracked, then drain reclaims it once it recovers", async () => {
+test("a failed driver.destroy keeps the paid box tracked, then drain reclaims it once it recovers", async () => {
   const { clock } = controllableClock(0);
   const events: Record<string, unknown>[] = [];
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, min: 0 }), {
     clock,
+    drivers,
     logEvent: (event) => {
       events.push(event);
     },
@@ -2635,11 +2709,11 @@ test("a failed provider.destroy keeps the paid box tracked, then drain reclaims 
   if (a.status !== "leased") return;
   const boxId = a.lease.boxId;
 
-  assert.ok(lastProvider);
-  const provider = lastProvider as FakeBoxProvider;
+  assert.ok(lastDriver);
+  const driver = lastDriver as FakeBoxDriver;
 
   // The backend destroy fails when the poisoned lease tries to recycle the box.
-  provider.injectDestroyFailure(boxId, "provider 500");
+  driver.injectDestroyFailure(boxId, "driver 500");
   await a.lease.fail("ssh_down");
 
   // The box must stay tracked (a machine that may still be running and billing):
@@ -2655,16 +2729,16 @@ test("a failed provider.destroy keeps the paid box tracked, then drain reclaims 
     true,
   );
   assert.equal(
-    (await provider.list()).some((descriptor) => descriptor.boxId === boxId),
+    (await driver.list()).some((descriptor) => descriptor.boxId === boxId),
     true,
   );
 
   // Once the backend recovers, teardown actually reclaims it - proving the retained
   // box was recoverable, never silently leaked.
-  provider.clearDestroyFailure(boxId);
+  driver.clearDestroyFailure(boxId);
   await pool.drain({ deadlineMs: 1_000 });
   assert.equal(
-    (await provider.list()).some((descriptor) => descriptor.boxId === boxId),
+    (await driver.list()).some((descriptor) => descriptor.boxId === boxId),
     false,
   );
 });
@@ -2673,7 +2747,7 @@ test("maxBoxesPerIssue is not bypassed when a same-issue sibling settles on a sh
   const { clock } = controllableClock(0);
   const pool = createBoxPool(
     poolSettings({ max: 2, warm: 0, min: 0, slotsPerMachine: 2, maxBoxesPerIssue: 1 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   // Two leases for issue-a co-reside on box B1 (both its slots).

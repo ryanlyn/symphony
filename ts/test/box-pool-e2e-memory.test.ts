@@ -21,7 +21,7 @@ registerBuiltinBackends();
 // ---------------------------------------------------------------------------
 // Always-on end-to-end demo (T17): the REAL `runDaemon` wiring with a
 // `tracker.kind=memory` client and the REAL `@symphony/worker-box-pool`
-// (provider=fake, max=1, warm=1). No fakes are injected into the runtime - the
+// (driver=fake, max=1, warm=1). No fakes are injected into the runtime - the
 // pool, orchestrator, runner, and ACP executor are all the real production
 // code paths. The pool yields `fake://box-<id>` as the workerHost; the runner
 // then drives the ACP bridge (and its per-run MCP reverse tunnel) over
@@ -78,7 +78,7 @@ test("memory-tracker daemon leases a fake box, completes a run, and returns it t
   // Lease released healthy: the single box is back in the warm pool, not destroyed.
   const pool = harness.pool.snapshot();
   assert.equal(pool.enabled, true);
-  assert.equal(pool.provider, "fake");
+  assert.equal(pool.driver, "fake");
   assert.equal(pool.total, 1);
   assert.equal(pool.warmIdle, 1);
   assert.equal(pool.leased, 0);
@@ -196,7 +196,7 @@ async function setupHarness(
       ssh_timeout_ms: 5_000,
       box_pool: {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         min: 0,
         max: 1,
         warm: 1,
@@ -226,7 +226,8 @@ async function setupHarness(
     settings,
   };
 
-  // The real production box pool (provider=fake self-registers on the barrel import).
+  // The real production box pool (the fake driver is in the default registry
+  // populated by registerBuiltinBackends() above, same as the CLI entrypoint).
   const pool = buildBoxPool(settings, process.env);
   assert.ok(pool);
   if (!pool) throw new Error("box pool was not constructed");

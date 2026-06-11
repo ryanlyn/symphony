@@ -213,7 +213,7 @@ function makeFakeMachinePool(
       return true;
     },
     reconcile(): void {},
-    swapProvider(): void {},
+    swapDriver(): void {},
     onMachineRecycling(cb): void {
       recyclingCallbacks.push(cb);
     },
@@ -230,7 +230,7 @@ function makeFakeMachinePool(
     snapshot(): BoxPoolSnapshot {
       return {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         total: leases.size,
         warmIdle: 0,
         leased: leases.size,

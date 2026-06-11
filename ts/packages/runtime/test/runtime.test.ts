@@ -1470,6 +1470,8 @@ function makeFakeBoxPool(
       reconcileCalls.push(next);
       if (options.reconcileError) throw new Error(options.reconcileError);
     },
+    swapDriver(): void {},
+    onMachineRecycling(): void {},
     async hydrate(): Promise<void> {},
     async drain(opts): Promise<void> {
       drainCalls.push({ deadlineMs: opts.deadlineMs });
@@ -1477,7 +1479,7 @@ function makeFakeBoxPool(
     snapshot() {
       return {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         total: 0,
         warmIdle: 0,
         leased: 0,
@@ -1509,7 +1511,7 @@ function boxPoolWorkflowFixture(
     worker: {
       box_pool: {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         acquire_timeout_ms: 12_345,
         drain_deadline_ms: 9_999,
         ...overrides,
@@ -2019,7 +2021,7 @@ test("box pool: no_capacity abandons the claim, skips the runner, records no his
 
 test("box pool: a thrown acquire rejection abandons the claim, skips the runner, and re-claims next poll", async () => {
   // acquire() can REJECT (throw) outside the no_capacity result path (ledger /
-  // filesystem / provider error). That rejection must be handled like a failed
+  // filesystem / driver error). That rejection must be handled like a failed
   // dispatch: release the active handle, abandon the claim (so the slot is
   // re-evaluated next poll), emit a clear error event, and return WITHOUT
   // running and WITHOUT leaving the claim/handle dangling as a stuck 'running'.
@@ -2035,7 +2037,7 @@ test("box pool: a thrown acquire rejection abandons the claim, skips the runner,
   const boxPool = makeFakeBoxPool({
     result: () => {
       acquireAttempts += 1;
-      // First acquire throws (provider/ledger fault); the second succeeds so the
+      // First acquire throws (driver/ledger fault); the second succeeds so the
       // re-claim on the next poll can actually run, proving the slot recovered.
       if (acquireAttempts === 1) throw new Error("ledger_write_failed: disk full");
       return { status: "leased", lease: makeFakeLease({ workerHost: "fake://box-recovered" }) };
@@ -2922,7 +2924,7 @@ test("box pool: a default (slotsPerMachine=1) reload applies unchanged through t
 test("box pool: a reload whose reconcile throws keeps last-good settings AND the live pool unchanged (transactional)", async () => {
   // Codex iter-5 HIGH (non-transactional reload): the reload assigned
   // this.input.workflow + this.orchestrator.settings BEFORE coordinator.reconcile.
-  // If reconcile throws (e.g. provider unavailable / invalid providerOptions), the
+  // If reconcile throws (e.g. driver unavailable / invalid driverOptions), the
   // catch emits workflow_reload_failed but the runtime has ALREADY switched to the
   // failed settings - 'last-good' is violated and dispatch uses settings that do not
   // match the live pool/coordinator. The reload must be transactional: run the
@@ -2937,10 +2939,10 @@ test("box pool: a reload whose reconcile throws keeps last-good settings AND the
     { max: 3 },
   );
   assert.equal(secondWorkflow.settings.worker.boxPool?.max, 3);
-  // The pool rejects the reconcile (e.g. provider unavailable on the new settings).
+  // The pool rejects the reconcile (e.g. driver unavailable on the new settings).
   const boxPool = makeFakeBoxPool({
     canAcquire: false,
-    reconcileError: "provider unavailable",
+    reconcileError: "driver unavailable",
   });
   let reloads = 0;
   const runtime = new SymphonyRuntime(
@@ -2971,7 +2973,7 @@ test("box pool: a reload whose reconcile throws keeps last-good settings AND the
     .snapshot()
     .recentEvents.find((event) => event.type === "workflow_reload_failed");
   assert.ok(reloadFailed);
-  assert.ok(reloadFailed.message.includes("provider unavailable"));
+  assert.ok(reloadFailed.message.includes("driver unavailable"));
   // ...and NO workflow_reloaded event was emitted for the rejected reload.
   assert.equal(
     runtime.snapshot().recentEvents.some((event) => event.type === "workflow_reloaded"),

@@ -1,19 +1,20 @@
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { runSsh as defaultRunSsh, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
-
+import { defaultBoxDriverRegistry } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  BoxDriverRegistry,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
+  DriverCapabilities,
+  DriverDeps,
   ProvisionRequest,
+  SshRunner,
   TeardownReason,
-} from "../types.js";
+} from "@symphony/box-sdk";
 
-const KIND: BoxPoolProvider = "static-ssh";
+const KIND = "static-ssh";
 
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: true,
   ephemeral: false,
   usesLedger: false,
@@ -22,23 +23,15 @@ const CAPABILITIES: ProviderCapabilities = {
 /** The readiness command the probe runs over SSH (a cheap liveness check). */
 const PROBE_COMMAND = "printf ready";
 
-/** Injectable SSH transport so tests can spy on the probe argv/timeout. */
-type RunSsh = (host: string, command: string, options?: SshRunOptions) => Promise<SshRunResult>;
-
-/** Optional dependency overrides (test seam for the SSH transport). */
-export interface StaticSshProviderOverrides {
-  runSsh?: RunSsh;
-}
-
 /**
- * Reads the configured host list from `providerOptions`, accepting BOTH the
+ * Reads the configured host list from the driver options, accepting BOTH the
  * snake_case `ssh_hosts` and the camelCase `sshHosts` spellings. This is the
  * documented passthrough: the config normalizer is a flat per-key alias map and
- * does NOT recurse into `providerOptions`, so an operator may write either form.
+ * does NOT recurse into the driver options, so an operator may write either form.
  * Throws `static_ssh_hosts_required` when neither is a non-empty string array.
  */
-function readSshHosts(providerOptions: Record<string, unknown> | undefined): string[] {
-  const raw = providerOptions?.["ssh_hosts"] ?? providerOptions?.["sshHosts"];
+function readSshHosts(options: Readonly<Record<string, unknown>> | undefined): string[] {
+  const raw = options?.["ssh_hosts"] ?? options?.["sshHosts"];
   if (
     Array.isArray(raw) &&
     raw.length > 0 &&
@@ -50,8 +43,8 @@ function readSshHosts(providerOptions: Record<string, unknown> | undefined): str
 }
 
 /**
- * A {@link BoxProvider} over a FIXED set of pre-existing SSH machines configured
- * via `providerOptions.ssh_hosts` (or `sshHosts`). It owns no lifecycle for the
+ * A {@link BoxDriver} over a FIXED set of pre-existing SSH machines configured
+ * via the `ssh_hosts` (or `sshHosts`) driver option. It owns no lifecycle for the
  * machines themselves: `min == max == hosts.length` is the implicit shape, and
  * the address IS the `boxId`. `provision` hands out one of the configured
  * addresses idempotently; `probe` runs `printf ready` over SSH using the
@@ -60,7 +53,7 @@ function readSshHosts(providerOptions: Record<string, unknown> | undefined): str
  * NEVER deletes a machine (a destroyed host is immediately re-provisionable);
  * `list` returns the configured set minus the addresses currently forgotten.
  */
-export class StaticSshBoxProvider implements BoxProvider {
+export class StaticSshBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
@@ -73,16 +66,15 @@ export class StaticSshBoxProvider implements BoxProvider {
    * "address IS the boxId" shape). Tracks the provisioned-minus-destroyed view.
    */
   private readonly assignments = new Map<string, string>();
-  private readonly runSsh: RunSsh;
+  private readonly runSsh: SshRunner;
 
   constructor(
-    settings: BoxPoolSettings,
-    private readonly deps: ProviderDeps,
-    overrides: StaticSshProviderOverrides = {},
+    options: Readonly<Record<string, unknown>>,
+    private readonly deps: DriverDeps,
   ) {
-    this.hosts = readSshHosts(settings.providerOptions);
+    this.hosts = readSshHosts(options);
     this.hostSet = new Set(this.hosts);
-    this.runSsh = overrides.runSsh ?? defaultRunSsh;
+    this.runSsh = deps.runSsh;
   }
 
   /**
@@ -169,10 +161,29 @@ export class StaticSshBoxProvider implements BoxProvider {
     return {
       boxId,
       workerHost: host,
-      providerRef: host,
+      driverRef: host,
       createdAtMs: this.deps.clock.now().getTime(),
       labels,
       metadata: {},
     };
+  }
+}
+
+/** The registered `static-ssh` factory: constructs a driver over the configured hosts. */
+export const staticSshBoxDriverFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: (options, deps) => new StaticSshBoxDriver(options, deps),
+};
+
+/**
+ * Register this extension's box driver. Idempotent; called by the composition
+ * root (or a test) against its registry, defaulting to the process-wide one.
+ */
+export function registerStaticSshBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(staticSshBoxDriverFactory);
   }
 }

@@ -1,23 +1,25 @@
-import { afterEach, test } from "vitest";
+import { beforeAll, test } from "vitest";
 import { parseConfig } from "@symphony/config";
-import { clearBoxProviderRegistry, registerBuiltInBoxProviders } from "@symphony/worker-box-pool";
 import { assert } from "@symphony/test-utils";
 
+import { registerBuiltinBackends } from "../src/daemon.js";
 import { assertSlotsPerMachineGate } from "../src/main.js";
 
 import {
   buildBoxPool,
   buildDispatchCoordinator,
   createBoxPool,
-  resolveProvider,
-  FakeBoxProvider,
-  StaticSshBoxProvider,
+  createDispatchCoordinator,
+  BoxDriverRegistry,
+  defaultBoxDriverRegistry,
+  FakeBoxDriver,
+  registerFakeBoxDriver,
 } from "@symphony/cli";
 
-afterEach(() => {
-  // Built-in providers self-register at barrel load; restore them after any
-  // test that clears the shared module-level registry for isolation.
-  registerBuiltInBoxProviders();
+// buildBoxPool resolves `worker.box_pool.driver` through the process-default
+// box-driver registry, so populate it the same way the CLI entrypoints do.
+beforeAll(() => {
+  registerBuiltinBackends();
 });
 
 test("buildBoxPool returns undefined when the pool is disabled (byte-identical path)", () => {
@@ -27,14 +29,14 @@ test("buildBoxPool returns undefined when the pool is disabled (byte-identical p
 });
 
 test("buildBoxPool returns undefined when box_pool is present but enabled:false", () => {
-  const settings = parseConfig({ worker: { box_pool: { enabled: false, provider: "fake" } } }, {});
+  const settings = parseConfig({ worker: { box_pool: { enabled: false, driver: "fake" } } }, {});
   assert.equal(settings.worker.boxPool?.enabled, false);
   assert.equal(buildBoxPool(settings, {}), undefined);
 });
 
 test("buildBoxPool constructs an enabled fake pool with a workspace-scoped ledger path", () => {
   const settings = parseConfig(
-    { worker: { box_pool: { enabled: true, provider: "fake", max: 2, warm: 1 } } },
+    { worker: { box_pool: { enabled: true, driver: "fake", max: 2, warm: 1 } } },
     {},
   );
   const boxPool = buildBoxPool(settings, {});
@@ -42,24 +44,32 @@ test("buildBoxPool constructs an enabled fake pool with a workspace-scoped ledge
 
   const snapshot = boxPool!.snapshot();
   assert.equal(snapshot.enabled, true);
-  assert.equal(snapshot.provider, "fake");
+  assert.equal(snapshot.driver, "fake");
   // Drain must be awaitable so main.ts can await runtime.drainBoxPool() on exit.
   assert.equal(typeof boxPool!.drain, "function");
   assert.equal(typeof boxPool!.hydrate, "function");
   assert.equal(typeof boxPool!.canAcquire, "function");
 });
 
-test("buildBoxPool throws box_pool_provider_unavailable for an unregistered enabled kind", () => {
-  const settings = parseConfig({ worker: { box_pool: { enabled: true, provider: "fake" } } }, {});
-  clearBoxProviderRegistry();
-  assert.throws(() => buildBoxPool(settings, {}), /box_pool_provider_unavailable/);
+test("buildBoxPool throws box_pool_driver_unavailable for an unregistered enabled kind", () => {
+  // "nope" is never registered by registerBuiltinBackends, so the registry's
+  // fail-loud `require` aborts pool construction with the known-kinds hint.
+  const settings = parseConfig({ worker: { box_pool: { enabled: true, driver: "nope" } } }, {});
+  assert.throws(
+    () => buildBoxPool(settings, {}),
+    /box_pool_driver_unavailable: nope \(known kinds: .*fake/,
+  );
 });
 
-test("CLI re-exports the worker-box-pool public API for live/e2e tests", () => {
+test("CLI re-exports the box-pool driver public API for live/e2e tests", () => {
   assert.equal(typeof createBoxPool, "function");
-  assert.equal(typeof resolveProvider, "function");
-  assert.equal(typeof FakeBoxProvider, "function");
-  assert.equal(typeof StaticSshBoxProvider, "function");
+  assert.equal(typeof createDispatchCoordinator, "function");
+  assert.equal(typeof BoxDriverRegistry, "function");
+  assert.equal(typeof registerFakeBoxDriver, "function");
+  assert.equal(typeof FakeBoxDriver, "function");
+  assert.ok(defaultBoxDriverRegistry instanceof BoxDriverRegistry);
+  // The builtin drivers registered above resolve through the default registry.
+  assert.ok(defaultBoxDriverRegistry.kinds().includes("fake"));
 });
 
 // --- STEP 3 post-construction gate ---------------------------------------
@@ -79,7 +89,7 @@ function gateSettings(boxPool: Record<string, unknown> | undefined) {
 test("gate: slotsPerMachine>1 with perRunEndpoint=false throws", () => {
   const settings = gateSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: true,
   });
@@ -90,7 +100,7 @@ test("gate: slotsPerMachine>1 with perRunEndpoint=false throws", () => {
 });
 
 test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent throws", () => {
-  const settings = gateSettings({ enabled: true, provider: "fake", max_in_flight: 2 });
+  const settings = gateSettings({ enabled: true, driver: "fake", max_in_flight: 2 });
   assert.equal(settings.worker.boxPool?.coResidence, undefined);
   assert.throws(() => assertSlotsPerMachineGate(settings, capable), /co.?residence/i);
 });
@@ -98,7 +108,7 @@ test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent th
 test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false throws", () => {
   const settings = gateSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: false,
   });
@@ -108,7 +118,7 @@ test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false thr
 test("gate: slotsPerMachine>1 with perRunEndpoint AND coResidence passes", () => {
   const settings = gateSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: true,
   });
@@ -121,7 +131,7 @@ test("gate: DISABLED pool with max_in_flight>1 does not abort daemon startup", (
   // is off (runs go static/local), so buildDispatchCoordinator returns undefined
   // and assertSlotsPerMachineGate(settings, undefined) must NOT throw. Before the
   // fix this fail-closed regression aborted the daemon over a value never used.
-  const settings = gateSettings({ enabled: false, provider: "fake", max_in_flight: 2 });
+  const settings = gateSettings({ enabled: false, driver: "fake", max_in_flight: 2 });
   assert.equal(settings.worker.boxPool?.enabled, false);
   assert.equal(settings.worker.boxPool?.slotsPerMachine, 2);
   const coordinator = buildDispatchCoordinator(settings, {});
@@ -132,7 +142,7 @@ test("gate: DISABLED pool with max_in_flight>1 does not abort daemon startup", (
 
 test("gate: default slotsPerMachine=1 always passes regardless of capability/opt-in", () => {
   // Enabled pool, default slots, no capability, no opt-in: gate never triggers.
-  const enabledDefault = gateSettings({ enabled: true, provider: "fake" });
+  const enabledDefault = gateSettings({ enabled: true, driver: "fake" });
   assert.equal(enabledDefault.worker.boxPool?.slotsPerMachine, 1);
   assertSlotsPerMachineGate(enabledDefault, incapable);
   assertSlotsPerMachineGate(enabledDefault, capable);

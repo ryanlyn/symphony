@@ -44,7 +44,7 @@ export type NoCapacityReason =
   | "acquire_timeout"
   | "spend_cap"
   | "pool_disabled"
-  | "provider_error"
+  | "driver_error"
   | "tunnel_exhausted";
 
 /** Discriminated result of {@link DispatchCoordinator.acquireRunSlot}. */
@@ -581,9 +581,9 @@ export function createDispatchCoordinator(
     },
 
     reconcile(next: BoxPoolSettings): void {
-      // Reconcile the pool FIRST: pool.reconcile -> swapProvider -> resolveProvider
-      // can THROW (e.g. box_pool_provider_unavailable) when a reload changes the
-      // provider to an unavailable kind, and the pool rolls itself back to last-good
+      // Reconcile the pool FIRST: pool.reconcile -> swapDriver -> registry resolve
+      // can THROW (e.g. box_pool_driver_unavailable) when a reload changes the
+      // driver to an unavailable kind, and the pool rolls itself back to last-good
       // on that throw. Only AFTER it succeeds do we commit the coordinator-owned
       // settings (the tunnel-exhaustion ceiling) so a rejected reload cannot strand
       // currentSettings on a config the pool refused - keeping the reload

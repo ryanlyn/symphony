@@ -1,21 +1,15 @@
-import type { BoxPoolProvider, BoxPoolSettings, ClockPort } from "@symphony/domain";
+import type { BoxDriver } from "@symphony/box-sdk";
+import type { BoxDriverKind, BoxPoolSettings } from "@symphony/domain";
 
 /**
- * Shared types for the embedded warm box pool. Every implementation file imports
- * from this module so concrete files (pool, lease, reaper, providers, ledger,
- * registry) never form import cycles. Keep this file dependency-light: it pulls
- * `BoxPoolProvider`/`BoxPoolSettings`/`ClockPort` from `@symphony/domain` only.
+ * Pool-side types for the embedded warm box pool. Every implementation file
+ * imports from this module so concrete files (pool, lease, reaper, ledger) never
+ * form import cycles. The DRIVER contract (BoxDriver, BoxDescriptor,
+ * ProvisionRequest, BoxHealth, TeardownReason, POOL_OWNED_LABEL, the registry)
+ * lives in `@symphony/box-sdk`; this module owns only the engine vocabulary the
+ * pool itself adds on top: leases, inventory records, the ledger row shape, and
+ * the pool surface.
  */
-
-/**
- * The label every pool-owned box carries so a `list()` reconcile can re-adopt or
- * destroy ONLY boxes the pool created (never an unlabeled foreign instance). The
- * pool stamps this on every provision request, and every provider's `list()` MUST
- * surface it on the descriptors it returns (the pool's ownership gate keys on it).
- * Defined here in the leaf types module so both `pool.ts` and the provider drivers
- * can reference it without forming an import cycle.
- */
-export const POOL_OWNED_LABEL = "symphony.pool=worker-box-pool";
 
 /**
  * Outcome of a completed lease. `healthy` keeps the box for reuse; `poison`
@@ -24,106 +18,6 @@ export const POOL_OWNED_LABEL = "symphony.pool=worker-box-pool";
  * `release('poison')` with a recorded reason.
  */
 export type BoxOutcome = "healthy" | "poison";
-
-/**
- * Why a box is being torn down. Drives provider `destroy` and ledger/spend
- * bookkeeping; never runs workspace hooks (the runner owns workspace lifecycle).
- */
-export type TeardownReason =
-  | "ttl"
-  | "idle"
-  | "shrink"
-  | "unhealthy"
-  | "failed"
-  | "drain"
-  | "orphan";
-
-/**
- * Provider-reported health of a single box. The probe is a cheap readiness
- * check (e.g. `printf ready` over SSH), not a workspace/hook operation.
- */
-export type BoxHealth = { ok: true } | { ok: false; reason: string };
-
-/**
- * Static capabilities of a provider backend. `usesLedger` gates the write-ahead
- * ledger (cloud-only); `sshAddressable` records that the yielded `workerHost` is
- * an SSH destination; `ephemeral` records that boxes are disposable machines.
- */
-export interface ProviderCapabilities {
-  sshAddressable: boolean;
-  ephemeral: boolean;
-  usesLedger: boolean;
-}
-
-/**
- * A provisioned box. `workerHost` is the SSH-addressable string threaded
- * end-to-end by the orchestrator/runner. `providerRef` is the backend's own
- * handle (e.g. a machine id) used for `destroy`/`list` reconcile. `labels`
- * tag pool-owned survivors so a `list()` reconcile can re-adopt them.
- */
-export interface BoxDescriptor {
-  boxId: string;
-  workerHost: string;
-  providerRef: string;
-  createdAtMs: number;
-  labels: ReadonlyArray<string>;
-  metadata: Record<string, unknown>;
-}
-
-/**
- * Request to provision one box. `boxId` is the pool's idempotency key (a
- * provider must return the same box for the same `boxId`). `affinityKey` carries
- * a prior `workerHost` so a retry can re-land on the same machine. `labels` are
- * stamped on the box for reconcile.
- */
-export interface ProvisionRequest {
-  boxId: string;
-  affinityKey?: string | null;
-  labels: ReadonlyArray<string>;
-  timeoutMs: number;
-  signal?: AbortSignal;
-  providerOptions?: Record<string, unknown>;
-}
-
-/**
- * A swappable backend that provisions, probes, destroys, and lists boxes behind
- * one interface (fake / static-ssh / cloud drivers). Every implementation must
- * be idempotent on `boxId` for `provision` and idempotent for `destroy`.
- */
-export interface BoxProvider {
-  readonly kind: BoxPoolProvider;
-  provision(req: ProvisionRequest): Promise<BoxDescriptor>;
-  probe(box: BoxDescriptor, opts: { timeoutMs: number; signal?: AbortSignal }): Promise<BoxHealth>;
-  destroy(box: BoxDescriptor, opts: { timeoutMs: number; reason: TeardownReason }): Promise<void>;
-  list(): Promise<BoxDescriptor[]>;
-  readonly capabilities: ProviderCapabilities;
-}
-
-/**
- * Dependencies a provider factory receives. Deliberately excludes any workspace
- * or hook deps: providers manage box lifecycle only. Cloud transports the pool
- * does not depend on (e.g. the E2B client or Modal transport) are closed over by
- * a custom registered factory, never threaded through these deps.
- */
-export interface ProviderDeps {
-  clock: ClockPort;
-  logEvent: (event: Record<string, unknown>) => void;
-}
-
-/** Constructs a provider from settings + deps. Registered by `kind`. */
-export type BoxProviderFactory = (settings: BoxPoolSettings, deps: ProviderDeps) => BoxProvider;
-
-/**
- * A box-readiness strategy. NEVER runs workspace hooks (the runner owns those);
- * it only gates that a provisioned box is reachable before it is leased.
- */
-export interface WarmupStrategy {
-  ensureReady(
-    box: BoxDescriptor,
-    provider: BoxProvider,
-    opts: { timeoutMs: number; signal?: AbortSignal },
-  ): Promise<BoxHealth>;
-}
 
 /**
  * Lifecycle state of a box inside the pool inventory. Internal to the pool;
@@ -151,7 +45,7 @@ export type BoxState =
 export interface BoxRecord {
   boxId: string;
   workerHost: string;
-  providerRef: string;
+  driverRef: string;
   state: BoxState;
   labels: ReadonlyArray<string>;
   createdAtMs: number;
@@ -192,15 +86,15 @@ export interface BoxRecord {
    */
   liveLeaseAcquiredMs?: number[];
   /**
-   * The provider that PROVISIONED this box, captured by `swapProvider` on a
-   * provider hot-reload BEFORE the pool reassigns its live `this.provider`. A
-   * teardown (`recycle`/`destroyDescriptor`) routes `destroy` to
-   * `record.originProvider ?? this.provider`, so an in-flight lease that settles
-   * AFTER a provider swap destroys its box on the ORIGINAL backend and a paid box
-   * is never orphaned on the now-detached provider. Absent on boxes provisioned
-   * under the live provider (no swap has happened); treated as `this.provider`.
+   * The driver that PROVISIONED this box, captured by `swapDriver` on a driver
+   * hot-reload BEFORE the pool reassigns its live `this.driver`. A teardown
+   * (`recycle`/`destroyDescriptor`) routes `destroy` to
+   * `record.originDriver ?? this.driver`, so an in-flight lease that settles
+   * AFTER a driver swap destroys its box on the ORIGINAL backend and a paid box
+   * is never orphaned on the now-detached driver. Absent on boxes provisioned
+   * under the live driver (no swap has happened); treated as `this.driver`.
    */
-  originProvider?: BoxProvider;
+  originDriver?: BoxDriver;
 }
 
 /**
@@ -214,16 +108,16 @@ export interface BoxRecord {
 export type MachineLease = BoxRecord;
 
 /**
- * A single write-ahead ledger row (cloud providers only). Written provisionally
- * BEFORE provision, then upserted with `providerRef`/`workerHost` after the
- * provider returns, so a crash mid-provision is recoverable by labels or boxId.
+ * A single write-ahead ledger row (cloud drivers only). Written provisionally
+ * BEFORE provision, then upserted with `driverRef`/`workerHost` after the
+ * driver returns, so a crash mid-provision is recoverable by labels or boxId.
  */
 export interface LedgerRow {
   boxId: string;
-  providerRef: string | null;
+  driverRef: string | null;
   workerHost: string | null;
   labels: ReadonlyArray<string>;
-  /** `provisional` until the provider returns; then `active`; `destroying` while reaping. */
+  /** `provisional` until the driver returns; then `active`; `destroying` while reaping. */
   status: "provisional" | "active" | "destroying";
   createdAtMs: number;
   updatedAtMs: number;
@@ -268,7 +162,7 @@ export type AcquireResult =
   | { status: "leased"; lease: BoxLease }
   | {
       status: "no_capacity";
-      reason: "acquire_timeout" | "spend_cap" | "pool_disabled" | "provider_error";
+      reason: "acquire_timeout" | "spend_cap" | "pool_disabled" | "driver_error";
     };
 
 /**
@@ -277,7 +171,7 @@ export type AcquireResult =
  */
 export interface BoxPoolSnapshot {
   enabled: boolean;
-  provider: BoxPoolProvider;
+  driver: BoxDriverKind;
   total: number;
   warmIdle: number;
   leased: number;
@@ -318,20 +212,21 @@ export interface BoxPool {
   isEnabled(): boolean;
   reconcile(next: BoxPoolSettings): void;
   /**
-   * Rebuilds the resolved provider IN PLACE (re-runs `resolveProvider`, re-threads
-   * the reaper provider, and rebuilds the ledger `usesLedger` gate) without
-   * reconstructing the singleton, capturing each existing box's origin provider so
-   * an in-flight lease that settles AFTER the swap destroys its box on the ORIGINAL
-   * backend. Called by `reconcile` when the provider construction changed (and by
-   * the dispatch coordinator before `reconcile` once it owns the reload path).
+   * Rebuilds the resolved driver IN PLACE (re-resolves `settings.driver` through
+   * the registry, re-threads the reaper driver, and rebuilds the ledger
+   * `usesLedger` gate) without reconstructing the singleton, capturing each
+   * existing box's origin driver so an in-flight lease that settles AFTER the
+   * swap destroys its box on the ORIGINAL backend. Called by `reconcile` when
+   * the driver construction changed (and by the dispatch coordinator before
+   * `reconcile` once it owns the reload path).
    */
-  swapProvider(next: BoxPoolSettings): void;
+  swapDriver(next: BoxPoolSettings): void;
   /**
    * Registers a callback the pool invokes INSIDE the per-box mutex immediately
    * before it destroys a machine (every teardown path - a poison settle, a reaper
-   * reap, a provider-swap drain, and the drain force-destroy loop - routes through
+   * reap, a driver-swap drain, and the drain force-destroy loop - routes through
    * the single `recycle` chokepoint, so the callback fires exactly once per box
-   * just before `provider.destroy`). The dispatch coordinator registers a callback
+   * just before `driver.destroy`). The dispatch coordinator registers a callback
    * here so a poisoned/recycled machine fails any still-open RunSlot bound to that
    * box CLEANLY (close its endpoint, settle, deregister) before the host dies,
    * never leaving a hung endpoint to a dead host. The callback must be cheap and

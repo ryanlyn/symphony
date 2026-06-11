@@ -11,6 +11,9 @@
       "path": "./packages/agent-sdk"
     },
     {
+      "path": "./packages/box-sdk"
+    },
+    {
       "path": "./packages/cli-kit"
     },
     {
@@ -101,6 +104,15 @@
       "path": "./packages/workspace"
     },
     {
+      "path": "./extensions/docker-box-driver"
+    },
+    {
+      "path": "./extensions/e2b-box-driver"
+    },
+    {
+      "path": "./extensions/fly-box-driver"
+    },
+    {
       "path": "./extensions/jira-tracker"
     },
     {
@@ -111,6 +123,12 @@
     },
     {
       "path": "./extensions/memory-tracker"
+    },
+    {
+      "path": "./extensions/modal-box-driver"
+    },
+    {
+      "path": "./extensions/static-ssh-box-driver"
     },
     {
       "path": "./apps/cli"

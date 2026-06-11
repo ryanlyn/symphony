@@ -1,27 +1,27 @@
 import { execFile } from "node:child_process";
 
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { runSsh as defaultRunSsh, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
-
+import { POOL_OWNED_LABEL, defaultBoxDriverRegistry } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  BoxDriverRegistry,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
+  DriverCapabilities,
+  DriverDeps,
   ProvisionRequest,
+  SshRunner,
   TeardownReason,
-} from "../types.js";
-import { POOL_OWNED_LABEL } from "../types.js";
+} from "@symphony/box-sdk";
 
-const KIND: BoxPoolProvider = "docker";
+const KIND = "docker";
 
 /**
  * Docker boxes are disposable SSH-addressable containers, so the pool both
  * destroys them (`ephemeral`) and keeps a write-ahead ledger (`usesLedger`) to
  * recover survivors across a daemon restart by label.
  */
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: true,
   ephemeral: true,
   usesLedger: true,
@@ -59,22 +59,18 @@ export type RunDocker = (
   options: { timeoutMs: number; signal?: AbortSignal },
 ) => Promise<DockerCommandResult>;
 
-/** Injectable SSH transport so tests can spy on the probe argv/timeout. */
-type RunSsh = (host: string, command: string, options?: SshRunOptions) => Promise<SshRunResult>;
-
-/** Optional dependency overrides (test seams for the docker + SSH transports). */
-export interface DockerProviderOverrides {
+/** Optional dependency overrides (test seam for the docker transport). */
+export interface DockerDriverOverrides {
   runDocker?: RunDocker;
-  runSsh?: RunSsh;
 }
 
-/** Reads a string `providerOptions` value under any of the given keys. */
+/** Reads a string driver-option value under any of the given keys. */
 function readStringOption(
-  providerOptions: Record<string, unknown> | undefined,
+  options: Readonly<Record<string, unknown>> | undefined,
   ...keys: string[]
 ): string | undefined {
   for (const key of keys) {
-    const value = providerOptions?.[key];
+    const value = options?.[key];
     if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
@@ -123,13 +119,13 @@ function parsePublishedPort(text: string): number | undefined {
 }
 
 /**
- * A {@link BoxProvider} that boots disposable Docker containers running `sshd`.
+ * A {@link BoxDriver} that boots disposable Docker containers running `sshd`.
  *
- * `provision` runs `docker run -d` of `providerOptions.image`, publishing the
+ * `provision` runs `docker run -d` of the `image` driver option, publishing the
  * container's sshd port (22) to an auto-assigned loopback host port and
  * labelling the container with {@link LABEL_POOL} (so `list`/reconcile can adopt
  * survivors) and {@link LABEL_BOX_ID}=<boxId> (the pool's idempotency key). It is
- * idempotent ACROSS provider instances: a second provision of the same boxId
+ * idempotent ACROSS driver instances: a second provision of the same boxId
  * adopts the surviving labelled container rather than launching a duplicate.
  * `probe` runs `printf ready` over SSH against the published `user@127.0.0.1:<port>`;
  * `destroy` runs `docker rm -f <containerId>` and tolerates an already-gone
@@ -137,36 +133,35 @@ function parsePublishedPort(text: string): number | undefined {
  * containers are never touched. Capabilities are
  * `{ sshAddressable: true, ephemeral: true, usesLedger: true }`.
  */
-export class DockerBoxProvider implements BoxProvider {
+export class DockerBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
   private readonly image: string | undefined;
   private readonly user: string;
   private readonly runDocker: RunDocker;
-  private readonly runSsh: RunSsh;
+  private readonly runSsh: SshRunner;
 
   constructor(
-    settings: BoxPoolSettings,
-    private readonly deps: ProviderDeps,
-    overrides: DockerProviderOverrides = {},
+    options: Readonly<Record<string, unknown>>,
+    private readonly deps: DriverDeps,
+    overrides: DockerDriverOverrides = {},
   ) {
-    const opts = settings.providerOptions;
-    this.image = readStringOption(opts, "image");
-    this.user = readStringOption(opts, "user", "sshUser", "ssh_user") ?? DEFAULT_USER;
+    this.image = readStringOption(options, "image");
+    this.user = readStringOption(options, "user", "sshUser", "ssh_user") ?? DEFAULT_USER;
     this.runDocker = overrides.runDocker ?? defaultRunDocker;
-    this.runSsh = overrides.runSsh ?? defaultRunSsh;
+    this.runSsh = deps.runSsh;
   }
 
   /**
    * Boots (or adopts) the container for `req.boxId`. Idempotency is keyed on the
    * {@link LABEL_BOX_ID} label on the live daemon: if a labelled container
-   * already exists it is adopted (no `docker run`), so two provider instances
+   * already exists it is adopted (no `docker run`), so two driver instances
    * sharing one daemon never double-launch. Otherwise it runs
    * `docker run -d -p 127.0.0.1::22 --label symphony.box-pool= --label
    * symphony.box-id=<boxId> [--label <caller label>...] <image>`, then resolves
    * the published loopback port via `docker port`. Rejects with
-   * `docker_image_required` when `providerOptions.image` is unset and
+   * `docker_image_required` when the `image` driver option is unset and
    * `docker_run_failed` on a non-zero `docker run` exit.
    */
   async provision(req: ProvisionRequest): Promise<BoxDescriptor> {
@@ -224,7 +219,7 @@ export class DockerBoxProvider implements BoxProvider {
       return {
         boxId: req.boxId,
         workerHost: this.workerHostFor(hostPort),
-        providerRef: containerId,
+        driverRef: containerId,
         createdAtMs: this.deps.clock.now().getTime(),
         labels: [LABEL_POOL, LABEL_BOX_ID, ...req.labels.filter((label) => label !== LABEL_POOL)],
         metadata: { containerId, hostPort },
@@ -262,7 +257,7 @@ export class DockerBoxProvider implements BoxProvider {
   }
 
   /**
-   * Force-removes the container via `docker rm -f <providerRef>`. Idempotent: a
+   * Force-removes the container via `docker rm -f <driverRef>`. Idempotent: a
    * `No such container` exit (the container is already gone) is tolerated, while
    * any other non-zero exit (e.g. the daemon is unreachable) throws
    * `docker_rm_failed` so the reaper can retry.
@@ -271,7 +266,7 @@ export class DockerBoxProvider implements BoxProvider {
     box: BoxDescriptor,
     opts: { timeoutMs: number; reason: TeardownReason },
   ): Promise<void> {
-    const result = await this.runDocker(["rm", "-f", box.providerRef], {
+    const result = await this.runDocker(["rm", "-f", box.driverRef], {
       timeoutMs: opts.timeoutMs,
     });
     if (result.status === 0) return;
@@ -313,7 +308,7 @@ export class DockerBoxProvider implements BoxProvider {
       boxes.push({
         boxId,
         workerHost: this.workerHostFor(hostPort),
-        providerRef: containerId,
+        driverRef: containerId,
         createdAtMs,
         // Surface the pool-owned label so the pool's hydrate/reconcile ownership
         // gate (which keys on POOL_OWNED_LABEL) re-adopts or cleans up this
@@ -328,5 +323,24 @@ export class DockerBoxProvider implements BoxProvider {
 
   private workerHostFor(hostPort: number): string {
     return `${this.user}@127.0.0.1:${hostPort}`;
+  }
+}
+
+/** The registered `docker` factory: constructs a driver over the real docker CLI. */
+export const dockerBoxDriverFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: (options, deps) => new DockerBoxDriver(options, deps),
+};
+
+/**
+ * Register this extension's box driver. Idempotent; called by the composition
+ * root (or a test) against its registry, defaulting to the process-wide one.
+ */
+export function registerDockerBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(dockerBoxDriverFactory);
   }
 }

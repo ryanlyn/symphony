@@ -266,7 +266,7 @@ function assertNoWorkspaceHooks(hooks: HooksSettings): void {
 function parseBoxPool(raw: BoxPoolRaw | null | undefined): BoxPoolSettings | undefined {
   if (raw === undefined || raw === null) return undefined;
   const enabled = raw.enabled ?? false;
-  const provider = raw.provider ?? "fake";
+  const driver = raw.driver ?? "fake";
   const min = raw.min ?? 0;
   const max = raw.max ?? 1;
   const warm = raw.warm ?? 1;
@@ -283,7 +283,7 @@ function parseBoxPool(raw: BoxPoolRaw | null | undefined): BoxPoolSettings | und
   // `worker.box_pool.max_in_flight` is unchanged; it parses into `slotsPerMachine`.
   const input: BoxPoolSettingsInput = {
     enabled,
-    provider,
+    driver,
     min,
     max,
     warm,
@@ -308,12 +308,11 @@ function parseBoxPool(raw: BoxPoolRaw | null | undefined): BoxPoolSettings | und
 
   const spend = parseBoxPoolSpend(raw.spend);
   if (spend) settings.spend = spend;
-  if (raw.providerOptions !== undefined) settings.providerOptions = raw.providerOptions;
+  if (raw.driverOptions !== undefined) settings.driverOptions = raw.driverOptions;
 
-  if (enabled && provider === "static-ssh" && !hasStaticSshHosts(raw.providerOptions ?? null)) {
-    throw new Error("worker.box_pool.provider_options.ssh_hosts is required for static-ssh");
-  }
-
+  // Driver-specific option validation (e.g. static-ssh's required ssh_hosts)
+  // lives with the registered driver and runs at pool construction - the same
+  // fail-loud startup point as an unregistered kind.
   return settings;
 }
 
@@ -324,14 +323,6 @@ function parseBoxPoolSpend(raw: BoxPoolRaw["spend"]): BoxPoolSettings["spend"] {
   if (raw.maxBoxSeconds !== undefined) spend.maxBoxSeconds = raw.maxBoxSeconds;
   if (raw.dailyBoxSeconds !== undefined) spend.dailyBoxSeconds = raw.dailyBoxSeconds;
   return spend;
-}
-
-function hasStaticSshHosts(providerOptions: Record<string, unknown> | null): boolean {
-  if (!providerOptions) return false;
-  const hosts = providerOptions.ssh_hosts ?? providerOptions.sshHosts;
-  return (
-    Array.isArray(hosts) && hosts.length > 0 && hosts.every((host) => typeof host === "string")
-  );
 }
 
 function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings {
@@ -615,10 +606,10 @@ function cloneBoxPool(boxPool: BoxPoolSettings): BoxPoolSettings {
   const { maxInFlight: _maxInFlight, ...rest } = boxPool;
   const input: BoxPoolSettingsInput = { ...rest };
   if (boxPool.spend !== undefined) input.spend = { ...boxPool.spend };
-  if (boxPool.providerOptions !== undefined) {
+  if (boxPool.driverOptions !== undefined) {
     // structuredClone guarantees nested arrays/objects (e.g. ssh_hosts) are copied,
-    // so a per-issue settings clone never aliases the source providerOptions.
-    input.providerOptions = structuredClone(boxPool.providerOptions);
+    // so a per-issue settings clone never aliases the source driverOptions.
+    input.driverOptions = structuredClone(boxPool.driverOptions);
   }
   return withDerivedMaxInFlight(input);
 }

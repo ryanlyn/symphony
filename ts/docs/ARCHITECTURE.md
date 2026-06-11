@@ -14,14 +14,16 @@ never from above.
 ```
 apps/cli, apps/traceviz                       composition roots / binaries
 ─────────────────────────────────────────────────────────────────────────
-extensions/{linear,local,memory,jira}-tracker extensions (tracker providers
-                                              and their tool packs)
+extensions/{linear,local,memory,jira}-tracker extensions (tracker providers,
+extensions/{static-ssh,docker,fly,e2b,modal}- their tool packs, and box
+  box-driver                                  drivers)
 ─────────────────────────────────────────────────────────────────────────
-@symphony/config, workflow, runtime,          engine (provider-agnostic)
+@symphony/config, workflow, runtime,          engine (backend-agnostic)
 orchestrator, dispatch, agent-runner, acp,
-mcp, server, tui, presenter, projections, …
+mcp, worker-box-pool, server, tui, …
 ─────────────────────────────────────────────────────────────────────────
-@symphony/tracker-sdk, tool-sdk, agent-sdk    extension SDKs (contracts + registries)
+@symphony/tracker-sdk, tool-sdk, agent-sdk,   extension SDKs (contracts + registries)
+box-sdk
 ─────────────────────────────────────────────────────────────────────────
 @symphony/domain, issue, policies, …          pure types, constants, leaf logic
 ```
@@ -139,6 +141,54 @@ Agents extend along two independent axes:
 The `AgentConfig` record shape is currently ACP-flavored (`bridgeCommand`,
 `usageAccounting`, ...). Generalizing it into an executor-owned options bag - mirroring
 `TrackerSettings.options` - is the designated next step if a second executor lands.
+
+## The box driver extension point
+
+The warm worker box pool (`@symphony/worker-box-pool`, an engine package) leases
+SSH-addressable machines per run. The machines themselves come from a **box driver**:
+the backend adapter that provisions, probes, destroys, and lists boxes for one
+infrastructure (a cloud API, a container runtime, a fixed host list). "Driver" is
+deliberate - "provider" is reserved for tracker/executor providers and reads as a
+model/agent provider.
+
+`BoxDriver` and `BoxDriverFactory` (in `@symphony/box-sdk`) are the contract:
+
+| Hook | Called by | Purpose |
+| --- | --- | --- |
+| `kind` | registry | `worker.box_pool.driver` selector |
+| `create(options, deps)` | pool construction / driver swap | build the driver from `driver_options`, validating them fail-loud |
+| `provision` | pool grow / warm top-up | create (or re-adopt, idempotent on `boxId`) one box |
+| `probe` | pool readiness gate, reaper health pass | cheap reachability check |
+| `destroy` | reaper / recycle / drain | tear one box down (idempotent, tolerant of already-gone) |
+| `list` | hydrate re-adoption, reaper reconcile | the backend's authoritative inventory |
+| `capabilities` | pool | `sshAddressable` / `ephemeral` / `usesLedger` gates |
+
+Drivers never see the pool's lifecycle state and never import engine packages: SSH
+access arrives through `DriverDeps.runSsh` (injected by the pool, which owns the real
+`@symphony/ssh` dependency), and `driver_options` arrive verbatim from
+`worker.box_pool.driver_options`. The pool owns leasing, reaping, spend caps, the
+write-ahead ledger, and crash recovery; every driver gets them for free.
+
+The `fake` driver ships inside `@symphony/box-sdk` as the reference implementation and
+the test double the engine suites lease against. The conformance kit
+(`@symphony/box-sdk/conformance`, `runDriverConformanceSuite`) pins the contract every
+driver must satisfy: provision idempotency, destroy tolerance, list-as-truth,
+pool-owned label round-trip, and probe gating.
+
+### Adding a box driver
+
+1. Create `extensions/<name>-box-driver` depending on `@symphony/box-sdk` (plus
+   `@symphony/domain` if it needs domain types).
+2. Implement `BoxDriver` and export a `BoxDriverFactory` whose `create` validates
+   `driver_options` and throws an actionable error when they are unusable.
+3. Export a `register<Name>BoxDriver(registries?)` function that registers the factory
+   idempotently, and invoke it from `registerBuiltinBackends()` in `apps/cli`. A driver
+   needing an injected transport the binary does not ship (e.g. a cloud SDK client)
+   registers a fail-loud factory by default and accepts the transport as a second
+   argument for configured deployments.
+4. Run `runDriverConformanceSuite` from `@symphony/box-sdk/conformance` in the
+   extension's test suite.
+5. Add the package to the workspace plumbing (`pnpm install`, `pnpm tsconfig:refs --write`).
 
 ## Composition and the default registries
 

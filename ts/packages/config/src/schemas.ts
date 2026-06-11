@@ -6,7 +6,6 @@ import {
   MAX_TURNS_MAX,
   ONE_WEEK_MS,
   PORT_MAX,
-  PROVIDER_KINDS,
   RENDER_INTERVAL_MAX_MS,
   isValidConcurrency,
   isValidEnsembleSize,
@@ -152,7 +151,9 @@ const boxPoolSpendRawSchema = z
 const boxPoolRawSchema = z
   .object({
     enabled: coercedBoolean.optional(),
-    provider: z.enum(PROVIDER_KINDS).optional(),
+    // The driver selector is open-ended; whether the kind is supported is decided by the
+    // box-driver registry at pool construction, not by the schema.
+    driver: z.string().min(1).optional(),
     min: coercedNonNegativeCount.optional(),
     max: coercedPositiveCount.optional(),
     warm: coercedNonNegativeCount.optional(),
@@ -167,9 +168,9 @@ const boxPoolRawSchema = z
     coResidence: coercedBoolean.optional(),
     maxConcurrentTunnels: coercedPositiveCount.optional(),
     spend: boxPoolSpendRawSchema.optional(),
-    // Provider-specific settings pass through verbatim (snake_case preserved);
-    // each provider validates its own options.
-    providerOptions: z.record(z.string(), z.unknown()).optional(),
+    // Driver-specific settings pass through verbatim (snake_case preserved);
+    // each driver validates its own options.
+    driverOptions: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 const workerRawSchema = z

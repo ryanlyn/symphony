@@ -82,17 +82,11 @@ export type AgentUsageAccounting = (typeof AGENT_USAGE_ACCOUNTING_VALUES)[number
 export type TrackerKind = string;
 
 /**
- * Box-pool provider backends. Each entry is its own kind (the cloud drivers are not collapsed
- * into a single `cloud` family): `"fake"` is an in-memory test double, `"static-ssh"` hands out
- * a fixed set of SSH destinations, and `"docker" | "fly" | "e2b" | "modal"` provision real
- * SSH-addressable boxes via their respective provider APIs/CLIs.
+ * Selector for the box driver backend; keys into the box-driver registry the
+ * composition root assembles, so the set of supported kinds is open-ended
+ * (an unregistered kind fails loud at pool construction).
  */
-export const PROVIDER_KINDS = ["fake", "static-ssh", "docker", "fly", "e2b", "modal"] as const;
-
-/**
- * Selector for the box-pool provider backend; keys into the worker-box-pool provider registry.
- */
-export type BoxPoolProvider = (typeof PROVIDER_KINDS)[number];
+export type BoxDriverKind = string;
 
 export const ISSUE_STATE_TYPES = [
   "backlog",
@@ -260,8 +254,8 @@ export interface TrackerSettings {
 export interface BoxPoolSettings {
   /** Master switch. When false the pool is constructed-but-inert (or not constructed at all). */
   enabled: boolean;
-  /** Provider backend that provisions, probes, and destroys boxes. */
-  provider: BoxPoolProvider;
+  /** Box driver backend that provisions, probes, and destroys boxes. */
+  driver: BoxDriverKind;
   /** Floor on warm inventory the reaper keeps alive (never reaped below this count). */
   min: number;
   /** Ceiling on total boxes the pool may provision at once. */
@@ -326,11 +320,11 @@ export interface BoxPoolSettings {
       }
     | undefined;
   /**
-   * Provider-specific options passed through un-normalized (snake_case as written in YAML).
-   * Providers must accept both snake_case and camelCase spellings since the config normalizer
+   * Driver-specific options passed through un-normalized (snake_case as written in YAML).
+   * Drivers must accept both snake_case and camelCase spellings since the config normalizer
    * does not recurse into this map. Example: `{ ssh_hosts: ["user@host:22"] }` for `static-ssh`.
    */
-  providerOptions?: Record<string, unknown> | undefined;
+  driverOptions?: Record<string, unknown> | undefined;
 }
 
 /**

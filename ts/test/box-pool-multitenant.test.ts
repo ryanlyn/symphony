@@ -2,7 +2,7 @@
 //
 // This is the cross-cutting proof that `slotsPerMachine > 1` actually works
 // end-to-end through the REAL `DispatchCoordinator` over the REAL
-// `@symphony/worker-box-pool` (provider=fake, max=1, slotsPerMachine=2,
+// `@symphony/worker-box-pool` (driver=fake, max=1, slotsPerMachine=2,
 // coResidence=true). The ONLY seam replaced is the per-run MCP endpoint manager:
 // a fake distinct-port manager (no real `ssh -N`, no real token/local-server)
 // that hands out a unique reverse-tunnel port per (workerHost, runKey) so the
@@ -35,13 +35,12 @@
 // the live/e2e suites use). Tests run against the live `.ts` source via vite's
 // `.js`->`.ts` resolution.
 
-import { afterEach, test } from "vitest";
+import { test } from "vitest";
 import {
-  clearBoxProviderRegistry,
+  BoxDriverRegistry,
   createBoxPool,
   createDispatchCoordinator,
-  FakeBoxProvider,
-  registerBoxProvider,
+  registerFakeBoxDriver,
 } from "@symphony/cli";
 import type { BoxPool, McpEndpointManager } from "@symphony/cli";
 import type { BoxPoolSettings } from "@symphony/domain";
@@ -64,6 +63,7 @@ function controllableClock(startMs: number): {
   return {
     clock: {
       now: () => new Date(current),
+      monotonicMs: () => current,
       setTimeout: (callback, delayMs): TimerHandle => setTimeout(callback, delayMs),
       clearTimeout: (handle) => clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
     },
@@ -79,7 +79,7 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   const { maxInFlight, slotsPerMachine, ...rest } = overrides;
   return withDerivedMaxInFlight({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     min: 0,
     max: 1,
     warm: 0,
@@ -95,16 +95,16 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   });
 }
 
-// A fresh fake provider registered under the `fake` kind so createBoxPool resolves
-// it. The provider yields `fake://box-<boxId>` worker hosts (a real ssh-addressable
-// shape) so the per-run endpoint manager treats them as remote and mints a tunnel.
-function registerFake(): void {
-  registerBoxProvider("fake", (_settings, deps) => new FakeBoxProvider(deps));
+// A fresh per-test registry carrying the SDK's fake driver under the `fake` kind
+// so createBoxPool resolves it through `deps.drivers` (no process-wide state to
+// reset between tests). The driver yields `fake://box-<boxId>` worker hosts (a
+// real ssh-addressable shape) so the per-run endpoint manager treats them as
+// remote and mints a tunnel.
+function fakeDriverRegistry(): BoxDriverRegistry {
+  const drivers = new BoxDriverRegistry();
+  registerFakeBoxDriver({ boxDrivers: drivers });
+  return drivers;
 }
-
-afterEach(() => {
-  clearBoxProviderRegistry();
-});
 
 // ---------------------------------------------------------------------------
 // The fake per-run McpEndpointManager. perRunEndpoint=true (so the coordinator
@@ -185,9 +185,12 @@ function makeStack(
   coordinator: ReturnType<typeof createDispatchCoordinator>;
   advance(ms: number): void;
 } {
-  registerFake();
   const { clock, advance } = controllableClock(0);
-  const pool = createBoxPool(settings, { clock, logEvent: () => undefined });
+  const pool = createBoxPool(settings, {
+    clock,
+    logEvent: () => undefined,
+    drivers: fakeDriverRegistry(),
+  });
   const coordinator = createDispatchCoordinator({
     pool,
     mcpEndpointManager: manager,

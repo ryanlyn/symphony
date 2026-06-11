@@ -9,6 +9,7 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
+    "@symphony/box-sdk": "workspace:*",
     "@symphony/domain": "workspace:*",
     "@symphony/ssh": "workspace:*"
   },

@@ -8,13 +8,13 @@ import type { BoxPoolSettings } from "@symphony/domain";
 import { withDerivedMaxInFlight } from "@symphony/domain";
 import type { ClockPort, TimerHandle } from "@symphony/domain";
 import { assert } from "@symphony/test-utils";
+import { BoxDriverRegistry, FakeBoxDriver, POOL_OWNED_LABEL } from "@symphony/box-sdk";
+import type { BoxDriver } from "@symphony/box-sdk";
 
-import { createBoxPool, POOL_OWNED_LABEL } from "../src/pool.js";
-import { FakeBoxProvider } from "../src/providers/fake.js";
+import { createBoxPool } from "../src/pool.js";
 import { createMutex } from "../src/mutex.js";
 import { runReaperTick, type ReaperInternals } from "../src/reaper.js";
-import { clearBoxProviderRegistry, registerBoxProvider } from "../src/registry.js";
-import type { AcquireResult, BoxLease, BoxProvider, BoxRecord, Mutex } from "../src/types.js";
+import type { AcquireResult, BoxLease, BoxRecord, Mutex } from "../src/types.js";
 
 // --- shared fixtures -------------------------------------------------------
 
@@ -30,6 +30,7 @@ function controllableClock(startMs: number): {
   return {
     clock: {
       now: () => new Date(current),
+      monotonicMs: () => current,
       setTimeout: (callback, delayMs): TimerHandle => setTimeout(callback, delayMs),
       clearTimeout: (handle) => clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
     },
@@ -46,7 +47,7 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   const { maxInFlight, slotsPerMachine, ...rest } = overrides;
   return withDerivedMaxInFlight({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     min: 0,
     max: 1,
     warm: 0,
@@ -61,21 +62,28 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   });
 }
 
-// Registers a fresh fake (in-memory, usesLedger:false) provider under `fake` so
-// `createBoxPool` resolves it. `provisionDelayMs` defers each `provision` by a
-// real-event-loop turn so two concurrent growth decisions race across the await.
-let lastProvider: FakeBoxProvider | null = null;
+// Each property wires the pool to its OWN registry (passed via `deps.drivers`),
+// so nothing here relies on the process-wide default registry being pre-populated.
+let drivers: BoxDriverRegistry;
+
+// Registers a fresh fake (in-memory, usesLedger:false) driver under `fake` so
+// `createBoxPool` resolves it through the per-test registry.
+let lastDriver: FakeBoxDriver | null = null;
 function registerFake(): void {
-  registerBoxProvider("fake", (_settings, deps) => {
-    lastProvider = new FakeBoxProvider(deps);
-    return lastProvider;
+  drivers = new BoxDriverRegistry();
+  drivers.register({
+    kind: "fake",
+    create: (_options, driverDeps) => {
+      lastDriver = new FakeBoxDriver(driverDeps);
+      return lastDriver;
+    },
   });
 }
 
-// A fake provider whose `provision` resolves only after a real macrotask, so the
+// A fake driver whose `provision` resolves only after a real macrotask, so the
 // reservation window (taken synchronously before the await) is exercised by two
 // or more concurrent growth attempts. Otherwise identical to the in-memory fake.
-class DeferredProvider implements BoxProvider {
+class DeferredDriver implements BoxDriver {
   readonly kind = "fake" as const;
   readonly capabilities = { sshAddressable: false, ephemeral: false, usesLedger: false };
   private readonly boxes = new Set<string>();
@@ -83,7 +91,7 @@ class DeferredProvider implements BoxProvider {
   provision(req: { boxId: string; labels: ReadonlyArray<string> }): Promise<{
     boxId: string;
     workerHost: string;
-    providerRef: string;
+    driverRef: string;
     createdAtMs: number;
     labels: ReadonlyArray<string>;
     metadata: Record<string, unknown>;
@@ -95,7 +103,7 @@ class DeferredProvider implements BoxProvider {
         resolve({
           boxId: req.boxId,
           workerHost,
-          providerRef: workerHost,
+          driverRef: workerHost,
           createdAtMs: 0,
           labels: [...req.labels],
           metadata: {},
@@ -121,14 +129,12 @@ class DeferredProvider implements BoxProvider {
 let tmpDir: string | null = null;
 
 beforeEach(() => {
-  clearBoxProviderRegistry();
   registerFake();
-  lastProvider = null;
+  lastDriver = null;
   tmpDir = null;
 });
 
 afterEach(async () => {
-  clearBoxProviderRegistry();
   if (tmpDir) {
     const dir = tmpDir;
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -182,11 +188,11 @@ test("pool — inventory in [0..max], inFlight>=0, box-seconds monotonic per box
       fc.integer({ min: 1, max: 3 }),
       fc.array(arbCommand(), { minLength: 1, maxLength: 40 }),
       async (max, maxInFlight, commands) => {
-        clearBoxProviderRegistry();
         registerFake();
         const { clock, advance } = controllableClock(0);
         const pool = createBoxPool(poolSettings({ max, warm: 0, min: 0, maxInFlight }), {
           clock,
+          drivers,
           logEvent: () => undefined,
         });
 
@@ -263,13 +269,13 @@ test("pool — min floor respected (live boxes never below min) while not draini
       fc.integer({ min: 1, max: 3 }),
       fc.array(arbCommand(), { minLength: 0, maxLength: 25 }),
       async (min, commands) => {
-        clearBoxProviderRegistry();
         registerFake();
         const { clock, advance } = controllableClock(0);
         // max >= min so the floor is satisfiable; reaper drives the top-up.
         const max = min + 2;
         const pool = createBoxPool(poolSettings({ min, max, warm: min }), {
           clock,
+          drivers,
           logEvent: () => undefined,
         });
 
@@ -314,22 +320,22 @@ test("pool — min floor respected (live boxes never below min) while not draini
   );
 });
 
-// --- 5: ledger-disabled provider performs zero fs writes -------------------
+// --- 5: ledger-disabled driver performs zero fs writes -------------------
 
-test("pool — ledger-disabled (fake) provider performs zero fs writes", async () => {
+test("pool — ledger-disabled (fake) driver performs zero fs writes", async () => {
   await fc.assert(
     fc.asyncProperty(fc.array(arbCommand(), { minLength: 1, maxLength: 30 }), async (commands) => {
-      clearBoxProviderRegistry();
       registerFake();
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), "box-pool-props-"));
       tmpDir = dir;
       const ledgerPath = path.join(dir, "ledger.json");
 
       const { clock, advance } = controllableClock(0);
-      // ledgerPath IS supplied, but the fake provider declares usesLedger:false,
+      // ledgerPath IS supplied, but the fake driver declares usesLedger:false,
       // so the pool wires the inert ledger and must touch the disk zero times.
       const pool = createBoxPool(poolSettings({ max: 3, maxInFlight: 2 }), {
         clock,
+        drivers,
         logEvent: () => undefined,
         ledgerPath,
       });
@@ -355,8 +361,8 @@ test("pool — ledger-disabled (fake) provider performs zero fs writes", async (
       await pool.drain({ deadlineMs: 1_000 });
       await flushAsync();
 
-      // (5) The provider itself recorded zero fs writes ...
-      if (lastProvider) assert.equal(lastProvider.fsWriteCount, 0);
+      // (5) The driver itself recorded zero fs writes ...
+      if (lastDriver) assert.equal(lastDriver.fsWriteCount, 0);
       // ... and the inert ledger created NO files on disk (no ledger.json /
       // spend.json), proving the disabled-ledger path never wrote.
       const entries = await fs.readdir(dir);
@@ -371,11 +377,11 @@ test("pool — ledger-disabled (fake) provider performs zero fs writes", async (
 test("pool — a stale-generation release/fail never touches inFlight (no-op)", async () => {
   await fc.assert(
     fc.asyncProperty(fc.boolean(), fc.boolean(), async (releaseStaleByFail, doubleSettle) => {
-      clearBoxProviderRegistry();
       registerFake();
       const { clock } = controllableClock(0);
       const pool = createBoxPool(poolSettings({ max: 1, maxInFlight: 1 }), {
         clock,
+        drivers,
         logEvent: () => undefined,
       });
 
@@ -444,7 +450,7 @@ test("pool — reaper never destroys a LEASED box (only flags it markedForDestro
         const leasedRecord: BoxRecord = {
           boxId: "box-leased",
           workerHost: "fake://box-leased",
-          providerRef: "fake://box-leased",
+          driverRef: "fake://box-leased",
           state: "LEASED",
           labels: [POOL_OWNED_LABEL],
           createdAtMs: cfg.createdAtMs,
@@ -463,15 +469,15 @@ test("pool — reaper never destroys a LEASED box (only flags it markedForDestro
         const mutexes = new Map<string, Mutex>();
         const destroyed: string[] = [];
 
-        // Provider whose authoritative list() mirrors inventory, so the list
+        // Driver whose authoritative list() mirrors inventory, so the list
         // reconcile is a no-op (the LEASED box stays known and present).
-        const provider: BoxProvider = {
+        const driver: BoxDriver = {
           kind: "fake",
           capabilities: { sshAddressable: false, ephemeral: false, usesLedger: false },
           provision: async (req) => ({
             boxId: req.boxId,
             workerHost: `fake://box-${req.boxId}`,
-            providerRef: `fake://box-${req.boxId}`,
+            driverRef: `fake://box-${req.boxId}`,
             createdAtMs: 0,
             labels: [...req.labels],
             metadata: {},
@@ -482,7 +488,7 @@ test("pool — reaper never destroys a LEASED box (only flags it markedForDestro
             [...inventory.values()].map((record) => ({
               boxId: record.boxId,
               workerHost: record.workerHost,
-              providerRef: record.providerRef,
+              driverRef: record.driverRef,
               createdAtMs: record.createdAtMs,
               labels: record.labels,
               metadata: record.metadata,
@@ -491,7 +497,7 @@ test("pool — reaper never destroys a LEASED box (only flags it markedForDestro
 
         const internals: ReaperInternals = {
           settings,
-          provider,
+          driver,
           poolOwnedLabel: POOL_OWNED_LABEL,
           now: () => cfg.nowMs,
           inventory,
@@ -540,16 +546,17 @@ test("pool — N concurrent growth ops never exceed max (synchronous reservation
       fc.integer({ min: 1, max: 4 }),
       fc.integer({ min: 2, max: 8 }),
       async (max, concurrency) => {
-        clearBoxProviderRegistry();
-        // A deferred-provision provider so every concurrent acquire takes its
+        // A deferred-provision driver so every concurrent acquire takes its
         // reservation synchronously and then awaits across the same macrotask;
         // the reservation is what must keep them from all provisioning past max.
-        const provider = new DeferredProvider();
-        registerBoxProvider("fake", () => provider);
+        const driver = new DeferredDriver();
+        drivers = new BoxDriverRegistry();
+        drivers.register({ kind: "fake", create: () => driver });
 
         const { clock } = controllableClock(0);
         const pool = createBoxPool(poolSettings({ max, warm: 0, min: 0, acquireTimeoutMs: 200 }), {
           clock,
+          drivers,
           logEvent: () => undefined,
         });
 

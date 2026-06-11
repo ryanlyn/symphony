@@ -84,21 +84,15 @@ export type { RuntimeProjectionInput } from "@symphony/projections";
 export { Executor, resolveBridgeCommand } from "@symphony/acp";
 export { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES } from "@symphony/domain";
 export type * from "@symphony/domain";
+export { createBoxPool } from "@symphony/worker-box-pool";
+export type { BoxPool, BoxLease, BoxPoolSnapshot, AcquireResult } from "@symphony/worker-box-pool";
 export {
-  createBoxPool,
-  registerBoxProvider,
-  resolveProvider,
-  clearBoxProviderRegistry,
-  FakeBoxProvider,
-  StaticSshBoxProvider,
-} from "@symphony/worker-box-pool";
-export type {
-  BoxPool,
-  BoxLease,
-  BoxProvider,
-  BoxPoolSnapshot,
-  AcquireResult,
-} from "@symphony/worker-box-pool";
+  BoxDriverRegistry,
+  defaultBoxDriverRegistry,
+  FakeBoxDriver,
+  registerFakeBoxDriver,
+} from "@symphony/box-sdk";
+export type { BoxDriver, BoxDriverFactory, DriverDeps } from "@symphony/box-sdk";
 export {
   createDispatchCoordinator,
   nullEndpointManager,

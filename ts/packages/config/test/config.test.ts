@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { test } from "vitest";
-import { PROVIDER_KINDS } from "@symphony/domain";
 import {
   loadWorkflow,
   parseConfig as parseConfigWith,
@@ -1016,7 +1015,7 @@ test("worker.box_pool parses all keys with snake_case aliasing", () => {
     worker: {
       box_pool: {
         enabled: true,
-        provider: "static-ssh",
+        driver: "static-ssh",
         min: 1,
         max: 4,
         warm: 2,
@@ -1033,7 +1032,7 @@ test("worker.box_pool parses all keys with snake_case aliasing", () => {
           max_box_seconds: 7_200,
           daily_box_seconds: 86_400,
         },
-        provider_options: {
+        driver_options: {
           ssh_hosts: ["user@host-a:22", "user@host-b:22"],
         },
       },
@@ -1043,7 +1042,7 @@ test("worker.box_pool parses all keys with snake_case aliasing", () => {
   const boxPool = settings.worker.boxPool;
   assert.ok(boxPool);
   assert.equal(boxPool?.enabled, true);
-  assert.equal(boxPool?.provider, "static-ssh");
+  assert.equal(boxPool?.driver, "static-ssh");
   assert.equal(boxPool?.min, 1);
   assert.equal(boxPool?.max, 4);
   assert.equal(boxPool?.warm, 2);
@@ -1061,7 +1060,7 @@ test("worker.box_pool parses all keys with snake_case aliasing", () => {
     maxBoxSeconds: 7_200,
     dailyBoxSeconds: 86_400,
   });
-  assert.deepEqual(boxPool?.providerOptions, {
+  assert.deepEqual(boxPool?.driverOptions, {
     ssh_hosts: ["user@host-a:22", "user@host-b:22"],
   });
 });
@@ -1071,7 +1070,7 @@ test("worker.box_pool parses co_residence and max_concurrent_tunnels (snake->cam
     worker: {
       box_pool: {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         max_in_flight: 2,
         co_residence: true,
         max_concurrent_tunnels: 8,
@@ -1093,7 +1092,7 @@ test("worker.box_pool parses co_residence and max_concurrent_tunnels (snake->cam
 
 test("worker.box_pool co_residence and max_concurrent_tunnels default absent", () => {
   const settings = parseConfig({
-    worker: { box_pool: { enabled: true, provider: "fake" } },
+    worker: { box_pool: { enabled: true, driver: "fake" } },
   });
 
   const boxPool = settings.worker.boxPool;
@@ -1114,14 +1113,14 @@ test("worker.box_pool rejects non-positive max_concurrent_tunnels", () => {
 test("worker.box_pool applies defaults when keys omitted", () => {
   const settings = parseConfig({
     worker: {
-      box_pool: { enabled: true, provider: "fake" },
+      box_pool: { enabled: true, driver: "fake" },
     },
   });
 
   const boxPool = settings.worker.boxPool;
   assert.ok(boxPool);
   assert.equal(boxPool?.enabled, true);
-  assert.equal(boxPool?.provider, "fake");
+  assert.equal(boxPool?.driver, "fake");
   assert.equal(boxPool?.min, 0);
   assert.equal(boxPool?.max, 1);
   assert.equal(boxPool?.warm, 1);
@@ -1135,13 +1134,13 @@ test("worker.box_pool applies defaults when keys omitted", () => {
   assert.equal(boxPool?.drainDeadlineMs, 30_000);
   assert.equal(boxPool?.maxBoxesPerIssue, undefined);
   assert.equal(boxPool?.spend, undefined);
-  assert.equal(boxPool?.providerOptions, undefined);
+  assert.equal(boxPool?.driverOptions, undefined);
 });
 
 test("worker.box_pool max_in_flight parses into slotsPerMachine with maxInFlight mirroring it", () => {
   const settings = parseConfig({
     worker: {
-      box_pool: { enabled: true, provider: "fake", max_in_flight: 3 },
+      box_pool: { enabled: true, driver: "fake", max_in_flight: 3 },
     },
   });
 
@@ -1171,17 +1170,20 @@ test("REGRESSION: absent box_pool Settings clone deep-equals the issue-state clo
   assert.equal("boxPool" in clone.worker, false);
 });
 
-test("worker.box_pool provider enum rejects unknown value", () => {
-  assert.throws(
-    () => parseConfig({ worker: { box_pool: { provider: "kubernetes" } } }),
-    /worker\.box_pool\.provider is invalid: Invalid option/,
-  );
+test("worker.box_pool driver is an open string resolved by the registry", () => {
+  // Unknown kinds parse leniently (mirroring tracker.kind): whether the kind is
+  // supported is the box-driver registry's call at pool construction, which
+  // fails loud with box_pool_driver_unavailable and the registered set.
+  const settings = parseConfig({ worker: { box_pool: { driver: "acme-cloud" } } });
+  assert.equal(settings.worker.boxPool?.driver, "acme-cloud");
 
-  for (const kind of PROVIDER_KINDS) {
-    if (kind === "static-ssh") continue;
-    const settings = parseConfig({ worker: { box_pool: { provider: kind } } });
-    assert.equal(settings.worker.boxPool?.provider, kind);
+  for (const kind of ["fake", "static-ssh", "docker", "fly", "e2b", "modal"]) {
+    const parsed = parseConfig({ worker: { box_pool: { driver: kind } } });
+    assert.equal(parsed.worker.boxPool?.driver, kind);
   }
+
+  // A blank driver is still a schema error.
+  assert.throws(() => parseConfig({ worker: { box_pool: { driver: "" } } }));
 });
 
 test("worker.box_pool rejects max < min", () => {
@@ -1219,7 +1221,7 @@ test("worker.box_pool enabled cannot be combined with non-empty ssh_hosts", () =
       parseConfig({
         worker: {
           ssh_hosts: ["user@host:22"],
-          box_pool: { enabled: true, provider: "fake" },
+          box_pool: { enabled: true, driver: "fake" },
         },
       }),
     /worker\.box_pool\.enabled cannot be combined with worker\.ssh_hosts/,
@@ -1228,73 +1230,62 @@ test("worker.box_pool enabled cannot be combined with non-empty ssh_hosts", () =
   const ok = parseConfig({
     worker: {
       ssh_hosts: ["user@host:22"],
-      box_pool: { enabled: false, provider: "fake" },
+      box_pool: { enabled: false, driver: "fake" },
     },
   });
   assert.deepEqual(ok.worker.sshHosts, ["user@host:22"]);
   assert.equal(ok.worker.boxPool?.enabled, false);
 });
 
-test("static-ssh enabled without provider_options.ssh_hosts throws", () => {
-  assert.throws(
-    () => parseConfig({ worker: { box_pool: { enabled: true, provider: "static-ssh" } } }),
-    /worker\.box_pool\.provider_options\.ssh_hosts is required for static-ssh/,
-  );
-
-  assert.throws(
-    () =>
-      parseConfig({
-        worker: {
-          box_pool: {
-            enabled: true,
-            provider: "static-ssh",
-            provider_options: { ssh_hosts: [] },
-          },
-        },
-      }),
-    /worker\.box_pool\.provider_options\.ssh_hosts is required for static-ssh/,
-  );
+test("static-ssh ssh_hosts validation belongs to the driver, not the parser", () => {
+  // The static-ssh driver validates its own driver_options at pool construction
+  // (the same fail-loud startup point as an unregistered kind); config parsing
+  // passes the options through untouched, including camelCase spellings.
+  const parsed = parseConfig({
+    worker: { box_pool: { enabled: true, driver: "static-ssh" } },
+  });
+  assert.equal(parsed.worker.boxPool?.driverOptions, undefined);
 
   const camel = parseConfig({
     worker: {
       box_pool: {
         enabled: true,
-        provider: "static-ssh",
-        provider_options: { sshHosts: ["user@host:22"] },
+        driver: "static-ssh",
+        driver_options: { sshHosts: ["user@host:22"] },
       },
     },
   });
-  assert.deepEqual(camel.worker.boxPool?.providerOptions, {
+  assert.deepEqual(camel.worker.boxPool?.driverOptions, {
     sshHosts: ["user@host:22"],
   });
 });
 
 test("unknown key under box_pool throws (strict schema)", () => {
   assert.throws(
-    () => parseConfig({ worker: { box_pool: { provider: "fake", bogus: 1 } } }),
+    () => parseConfig({ worker: { box_pool: { driver: "fake", bogus: 1 } } }),
     /unsupported keys: bogus/,
   );
 });
 
-test("cloneSettings deep-copies providerOptions nested ssh_hosts array", () => {
+test("cloneSettings deep-copies driverOptions nested ssh_hosts array", () => {
   const settings = parseConfig({
     worker: {
       box_pool: {
         enabled: true,
-        provider: "static-ssh",
-        provider_options: { ssh_hosts: ["user@host-a:22", "user@host-b:22"] },
+        driver: "static-ssh",
+        driver_options: { ssh_hosts: ["user@host-a:22", "user@host-b:22"] },
       },
     },
   });
 
   const clone = settingsForIssueState(settings, "Todo");
-  const cloneHosts = clone.worker.boxPool?.providerOptions?.ssh_hosts as string[];
+  const cloneHosts = clone.worker.boxPool?.driverOptions?.ssh_hosts as string[];
   cloneHosts[0] = "mutated@host:22";
 
-  const originalHosts = settings.worker.boxPool?.providerOptions?.ssh_hosts as string[];
+  const originalHosts = settings.worker.boxPool?.driverOptions?.ssh_hosts as string[];
   assert.equal(originalHosts[0], "user@host-a:22");
   assert.notEqual(clone.worker.boxPool, settings.worker.boxPool);
-  assert.notEqual(clone.worker.boxPool?.providerOptions, settings.worker.boxPool?.providerOptions);
+  assert.notEqual(clone.worker.boxPool?.driverOptions, settings.worker.boxPool?.driverOptions);
 });
 
 test("cloneSettings deep-copies spend so mutating the clone leaves the original intact", () => {
@@ -1302,7 +1293,7 @@ test("cloneSettings deep-copies spend so mutating the clone leaves the original 
     worker: {
       box_pool: {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         spend: { max_box_seconds: 7_200 },
       },
     },
@@ -1319,7 +1310,7 @@ test("worker.box_pool spend.* parse in seconds while ttl/idle/drain stay in ms",
     worker: {
       box_pool: {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         ttl_ms: 1_800_000,
         idle_reap_ms: 60_000,
         drain_deadline_ms: 15_000,
@@ -1336,13 +1327,13 @@ test("worker.box_pool spend.* parse in seconds while ttl/idle/drain stay in ms",
   assert.equal(boxPool?.spend?.dailyBoxSeconds, 3_600);
 });
 
-test("worker.box_pool provider_options keys pass through un-normalized", () => {
+test("worker.box_pool driver_options keys pass through un-normalized", () => {
   const settings = parseConfig({
     worker: {
       box_pool: {
         enabled: true,
-        provider: "static-ssh",
-        provider_options: {
+        driver: "static-ssh",
+        driver_options: {
           ssh_hosts: ["user@host:22"],
           max_in_flight: 9,
           nested: { deep_key: "value" },
@@ -1351,7 +1342,7 @@ test("worker.box_pool provider_options keys pass through un-normalized", () => {
     },
   });
 
-  assert.deepEqual(settings.worker.boxPool?.providerOptions, {
+  assert.deepEqual(settings.worker.boxPool?.driverOptions, {
     ssh_hosts: ["user@host:22"],
     max_in_flight: 9,
     nested: { deep_key: "value" },

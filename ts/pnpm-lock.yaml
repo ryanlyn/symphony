@@ -331,6 +331,9 @@ importers:
       "@symphony/agent-sdk":
         specifier: workspace:*
         version: link:../../packages/agent-sdk
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
       "@symphony/cli-kit":
         specifier: workspace:*
         version: link:../../packages/cli-kit
@@ -343,9 +346,18 @@ importers:
       "@symphony/dispatch-coordinator":
         specifier: workspace:*
         version: link:../../packages/dispatch-coordinator
+      "@symphony/docker-box-driver":
+        specifier: workspace:*
+        version: link:../../extensions/docker-box-driver
       "@symphony/domain":
         specifier: workspace:*
         version: link:../../packages/domain
+      "@symphony/e2b-box-driver":
+        specifier: workspace:*
+        version: link:../../extensions/e2b-box-driver
+      "@symphony/fly-box-driver":
+        specifier: workspace:*
+        version: link:../../extensions/fly-box-driver
       "@symphony/humanize":
         specifier: workspace:*
         version: link:../../packages/humanize
@@ -370,6 +382,9 @@ importers:
       "@symphony/memory-tracker":
         specifier: workspace:*
         version: link:../../extensions/memory-tracker
+      "@symphony/modal-box-driver":
+        specifier: workspace:*
+        version: link:../../extensions/modal-box-driver
       "@symphony/orchestrator":
         specifier: workspace:*
         version: link:../../packages/orchestrator
@@ -400,6 +415,9 @@ importers:
       "@symphony/ssh":
         specifier: workspace:*
         version: link:../../packages/ssh
+      "@symphony/static-ssh-box-driver":
+        specifier: workspace:*
+        version: link:../../extensions/static-ssh-box-driver
       "@symphony/tool-sdk":
         specifier: workspace:*
         version: link:../../packages/tool-sdk
@@ -502,6 +520,32 @@ importers:
         specifier: "catalog:"
         version: 5.9.3
 
+  extensions/docker-box-driver:
+    dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
+    devDependencies:
+      "@symphony/test-utils":
+        specifier: workspace:*
+        version: link:../../packages/test-utils
+
+  extensions/e2b-box-driver:
+    dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
+
+  extensions/fly-box-driver:
+    dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
+    devDependencies:
+      "@symphony/test-utils":
+        specifier: workspace:*
+        version: link:../../packages/test-utils
+
   extensions/jira-tracker:
     dependencies:
       "@symphony/domain":
@@ -561,6 +605,26 @@ importers:
       "@symphony/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
+
+  extensions/modal-box-driver:
+    dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
+    devDependencies:
+      "@symphony/test-utils":
+        specifier: workspace:*
+        version: link:../../packages/test-utils
+
+  extensions/static-ssh-box-driver:
+    dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../../packages/box-sdk
+    devDependencies:
+      "@symphony/test-utils":
+        specifier: workspace:*
+        version: link:../../packages/test-utils
 
   packages/acp:
     dependencies:
@@ -628,6 +692,16 @@ importers:
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
+
+  packages/box-sdk:
+    dependencies:
+      "@symphony/domain":
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      vitest:
+        specifier: "catalog:"
+        version: 4.1.7(@types/node@22.19.19)(jsdom@26.1.0)(msw@2.14.6(@types/node@22.19.19)(typescript@5.9.3))(vite@6.4.2(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0))
 
   packages/cli-kit:
     dependencies:
@@ -1013,6 +1087,9 @@ importers:
 
   packages/worker-box-pool:
     dependencies:
+      "@symphony/box-sdk":
+        specifier: workspace:*
+        version: link:../box-sdk
       "@symphony/domain":
         specifier: workspace:*
         version: link:../domain
@@ -10641,7 +10718,7 @@ snapshots:
       std-env: 4.1.0
       tinybench: 2.9.0
       tinyexec: 1.2.3
-      tinyglobby: 0.2.16
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 6.4.2(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.3)(yaml@2.9.0)
       why-is-node-running: 2.3.0

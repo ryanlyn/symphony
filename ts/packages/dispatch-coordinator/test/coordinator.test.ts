@@ -90,7 +90,7 @@ function makeFakeLease(
 interface FakeBoxPool extends BoxPool {
   readonly acquireCalls: AcquireRequest[];
   readonly reconcileCalls: BoxPoolSettings[];
-  readonly swapProviderCalls: BoxPoolSettings[];
+  readonly swapDriverCalls: BoxPoolSettings[];
   readonly drainCalls: Array<{ deadlineMs: number }>;
   readonly hydrateCalls: { count: number };
   lastLease: FakeLease | null;
@@ -105,20 +105,20 @@ function makeFakeBoxPool(
     canAcquire?: boolean | (() => boolean);
     isEnabled?: boolean | (() => boolean);
     snapshot?: BoxPoolSnapshot;
-    /** When set, pool.reconcile THROWS this (models a reload to an unavailable provider). */
+    /** When set, pool.reconcile THROWS this (models a reload to an unavailable driver). */
     reconcileError?: Error;
   } = {},
 ): FakeBoxPool {
   const acquireCalls: AcquireRequest[] = [];
   const reconcileCalls: BoxPoolSettings[] = [];
-  const swapProviderCalls: BoxPoolSettings[] = [];
+  const swapDriverCalls: BoxPoolSettings[] = [];
   const drainCalls: Array<{ deadlineMs: number }> = [];
   const hydrateCalls = { count: 0 };
   const recyclingCallbacks: Array<(boxId: string) => void> = [];
   const pool: FakeBoxPool = {
     acquireCalls,
     reconcileCalls,
-    swapProviderCalls,
+    swapDriverCalls,
     drainCalls,
     hydrateCalls,
     lastLease: null,
@@ -147,13 +147,13 @@ function makeFakeBoxPool(
     },
     reconcile(next): void {
       reconcileCalls.push(next);
-      // Models pool.reconcile -> swapProvider -> resolveProvider throwing on a
-      // reload to an unavailable provider kind (the pool itself rolls back; the
+      // Models pool.reconcile -> swapDriver -> registry resolution throwing on a
+      // reload to an unavailable driver kind (the pool itself rolls back; the
       // coordinator must NOT have committed currentSettings to the rejected config).
       if (options.reconcileError) throw options.reconcileError;
     },
-    swapProvider(next): void {
-      swapProviderCalls.push(next);
+    swapDriver(next): void {
+      swapDriverCalls.push(next);
     },
     onMachineRecycling(cb): void {
       recyclingCallbacks.push(cb);
@@ -174,7 +174,7 @@ function makeFakeBoxPool(
 function baseSnapshot(overrides: Partial<BoxPoolSnapshot> = {}): BoxPoolSnapshot {
   return {
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     total: 0,
     warmIdle: 0,
     leased: 0,
@@ -382,7 +382,7 @@ const noCapacityReasons = [
   "acquire_timeout",
   "spend_cap",
   "pool_disabled",
-  "provider_error",
+  "driver_error",
 ] as const;
 
 for (const reason of noCapacityReasons) {
@@ -434,12 +434,12 @@ test("a thrown pool.acquire fault PROPAGATES verbatim (so the runtime emits box_
 test("a thrown pool fault leaves the slot registry empty (no orphan RunSlot)", async () => {
   const pool = makeFakeBoxPool({
     result: () => {
-      throw new Error("provider boom");
+      throw new Error("driver boom");
     },
   });
   const coordinator = makeCoordinator(pool);
 
-  await assert.rejects(() => coordinator.acquireRunSlot(acquireReq), /provider boom/);
+  await assert.rejects(() => coordinator.acquireRunSlot(acquireReq), /driver boom/);
   assert.equal(coordinator.snapshot().slots.length, 0);
 });
 
@@ -1284,10 +1284,10 @@ test("tunnel ceiling: reconcile RAISES the ceiling and the next acquire binds (s
 test("tunnel ceiling: a REJECTED reconcile (pool.reconcile throws) does NOT advance the ceiling (transactional)", async () => {
   const order: string[] = [];
   const manager = makeRecordingManager(order);
-  // pool.reconcile THROWS (models a reload to an unavailable provider). The pool
+  // pool.reconcile THROWS (models a reload to an unavailable driver). The pool
   // rolls itself back; the coordinator must NOT commit currentSettings to the
   // rejected config (so the tunnel ceiling stays at the last-good value).
-  const reloadFailure = new Error("box_pool_provider_unavailable");
+  const reloadFailure = new Error("box_pool_driver_unavailable");
   const pool = makeScriptedBoxPool(
     [
       makeFakeLease({ leaseId: "g0", boxId: "box-0", workerHost: "ssh://host-0" }),
@@ -1307,7 +1307,7 @@ test("tunnel ceiling: a REJECTED reconcile (pool.reconcile throws) does NOT adva
         __tag: "rejected",
         maxConcurrentTunnels: 5,
       } as unknown as BoxPoolSettings),
-    /box_pool_provider_unavailable/,
+    /box_pool_driver_unavailable/,
   );
 
   // The ceiling is STILL the last-good 1: a second acquire (which the rejected

@@ -1,29 +1,19 @@
 import { assert } from "@symphony/test-utils";
 import { test } from "vitest";
 
-import { PROVIDER_KINDS, withDerivedMaxInFlight } from "@symphony/domain";
+import { withDerivedMaxInFlight } from "@symphony/domain";
 import type {
-  BoxPoolProvider,
+  BoxDriverKind,
   BoxPoolSettings,
   RunningEntry,
   WorkerSettings,
 } from "@symphony/domain";
 
-// The provider enum mirrors the spec (Section 5): each cloud driver is its own kind.
-const expectedProviderKinds: ReadonlyArray<BoxPoolProvider> = [
-  "fake",
-  "static-ssh",
-  "docker",
-  "fly",
-  "e2b",
-  "modal",
-];
-
-// A full BoxPoolSettings literal: every required field plus the optional spend/providerOptions/cap.
+// A full BoxPoolSettings literal: every required field plus the optional spend/driverOptions/cap.
 // `slotsPerMachine` is the single own field; `maxInFlight` is installed as a derived getter.
 const boxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
   enabled: true,
-  provider: "static-ssh",
+  driver: "static-ssh",
   min: 0,
   max: 4,
   warm: 1,
@@ -40,7 +30,7 @@ const boxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
     maxBoxSeconds: 7_200,
     dailyBoxSeconds: 86_400,
   },
-  providerOptions: {
+  driverOptions: {
     ssh_hosts: ["user@host-a:22", "user@host-b:22"],
   },
 });
@@ -48,7 +38,7 @@ const boxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
 // A minimal BoxPoolSettings literal: only the required fields, optionals omitted.
 const minimalBoxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
   enabled: false,
-  provider: "fake",
+  driver: "fake",
   min: 0,
   max: 1,
   warm: 1,
@@ -65,7 +55,7 @@ const minimalBoxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
 // literal that sets them stays valid and `withDerivedMaxInFlight` carries them through.
 const coResidentBoxPoolFixture: BoxPoolSettings = withDerivedMaxInFlight({
   enabled: true,
-  provider: "fake",
+  driver: "fake",
   min: 0,
   max: 4,
   warm: 0,
@@ -120,22 +110,19 @@ const runningEntryWithAffinity: RunningEntry = {
   affinityHost: "user@host-a:22",
 };
 
-// @ts-expect-error provider must be one of PROVIDER_KINDS.
-const invalidProvider: BoxPoolProvider = "broker";
+// The driver selector is an open string: which kinds are supported is decided by
+// the box-driver registry at the composition root, not by the domain type.
+const customDriverKind: BoxDriverKind = "acme-cloud";
 
-test("PROVIDER_KINDS lists the six box-pool providers", () => {
-  assert.deepEqual([...PROVIDER_KINDS], [...expectedProviderKinds]);
-  for (const kind of expectedProviderKinds) {
-    assert.ok(PROVIDER_KINDS.includes(kind));
-  }
-  assert.equal(PROVIDER_KINDS.length, 6);
+test("BoxDriverKind is open: any registry-resolvable string compiles", () => {
+  assert.equal(customDriverKind, "acme-cloud");
 });
 
 test("BoxPoolSettings shape compiles with and without optionals", () => {
-  assert.equal(boxPoolFixture.provider, "static-ssh");
+  assert.equal(boxPoolFixture.driver, "static-ssh");
   assert.equal(boxPoolFixture.slotsPerMachine, 1);
   assert.equal(boxPoolFixture.spend?.dailyBoxSeconds, 86_400);
-  assert.deepEqual(boxPoolFixture.providerOptions?.ssh_hosts, ["user@host-a:22", "user@host-b:22"]);
+  assert.deepEqual(boxPoolFixture.driverOptions?.ssh_hosts, ["user@host-a:22", "user@host-b:22"]);
   assert.equal(minimalBoxPoolFixture.spend, undefined);
   assert.equal(minimalBoxPoolFixture.maxBoxesPerIssue, undefined);
 });
@@ -166,7 +153,7 @@ test("BoxPoolSettings.maxInFlight is a derived getter that always equals slotsPe
   // Build with a non-default value: maxInFlight tracks it with no second field to set.
   const multi = withDerivedMaxInFlight({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     min: 0,
     max: 4,
     warm: 0,
@@ -196,14 +183,10 @@ test("BoxPoolSettings.maxInFlight is a derived getter that always equals slotsPe
 
 test("WorkerSettings.boxPool is optional and additive", () => {
   assert.equal(workerWithoutPool.boxPool, undefined);
-  assert.equal(workerWithPool.boxPool?.provider, "fake");
+  assert.equal(workerWithPool.boxPool?.driver, "fake");
 });
 
 test("RunningEntry.affinityHost is optional", () => {
   assert.equal(runningEntryFixture.affinityHost, undefined);
   assert.equal(runningEntryWithAffinity.affinityHost, "user@host-a:22");
-});
-
-test("BoxPoolProvider rejects unknown providers", () => {
-  assert.equal(invalidProvider, "broker");
 });

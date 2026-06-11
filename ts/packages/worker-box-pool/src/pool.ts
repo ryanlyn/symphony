@@ -1,50 +1,77 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  defaultBoxDriverRegistry,
+  POOL_OWNED_LABEL,
+  type BoxDescriptor,
+  type BoxDriver,
+  type BoxDriverRegistry,
+  type DriverDeps,
+  type TeardownReason,
+} from "@symphony/box-sdk";
 import type { BoxPoolSettings } from "@symphony/domain";
 import type { ClockPort, TimerHandle } from "@symphony/domain";
+import { runSsh } from "@symphony/ssh";
 
 import { createLedger, type Ledger } from "./ledger.js";
 import { createLease } from "./lease.js";
 import { createMutex } from "./mutex.js";
 import { runReaperTick, type ReaperInternals } from "./reaper.js";
-import { resolveProvider } from "./registry.js";
 import type {
   AcquireRequest,
   AcquireResult,
-  BoxDescriptor,
   BoxLease,
   BoxOutcome,
   BoxPool,
   BoxPoolSnapshot,
-  BoxProvider,
   BoxRecord,
   BoxState,
   LedgerRow,
   Mutex,
-  TeardownReason,
 } from "./types.js";
-import { POOL_OWNED_LABEL } from "./types.js";
-
-// Re-exported for the public package surface (`@symphony/worker-box-pool`) and the
-// existing test imports. The constant itself lives in the leaf `types` module so
-// the provider drivers can reference it without an import cycle through `pool.ts`.
-export { POOL_OWNED_LABEL };
 
 /**
  * Dependencies the pool factory receives. Deliberately excludes any workspace or
  * hook deps: the pool owns box lifecycle only (the runner owns workspaces). The
- * `ledgerPath` is optional and only consulted when the resolved provider's
- * `capabilities.usesLedger` is true (cloud); fake / static-ssh do zero fs I/O.
+ * `ledgerPath` is optional and only consulted when the resolved driver's
+ * `capabilities.usesLedger` is true (cloud); a purely in-memory driver does zero
+ * fs I/O.
  */
 export interface CreateBoxPoolDeps {
   clock: ClockPort;
   logEvent: (event: Record<string, unknown>) => void;
   ledgerPath?: string;
+  /**
+   * Box-driver registry the pool resolves `settings.driver` against. The
+   * composition root registers driver extensions and passes its registry here;
+   * absent, the pool falls back to the process-wide
+   * {@link defaultBoxDriverRegistry}.
+   */
+  drivers?: BoxDriverRegistry | undefined;
 }
 
 /**
- * Bounded retry budget for the authoritative `provider.list()` call on
- * {@link BoxPoolImpl.hydrate}. A transient provider blip must not be mistaken for a
+ * Resolves the configured driver kind through the registry and constructs the
+ * driver from the operator's `driverOptions`. The pool is the engine boundary
+ * that owns the real ssh dependency: drivers only ever see the injected
+ * {@link DriverDeps.runSsh}, never `@symphony/ssh` itself. Throws the registry's
+ * `box_pool_driver_unavailable` error for an unregistered kind (so the daemon
+ * fails loud at startup), and surfaces the factory's own validation error for
+ * unusable `driverOptions` at the same fail-loud construction point.
+ */
+function resolveDriver(settings: BoxPoolSettings, deps: CreateBoxPoolDeps): BoxDriver {
+  const factory = (deps.drivers ?? defaultBoxDriverRegistry).require(settings.driver);
+  const driverDeps: DriverDeps = {
+    clock: deps.clock,
+    logEvent: deps.logEvent,
+    runSsh,
+  };
+  return factory.create(settings.driverOptions ?? {}, driverDeps);
+}
+
+/**
+ * Bounded retry budget for the authoritative `driver.list()` call on
+ * {@link BoxPoolImpl.hydrate}. A transient driver blip must not be mistaken for a
  * successful (empty) startup, so the list is re-attempted this many times with a
  * short clock-driven backoff before the pool gives up.
  */
@@ -101,7 +128,7 @@ interface Waiter {
  * surface. `reconcile` diffs prev-vs-next settings (resize toward min/max,
  * deferring shrink to the reaper oldest-idle-first, never reconstructing the
  * object and never destroying a leased box synchronously); `hydrate` re-adopts
- * survivors from `provider.list()` + the ledger and drops orphan rows; `drain`
+ * survivors from `driver.list()` + the ledger and drops orphan rows; `drain`
  * rejects new acquires then force-destroys every box so no paid cloud box leaks.
  */
 class BoxPoolImpl implements BoxPool {
@@ -142,7 +169,7 @@ class BoxPoolImpl implements BoxPool {
   private dailyBoxSecondsUsed = 0;
   private dayKey: string;
 
-  // Monotonic sequence for deterministic box ids (so the fake provider's
+  // Monotonic sequence for deterministic box ids (so the fake driver's
   // idempotency key and the test assertions are reproducible).
   private boxSeq = 0;
 
@@ -162,17 +189,17 @@ class BoxPoolImpl implements BoxPool {
   // advances). Raced against a deadline timer inside `runDrain`.
   private notifyDrained: (() => void) | null = null;
 
-  private provider: BoxProvider;
-  // Monotonic provider generation, bumped by `swapProvider` on every provider
-  // hot-reload. A grow / warm-provision CAPTURES this (and `this.provider`) BEFORE
+  private driver: BoxDriver;
+  // Monotonic driver generation, bumped by `swapDriver` on every driver
+  // hot-reload. A grow / warm-provision CAPTURES this (and `this.driver`) BEFORE
   // its provision await; if the generation has advanced by the time provision
   // returns, a swap happened DURING the await, so the new box was provisioned on the
-  // now-stale provider. The pool then records its origin as the CAPTURED provider
+  // now-stale driver. The pool then records its origin as the CAPTURED driver
   // (so recycle destroys it on the backend that actually created it) and marks it
-  // for destroy (it cannot serve the live provider). Without this, a box provisioned
-  // on provider A but inserted after a swap to B would be recorded under B with no
+  // for destroy (it cannot serve the live driver). Without this, a box provisioned
+  // on driver A but inserted after a swap to B would be recorded under B with no
   // origin, so recycle/destroy routes to B and A's paid machine leaks.
-  private providerGeneration = 0;
+  private driverGeneration = 0;
   private ledger: Ledger;
   private readonly clock: ClockPort;
   private readonly logEvent: (event: Record<string, unknown>) => void;
@@ -185,13 +212,13 @@ class BoxPoolImpl implements BoxPool {
   private reaperStopped = false;
   // True once `hydrate()` has completed at least once. The constructor arms the
   // reaper before `hydrate()` runs, so until the first hydrate re-adopts the
-  // labeled survivors from `provider.list()`, the reaper's destroy-unknown branch
+  // labeled survivors from `driver.list()`, the reaper's destroy-unknown branch
   // must stay inert or it would reap the pool's own survivors on restart.
   private hydrated = false;
   private readonly reaperInternals: ReaperInternals;
-  // The deps used to resolve the provider in the ctor. Retained so `swapProvider`
-  // can re-run `resolveProvider` (and rebuild the ledger gate) in place on a
-  // provider hot-reload WITHOUT reconstructing the pool singleton.
+  // The deps used to resolve the driver in the ctor. Retained so `swapDriver`
+  // can re-run `resolveDriver` (and rebuild the ledger gate) in place on a
+  // driver hot-reload WITHOUT reconstructing the pool singleton.
   private readonly deps: CreateBoxPoolDeps;
 
   constructor(
@@ -201,14 +228,11 @@ class BoxPoolImpl implements BoxPool {
     this.deps = deps;
     this.clock = deps.clock;
     this.logEvent = deps.logEvent;
-    this.provider = resolveProvider(settings.provider, settings, {
-      clock: deps.clock,
-      logEvent: deps.logEvent,
-    });
+    this.driver = resolveDriver(settings, deps);
     this.ledger = createLedger({
       ledgerPath: deps.ledgerPath ?? "",
       clock: deps.clock,
-      usesLedger: this.provider.capabilities.usesLedger && deps.ledgerPath !== undefined,
+      usesLedger: this.driver.capabilities.usesLedger && deps.ledgerPath !== undefined,
     });
     // The lease/heartbeat clock works in milliseconds while the ClockPort yields
     // a Date; adapt once so leases see a plain numeric clock.
@@ -220,7 +244,7 @@ class BoxPoolImpl implements BoxPool {
     // touch the same `inFlight`.
     this.reaperInternals = {
       settings: this.settings,
-      provider: this.provider,
+      driver: this.driver,
       poolOwnedLabel: POOL_OWNED_LABEL,
       now: () => this.leaseClock.now(),
       inventory: this.inventory,
@@ -232,7 +256,7 @@ class BoxPoolImpl implements BoxPool {
       // never force-returns a LEASED box from the live pool (that would kill a
       // legitimate long single-turn run that emits no heartbeat). Orphan recovery
       // after a process restart is handled separately by `hydrate`, which re-adopts
-      // only the survivors `provider.list()` still shows and drops orphan rows.
+      // only the survivors `driver.list()` still shows and drops orphan rows.
       isRunActive: () => true,
       hydrated: () => this.hydrated,
       hasGrowthBudget: () => this.hasGrowthHeadroom(),
@@ -275,8 +299,8 @@ class BoxPoolImpl implements BoxPool {
       const grown = await this.grow(req);
       if (grown.status === "leased") return grown;
       // A growth that failed for capacity/spend reasons falls through to the
-      // waiter queue; a provider_error with nothing to wait on is returned.
-      if (grown.status === "no_capacity" && grown.reason === "provider_error") {
+      // waiter queue; a driver_error with nothing to wait on is returned.
+      if (grown.status === "no_capacity" && grown.reason === "driver_error") {
         return grown;
       }
     } else if (this.blockedBySpendCap()) {
@@ -333,25 +357,25 @@ class BoxPoolImpl implements BoxPool {
     const prev = this.settings;
 
     if (!next.enabled) {
-      // Disabling the pool drains it to zero, so it needs NO (re)built provider:
+      // Disabling the pool drains it to zero, so it needs NO (re)built driver:
       // SKIP the swap entirely. A disable reload that ALSO points at an unavailable
-      // provider (or drops the static-ssh hosts so construction would throw) must
-      // still disable + drain - never throw inside `swapProvider` and strand the
+      // driver (or drops the static-ssh hosts so construction would throw) must
+      // still disable + drain - never throw inside `swapDriver` and strand the
       // live pool enabled with paid boxes still running. The drain tears every box
-      // down on the provider that PROVISIONED it (its origin), not the new one.
+      // down on the driver that PROVISIONED it (its origin), not the new one.
       this.settings = next;
       this.reaperInternals.settings = next;
       void this.drain({ deadlineMs: next.drainDeadlineMs });
       return;
     }
 
-    // Finding #1: rebuild the provider in place BEFORE the settings swap when the
-    // provider construction actually changed (a new kind or deep-changed
-    // providerOptions). A same-provider reconcile skips the swap (no rebuild),
-    // keeping the singleton's resolved provider object stable. Once the coordinator
-    // exists it will drive `swapProvider`; until then `reconcile` drives it directly.
-    if (providerConstructionChanged(prev, next)) {
-      this.swapProvider(next);
+    // Finding #1: rebuild the driver in place BEFORE the settings swap when the
+    // driver construction actually changed (a new kind or deep-changed
+    // driverOptions). A same-driver reconcile skips the swap (no rebuild),
+    // keeping the singleton's resolved driver object stable. Once the coordinator
+    // exists it will drive `swapDriver`; until then `reconcile` drives it directly.
+    if (driverConstructionChanged(prev, next)) {
+      this.swapDriver(next);
     }
 
     this.settings = next;
@@ -384,96 +408,93 @@ class BoxPoolImpl implements BoxPool {
   }
 
   /**
-   * Rebuilds the resolved provider IN PLACE on a provider hot-reload, without
+   * Rebuilds the resolved driver IN PLACE on a driver hot-reload, without
    * reconstructing the pool singleton (Finding #1). The pool's ctor resolved the
-   * provider once, but `reconcile` previously only swapped settings, so a reload
-   * that changed `provider`/`providerOptions` left every acquire still routed to
-   * the stale provider object.
+   * driver once, but `reconcile` previously only swapped settings, so a reload
+   * that changed `driver`/`driverOptions` left every acquire still routed to
+   * the stale driver object.
    *
-   * TRANSACTIONAL: every step that can THROW (resolving the new provider and
+   * TRANSACTIONAL: every step that can THROW (resolving the new driver and
    * constructing its ledger) runs FIRST, into locals, BEFORE any record or
-   * `this.provider` is mutated. A failed reload (provider unavailable / invalid
-   * providerOptions) therefore throws having mutated NOTHING, matching the
+   * `this.driver` is mutated. A failed reload (driver unavailable / invalid
+   * driverOptions) therefore throws having mutated NOTHING, matching the
    * runtime's rollback to the last-good settings: marking last-good boxes for
    * destroy and THEN throwing would let `onLeaseSettle`/the reaper drain healthy
    * warm/paid capacity after a REJECTED reload (Codex iter-6 HIGH). Once resolve
-   * succeeds (the commit point), the remaining steps cannot throw. `swapProvider`:
+   * succeeds (the commit point), the remaining steps cannot throw. `swapDriver`:
    *
-   *  1. CAPTURES `originProvider` on EVERY existing record BEFORE reassigning, so
+   *  1. CAPTURES `originDriver` on EVERY existing record BEFORE reassigning, so
    *     each surviving box remembers the backend that PROVISIONED it. This is the
    *     no-orphaned-paid-box invariant: an in-flight lease that settles AFTER the
    *     swap routes `recycle`'s `destroy` to its ORIGINAL backend (below), not the
-   *     new `this.provider`. A record that already carries an `originProvider` (a
+   *     new `this.driver`. A record that already carries an `originDriver` (a
    *     prior swap) keeps it (the true origin), so repeated swaps never lose it.
-   *  2. flags every old-provider box `markedForDestroy` and recycles each IDLE one
+   *  2. flags every old-driver box `markedForDestroy` and recycles each IDLE one
    *     immediately (under its per-box mutex) against its ORIGINAL backend, so no
-   *     paid box is orphaned and the new provider's `list()` reconcile never sees a
+   *     paid box is orphaned and the new driver's `list()` reconcile never sees a
    *     stale old box it does not own. A still-LEASED old box keeps the flag and is
    *     recycled on its ORIGINAL backend the instant its last lease settles
-   *     (`onLeaseSettle` -> `recycle`, which routes to `originProvider`).
-   *  3. commits the pre-resolved provider (`this.provider = newProvider`).
-   *  4. re-threads `reaperInternals.provider` to the new provider so the recurring
+   *     (`onLeaseSettle` -> `recycle`, which routes to `originDriver`).
+   *  3. commits the pre-resolved driver (`this.driver = newDriver`).
+   *  4. re-threads `reaperInternals.driver` to the new driver so the recurring
    *     reaper's `list()` reconcile / probe / top-up drive the new backend.
-   *  5. rebuilds the ledger `usesLedger` gate against the new provider's
+   *  5. rebuilds the ledger `usesLedger` gate against the new driver's
    *     capabilities (e.g. non-ledger -> ledger) WITHOUT reconstructing the spend
    *     accumulators, which live on the pool and are untouched.
    *
-   * Called by `reconcile` only when {@link providerConstructionChanged} is true.
+   * Called by `reconcile` only when {@link driverConstructionChanged} is true.
    */
-  swapProvider(next: BoxPoolSettings): void {
-    // TRANSACTIONAL: do ALL throwing work (resolveProvider, and constructing the
-    // new ledger) into LOCALS BEFORE mutating ANY record or `this.provider`. A
-    // failed reload (provider unavailable / invalid providerOptions) must throw
+  swapDriver(next: BoxPoolSettings): void {
+    // TRANSACTIONAL: do ALL throwing work (resolveDriver, and constructing the
+    // new ledger) into LOCALS BEFORE mutating ANY record or `this.driver`. A
+    // failed reload (driver unavailable / invalid driverOptions) must throw
     // having mutated NOTHING, so the runtime's transactional rollback to the
     // last-good settings is matched by an UNTOUCHED inventory: marking boxes for
     // destroy before this throws would let `onLeaseSettle` recycle healthy
     // in-flight leases and the reaper reap idle boxes, draining warm/paid capacity
     // after a REJECTED reload. (Codex iter-6 HIGH.)
-    const newProvider = resolveProvider(next.provider, next, {
-      clock: this.deps.clock,
-      logEvent: this.deps.logEvent,
-    });
+    const newDriver = resolveDriver(next, this.deps);
     const newLedger = createLedger({
       ledgerPath: this.deps.ledgerPath ?? "",
       clock: this.deps.clock,
-      usesLedger: newProvider.capabilities.usesLedger && this.deps.ledgerPath !== undefined,
+      usesLedger: newDriver.capabilities.usesLedger && this.deps.ledgerPath !== undefined,
     });
 
     // --- COMMIT POINT: resolve succeeded, so from here NOTHING throws. ---------
 
-    // 1) Capture the origin provider on every existing record BEFORE reassigning
-    //    `this.provider`, and flag each for drain so it is recycled on its origin.
+    // 1) Capture the origin driver on every existing record BEFORE reassigning
+    //    `this.driver`, and flag each for drain so it is recycled on its origin.
     const idleToRecycle: BoxRecord[] = [];
     for (const record of this.inventory.values()) {
-      record.originProvider = record.originProvider ?? this.provider;
+      record.originDriver = record.originDriver ?? this.driver;
       record.markedForDestroy = true;
-      // An idle (un-leased) old-provider box cannot serve the new provider and the
-      // new provider's list() will not own it, so recycle it now against its origin
+      // An idle (un-leased) old-driver box cannot serve the new driver and the
+      // new driver's list() will not own it, so recycle it now against its origin
       // rather than deferring to a reaper that would otherwise drop it un-destroyed.
       if (isLive(record.state) && record.inFlight === 0 && record.state !== "DESTROYING") {
         idleToRecycle.push(record);
       }
     }
 
-    // 3) Commit the pre-resolved provider in place, and bump the provider
+    // 3) Commit the pre-resolved driver in place, and bump the driver
     //    generation so any in-flight grow / warm-provision that captured the PRIOR
     //    generation before its provision await detects the swap when it returns
-    //    (and records its box's origin as the captured provider).
-    this.provider = newProvider;
-    this.providerGeneration += 1;
+    //    (and records its box's origin as the captured driver).
+    this.driver = newDriver;
+    this.driverGeneration += 1;
 
-    // 4) Re-thread the reaper's provider so its list()/probe/top-up drive the new
-    //    backend (the reaper reads `reaperInternals.provider`, not `this.provider`).
-    this.reaperInternals.provider = this.provider;
+    // 4) Re-thread the reaper's driver so its list()/probe/top-up drive the new
+    //    backend (the reaper reads `reaperInternals.driver`, not `this.driver`).
+    this.reaperInternals.driver = this.driver;
 
-    // 5) Commit the pre-built ledger gate (rebuilt against the new provider's
+    // 5) Commit the pre-built ledger gate (rebuilt against the new driver's
     //    `usesLedger` capability). The pool's spend accumulators are unaffected
     //    (they live on the pool, not the ledger object).
     this.ledger = newLedger;
 
     // 2 (deferred async, fire-and-forget like reconcile's grow/drain): recycle each
-    //    idle old-provider box on its ORIGINAL backend under its per-box mutex, then
-    //    wake any waiters so the freed capacity refills from the NEW provider.
+    //    idle old-driver box on its ORIGINAL backend under its per-box mutex, then
+    //    wake any waiters so the freed capacity refills from the NEW driver.
     if (idleToRecycle.length > 0) {
       void (async () => {
         for (const record of idleToRecycle) {
@@ -491,7 +512,7 @@ class BoxPoolImpl implements BoxPool {
    * Registers a callback the pool fires INSIDE the per-box mutex immediately
    * before it destroys a machine. Every teardown path routes through the single
    * {@link recycle} chokepoint, so the callback fires exactly once per box just
-   * before `provider.destroy`. The dispatch coordinator registers a callback here
+   * before `driver.destroy`. The dispatch coordinator registers a callback here
    * to fail any still-open RunSlot on the recycled box CLEANLY before the host
    * dies (the recycle-vs-endpoint ordering invariant). A callback error is
    * swallowed so a misbehaving listener can never block the teardown it precedes.
@@ -503,7 +524,7 @@ class BoxPoolImpl implements BoxPool {
   /**
    * Notifies every registered {@link onMachineRecycling} callback that `boxId` is
    * about to be destroyed. Called once at the top of {@link recycle} (inside the
-   * per-box mutex, before `provider.destroy`). Each callback's error is caught and
+   * per-box mutex, before `driver.destroy`). Each callback's error is caught and
    * logged so one bad listener can never block the teardown or starve the others.
    */
   private notifyMachineRecycling(boxId: string): void {
@@ -570,12 +591,12 @@ class BoxPoolImpl implements BoxPool {
 
   /**
    * Re-adopts survivors on daemon startup so a restart does not leak the boxes a
-   * prior process created. The reconcile is authoritative on `provider.list()`:
+   * prior process created. The reconcile is authoritative on `driver.list()`:
    *
    *  1. Seed the daily spend accumulator from the `spend.json` sidecar so a
    *     restart within the same UTC day carries the daily total (a day boundary
    *     resets it). The sidecar is the source of truth for spend, not inventory.
-   *  2. Re-adopt every box `provider.list()` still shows that carries the
+   *  2. Re-adopt every box `driver.list()` still shows that carries the
    *     pool-owned label into inventory as WARM_IDLE (a fresh process has no
    *     active runs, so a survivor is idle: `inFlight=0`, `leaseId=null`). An
    *     unlabeled instance is never adopted (it is not ours).
@@ -590,13 +611,13 @@ class BoxPoolImpl implements BoxPool {
     this.dayKey = spend.dayKey;
     this.dailyBoxSecondsUsed = spend.boxSecondsToday;
 
-    // The ledger replay is advisory; provider.list() is authoritative. A transient
+    // The ledger replay is advisory; driver.list() is authoritative. A transient
     // list() failure must not wipe inventory, so the re-adopt below only runs once a
     // BOUNDED retry of list() (short clock-driven backoff) finally succeeds.
     const rows = await this.ledger.load();
     const listed = await this.listForHydrate();
     if (listed === null) {
-      // list() never recovered. For a provider that owns no paid survivors
+      // list() never recovered. For a driver that owns no paid survivors
       // (non-ledger, non-ephemeral fake / static-ssh) the logged skip is tolerable:
       // there is nothing to leak, so startup proceeds and the reaper reconciles a
       // later tick. `hydrated` deliberately stays false so the reaper's
@@ -616,7 +637,7 @@ class BoxPoolImpl implements BoxPool {
       this.inventory.set(descriptor.boxId, {
         boxId: descriptor.boxId,
         workerHost: descriptor.workerHost,
-        providerRef: descriptor.providerRef,
+        driverRef: descriptor.driverRef,
         state: "WARM_IDLE",
         labels: [...descriptor.labels],
         createdAtMs: descriptor.createdAtMs,
@@ -635,7 +656,7 @@ class BoxPoolImpl implements BoxPool {
     // Reconcile every ledger row against the authoritative list:
     //  - row whose box list() still shows: kept (its survivor was re-adopted above).
     //  - PROVISIONAL row with no matching instance YOUNGER than ttlMs: kept. The
-    //    prior process crashed mid-provision (the box may exist at the provider but
+    //    prior process crashed mid-provision (the box may exist at the driver but
     //    not yet be list-visible under eventual consistency), so the recoverable
     //    write-ahead row is retained for a later tick / re-hydrate to correlate.
     //  - any other row with no matching instance (active row whose box vanished, or
@@ -668,9 +689,9 @@ class BoxPoolImpl implements BoxPool {
   }
 
   /**
-   * Bounded-retry wrapper around `provider.list()` for {@link hydrate}. The
+   * Bounded-retry wrapper around `driver.list()` for {@link hydrate}. The
    * authoritative startup reconcile MUST NOT treat a transient `list()` outage as a
-   * successful (empty) startup, because a paid (usesLedger / ephemeral) provider may
+   * successful (empty) startup, because a paid (usesLedger / ephemeral) driver may
    * have real survivors a prior process provisioned: swallowing the failure would
    * leave those boxes neither adopted (so they never serve a lease) nor reaped (the
    * destroy-unknown gate stays closed because {@link hydrated} never flips) nor
@@ -678,12 +699,12 @@ class BoxPoolImpl implements BoxPool {
    *
    *  - Retries `list()` up to {@link HYDRATE_LIST_ATTEMPTS} times with a short
    *    clock-driven backoff between attempts, returning the descriptors on the first
-   *    success (the common case: a brief provider blip recovers within a retry).
-   *  - If every attempt fails AND the provider owns real survivors
+   *    success (the common case: a brief driver blip recovers within a retry).
+   *  - If every attempt fails AND the driver owns real survivors
    *    (`capabilities.usesLedger` or `capabilities.ephemeral`), THROWS
    *    `box_pool_hydrate_failed` so the daemon's `await boxPool.hydrate()` fails
    *    startup LOUDLY instead of running blind over unmanaged paid machines.
-   *  - If every attempt fails for a NON-paid provider (fake / static-ssh: no paid
+   *  - If every attempt fails for a NON-paid driver (fake / static-ssh: no paid
    *    survivors to leak), returns `null` so the caller logs the skip and proceeds
    *    with startup, leaving `hydrated` false (reaper destroy-unknown gate closed)
    *    until a later `list()` succeeds.
@@ -692,7 +713,7 @@ class BoxPoolImpl implements BoxPool {
     let lastError: unknown;
     for (let attempt = 1; attempt <= HYDRATE_LIST_ATTEMPTS; attempt += 1) {
       try {
-        return await this.provider.list();
+        return await this.driver.list();
       } catch (error) {
         lastError = error;
         this.logEvent({
@@ -707,9 +728,9 @@ class BoxPoolImpl implements BoxPool {
       }
     }
 
-    const caps = this.provider.capabilities;
+    const caps = this.driver.capabilities;
     if (caps.usesLedger || caps.ephemeral) {
-      // A paid provider with potential real survivors: fail startup loud rather than
+      // A paid driver with potential real survivors: fail startup loud rather than
       // run with unmanaged paid boxes that are invisible to adopt / reap / drain.
       this.logEvent({
         event: "box_pool_hydrate_failed",
@@ -717,10 +738,10 @@ class BoxPoolImpl implements BoxPool {
         error: errorMessage(lastError),
       });
       throw new Error(
-        `box_pool_hydrate_failed: provider.list() failed after ${HYDRATE_LIST_ATTEMPTS} attempts: ${errorMessage(lastError)}`,
+        `box_pool_hydrate_failed: driver.list() failed after ${HYDRATE_LIST_ATTEMPTS} attempts: ${errorMessage(lastError)}`,
       );
     }
-    // A non-paid provider owns no survivors to leak: tolerate the skip.
+    // A non-paid driver owns no survivors to leak: tolerate the skip.
     return null;
   }
 
@@ -734,24 +755,21 @@ class BoxPoolImpl implements BoxPool {
 
   /**
    * Probes a freshly-provisioned box until it reports SSH-ready or the bounded
-   * attempt budget is spent, enforcing the WarmupStrategy contract that a box is
+   * attempt budget is spent, enforcing the warm-up contract that a box is
    * "reachable before it is leased". `provision` returning does NOT guarantee sshd is
-   * up on a cold cloud box (docker only resolves the published port; fly/e2b/modal
-   * create the machine but boot asynchronously), so leasing it immediately would hand
+   * up on a cold cloud box (a container driver may only have resolved the published
+   * port; a cloud driver may boot asynchronously), so leasing it immediately would hand
    * an unready host to the runner - failing the first run, poisoning the lease, and
    * destroying an otherwise-healthy box. An already-up host (static-ssh) and the fake
    * probe ok on the first attempt, so this is a single round-trip on the cold path.
    * Probe faults are treated as not-ready (never thrown). Returns false when the box
    * never becomes ready; the caller destroys it.
    */
-  private async probeUntilReady(
-    descriptor: BoxDescriptor,
-    provider: BoxProvider,
-  ): Promise<boolean> {
+  private async probeUntilReady(descriptor: BoxDescriptor, driver: BoxDriver): Promise<boolean> {
     let lastReason = "not_ready";
     for (let attempt = 1; attempt <= PROBE_READY_ATTEMPTS; attempt += 1) {
       try {
-        const health = await provider.probe(descriptor, {
+        const health = await driver.probe(descriptor, {
           timeoutMs: this.settings.acquireTimeoutMs,
         });
         if (health.ok) return true;
@@ -839,7 +857,7 @@ class BoxPoolImpl implements BoxPool {
 
     return {
       enabled: this.settings.enabled,
-      provider: this.settings.provider,
+      driver: this.settings.driver,
       total: this.inventory.size,
       warmIdle,
       leased,
@@ -1020,19 +1038,19 @@ class BoxPoolImpl implements BoxPool {
 
     const boxId = `box-${this.boxSeq++}`;
     const labels = [POOL_OWNED_LABEL, ...req.labels];
-    // Capture the provider that will actually run this provision (and its
-    // generation) BEFORE the await, so a swapProvider racing the provision cannot
+    // Capture the driver that will actually run this provision (and its
+    // generation) BEFORE the await, so a swapDriver racing the provision cannot
     // misattribute the resulting box: the record's origin is stamped to THIS
-    // provider so recycle destroys it on the backend that created it.
-    const originProvider = this.provider;
-    const originGeneration = this.providerGeneration;
+    // driver so recycle destroys it on the backend that created it.
+    const originDriver = this.driver;
+    const originGeneration = this.driverGeneration;
     try {
       // Write-ahead: flush a provisional ledger row BEFORE the provision await so a
       // crash mid-provision leaves a recoverable record (reconciled by hydrate
-      // against provider.list()). Inert for non-cloud providers.
+      // against driver.list()). Inert for non-cloud drivers.
       await this.writeProvisionalRow(boxId, labels);
 
-      const descriptor = await originProvider.provision({
+      const descriptor = await originDriver.provision({
         boxId,
         affinityKey: req.affinityKey ?? null,
         // Stamp the pool-owned label alongside the request labels so a leaked
@@ -1041,43 +1059,41 @@ class BoxPoolImpl implements BoxPool {
         labels,
         timeoutMs: req.timeoutMs,
         ...(req.signal ? { signal: req.signal } : {}),
-        ...(this.settings.providerOptions
-          ? { providerOptions: this.settings.providerOptions }
-          : {}),
+        ...(this.settings.driverOptions ? { driverOptions: this.settings.driverOptions } : {}),
       });
 
-      // Correlate: upsert the provisional row with the real providerRef/workerHost
-      // now the provider has returned, completing the write-ahead correlate.
+      // Correlate: upsert the provisional row with the real driverRef/workerHost
+      // now the driver has returned, completing the write-ahead correlate.
       await this.correlateRow(descriptor);
 
-      // A swapProvider may have run WHILE this provision was in flight, so the box
-      // was created on the now-stale `originProvider`, not the live `this.provider`.
-      const swappedDuringProvision = this.providerGeneration !== originGeneration;
+      // A swapDriver may have run WHILE this provision was in flight, so the box
+      // was created on the now-stale `originDriver`, not the live `this.driver`.
+      const swappedDuringProvision = this.driverGeneration !== originGeneration;
 
       // Readiness gate: never lease a box that is not yet SSH-reachable (the
-      // "reachable before leased" contract). Probe it on the provider that created it
+      // "reachable before leased" contract). Probe it on the driver that created it
       // BEFORE it enters inventory, so a concurrent acquire cannot grab a not-yet-ready
       // box and an unready cold box is destroyed + reported as no-capacity rather than
       // handed to the runner (which would fail, poison the lease, and churn a healthy
       // box). Inert for an already-up host / the fake (probes ok on the first try).
-      if (!(await this.probeUntilReady(descriptor, originProvider))) {
-        await this.destroyDescriptor(descriptor, "unhealthy", originProvider);
-        return { status: "no_capacity", reason: "provider_error" };
+      if (!(await this.probeUntilReady(descriptor, originDriver))) {
+        await this.destroyDescriptor(descriptor, "unhealthy", originDriver);
+        return { status: "no_capacity", reason: "driver_error" };
       }
 
       // The pool may have started draining (or been disabled) WHILE this provision OR
       // the readiness probe was in flight. runDrain snapshotted inventory before the
       // box existed, so adding it now would leak a paid box past a completed drain.
-      // Destroy it instead of stamping it in - on the ORIGIN provider that created it.
+      // Destroy it instead of stamping it in - on the ORIGIN driver that created it.
       if (this.draining || !this.settings.enabled) {
-        await this.destroyDescriptor(descriptor, "drain", originProvider);
+        await this.destroyDescriptor(descriptor, "drain", originDriver);
         return { status: "no_capacity", reason: "pool_disabled" };
       }
 
       const record: BoxRecord = {
         boxId: descriptor.boxId,
         workerHost: descriptor.workerHost,
-        providerRef: descriptor.providerRef,
+        driverRef: descriptor.driverRef,
         state: "WARM_IDLE",
         labels: [...descriptor.labels],
         createdAtMs: descriptor.createdAtMs,
@@ -1087,8 +1103,8 @@ class BoxPoolImpl implements BoxPool {
         lastHeartbeatMs: this.leaseClock.now(),
         boxSecondsUsed: 0,
         // A swap during the provision means this box was created on a now-stale
-        // provider; flag it for destroy so the reaper / settle recycles it (it
-        // cannot serve the live provider and the new provider's list() will not own
+        // driver; flag it for destroy so the reaper / settle recycles it (it
+        // cannot serve the live driver and the new driver's list() will not own
         // it). A no-swap grow leaves this false (byte-identical default).
         markedForDestroy: swappedDuringProvision,
         affinityKey: null,
@@ -1096,9 +1112,9 @@ class BoxPoolImpl implements BoxPool {
         leaseIssues: new Map(),
         // Record the backend that actually provisioned this box so recycle destroys
         // it there. Only set when a swap happened during the await; an un-swapped
-        // grow leaves it undefined so recycle falls back to `this.provider`
+        // grow leaves it undefined so recycle falls back to `this.driver`
         // (byte-identical to the prior default path).
-        ...(swappedDuringProvision ? { originProvider } : {}),
+        ...(swappedDuringProvision ? { originDriver } : {}),
       };
       this.inventory.set(record.boxId, record);
       const lease = this.stamp(record, req);
@@ -1108,7 +1124,7 @@ class BoxPoolImpl implements BoxPool {
       // The provision rejected: drop the write-ahead provisional row so a failed
       // grow leaves no dangling row a later hydrate would have to reap.
       await this.ledger.delete(boxId);
-      return { status: "no_capacity", reason: "provider_error" };
+      return { status: "no_capacity", reason: "driver_error" };
     } finally {
       // Release the reservations on settle OR reject so a failed provision never
       // permanently blocks future growth.
@@ -1317,23 +1333,23 @@ class BoxPoolImpl implements BoxPool {
     if (record.state === "DESTROYED" || record.state === "DESTROYING") return;
     record.state = "DESTROYING";
     // Recycle-vs-endpoint ordering invariant: fire the recycling callbacks INSIDE
-    // the per-box mutex (we are inside it here) BEFORE `provider.destroy`, so the
+    // the per-box mutex (we are inside it here) BEFORE `driver.destroy`, so the
     // coordinator can fail any still-open RunSlot bound to this box cleanly (close
     // its endpoint, settle, deregister) before the host is torn out from under it.
     // The state is already flipped to DESTROYING above so this fires exactly once.
     this.notifyMachineRecycling(record.boxId);
     try {
-      // Destroy against the box's ORIGINAL provider when a swap captured one, so an
-      // in-flight lease settling AFTER a provider hot-reload tears its box down on
-      // the backend that PROVISIONED it (never the new `this.provider`) and a paid
-      // box is never orphaned. Boxes provisioned under the live provider carry no
-      // `originProvider` and fall back to `this.provider` (byte-identical default).
-      const provider = record.originProvider ?? this.provider;
-      await provider.destroy(
+      // Destroy against the box's ORIGINAL driver when a swap captured one, so an
+      // in-flight lease settling AFTER a driver hot-reload tears its box down on
+      // the backend that PROVISIONED it (never the new `this.driver`) and a paid
+      // box is never orphaned. Boxes provisioned under the live driver carry no
+      // `originDriver` and fall back to `this.driver` (byte-identical default).
+      const driver = record.originDriver ?? this.driver;
+      await driver.destroy(
         {
           boxId: record.boxId,
           workerHost: record.workerHost,
-          providerRef: record.providerRef,
+          driverRef: record.driverRef,
           createdAtMs: record.createdAtMs,
           labels: record.labels,
           metadata: record.metadata,
@@ -1428,54 +1444,52 @@ class BoxPoolImpl implements BoxPool {
     }
     const boxId = `box-${this.boxSeq++}`;
     const labels = [POOL_OWNED_LABEL];
-    // Capture the provider that will run this warm provision (and its generation)
-    // BEFORE the await so a swapProvider racing the provision cannot misattribute the
+    // Capture the driver that will run this warm provision (and its generation)
+    // BEFORE the await so a swapDriver racing the provision cannot misattribute the
     // box (same no-orphan invariant as `grow`).
-    const originProvider = this.provider;
-    const originGeneration = this.providerGeneration;
+    const originDriver = this.driver;
+    const originGeneration = this.driverGeneration;
     try {
       // Write-ahead the provisional row BEFORE provision (recoverable mid-provision
-      // crash), then correlate after the provider returns. Inert for non-cloud.
+      // crash), then correlate after the driver returns. Inert for non-cloud.
       await this.writeProvisionalRow(boxId, labels);
 
-      const descriptor = await originProvider.provision({
+      const descriptor = await originDriver.provision({
         boxId,
         affinityKey: null,
         labels,
         timeoutMs: this.settings.acquireTimeoutMs,
-        ...(this.settings.providerOptions
-          ? { providerOptions: this.settings.providerOptions }
-          : {}),
+        ...(this.settings.driverOptions ? { driverOptions: this.settings.driverOptions } : {}),
       });
 
       await this.correlateRow(descriptor);
 
-      // A swapProvider may have run WHILE this warm provision was in flight, so the
-      // box was created on the now-stale `originProvider`, not `this.provider`.
-      const swappedDuringProvision = this.providerGeneration !== originGeneration;
+      // A swapDriver may have run WHILE this warm provision was in flight, so the
+      // box was created on the now-stale `originDriver`, not `this.driver`.
+      const swappedDuringProvision = this.driverGeneration !== originGeneration;
 
       // Readiness gate (same "reachable before leased" contract as `grow`): a warm box
       // must be SSH-reachable BEFORE it becomes WARM_IDLE and leasable, so an acquire
       // never grabs a not-yet-ready top-up box. A box that never becomes ready is
       // destroyed and skipped (the reaper re-tops-up); inert for an already-up host.
-      if (!(await this.probeUntilReady(descriptor, originProvider))) {
-        await this.destroyDescriptor(descriptor, "unhealthy", originProvider);
+      if (!(await this.probeUntilReady(descriptor, originDriver))) {
+        await this.destroyDescriptor(descriptor, "unhealthy", originDriver);
         return;
       }
 
       // A drain (or disable) may have begun WHILE this warm provision OR the readiness
       // probe was in flight; runDrain snapshotted inventory before the box existed, so
       // adding it now would leak a paid box past a completed drain. Destroy it instead -
-      // on the ORIGIN provider that created it.
+      // on the ORIGIN driver that created it.
       if (this.draining || !this.settings.enabled) {
-        await this.destroyDescriptor(descriptor, "drain", originProvider);
+        await this.destroyDescriptor(descriptor, "drain", originDriver);
         return;
       }
       const now = this.leaseClock.now();
       const record: BoxRecord = {
         boxId: descriptor.boxId,
         workerHost: descriptor.workerHost,
-        providerRef: descriptor.providerRef,
+        driverRef: descriptor.driverRef,
         state: "WARM_IDLE",
         labels: [...descriptor.labels],
         createdAtMs: descriptor.createdAtMs,
@@ -1485,25 +1499,25 @@ class BoxPoolImpl implements BoxPool {
         lastHeartbeatMs: now,
         boxSecondsUsed: 0,
         // A swap during the provision means this warm box was created on a stale
-        // provider; flag it for destroy (it cannot serve the live provider).
+        // driver; flag it for destroy (it cannot serve the live driver).
         markedForDestroy: swappedDuringProvision,
         affinityKey: null,
         metadata: { ...descriptor.metadata },
         leaseIssues: new Map(),
         // Record the backend that actually provisioned this box (only on a swap; an
         // un-swapped warm provision leaves it undefined -> falls back to
-        // `this.provider`, byte-identical to the prior path).
-        ...(swappedDuringProvision ? { originProvider } : {}),
+        // `this.driver`, byte-identical to the prior path).
+        ...(swappedDuringProvision ? { originDriver } : {}),
       };
       this.inventory.set(record.boxId, record);
 
       if (swappedDuringProvision) {
-        // This idle warm box was provisioned on a now-stale provider, so it cannot
-        // serve the live provider AND the new provider's list() will not own it
+        // This idle warm box was provisioned on a now-stale driver, so it cannot
+        // serve the live driver AND the new driver's list() will not own it
         // (the reaper's list-reconcile would otherwise DROP the record without
         // tearing the box down, orphaning a paid machine on the old backend).
         // Recycle it NOW on its captured origin (under its per-box mutex, exactly as
-        // swapProvider recycles old-provider idle boxes) so the destroy is
+        // swapDriver recycles old-driver idle boxes) so the destroy is
         // deterministic and routed to the backend that created it.
         await this.mutexFor(record.boxId).runExclusive(async () => {
           if (record.inFlight !== 0) return; // a lease landed first; settle recycles it
@@ -1640,16 +1654,16 @@ class BoxPoolImpl implements BoxPool {
 
   /**
    * Writes the write-ahead provisional ledger row for a box BEFORE its provision is
-   * awaited. The row carries the boxId + the pool-owned label but no providerRef /
-   * workerHost yet (the provider has not returned), so a crash between provision
+   * awaited. The row carries the boxId + the pool-owned label but no driverRef /
+   * workerHost yet (the driver has not returned), so a crash between provision
    * and the inventory write leaves a recoverable record on disk. Inert (zero fs
-   * I/O) for non-cloud providers (the ledger is a no-op when `usesLedger` is false).
+   * I/O) for non-cloud drivers (the ledger is a no-op when `usesLedger` is false).
    */
   private async writeProvisionalRow(boxId: string, labels: ReadonlyArray<string>): Promise<void> {
     const now = this.leaseClock.now();
     const row: LedgerRow = {
       boxId,
-      providerRef: null,
+      driverRef: null,
       workerHost: null,
       labels: [...labels],
       status: "provisional",
@@ -1661,15 +1675,15 @@ class BoxPoolImpl implements BoxPool {
 
   /**
    * Upserts the CORRELATED active ledger row for a box AFTER its provision returns,
-   * stamping the real providerRef / workerHost over the earlier provisional row
+   * stamping the real driverRef / workerHost over the earlier provisional row
    * (same boxId, so it is replaced, not appended). Completes the write-ahead
-   * correlate. Inert for non-cloud providers.
+   * correlate. Inert for non-cloud drivers.
    */
   private async correlateRow(descriptor: BoxDescriptor): Promise<void> {
     const now = this.leaseClock.now();
     const row: LedgerRow = {
       boxId: descriptor.boxId,
-      providerRef: descriptor.providerRef,
+      driverRef: descriptor.driverRef,
       workerHost: descriptor.workerHost,
       labels: [...descriptor.labels],
       status: "active",
@@ -1680,24 +1694,24 @@ class BoxPoolImpl implements BoxPool {
   }
 
   /**
-   * Destroys a provider descriptor that was created but never entered inventory
+   * Destroys a driver descriptor that was created but never entered inventory
    * (e.g. a box provisioned while the pool started draining). Best-effort: a
    * failure is logged and swallowed so the caller can still bail. The optional
-   * `provider` override destroys the box on the backend that ACTUALLY provisioned it
+   * `driver` override destroys the box on the backend that ACTUALLY provisioned it
    * (the captured origin) when a swap raced the provision; it defaults to the live
-   * `this.provider` (byte-identical to the prior single-provider path).
+   * `this.driver` (byte-identical to the prior single-driver path).
    */
   private async destroyDescriptor(
     descriptor: BoxDescriptor,
     reason: TeardownReason,
-    provider: BoxProvider = this.provider,
+    driver: BoxDriver = this.driver,
   ): Promise<void> {
     try {
-      await provider.destroy(
+      await driver.destroy(
         {
           boxId: descriptor.boxId,
           workerHost: descriptor.workerHost,
-          providerRef: descriptor.providerRef,
+          driverRef: descriptor.driverRef,
           createdAtMs: descriptor.createdAtMs,
           labels: descriptor.labels,
           metadata: descriptor.metadata,
@@ -1765,20 +1779,20 @@ function errorMessage(error: unknown): string {
 
 /**
  * Whether a reconcile changes the PROVIDER CONSTRUCTION, gating the in-place
- * `swapProvider` rebuild (Finding #1). True when the provider `kind` differs OR
- * the `providerOptions` deep-differ (the two inputs `resolveProvider` consumes).
- * A same-provider reconcile (e.g. a `max`/`warm` resize) returns false so the
- * resolved provider object stays stable and the rebuild is skipped.
+ * `swapDriver` rebuild (Finding #1). True when the driver `kind` differs OR
+ * the `driverOptions` deep-differ (the two inputs `resolveDriver` consumes).
+ * A same-driver reconcile (e.g. a `max`/`warm` resize) returns false so the
+ * resolved driver object stays stable and the rebuild is skipped.
  */
-function providerConstructionChanged(prev: BoxPoolSettings, next: BoxPoolSettings): boolean {
-  if (prev.provider !== next.provider) return true;
-  return !deepEqual(prev.providerOptions, next.providerOptions);
+function driverConstructionChanged(prev: BoxPoolSettings, next: BoxPoolSettings): boolean {
+  if (prev.driver !== next.driver) return true;
+  return !deepEqual(prev.driverOptions, next.driverOptions);
 }
 
 /**
- * Structural deep-equality over the JSON-shaped `providerOptions` records (plain
+ * Structural deep-equality over the JSON-shaped `driverOptions` records (plain
  * objects, arrays, and primitives). Sufficient for the swap gate since
- * `providerOptions` is a `Record<string, unknown>` of config-derived JSON values.
+ * `driverOptions` is a `Record<string, unknown>` of config-derived JSON values.
  */
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -1806,12 +1820,12 @@ function deepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Constructs a {@link BoxPool}. Resolves the provider for `settings.provider`
- * from the module-level registry (throwing `box_pool_provider_unavailable` for
- * an unregistered kind, so the daemon fails loud at startup) and wires the
- * write-ahead ledger only when the provider declares `usesLedger` AND a
- * `ledgerPath` is supplied. No workspace/hook deps are taken: the pool owns box
- * lifecycle only.
+ * Constructs a {@link BoxPool}. Resolves the driver for `settings.driver`
+ * through `deps.drivers` (falling back to the process-wide default registry),
+ * throwing `box_pool_driver_unavailable` for an unregistered kind so the daemon
+ * fails loud at startup, and wires the write-ahead ledger only when the driver
+ * declares `usesLedger` AND a `ledgerPath` is supplied. No workspace/hook deps
+ * are taken: the pool owns box lifecycle only.
  */
 export function createBoxPool(settings: BoxPoolSettings, deps: CreateBoxPoolDeps): BoxPool {
   return new BoxPoolImpl(settings, deps);

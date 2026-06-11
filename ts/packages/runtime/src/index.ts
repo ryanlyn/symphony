@@ -576,7 +576,7 @@ export class SymphonyRuntime {
         });
       } catch (error) {
         // acquireRunSlot() REJECTED outside the no_capacity result path (ledger /
-        // filesystem / provider / endpoint-open fault). Handle it like a failed
+        // filesystem / driver / endpoint-open fault). Handle it like a failed
         // dispatch rather than letting the rejection strand the claim: abandon the
         // claim so the slot is re-evaluated next poll, release the active handle,
         // surface a clear error event (never swallowed), and return WITHOUT running
@@ -745,8 +745,8 @@ export class SymphonyRuntime {
       // TRANSACTIONAL reload: run EVERY throwing side effect FIRST (the gate above,
       // then the coordinator/pool reconcile), and ONLY swap the runtime settings
       // (this.input.workflow + this.orchestrator.settings + the client) AFTER they
-      // ALL succeed. If reconcile throws (e.g. provider unavailable / invalid
-      // providerOptions) the catch below leaves BOTH the runtime settings AND the
+      // ALL succeed. If reconcile throws (e.g. driver unavailable / invalid
+      // driverOptions) the catch below leaves BOTH the runtime settings AND the
       // pool/coordinator state on the PREVIOUS config - last-good is never partially
       // applied, so dispatch can never use settings that do not match the live pool.
       //
@@ -1299,7 +1299,7 @@ function wrapBoxPoolInCoordinator(
     settings.worker.boxPool ??
     withDerivedMaxInFlight({
       enabled: false,
-      provider: "fake",
+      driver: "fake",
       min: 0,
       max: 0,
       warm: 0,

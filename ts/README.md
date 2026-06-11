@@ -151,6 +151,24 @@ worker:
     - worker2.example.com:2222
   ssh_timeout_ms: 60000 # default: 60000
   max_concurrent_agents_per_host: 2 # optional; defaults to the global agent cap per host
+  # Alternative to ssh_hosts (mutually exclusive): a warm pool of leased worker
+  # boxes provisioned by a box driver extension. Disabled by default.
+  box_pool:
+    enabled: false
+    driver: fake # registered box driver kind: fake | static-ssh | docker | fly | e2b | modal
+    min: 0 # warm-inventory floor the reaper keeps alive
+    max: 1 # ceiling on concurrent boxes
+    warm: 1 # pre-warmed idle boxes the reaper tops up toward
+    max_in_flight: 1 # run slots per machine; >1 requires co_residence: true
+    ttl_ms: 3600000 # hard box lifetime before recycle
+    idle_reap_ms: 300000 # idle window before a warm box above min is reaped
+    acquire_timeout_ms: 30000 # how long an acquire waits for capacity
+    spend: # optional caps, all in boxes / wall-clock box-seconds
+      max_concurrent_boxes: 4
+      max_box_seconds: 86400
+      daily_box_seconds: 28800
+    driver_options: # passed verbatim to the driver (snake_case preserved)
+      ssh_hosts: ["user@box1:22"] # static-ssh example
 
 agent:
   kind: codex # default: "codex"; "claude" is configured below

@@ -120,14 +120,14 @@ function makeFakeMachinePool(): BoxPool & { readonly leases: Map<string, FakeLea
     canAcquire: () => true,
     isEnabled: () => true,
     reconcile(): void {},
-    swapProvider(): void {},
+    swapDriver(): void {},
     onMachineRecycling(): void {},
     async hydrate(): Promise<void> {},
     async drain(): Promise<void> {},
     snapshot(): BoxPoolSnapshot {
       return {
         enabled: true,
-        provider: "fake",
+        driver: "fake",
         total: leases.size,
         warmIdle: 0,
         leased: leases.size,
@@ -158,7 +158,7 @@ function fullSettingsWithServerPort(port = 51_873): Settings {
 function boxPoolOnlySettings(): BoxPoolSettings {
   return {
     enabled: true,
-    provider: "fake",
+    driver: "fake",
   } as unknown as BoxPoolSettings;
 }
 

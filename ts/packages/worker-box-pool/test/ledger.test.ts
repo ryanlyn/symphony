@@ -27,6 +27,7 @@ function fixedClock(initial: Date): { clock: ClockPort; set(next: Date): void } 
   let current = initial;
   const clock: ClockPort = {
     now: () => current,
+    monotonicMs: () => current.getTime(),
     setTimeout: (): TimerHandle => ({ unref: undefined }),
     clearTimeout: () => undefined,
   };
@@ -45,7 +46,7 @@ function ledgerPathFor(dir: string): string {
 function provisionalRow(boxId: string, atMs: number): LedgerRow {
   return {
     boxId,
-    providerRef: null,
+    driverRef: null,
     workerHost: null,
     labels: ["symphony-box-pool"],
     status: "provisional",
@@ -62,7 +63,7 @@ test("provisional row flushed BEFORE provision", async () => {
     usesLedger: true,
   });
 
-  // A provisional row is written before the provider is even called, so a crash
+  // A provisional row is written before the driver is even called, so a crash
   // mid-provision leaves a recoverable record on disk.
   await ledger.upsert(provisionalRow("box-1", 1_000));
 
@@ -70,11 +71,11 @@ test("provisional row flushed BEFORE provision", async () => {
   assert.equal(onDisk.length, 1);
   assert.equal(onDisk[0]?.boxId, "box-1");
   assert.equal(onDisk[0]?.status, "provisional");
-  assert.equal(onDisk[0]?.providerRef, null);
+  assert.equal(onDisk[0]?.driverRef, null);
   assert.equal(onDisk[0]?.workerHost, null);
 });
 
-test("row UPSERTED with providerRef/workerHost after provision returns", async () => {
+test("row UPSERTED with driverRef/workerHost after provision returns", async () => {
   const { clock } = fixedClock(new Date("2026-05-29T10:00:00.000Z"));
   const ledger = createLedger({
     ledgerPath: ledgerPathFor(tmpDir),
@@ -83,11 +84,11 @@ test("row UPSERTED with providerRef/workerHost after provision returns", async (
   });
 
   await ledger.upsert(provisionalRow("box-1", 1_000));
-  // After the provider returns, the SAME boxId row is upserted (not appended)
-  // with the real providerRef/workerHost and an `active` status.
+  // After the driver returns, the SAME boxId row is upserted (not appended)
+  // with the real driverRef/workerHost and an `active` status.
   await ledger.upsert({
     boxId: "box-1",
-    providerRef: "i-0abc123",
+    driverRef: "i-0abc123",
     workerHost: "user@10.0.0.5:22",
     labels: ["symphony-box-pool"],
     status: "active",
@@ -99,7 +100,7 @@ test("row UPSERTED with providerRef/workerHost after provision returns", async (
   assert.equal(onDisk.length, 1);
   assert.equal(onDisk[0]?.boxId, "box-1");
   assert.equal(onDisk[0]?.status, "active");
-  assert.equal(onDisk[0]?.providerRef, "i-0abc123");
+  assert.equal(onDisk[0]?.driverRef, "i-0abc123");
   assert.equal(onDisk[0]?.workerHost, "user@10.0.0.5:22");
 });
 
@@ -112,7 +113,7 @@ test("load replays rows on hydrate", async () => {
   await first.upsert(provisionalRow("box-1", 1_000));
   await first.upsert({
     boxId: "box-2",
-    providerRef: "i-2",
+    driverRef: "i-2",
     workerHost: "user@host-2:22",
     labels: ["symphony-box-pool"],
     status: "active",
@@ -149,12 +150,12 @@ test("atomic write via tmp+rename", async () => {
   assert.equal(parsed.rows[0]?.boxId, "box-1");
 });
 
-test("corrupted ledger returns [] defers to provider.list()", async () => {
+test("corrupted ledger returns [] defers to driver.list()", async () => {
   const { clock } = fixedClock(new Date("2026-05-29T10:00:00.000Z"));
   const ledgerPath = ledgerPathFor(tmpDir);
   await fs.mkdir(path.dirname(ledgerPath), { recursive: true });
   // A half-written / garbage file must not throw on load: the pool defers to
-  // provider.list() as the authoritative inventory.
+  // driver.list() as the authoritative inventory.
   await fs.writeFile(ledgerPath, "{ not valid json", "utf8");
 
   const ledger = createLedger({ ledgerPath, clock, usesLedger: true });
@@ -184,7 +185,7 @@ test("ledger untouched when usesLedger false", async () => {
   const ledgerPath = ledgerPathFor(tmpDir);
   const ledger = createLedger({ ledgerPath, clock, usesLedger: false });
 
-  // Every mutating call is a no-op for a non-cloud provider: zero fs writes.
+  // Every mutating call is a no-op for a non-cloud driver: zero fs writes.
   await ledger.upsert(provisionalRow("box-1", 1_000));
   await ledger.flush([provisionalRow("box-2", 1_000)]);
   await ledger.delete("box-1");

@@ -24,7 +24,7 @@ function boxPoolSettings(
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the endpoint message", () => {
   const settings = boxPoolSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: true,
   });
@@ -34,7 +34,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the en
 });
 
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent returns the co-residence message", () => {
-  const settings = boxPoolSettings({ enabled: true, provider: "fake", max_in_flight: 2 });
+  const settings = boxPoolSettings({ enabled: true, driver: "fake", max_in_flight: 2 });
   assert.equal(settings?.coResidence, undefined);
   const message = checkSlotsPerMachineGate(settings, capable);
   assert.ok(message);
@@ -44,7 +44,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false returns the co-residence message", () => {
   const settings = boxPoolSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: false,
   });
@@ -56,7 +56,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint AND coResidence returns null", () => {
   const settings = boxPoolSettings({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     max_in_flight: 2,
     co_residence: true,
   });
@@ -67,7 +67,7 @@ test("gate predicate: DISABLED pool with slotsPerMachine>1 returns null (dormant
   // A disabled pool cannot co-reside anything: runs go static/local, so a dormant
   // max_in_flight>1 must be ignored exactly like an absent pool. Otherwise the
   // startup gate hard-aborts the daemon over a value the disabled pool never uses.
-  const settings = boxPoolSettings({ enabled: false, provider: "fake", max_in_flight: 2 });
+  const settings = boxPoolSettings({ enabled: false, driver: "fake", max_in_flight: 2 });
   assert.equal(settings?.enabled, false);
   assert.equal(settings?.slotsPerMachine, 2);
   // No capability AND no opt-in: still null, because the pool is off entirely.
@@ -77,7 +77,7 @@ test("gate predicate: DISABLED pool with slotsPerMachine>1 returns null (dormant
 });
 
 test("gate predicate: default slotsPerMachine=1 always returns null regardless of capability/opt-in", () => {
-  const enabledDefault = boxPoolSettings({ enabled: true, provider: "fake" });
+  const enabledDefault = boxPoolSettings({ enabled: true, driver: "fake" });
   assert.equal(enabledDefault?.slotsPerMachine, 1);
   assert.equal(checkSlotsPerMachineGate(enabledDefault, incapable), null);
   assert.equal(checkSlotsPerMachineGate(enabledDefault, capable), null);

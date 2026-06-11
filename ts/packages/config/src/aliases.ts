@@ -20,10 +20,10 @@ const workerAliases = {
   max_concurrent_agents_per_host: "maxConcurrentAgentsPerHost",
   box_pool: "boxPool",
 };
-// NOTE: providerOptions (provider_options) is renamed at the box_pool level only;
+// NOTE: driverOptions (driver_options) is renamed at the box_pool level only;
 // the normalizer is a flat per-key map that does not recurse into nested maps, so
-// the CONTENTS of provider_options pass through to providers verbatim (snake_case
-// preserved). StaticSshBoxProvider therefore accepts both ssh_hosts and sshHosts.
+// the CONTENTS of driver_options pass through to drivers verbatim (snake_case
+// preserved). The static-ssh driver therefore accepts both ssh_hosts and sshHosts.
 const boxPoolAliases = {
   max_in_flight: "maxInFlight",
   ttl_ms: "ttlMs",
@@ -35,7 +35,7 @@ const boxPoolAliases = {
   max_boxes_per_issue: "maxBoxesPerIssue",
   co_residence: "coResidence",
   max_concurrent_tunnels: "maxConcurrentTunnels",
-  provider_options: "providerOptions",
+  driver_options: "driverOptions",
 };
 const boxPoolSpendAliases = {
   max_concurrent_boxes: "maxConcurrentBoxes",

@@ -8,39 +8,39 @@ import { promisify } from "node:util";
 import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
 import { test, vi } from "vitest";
 import { systemClock, withDerivedMaxInFlight } from "@symphony/domain";
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
+import type { BoxDriverKind, BoxPoolSettings } from "@symphony/domain";
 import { createWorkspaceForIssue, parseConfig, runSsh, shellEscape } from "@symphony/cli";
 import type { Issue } from "@symphony/cli";
 
-// Importing the package barrel self-registers every built-in provider; this test
-// then overrides ONLY the `static-ssh` kind with a live-SSH adapter that talks to
-// a real loopback sshd, exercising the REAL pool (acquire/lease/release/fail/
-// drain/snapshot/affinity) and the REAL runner workspace-over-SSH path. The pool
-// resolves providers by name (`@symphony/worker-box-pool` is not a root dependency),
-// so the package is reached through its compiled barrel by relative path - the same
-// pattern the package's own root-relative `test/assert.js` import uses.
+// The pool engine barrel has NO side effects (no driver is registered on import);
+// this test registers its OWN live-SSH driver - one that talks to a real loopback
+// sshd - into a LOCAL `BoxDriverRegistry` threaded to `createBoxPool` via
+// `deps.drivers`, exercising the REAL pool (acquire/lease/release/fail/drain/
+// snapshot/affinity) and the REAL runner workspace-over-SSH path. The engine and
+// SDK packages are not root dependencies, so they are reached through their
+// compiled barrels by relative path - the same pattern the package's own
+// root-relative `test/assert.js` import uses.
 import {
+  BoxDriverRegistry,
   createBoxPool,
-  clearBoxProviderRegistry,
-  registerBoxProvider,
-  registerBuiltInBoxProviders,
   type BoxDescriptor,
+  type BoxDriver,
   type BoxHealth,
   type BoxLease,
   type BoxPool,
-  type BoxProvider,
-  type ProviderCapabilities,
-  type ProviderDeps,
-  type ProvisionRequest,
+  type DriverDeps,
   type TeardownReason,
 } from "../packages/worker-box-pool/dist/index.js";
+import type { DriverCapabilities, ProvisionRequest } from "../packages/box-sdk/dist/index.js";
 
 const execFileAsync = promisify(execFile);
 const runLiveSsh = process.env.SYMPHONY_TS_RUN_LIVE_SSH_E2E === "1";
 
-// The kind we override with the live adapter. `static-ssh` is the SSH-addressable
-// built-in kind, so the pool treats the yielded `workerHost` as a real SSH target.
-const LIVE_KIND: BoxPoolProvider = "static-ssh";
+// The kind the live adapter registers under in this test's LOCAL registry. The
+// name mirrors the SSH-addressable extension kind; the driver itself declares
+// `sshAddressable: true`, so the pool treats the yielded `workerHost` as a real
+// SSH target.
+const LIVE_KIND: BoxDriverKind = "static-ssh";
 const SSH_TIMEOUT_MS = 60_000;
 
 test(
@@ -53,11 +53,12 @@ test(
       return;
     }
 
-    clearBoxProviderRegistry();
-    const recorder = new LiveSshProviderRecorder(setup.hosts);
-    registerBoxProvider(LIVE_KIND, (settings, deps) =>
-      recorder.create(settings, deps, setup.runRoot),
-    );
+    const recorder = new LiveSshDriverRecorder(setup.hosts);
+    const drivers = new BoxDriverRegistry();
+    drivers.register({
+      kind: LIVE_KIND,
+      create: (options, deps) => recorder.create(options, deps, setup.runRoot),
+    });
 
     const settings = parseConfig({
       workspace: { root: setup.workspaceRoot },
@@ -65,9 +66,10 @@ test(
       hooks: { after_create: initWorkspaceHook(), timeout_ms: 60_000 },
     });
 
-    const pool = createBoxPool(poolSettings({ provider: LIVE_KIND, max: 1, warm: 0 }), {
+    const pool = createBoxPool(poolSettings({ driver: LIVE_KIND, max: 1, warm: 0 }), {
       clock: systemClock,
       logEvent: () => undefined,
+      drivers,
     });
 
     const issue: Issue = {
@@ -81,7 +83,7 @@ test(
 
     try {
       // --- probe via runSsh printf-ready succeeds against the live sshd ---------
-      // Drive the registered live provider's probe (the same `printf ready` the
+      // Drive the registered live driver's probe (the same `printf ready` the
       // pool's reaper health-check uses) directly so the live readiness check is
       // asserted end-to-end against the real sshd.
       const probed = await recorder.probeHost(setup.hosts[0]!);
@@ -174,8 +176,6 @@ test(
       }
     } finally {
       await pool.drain({ deadlineMs: 30_000 }).catch(() => undefined);
-      clearBoxProviderRegistry();
-      registerBuiltInBoxProviders();
       await setup.cleanup();
     }
   },
@@ -196,11 +196,12 @@ test(
       return;
     }
 
-    clearBoxProviderRegistry();
-    const recorder = new LiveSshProviderRecorder(setup.hosts);
-    registerBoxProvider(LIVE_KIND, (settings, deps) =>
-      recorder.create(settings, deps, setup.runRoot),
-    );
+    const recorder = new LiveSshDriverRecorder(setup.hosts);
+    const drivers = new BoxDriverRegistry();
+    drivers.register({
+      kind: LIVE_KIND,
+      create: (options, deps) => recorder.create(options, deps, setup.runRoot),
+    });
 
     const settings = parseConfig({
       workspace: { root: setup.workspaceRoot },
@@ -209,8 +210,8 @@ test(
     });
 
     const pool = createBoxPool(
-      poolSettings({ provider: LIVE_KIND, max: setup.hosts.length, warm: 0, maxInFlight: 1 }),
-      { clock: systemClock, logEvent: () => undefined },
+      poolSettings({ driver: LIVE_KIND, max: setup.hosts.length, warm: 0, maxInFlight: 1 }),
+      { clock: systemClock, logEvent: () => undefined, drivers },
     );
 
     try {
@@ -277,27 +278,25 @@ test(
       for (const boxId of recorder.provisionedBoxIds) {
         assert.equal(recorder.destroyedBoxIds.includes(boxId), true);
       }
-      clearBoxProviderRegistry();
-      registerBuiltInBoxProviders();
       await setup.cleanup();
     }
   },
 );
 
 // ---------------------------------------------------------------------------
-// Live-SSH provider adapter: a real BoxProvider over the configured loopback /
+// Live-SSH driver adapter: a real BoxDriver over the configured loopback /
 // BYO hosts. It maps the pool's `box-N` idempotency key onto a real SSH host
 // (round-robin, affinity-aware), probes with `printf ready`, and tears down each
 // box with a real `rm -rf` over SSH so drain/fail teardown is observable.
 // ---------------------------------------------------------------------------
 
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: true,
   ephemeral: true,
   usesLedger: false,
 };
 
-class LiveSshProviderRecorder {
+class LiveSshDriverRecorder {
   readonly provisionedBoxIds: string[] = [];
   readonly destroyedBoxIds: string[] = [];
   readonly destroyReasons: string[] = [];
@@ -310,7 +309,7 @@ class LiveSshProviderRecorder {
 
   constructor(private readonly hosts: readonly string[]) {}
 
-  // The same readiness check the provider's `probe` performs, exposed so the test
+  // The same readiness check the driver's `probe` performs, exposed so the test
   // can assert the live `printf ready` probe end-to-end against the real sshd.
   async probeHost(host: string): Promise<BoxHealth> {
     this.probeHosts.push(host);
@@ -327,9 +326,13 @@ class LiveSshProviderRecorder {
     }
   }
 
-  // An arrow class field so the returned provider's arrow methods close over the
+  // An arrow class field so the returned driver's arrow methods close over the
   // recorder instance via lexical `this` (no `this` aliasing).
-  create = (_settings: BoxPoolSettings, deps: ProviderDeps, runRoot: string): BoxProvider => ({
+  create = (
+    _options: Readonly<Record<string, unknown>>,
+    deps: DriverDeps,
+    runRoot: string,
+  ): BoxDriver => ({
     kind: LIVE_KIND,
     capabilities: CAPABILITIES,
     provision: async (req: ProvisionRequest): Promise<BoxDescriptor> => {
@@ -348,7 +351,7 @@ class LiveSshProviderRecorder {
       return {
         boxId: req.boxId,
         workerHost: host,
-        providerRef: `${host}#${req.boxId}`,
+        driverRef: `${host}#${req.boxId}`,
         createdAtMs: deps.clock.now().getTime(),
         labels: [...req.labels],
         metadata: { markerDir },
@@ -377,7 +380,7 @@ class LiveSshProviderRecorder {
       [...this.bound.entries()].map(([boxId, host]) => ({
         boxId,
         workerHost: host,
-        providerRef: `${host}#${boxId}`,
+        driverRef: `${host}#${boxId}`,
         createdAtMs: deps.clock.now().getTime(),
         labels: [],
         metadata: { markerDir: path.posix.join(runRoot, "boxes", boxId) },
@@ -407,7 +410,7 @@ function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings
   const { maxInFlight, slotsPerMachine, ...rest } = overrides;
   return withDerivedMaxInFlight({
     enabled: true,
-    provider: LIVE_KIND,
+    driver: LIVE_KIND,
     min: 0,
     max: 1,
     warm: 0,

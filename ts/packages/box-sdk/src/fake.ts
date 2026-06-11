@@ -1,33 +1,35 @@
-import type { BoxPoolProvider } from "@symphony/domain";
-
+import type { BoxDriverRegistry } from "./registry.js";
+import { defaultBoxDriverRegistry } from "./registry.js";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  DriverCapabilities,
+  DriverDeps,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
   ProvisionRequest,
   TeardownReason,
-} from "../types.js";
+} from "./types.js";
 
-const KIND: BoxPoolProvider = "fake";
+const KIND = "fake";
 
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: false,
   ephemeral: false,
   usesLedger: false,
 };
 
 /**
- * An in-memory {@link BoxProvider} used by the always-on test layer and the
- * memory-tracker e2e demo. It owns no real machines and touches no disk: every
+ * An in-memory {@link BoxDriver} used by the always-on test layer and the
+ * memory-tracker e2e demo, and the SDK's reference implementation of the
+ * driver contract. It owns no real machines and touches no disk: every
  * operation mutates a `Map<boxId, BoxDescriptor>` and the yielded `workerHost`
  * is a synthetic `fake://box-<boxId>` address. Determinism comes from the
- * injected {@link ClockPort} (so `createdAtMs` is reproducible), and failure can
- * be injected per-box so tests can exercise probe/provision/destroy faults and
+ * injected clock (so `createdAtMs` is reproducible), and failure can be
+ * injected per-box so tests can exercise probe/provision/destroy faults and
  * the conformance suite's unreachable-box case.
  */
-export class FakeBoxProvider implements BoxProvider {
+export class FakeBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
@@ -41,14 +43,14 @@ export class FakeBoxProvider implements BoxProvider {
   private readonly provisionFailures = new Map<string, string>();
   private readonly destroyFailures = new Map<string, string>();
 
-  // A write counter that proves the provider never touched the disk. It is
-  // structurally pinned at 0 (the provider holds only in-memory state), so a
+  // A write counter that proves the driver never touched the disk. It is
+  // structurally pinned at 0 (the driver holds only in-memory state), so a
   // test can assert ZERO fs I/O by reading `fsWriteCount`.
   private writes = 0;
 
-  constructor(private readonly deps: ProviderDeps) {}
+  constructor(private readonly deps: Pick<DriverDeps, "clock">) {}
 
-  /** Number of fs writes performed (always 0; the provider is purely in-memory). */
+  /** Number of fs writes performed (always 0; the driver is purely in-memory). */
   get fsWriteCount(): number {
     return this.writes;
   }
@@ -74,7 +76,7 @@ export class FakeBoxProvider implements BoxProvider {
     const descriptor: BoxDescriptor = {
       boxId: req.boxId,
       workerHost,
-      providerRef: workerHost,
+      driverRef: workerHost,
       createdAtMs: this.deps.clock.now().getTime(),
       labels: [...req.labels],
       metadata: {},
@@ -152,5 +154,26 @@ export class FakeBoxProvider implements BoxProvider {
   /** Clears a previously injected destroy failure. */
   clearDestroyFailure(boxId: string): void {
     this.destroyFailures.delete(boxId);
+  }
+}
+
+/** The registered `fake` factory: constructs a fresh in-memory driver per pool. */
+export const fakeBoxDriverFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: (_options, deps) => new FakeBoxDriver(deps),
+};
+
+/**
+ * Registers the `fake` driver. The SDK ships this reference driver (rather
+ * than an extension) so engine and extension test suites alike can exercise
+ * the pool without real machines; the composition root registers it next to
+ * the real driver extensions.
+ */
+export function registerFakeBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(fakeBoxDriverFactory);
   }
 }

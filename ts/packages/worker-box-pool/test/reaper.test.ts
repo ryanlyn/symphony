@@ -1,14 +1,15 @@
-import { afterEach, beforeEach, test } from "vitest";
+import { beforeEach, test } from "vitest";
 import type { BoxPoolSettings } from "@symphony/domain";
+import { withDerivedMaxInFlight } from "@symphony/domain";
 import type { ClockPort, TimerHandle } from "@symphony/domain";
 import { assert } from "@symphony/test-utils";
+import { BoxDriverRegistry, FakeBoxDriver } from "@symphony/box-sdk";
+import type { BoxDriver } from "@symphony/box-sdk";
 
 import { createBoxPool } from "../src/pool.js";
-import { FakeBoxProvider } from "../src/providers/fake.js";
 import { runReaperTick, type ReaperInternals } from "../src/reaper.js";
-import { clearBoxProviderRegistry, registerBoxProvider } from "../src/registry.js";
 import { createMutex } from "../src/mutex.js";
-import type { BoxProvider, BoxRecord, Mutex } from "../src/types.js";
+import type { BoxRecord, Mutex } from "../src/types.js";
 
 // --- shared fixtures -------------------------------------------------------
 
@@ -20,6 +21,7 @@ function controllableClock(startMs: number): {
   return {
     clock: {
       now: () => new Date(current),
+      monotonicMs: () => current,
       setTimeout: (callback, delayMs): TimerHandle => setTimeout(callback, delayMs),
       clearTimeout: (handle) => clearTimeout(handle as unknown as ReturnType<typeof setTimeout>),
     },
@@ -30,39 +32,43 @@ function controllableClock(startMs: number): {
 }
 
 function poolSettings(overrides: Partial<BoxPoolSettings> = {}): BoxPoolSettings {
-  return {
+  const { maxInFlight, slotsPerMachine, ...rest } = overrides;
+  return withDerivedMaxInFlight({
     enabled: true,
-    provider: "fake",
+    driver: "fake",
     min: 0,
     max: 4,
     warm: 0,
-    maxInFlight: 1,
+    slotsPerMachine: slotsPerMachine ?? maxInFlight ?? 1,
     ttlMs: 3_600_000,
     idleReapMs: 300_000,
     acquireTimeoutMs: 1_000,
     reapIntervalMs: 15_000,
     staleHeartbeatMs: 600_000,
     drainDeadlineMs: 30_000,
-    ...overrides,
-  };
+    ...rest,
+  });
 }
 
-let lastProvider: FakeBoxProvider | null = null;
+// Each test wires the pool to its OWN registry (passed via `deps.drivers`), so
+// nothing here relies on the process-wide default registry being pre-populated.
+let drivers: BoxDriverRegistry;
+
+let lastDriver: FakeBoxDriver | null = null;
 function registerFake(): void {
-  registerBoxProvider("fake", (_settings, deps) => {
-    lastProvider = new FakeBoxProvider(deps);
-    return lastProvider;
+  drivers = new BoxDriverRegistry();
+  drivers.register({
+    kind: "fake",
+    create: (_options, driverDeps) => {
+      lastDriver = new FakeBoxDriver(driverDeps);
+      return lastDriver;
+    },
   });
 }
 
 beforeEach(() => {
-  clearBoxProviderRegistry();
   registerFake();
-  lastProvider = null;
-});
-
-afterEach(() => {
-  clearBoxProviderRegistry();
+  lastDriver = null;
 });
 
 // Builds a BoxRecord seeded into a hand-rolled inventory for the unit-level
@@ -74,7 +80,7 @@ function makeRecord(overrides: Partial<BoxRecord> = {}): BoxRecord {
   return {
     boxId,
     workerHost,
-    providerRef: workerHost,
+    driverRef: workerHost,
     state: "WARM_IDLE",
     labels: ["symphony.pool=worker-box-pool"],
     createdAtMs: 0,
@@ -91,14 +97,14 @@ function makeRecord(overrides: Partial<BoxRecord> = {}): BoxRecord {
   };
 }
 
-// A minimal ReaperInternals over a hand-rolled inventory + the fake provider, so
+// A minimal ReaperInternals over a hand-rolled inventory + the fake driver, so
 // the reaper logic is exercised in isolation. Tracks destroy calls and provisions
 // so a test can assert exactly which boxes were torn down or topped up.
 function makeInternals(
   settings: BoxPoolSettings,
   records: BoxRecord[],
   options: {
-    provider?: BoxProvider;
+    driver?: BoxDriver;
     isRunActive?: (record: BoxRecord) => boolean;
     poolOwnedLabel?: string;
     liveBoxCount?: () => number;
@@ -116,17 +122,17 @@ function makeInternals(
   const destroyed: string[] = [];
   const provisioned: string[] = [];
 
-  // Default provider whose authoritative `list()` mirrors the live inventory, so
+  // Default driver whose authoritative `list()` mirrors the live inventory, so
   // the list() reconcile is a no-op for the ttl/idle/orphan/top-up unit tests
-  // (which only want to exercise those paths). Tests that need provider-vs-pool
-  // DIVERGENCE pass their own provider via `options.provider`.
-  const inventoryMirrorProvider: BoxProvider = {
+  // (which only want to exercise those paths). Tests that need driver-vs-pool
+  // DIVERGENCE pass their own driver via `options.driver`.
+  const inventoryMirrorDriver: BoxDriver = {
     kind: "fake",
     capabilities: { sshAddressable: false, ephemeral: false, usesLedger: false },
     provision: async (req) => ({
       boxId: req.boxId,
       workerHost: `fake://box-${req.boxId}`,
-      providerRef: `fake://box-${req.boxId}`,
+      driverRef: `fake://box-${req.boxId}`,
       createdAtMs: 0,
       labels: [...req.labels],
       metadata: {},
@@ -137,17 +143,17 @@ function makeInternals(
       [...inventory.values()].map((record) => ({
         boxId: record.boxId,
         workerHost: record.workerHost,
-        providerRef: record.providerRef,
+        driverRef: record.driverRef,
         createdAtMs: record.createdAtMs,
         labels: record.labels,
         metadata: record.metadata,
       })),
   };
-  const provider = options.provider ?? inventoryMirrorProvider;
+  const driver = options.driver ?? inventoryMirrorDriver;
 
   const internals: ReaperInternals = {
     settings,
-    provider,
+    driver,
     poolOwnedLabel: options.poolOwnedLabel ?? "symphony.pool=worker-box-pool",
     now: () => 0,
     inventory,
@@ -223,7 +229,7 @@ test("LEASED past ttl is flagged markedForDestroy, NOT yanked, recycled when inF
       idleReapMs: 1_000_000,
       reapIntervalMs: 10,
     }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   const leased = await pool.acquire({
@@ -260,14 +266,14 @@ test("LEASED past ttl is flagged markedForDestroy, NOT yanked, recycled when inF
 
 test("probe failure on long-idle demotes to DEGRADED then DESTROYING", async () => {
   const { clock } = controllableClock(0);
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
-  // Provision a box into the provider so probe has something to flip to failing.
-  await provider.provision({ boxId: "box-0", labels: [], timeoutMs: 1_000 });
-  provider.injectProbeFailure("box-0", "unreachable");
+  const driver = new FakeBoxDriver({ clock });
+  // Provision a box into the driver so probe has something to flip to failing.
+  await driver.provision({ boxId: "box-0", labels: [], timeoutMs: 1_000 });
+  driver.injectProbeFailure("box-0", "unreachable");
 
   const settings = poolSettings({ min: 0, idleReapMs: 1_000, ttlMs: 1_000_000 });
   const record = makeRecord({ state: "WARM_IDLE", lastIdleAtMs: 0, lastHeartbeatMs: 0 });
-  const { internals, inventory, destroyed } = makeInternals(settings, [record], { provider });
+  const { internals, inventory, destroyed } = makeInternals(settings, [record], { driver });
   // Within idle window so idle-reap does NOT fire; the demotion path runs.
   internals.now = () => 500;
 
@@ -341,7 +347,7 @@ test("LIVE POOL: a long-stale LEASED box is never force-returned by the orphan p
       idleReapMs: 1_000_000,
       reapIntervalMs: 10,
     }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   const leased = await pool.acquire({
@@ -375,76 +381,76 @@ test("LIVE POOL: a long-stale LEASED box is never force-returned by the orphan p
 
 test("list() authoritative: labeled pool-owned unknown is destroyed", async () => {
   const { clock } = controllableClock(0);
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
-  // A labeled pool-owned box exists at the provider but the pool has NO record
+  const driver = new FakeBoxDriver({ clock });
+  // A labeled pool-owned box exists at the driver but the pool has NO record
   // of it (e.g. a crashed-before-ledger orphan). It must be destroyed.
-  await provider.provision({
+  await driver.provision({
     boxId: "ghost-0",
     labels: ["symphony.pool=worker-box-pool"],
     timeoutMs: 1_000,
   });
 
   const settings = poolSettings({ min: 0 });
-  const { internals } = makeInternals(settings, [], { provider });
+  const { internals } = makeInternals(settings, [], { driver });
 
   await runReaperTick(internals);
 
-  // The labeled-but-unknown survivor is destroyed at the provider directly (the
+  // The labeled-but-unknown survivor is destroyed at the driver directly (the
   // pool has no record to route through `destroyBox`).
-  const remaining = await provider.list();
+  const remaining = await driver.list();
   assert.equal(remaining.length, 0);
 });
 
 test("list() pre-hydrate: a labeled survivor is NOT destroyed before hydrate has run", async () => {
   const { clock } = controllableClock(0);
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
-  // A labeled pool-owned survivor exists at the provider. A reaper tick that fires
+  const driver = new FakeBoxDriver({ clock });
+  // A labeled pool-owned survivor exists at the driver. A reaper tick that fires
   // BEFORE hydrate() has re-adopted it must NOT destroy it (the constructor arms
   // the reaper but hydrate runs later); otherwise a restart reaps its own survivor.
-  await provider.provision({
+  await driver.provision({
     boxId: "survivor-0",
     labels: ["symphony.pool=worker-box-pool"],
     timeoutMs: 1_000,
   });
 
   const settings = poolSettings({ min: 0 });
-  const { internals } = makeInternals(settings, [], { provider });
+  const { internals } = makeInternals(settings, [], { driver });
   // The pool has not hydrated yet: the destroy-unknown branch must be inert.
   internals.hydrated = () => false;
 
   await runReaperTick(internals);
 
   // The labeled survivor is still present (never reaped pre-hydrate).
-  const remaining = await provider.list();
+  const remaining = await driver.list();
   assert.equal(remaining.length, 1);
   assert.equal(remaining[0]?.boxId, "survivor-0");
 });
 
 test("list() authoritative: unlabeled instance is NEVER destroyed", async () => {
   const { clock } = controllableClock(0);
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
-  // An UNLABELED instance at the provider (not ours). The reaper must NEVER
+  const driver = new FakeBoxDriver({ clock });
+  // An UNLABELED instance at the driver (not ours). The reaper must NEVER
   // destroy it even though the pool has no record of it.
-  await provider.provision({ boxId: "foreign-0", labels: [], timeoutMs: 1_000 });
+  await driver.provision({ boxId: "foreign-0", labels: [], timeoutMs: 1_000 });
 
   const settings = poolSettings({ min: 0 });
-  const { internals, destroyed } = makeInternals(settings, [], { provider });
+  const { internals, destroyed } = makeInternals(settings, [], { driver });
 
   await runReaperTick(internals);
 
   assert.deepEqual(destroyed, []);
-  const remaining = await provider.list();
+  const remaining = await driver.list();
   assert.equal(remaining.length, 1);
 });
 
 test("registered-but-missing-in-list is marked DESTROYED", async () => {
   const { clock } = controllableClock(0);
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
-  // The pool has a record but the provider's authoritative list() does NOT show
+  const driver = new FakeBoxDriver({ clock });
+  // The pool has a record but the driver's authoritative list() does NOT show
   // it (the machine vanished). The record must be reconciled to DESTROYED.
   const settings = poolSettings({ min: 0 });
   const record = makeRecord({ boxId: "box-0", state: "WARM_IDLE" });
-  const { internals, inventory } = makeInternals(settings, [record], { provider });
+  const { internals, inventory } = makeInternals(settings, [record], { driver });
 
   await runReaperTick(internals);
 
@@ -452,24 +458,24 @@ test("registered-but-missing-in-list is marked DESTROYED", async () => {
   assert.equal(inventory.has("box-0"), false);
 });
 
-test("reconcile-missing leaves a LEASED detached-provider box alone (no old-provider leak after a swap)", async () => {
+test("reconcile-missing leaves a LEASED detached-driver box alone (no old-driver leak after a swap)", async () => {
   const { clock } = controllableClock(0);
-  // The LIVE provider's list() is empty, so box-0 looks "missing".
-  const provider = new FakeBoxProvider({ clock, logEvent: () => undefined });
+  // The LIVE driver's list() is empty, so box-0 looks "missing".
+  const driver = new FakeBoxDriver({ clock });
   const settings = poolSettings({ min: 0 });
-  // box-0 is still LEASED and was created on a now-detached provider (captured
-  // originProvider by a swapProvider). The live list() legitimately cannot see it -
+  // box-0 is still LEASED and was created on a now-detached driver (captured
+  // originDriver by a swapDriver). The live list() legitimately cannot see it -
   // it lives on the OLD backend and is torn down on its origin when its lease settles.
   // Reconciling it away would drop the record so the settle no-ops and the paid
-  // old-provider machine leaks.
-  const oldProvider = new FakeBoxProvider({ clock, logEvent: () => undefined });
+  // old-driver machine leaks.
+  const oldDriver = new FakeBoxDriver({ clock });
   const record = makeRecord({
     boxId: "box-0",
     state: "LEASED",
     inFlight: 1,
-    originProvider: oldProvider,
+    originDriver: oldDriver,
   });
-  const { internals, inventory } = makeInternals(settings, [record], { provider });
+  const { internals, inventory } = makeInternals(settings, [record], { driver });
 
   await runReaperTick(internals);
 
@@ -499,17 +505,17 @@ test("top-up does NOT provision when spend budget is exhausted", async () => {
   assert.equal(provisioned.length, 0);
 });
 
-test("top-up is HELD for a survivor-owning provider until hydrate completes (no pre-hydrate duplicates)", async () => {
+test("top-up is HELD for a survivor-owning driver until hydrate completes (no pre-hydrate duplicates)", async () => {
   const settings = poolSettings({ min: 2, warm: 2, max: 4 });
-  // A PAID provider that owns survivors (usesLedger/ephemeral). Pre-hydrate its
+  // A PAID driver that owns survivors (usesLedger/ephemeral). Pre-hydrate its
   // survivors are not yet adopted, so topping up would provision DUPLICATES.
-  const paidProvider: BoxProvider = {
+  const paidDriver: BoxDriver = {
     kind: "fake",
     capabilities: { sshAddressable: true, ephemeral: true, usesLedger: true },
     provision: async (req) => ({
       boxId: req.boxId,
       workerHost: `fake://box-${req.boxId}`,
-      providerRef: `fake://box-${req.boxId}`,
+      driverRef: `fake://box-${req.boxId}`,
       createdAtMs: 0,
       labels: [...req.labels],
       metadata: {},
@@ -518,12 +524,12 @@ test("top-up is HELD for a survivor-owning provider until hydrate completes (no 
     destroy: async () => undefined,
     list: async () => [],
   };
-  const { internals, provisioned } = makeInternals(settings, [], { provider: paidProvider });
+  const { internals, provisioned } = makeInternals(settings, [], { driver: paidDriver });
   internals.hasGrowthBudget = () => true;
   internals.hydrated = () => false; // hydrate has not completed yet
 
   await runReaperTick(internals);
-  // Held: a survivor-owning provider must NOT top up before hydrate adopts survivors.
+  // Held: a survivor-owning driver must NOT top up before hydrate adopts survivors.
   assert.equal(provisioned.length, 0);
 
   // Once hydrate completes, top-up resumes toward the target.
@@ -542,13 +548,13 @@ test("reaper serial: a second tick while one is in progress is skipped", async (
   const { internals, inventory } = makeInternals(settings, []);
   // Make the single top-up provision block so a second tick can be attempted
   // mid-flight, then add the box so the top-up loop terminates on release.
-  let release: (() => void) | null = null;
+  const gate: { release: (() => void) | null } = { release: null };
   internals.provisionWarm = async () => {
     bodyRuns += 1;
     inBody += 1;
     maxConcurrent = Math.max(maxConcurrent, inBody);
     await new Promise<void>((resolve) => {
-      release = resolve;
+      gate.release = resolve;
     });
     inventory.set(`warm-${bodyRuns}`, makeRecord({ boxId: `warm-${bodyRuns}` }));
     inBody -= 1;
@@ -557,14 +563,14 @@ test("reaper serial: a second tick while one is in progress is skipped", async (
   const first = runReaperTick(internals);
   // Wait until the first tick has entered provisionWarm and parked (the body runs
   // after the reconcile/probe awaits, so poll rather than guess a microtask count).
-  while (release === null) {
+  while (gate.release === null) {
     await new Promise<void>((resolve) => setTimeout(resolve, 1));
   }
   // A second tick must be a no-op while the first is in progress (it must NOT
   // start a second provision body).
   const second = runReaperTick(internals);
   await second;
-  release?.();
+  gate.release();
   await first;
 
   // The serial in-progress guard means the body never ran concurrently and the
@@ -582,11 +588,13 @@ test("pool invokes timerHandle.unref?.() on the reaper timer", () => {
   };
   const clock: ClockPort = {
     now: () => new Date(0),
+    monotonicMs: () => 0,
     setTimeout: () => timer,
     clearTimeout: () => undefined,
   };
   const pool = createBoxPool(poolSettings({ enabled: true, min: 0, warm: 0 }), {
     clock,
+    drivers,
     logEvent: () => undefined,
   });
   // The reaper timer must be detached so it never keeps the process alive.
@@ -599,7 +607,7 @@ test("pool reaper tick fires on the clock timer and reaps an idle box (end-to-en
   const { clock, advance } = controllableClock(0);
   const pool = createBoxPool(
     poolSettings({ min: 0, warm: 0, max: 1, idleReapMs: 1_000, reapIntervalMs: 10, ttlMs: 10_000 }),
-    { clock, logEvent: () => undefined },
+    { clock, drivers, logEvent: () => undefined },
   );
 
   const leased = await pool.acquire({

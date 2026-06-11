@@ -1,6 +1,7 @@
+import type { BoxDescriptor, BoxDriver } from "@symphony/box-sdk";
 import type { BoxPoolSettings } from "@symphony/domain";
 
-import type { BoxDescriptor, BoxProvider, BoxRecord, Mutex } from "./types.js";
+import type { BoxRecord, Mutex } from "./types.js";
 
 /**
  * The seam between the pool and the single serial reaper pass. The pool supplies
@@ -13,8 +14,8 @@ import type { BoxDescriptor, BoxProvider, BoxRecord, Mutex } from "./types.js";
 export interface ReaperInternals {
   /** Current effective pool settings (swapped by the pool on config reload). */
   settings: BoxPoolSettings;
-  /** The resolved provider whose `list()` is the authoritative source of truth. */
-  provider: BoxProvider;
+  /** The resolved driver whose `list()` is the authoritative source of truth. */
+  driver: BoxDriver;
   /**
    * The label every pool-owned box carries. A `list()` reconcile destroys a
    * labeled-but-unknown survivor (ours, leaked) but NEVER an unlabeled instance
@@ -37,7 +38,7 @@ export interface ReaperInternals {
    * exactly once (only in `runClaim`'s finally), so an un-settled in-flight lease
    * always implies an active run, and the reaper must never force-return a LEASED
    * box (that would kill a legitimate long single turn). Cross-restart orphan
-   * recovery is handled by `hydrate` (re-adopt only survivors `provider.list()`
+   * recovery is handled by `hydrate` (re-adopt only survivors `driver.list()`
    * still shows), not by this predicate. The reaper unit tests inject `false` to
    * exercise the force-return branch in isolation.
    */
@@ -45,7 +46,7 @@ export interface ReaperInternals {
   /**
    * Whether `hydrate()` has completed at least once. The constructor arms the
    * recurring reaper but `hydrate()` (which re-adopts labeled survivors from
-   * `provider.list()`) runs later, so a reaper tick that fires in the gap would see
+   * `driver.list()`) runs later, so a reaper tick that fires in the gap would see
    * a labeled survivor the pool has no record of yet and reap it as a leaked
    * unknown - destroying the pool's own survivor on restart. The destroy-unknown
    * reconcile branch is therefore gated on this: it is inert until the first
@@ -54,7 +55,7 @@ export interface ReaperInternals {
   hydrated: () => boolean;
   /** Whether the spend budget allows provisioning one more box right now. */
   hasGrowthBudget: () => boolean;
-  /** Destroys a box (provider.destroy + inventory/mutex removal). Idempotent. */
+  /** Destroys a box (driver.destroy + inventory/mutex removal). Idempotent. */
   destroyBox: (record: BoxRecord, reason: TeardownReasonInternal) => Promise<void>;
   /** Provisions one warm box toward the min/warm target (under budget). */
   provisionWarm: () => Promise<void>;
@@ -78,7 +79,7 @@ const inProgress = new WeakSet<ReaperInternals>();
  * skipped (the single in-progress guard), so a slow probe/destroy can never let
  * two passes interleave and double-decrement `inFlight`. The pass, in order:
  *
- *  1. reconcile against `provider.list()` (authoritative): destroy labeled
+ *  1. reconcile against `driver.list()` (authoritative): destroy labeled
  *     pool-owned survivors the pool does not know about, NEVER touch unlabeled
  *     instances, and mark registered-but-missing records DESTROYED.
  *  2. orphan detection (gated on `isRunActive`): a LEASED box with a stale
@@ -102,7 +103,7 @@ export async function runReaperTick(internals: ReaperInternals): Promise<void> {
   if (inProgress.has(internals)) return;
   inProgress.add(internals);
   try {
-    await reconcileWithProviderList(internals);
+    await reconcileWithDriverList(internals);
     await reapOrphans(internals);
     await reapTtlAndIdle(internals);
     await reapUnhealthy(internals);
@@ -114,21 +115,21 @@ export async function runReaperTick(internals: ReaperInternals): Promise<void> {
 }
 
 /**
- * Reconciles the in-memory inventory against `provider.list()`, the authoritative
+ * Reconciles the in-memory inventory against `driver.list()`, the authoritative
  * source of truth. Two independent directions:
  *
- *  - provider-has / pool-lacks: a survivor at the provider the pool has no record
+ *  - driver-has / pool-lacks: a survivor at the driver the pool has no record
  *    of. Destroy it ONLY when it carries the pool-owned label (ours, leaked by a
  *    crash). An unlabeled instance is left strictly alone (it is not ours).
- *  - pool-has / provider-lacks: a registered record the authoritative list no
+ *  - pool-has / driver-lacks: a registered record the authoritative list no
  *    longer shows (the machine vanished). Mark it DESTROYED and drop it.
  */
-async function reconcileWithProviderList(internals: ReaperInternals): Promise<void> {
+async function reconcileWithDriverList(internals: ReaperInternals): Promise<void> {
   let listed: BoxDescriptor[];
   try {
-    listed = await internals.provider.list();
+    listed = await internals.driver.list();
   } catch (error) {
-    // list() is advisory-on-failure: a transient provider error must not cause a
+    // list() is advisory-on-failure: a transient driver error must not cause a
     // mass reconcile (which could destroy or drop boxes). Skip reconcile this pass.
     internals.logEvent({ event: "box_pool_list_failed", error: errorMessage(error) });
     return;
@@ -137,7 +138,7 @@ async function reconcileWithProviderList(internals: ReaperInternals): Promise<vo
   const listedById = new Map<string, BoxDescriptor>();
   for (const descriptor of listed) listedById.set(descriptor.boxId, descriptor);
 
-  // provider-has / pool-lacks: destroy labeled-pool-owned unknowns only. Held back
+  // driver-has / pool-lacks: destroy labeled-pool-owned unknowns only. Held back
   // until the first hydrate completes: pre-hydrate, every labeled survivor is
   // "unknown" simply because hydrate has not re-adopted it yet, and reaping it here
   // would destroy the pool's own survivors on restart. After hydrate the branch
@@ -153,7 +154,7 @@ async function reconcileWithProviderList(internals: ReaperInternals): Promise<vo
     }
     internals.logEvent({ event: "box_pool_reconcile_destroy_unknown", boxId: descriptor.boxId });
     try {
-      await internals.provider.destroy(descriptor, {
+      await internals.driver.destroy(descriptor, {
         timeoutMs: internals.settings.acquireTimeoutMs,
         reason: "orphan",
       });
@@ -166,21 +167,21 @@ async function reconcileWithProviderList(internals: ReaperInternals): Promise<vo
     }
   }
 
-  // pool-has / provider-lacks: mark registered-but-missing records DESTROYED.
+  // pool-has / driver-lacks: mark registered-but-missing records DESTROYED.
   for (const record of [...internals.inventory.values()]) {
     if (listedById.has(record.boxId)) continue;
     if (record.state === "DESTROYED" || record.state === "DESTROYING") continue;
     // A box still mid-provision may legitimately not appear in list() yet; only
     // reconcile away records the pool already considers live/idle.
     if (record.state === "PROVISIONING" || record.state === "WARMING") continue;
-    // A box created on a now-detached provider (it carries the `originProvider` a
-    // swapProvider stamped) is NOT expected in the LIVE provider's list() - it lives
+    // A box created on a now-detached driver (it carries the `originDriver` a
+    // swapDriver stamped) is NOT expected in the LIVE driver's list() - it lives
     // on the OLD backend and is torn down on its origin when its lease settles. An
     // in-flight lease likewise owns its box's teardown (and a truly-dead one is
     // handled by the orphan reaper / eventual-consistency retry). Reconciling either
     // away here would drop the record so the later settle no-ops on a DESTROYED box
-    // and `originProvider.destroy()` is never called - leaking the paid machine.
-    if (record.originProvider !== undefined || record.inFlight > 0) continue;
+    // and `originDriver.destroy()` is never called - leaking the paid machine.
+    if (record.originDriver !== undefined || record.inFlight > 0) continue;
     internals.logEvent({ event: "box_pool_reconcile_missing", boxId: record.boxId });
     await internals.mutexFor(record.boxId).runExclusive(async () => {
       record.state = "DESTROYED";
@@ -281,7 +282,7 @@ async function reapUnhealthy(internals: ReaperInternals): Promise<void> {
     if (record.state !== "WARM_IDLE" || record.inFlight !== 0) continue;
     let health: { ok: boolean };
     try {
-      health = await internals.provider.probe(descriptorOf(record), {
+      health = await internals.driver.probe(descriptorOf(record), {
         timeoutMs: internals.settings.acquireTimeoutMs,
       });
     } catch (error) {
@@ -308,15 +309,15 @@ async function reapUnhealthy(internals: ReaperInternals): Promise<void> {
  * / the pool's own headroom check inside `provisionWarm`.
  */
 async function topUp(internals: ReaperInternals): Promise<void> {
-  // Hold top-up until the first hydrate has adopted any provider survivors, but ONLY
-  // for a provider that actually OWNS survivors (paid: usesLedger / ephemeral). The
+  // Hold top-up until the first hydrate has adopted any driver survivors, but ONLY
+  // for a driver that actually OWNS survivors (paid: usesLedger / ephemeral). The
   // ctor arms the reaper before `hydrate()` runs, so a pre-hydrate tick sees an empty
   // in-memory inventory even while paid survivors still exist at the backend - topping
-  // up now would provision DUPLICATES and overshoot warm/max (a paid provider that
+  // up now would provision DUPLICATES and overshoot warm/max (a paid driver that
   // cannot hydrate fails startup loudly, so reaching steady state implies hydrated).
-  // A non-paid provider (fake / static-ssh) owns no survivors and need not wait on a
+  // A non-paid driver (fake / static-ssh) owns no survivors and need not wait on a
   // one-time list(), so it warms immediately regardless of `hydrated`.
-  const caps = internals.provider.capabilities;
+  const caps = internals.driver.capabilities;
   if (!internals.hydrated() && (caps.usesLedger || caps.ephemeral)) return;
 
   const target = Math.max(internals.settings.min, internals.settings.warm);
@@ -333,12 +334,12 @@ async function topUp(internals: ReaperInternals): Promise<void> {
   }
 }
 
-/** Reconstructs a BoxDescriptor from a record for provider probe/destroy calls. */
+/** Reconstructs a BoxDescriptor from a record for driver probe/destroy calls. */
 function descriptorOf(record: BoxRecord): BoxDescriptor {
   return {
     boxId: record.boxId,
     workerHost: record.workerHost,
-    providerRef: record.providerRef,
+    driverRef: record.driverRef,
     createdAtMs: record.createdAtMs,
     labels: record.labels,
     metadata: record.metadata,

@@ -8,20 +8,20 @@ import { createMutex } from "./mutex.js";
 import type { LedgerRow } from "./types.js";
 
 /**
- * Write-ahead ledger for cloud providers. A provisional row is flushed BEFORE
- * the provider is asked to create a machine, then upserted with the real
- * `providerRef`/`workerHost` once the provider returns. A crash between create
+ * Write-ahead ledger for cloud drivers. A provisional row is flushed BEFORE
+ * the driver is asked to create a machine, then upserted with the real
+ * `driverRef`/`workerHost` once the driver returns. A crash between create
  * and ledger-correlate is therefore recoverable: a hydrate reconciles
- * `provider.list()` (authoritative) against these rows by labels or boxId.
+ * `driver.list()` (authoritative) against these rows by labels or boxId.
  *
- * Every mutating method is a no-op for non-cloud providers (`usesLedger:false`),
- * so the fake / static-ssh providers perform ZERO fs I/O. The ledger is pure fs
+ * Every mutating method is a no-op for non-cloud drivers (`usesLedger:false`),
+ * so the fake / static-ssh drivers perform ZERO fs I/O. The ledger is pure fs
  * over an injected path with no coupling to the pool.
  */
 export interface Ledger {
   /** Replace the entire ledger contents atomically (tmp file + rename). */
   flush(rows: ReadonlyArray<LedgerRow>): Promise<void>;
-  /** Read all rows. Missing or corrupt file returns [] (defer to provider.list()). */
+  /** Read all rows. Missing or corrupt file returns [] (defer to driver.list()). */
   load(): Promise<LedgerRow[]>;
   /** Insert or replace a row keyed by `boxId`, then flush atomically. */
   upsert(row: LedgerRow): Promise<void>;
@@ -118,7 +118,7 @@ export function createLedger(options: LedgerOptions): Ledger {
       throw error;
     }
     // Corruption tolerance: a truncated or garbage file must not throw. The pool
-    // defers to provider.list() as the authoritative inventory in that case.
+    // defers to driver.list() as the authoritative inventory in that case.
     try {
       const parsed = JSON.parse(text) as Partial<LedgerFile>;
       if (!parsed || !Array.isArray(parsed.rows)) return [];

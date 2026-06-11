@@ -1,18 +1,18 @@
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { runSsh as defaultRunSsh, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
-
-import { POOL_OWNED_LABEL } from "../types.js";
+import { POOL_OWNED_LABEL, defaultBoxDriverRegistry } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  BoxDriverRegistry,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
+  DriverCapabilities,
+  DriverDeps,
   ProvisionRequest,
+  SshRunner,
   TeardownReason,
-} from "../types.js";
+} from "@symphony/box-sdk";
 
-const KIND: BoxPoolProvider = "modal";
+const KIND = "modal";
 
 /**
  * SSH-ADDRESSABLE TRANSPORT ASSUMPTION. Symphony's executor reaches a worker
@@ -23,12 +23,12 @@ const KIND: BoxPoolProvider = "modal";
  * require executor changes and is OUT OF SCOPE here (a possible future
  * extension). Hence `capabilities.sshAddressable` is `true`.
  */
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   // Modal sandboxes are reached over SSH (see the assumption above).
   sshAddressable: true,
   // Sandboxes are disposable machines created/terminated per pool decision.
   ephemeral: true,
-  // A cloud provider: pool-owned survivors are tracked in the write-ahead ledger.
+  // A cloud driver: pool-owned survivors are tracked in the write-ahead ledger.
   usesLedger: true,
 };
 
@@ -40,9 +40,6 @@ const PROBE_COMMAND = "printf ready";
  * reconcile only adopts sandboxes this pool provisioned (never a foreign one).
  */
 const POOL_LABEL = "symphony.box-pool";
-
-/** Injectable SSH transport so tests can spy on the probe argv/timeout. */
-type RunSsh = (host: string, command: string, options?: SshRunOptions) => Promise<SshRunResult>;
 
 /**
  * A live Modal Sandbox as seen through the transport. `sandboxId` is Modal's own
@@ -59,7 +56,7 @@ export interface ModalSandbox {
 /**
  * Request handed to the transport to create a sandbox. `labels` are stamped on
  * the sandbox (pool label + a boxId-derived label so survivors correlate back to
- * a `boxId`); `image` is the optional base image from `providerOptions.image`.
+ * a `boxId`); `image` is the optional base image from the `image` driver option.
  */
 export interface ModalCreateRequest {
   labels: ReadonlyArray<string>;
@@ -67,11 +64,13 @@ export interface ModalCreateRequest {
 }
 
 /**
- * The Modal seam. Deliberately abstract so this package takes NO hard dependency
- * on the Modal client/CLI: the daemon injects either a CLI-shelling transport or
- * a Modal-client-backed one, and the always-on tests inject an in-memory fake.
- * `create` boots a sandbox exposing an SSH endpoint; `terminate` removes it
- * (idempotent at the Modal level); `list` enumerates sandboxes carrying a label.
+ * The Modal seam. Deliberately abstract so this extension takes NO hard dependency
+ * on the Modal client/CLI: the composition root injects either a CLI-shelling
+ * transport or a Modal-client-backed one via
+ * `registerModalBoxDriver(registries, { transport })`, and the always-on tests
+ * inject an in-memory fake. `create` boots a sandbox exposing an SSH endpoint;
+ * `terminate` removes it (idempotent at the Modal level); `list` enumerates
+ * sandboxes carrying a label.
  */
 export interface ModalTransport {
   create(req: ModalCreateRequest): Promise<ModalSandbox>;
@@ -79,10 +78,9 @@ export interface ModalTransport {
   list(opts: { label: string }): Promise<ModalSandbox[]>;
 }
 
-/** Dependency overrides (test seams for the Modal transport + SSH transport). */
-export interface ModalProviderOverrides {
+/** Dependency overrides (the injected Modal transport seam). */
+export interface ModalDriverOverrides {
   transport: ModalTransport;
-  runSsh?: RunSsh;
 }
 
 /**
@@ -94,8 +92,8 @@ function boxIdLabel(boxId: string): string {
 }
 
 /**
- * A {@link BoxProvider} backed by Modal Sandboxes via an INJECTED transport (a
- * CLI shim or the Modal client), so this package carries no Modal SDK dependency.
+ * A {@link BoxDriver} backed by Modal Sandboxes via an INJECTED transport (a
+ * CLI shim or the Modal client), so this extension carries no Modal SDK dependency.
  * `provision` creates a sandbox exposing SSH and returns the endpoint as the box
  * `workerHost` (idempotent on `boxId`); `probe` runs `printf ready` over SSH with
  * the caller-supplied timeout; `destroy` terminates the sandbox by its Modal id;
@@ -103,12 +101,12 @@ function boxIdLabel(boxId: string): string {
  * mapped to typed `modal_provision_failed` / `modal_destroy_failed` /
  * `modal_list_failed` errors.
  */
-export class ModalBoxProvider implements BoxProvider {
+export class ModalBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
   private readonly transport: ModalTransport;
-  private readonly runSsh: RunSsh;
+  private readonly runSsh: SshRunner;
   /** Optional base image threaded into every create request. */
   private readonly image: string | undefined;
 
@@ -116,13 +114,13 @@ export class ModalBoxProvider implements BoxProvider {
   private readonly boxes = new Map<string, ModalSandbox>();
 
   constructor(
-    settings: BoxPoolSettings,
-    private readonly deps: ProviderDeps,
-    overrides: ModalProviderOverrides,
+    options: Readonly<Record<string, unknown>>,
+    private readonly deps: DriverDeps,
+    overrides: ModalDriverOverrides,
   ) {
     this.transport = overrides.transport;
-    this.runSsh = overrides.runSsh ?? defaultRunSsh;
-    const image = settings.providerOptions?.["image"];
+    this.runSsh = deps.runSsh;
+    const image = options["image"];
     this.image = typeof image === "string" ? image : undefined;
   }
 
@@ -175,7 +173,7 @@ export class ModalBoxProvider implements BoxProvider {
   }
 
   /**
-   * Terminates the sandbox by its Modal id (`providerRef`). Always issues the
+   * Terminates the sandbox by its Modal id (`driverRef`). Always issues the
    * terminate so a SURVIVOR adopted via `list()` (a sandbox a prior daemon
    * provisioned, hence absent from this instance's `boxes`) is still torn down by
    * a reconcile/drain - never silently skipped. Idempotent: an already-gone
@@ -187,7 +185,7 @@ export class ModalBoxProvider implements BoxProvider {
     _opts: { timeoutMs: number; reason: TeardownReason },
   ): Promise<void> {
     try {
-      await this.transport.terminate(box.providerRef);
+      await this.transport.terminate(box.driverRef);
     } catch (error) {
       if (isNotFound(error)) {
         // Already gone: the desired end state (sandbox terminated) holds.
@@ -233,7 +231,7 @@ export class ModalBoxProvider implements BoxProvider {
     return {
       boxId,
       workerHost: sandbox.sshHost,
-      providerRef: sandbox.sandboxId,
+      driverRef: sandbox.sandboxId,
       createdAtMs: this.deps.clock.now().getTime(),
       labels,
       metadata: { sandboxId: sandbox.sandboxId },
@@ -258,4 +256,47 @@ function messageOf(error: unknown): string {
 /** True when a "not found"-style error means the sandbox is already gone. */
 function isNotFound(error: unknown): boolean {
   return /not[\s_-]?found/i.test(messageOf(error));
+}
+
+/**
+ * Builds the `modal` factory over an injected {@link ModalTransport}. The
+ * extension carries no Modal SDK/CLI dependency, so a working factory only
+ * exists once the composition root supplies the transport.
+ */
+export function modalBoxDriverFactory(io: { transport: ModalTransport }): BoxDriverFactory {
+  return {
+    kind: KIND,
+    create: (options, deps) => new ModalBoxDriver(options, deps, io),
+  };
+}
+
+/**
+ * The fail-loud `modal` factory registered when no transport is injected:
+ * enabling the kind then fails at pool construction with an actionable message
+ * instead of failing at first provision.
+ */
+const failLoudFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: () => {
+    throw new Error(
+      "box_pool_driver_unavailable: modal requires an injected transport; register a configured modal driver via registerModalBoxDriver(registries, { transport }) before enabling it",
+    );
+  },
+};
+
+/**
+ * Register this extension's box driver. Idempotent; called by the composition
+ * root (or a test) against its registry, defaulting to the process-wide one.
+ * With `io` it registers a working factory closing over the supplied transport;
+ * without `io` it registers a fail-loud factory so the stock daemon (which
+ * ships no Modal transport) surfaces an actionable error if the kind is enabled.
+ */
+export function registerModalBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+  io?: { transport: ModalTransport },
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(io ? modalBoxDriverFactory(io) : failLoudFactory);
+  }
 }

@@ -24,7 +24,7 @@ function leasedRecord(overrides: Partial<BoxRecord> = {}): BoxRecord {
   return {
     boxId: "box-1",
     workerHost: "fake://box-box-1",
-    providerRef: "ref-1",
+    driverRef: "ref-1",
     state: "LEASED",
     labels: [],
     createdAtMs: 0,

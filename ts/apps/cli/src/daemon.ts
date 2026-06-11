@@ -9,12 +9,22 @@ import {
   type RunAgentAttemptInput,
   type RunResult,
 } from "@symphony/agent-runner";
+import {
+  defaultBoxDriverRegistry,
+  registerFakeBoxDriver,
+  type BoxDriverRegistry,
+} from "@symphony/box-sdk";
 import type { DefaultSettingsOptions } from "@symphony/config";
+import { registerDockerBoxDriver } from "@symphony/docker-box-driver";
 import { systemClock, type RuntimeTrackerClient, type Settings } from "@symphony/domain";
+import { registerE2bBoxDriver } from "@symphony/e2b-box-driver";
+import { registerFlyBoxDriver } from "@symphony/fly-box-driver";
 import { registerJiraTrackers } from "@symphony/jira-tracker";
 import { registerLinearTracker } from "@symphony/linear-tracker";
 import { registerLocalTracker } from "@symphony/local-tracker";
 import { registerMemoryTracker } from "@symphony/memory-tracker";
+import { registerModalBoxDriver } from "@symphony/modal-box-driver";
+import { registerStaticSshBoxDriver } from "@symphony/static-ssh-box-driver";
 import { acquireAgentMcpEndpointForRun } from "@symphony/mcp";
 import { createBoxPool, type BoxPool } from "@symphony/worker-box-pool";
 import {
@@ -46,6 +56,7 @@ export interface BackendRegistries {
   trackers?: TrackerRegistry | undefined;
   tools?: ToolRegistry | undefined;
   executors?: AgentExecutorRegistry | undefined;
+  boxDrivers?: BoxDriverRegistry | undefined;
 }
 
 /**
@@ -70,6 +81,19 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
   if (executors.get(acpExecutorProvider.executor) === undefined) {
     executors.register(acpExecutorProvider);
   }
+
+  const boxDrivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  registerFakeBoxDriver({ boxDrivers });
+  registerStaticSshBoxDriver({ boxDrivers });
+  registerDockerBoxDriver({ boxDrivers });
+  registerFlyBoxDriver({ boxDrivers });
+  // e2b/modal register fail-loud factories here: the stock daemon ships no
+  // cloud client/transport, so enabling those kinds points the operator at the
+  // configured registration (registerE2bBoxDriver(registries, { client }) /
+  // registerModalBoxDriver(registries, { transport })) instead of failing at
+  // first provision.
+  registerE2bBoxDriver({ boxDrivers });
+  registerModalBoxDriver({ boxDrivers });
 }
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
@@ -86,13 +110,12 @@ export function createTrackerClient(
 /**
  * Constructs the warm worker box pool when `worker.box_pool.enabled` is set, and
  * returns `undefined` otherwise so the disabled path stays byte-identical to the
- * pre-pool daemon. Built-in providers (`fake`, `static-ssh`, ...) self-register
- * on the `@symphony/worker-box-pool` barrel import; `createBoxPool` resolves the
- * configured `provider` against that registry and throws
- * `box_pool_provider_unavailable` for an unregistered enabled kind, so an
- * operator misconfiguration fails loud at startup rather than silently disabling
- * the pool. The write-ahead ledger (only consulted by cloud providers) lives
- * under `<workspace.root>/.symphony/box-pool/`.
+ * pre-pool daemon. The pool resolves the configured `driver` against the
+ * box-driver registry populated by {@link registerBuiltinBackends}; an
+ * unregistered enabled kind throws `box_pool_driver_unavailable`, so an operator
+ * misconfiguration fails loud at startup rather than silently disabling the
+ * pool. The write-ahead ledger (only consulted by cloud drivers) lives under
+ * `<workspace.root>/.symphony/box-pool/`.
  */
 export function buildBoxPool(
   settings: Settings,
@@ -105,6 +128,7 @@ export function buildBoxPool(
     logEvent: (event: Record<string, unknown>) =>
       void appendLogEvent(settings.logging.logFile, event),
     ledgerPath: path.join(settings.workspace.root, ".symphony", "box-pool", "ledger.json"),
+    drivers: defaultBoxDriverRegistry,
   });
 }
 

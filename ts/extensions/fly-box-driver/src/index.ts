@@ -1,20 +1,20 @@
-import type { BoxPoolProvider, BoxPoolSettings } from "@symphony/domain";
-import { runSsh as defaultRunSsh, type SshRunOptions, type SshRunResult } from "@symphony/ssh";
-
+import { POOL_OWNED_LABEL, defaultBoxDriverRegistry } from "@symphony/box-sdk";
 import type {
   BoxDescriptor,
+  BoxDriver,
+  BoxDriverFactory,
+  BoxDriverRegistry,
   BoxHealth,
-  BoxProvider,
-  ProviderCapabilities,
-  ProviderDeps,
+  DriverCapabilities,
+  DriverDeps,
   ProvisionRequest,
+  SshRunner,
   TeardownReason,
-} from "../types.js";
-import { POOL_OWNED_LABEL } from "../types.js";
+} from "@symphony/box-sdk";
 
-const KIND: BoxPoolProvider = "fly";
+const KIND = "fly";
 
-const CAPABILITIES: ProviderCapabilities = {
+const CAPABILITIES: DriverCapabilities = {
   sshAddressable: true,
   ephemeral: true,
   usesLedger: true,
@@ -35,7 +35,7 @@ const POOL_LABEL_KEY = "symphony_box_pool";
 const BOX_ID_KEY = "symphony_box_id";
 
 /**
- * Minimal `fetch`-shaped response the provider consumes. Kept deliberately
+ * Minimal `fetch`-shaped response the driver consumes. Kept deliberately
  * narrow (no `json()`/headers reflection) so the always-on tests can drive it
  * with a tiny in-memory fake and so the global `fetch` satisfies it verbatim.
  */
@@ -61,18 +61,14 @@ export interface FlyFetchInit {
  */
 export type FlyFetch = (url: string, init?: FlyFetchInit) => Promise<FlyFetchResponse>;
 
-/** Injectable SSH transport so tests can spy on the probe argv/timeout. */
-type RunSsh = (host: string, command: string, options?: SshRunOptions) => Promise<SshRunResult>;
-
-/** Optional dependency overrides (test seams for HTTP + SSH transports). */
-export interface FlyProviderOverrides {
+/** Optional dependency overrides (test seam for the HTTP transport). */
+export interface FlyDriverOverrides {
   fetch?: FlyFetch;
-  runSsh?: RunSsh;
 }
 
-/** Reads a providerOptions value accepting BOTH snake_case and camelCase keys. */
+/** Reads a driver-option value accepting BOTH snake_case and camelCase keys. */
 function readOption(
-  options: Record<string, unknown> | undefined,
+  options: Readonly<Record<string, unknown>> | undefined,
   snake: string,
   camel: string,
 ): unknown {
@@ -80,7 +76,7 @@ function readOption(
 }
 
 function readStringOption(
-  options: Record<string, unknown> | undefined,
+  options: Readonly<Record<string, unknown>> | undefined,
   snake: string,
   camel: string,
 ): string | undefined {
@@ -89,7 +85,7 @@ function readStringOption(
 }
 
 function readNumberOption(
-  options: Record<string, unknown> | undefined,
+  options: Readonly<Record<string, unknown>> | undefined,
   snake: string,
   camel: string,
 ): number | undefined {
@@ -106,7 +102,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Resolved, validated Fly configuration distilled from `providerOptions`. */
+/** Resolved, validated Fly configuration distilled from the driver options. */
 interface FlyConfig {
   app: string;
   image: string;
@@ -119,7 +115,7 @@ interface FlyConfig {
 }
 
 /**
- * A {@link BoxProvider} backed by the Fly Machines REST API. Each box is a Fly
+ * A {@link BoxDriver} backed by the Fly Machines REST API. Each box is a Fly
  * Machine created from an image that runs `sshd`, so the yielded `workerHost`
  * is an SSH destination on the Fly private network (`user@<private-ipv6>:port`)
  * or a configured DNS template. Machines are labeled with the pool marker + the
@@ -129,22 +125,22 @@ interface FlyConfig {
  * (defaults to the global `fetch`) so always-on unit tests run with zero network
  * and zero cost.
  */
-export class FlyBoxProvider implements BoxProvider {
+export class FlyBoxDriver implements BoxDriver {
   readonly kind = KIND;
   readonly capabilities = CAPABILITIES;
 
   private readonly config: FlyConfig;
   private readonly fetch: FlyFetch;
-  private readonly runSsh: RunSsh;
+  private readonly runSsh: SshRunner;
 
   constructor(
-    settings: BoxPoolSettings,
-    private readonly deps: ProviderDeps,
-    overrides: FlyProviderOverrides = {},
+    options: Readonly<Record<string, unknown>>,
+    private readonly deps: DriverDeps,
+    overrides: FlyDriverOverrides = {},
   ) {
-    this.config = resolveConfig(settings.providerOptions);
+    this.config = resolveConfig(options);
     this.fetch = overrides.fetch ?? globalFetch;
-    this.runSsh = overrides.runSsh ?? defaultRunSsh;
+    this.runSsh = deps.runSsh;
   }
 
   /**
@@ -194,11 +190,11 @@ export class FlyBoxProvider implements BoxProvider {
       throw new Error(`fly_provision_failed: malformed create response`);
     }
 
-    const providerRef = machine["id"];
+    const driverRef = machine["id"];
     return {
       boxId: req.boxId,
-      workerHost: this.workerHostFor(providerRef, machine),
-      providerRef,
+      workerHost: this.workerHostFor(driverRef, machine),
+      driverRef,
       createdAtMs: this.deps.clock.now().getTime(),
       labels: [...req.labels],
       metadata: { region: machine["region"] ?? this.config.region },
@@ -237,7 +233,7 @@ export class FlyBoxProvider implements BoxProvider {
     opts: { timeoutMs: number; reason: TeardownReason },
   ): Promise<void> {
     const response = await this.fetchBounded(
-      `${this.machineUrl(box.providerRef)}?force=true`,
+      `${this.machineUrl(box.driverRef)}?force=true`,
       {
         method: "DELETE",
         headers: this.headers(),
@@ -283,11 +279,11 @@ export class FlyBoxProvider implements BoxProvider {
       if (metadata[POOL_LABEL_KEY] !== "true") continue;
       const boxId = metadata[BOX_ID_KEY];
       if (typeof boxId !== "string" || boxId.length === 0) continue;
-      const providerRef = machine["id"];
+      const driverRef = machine["id"];
       descriptors.push({
         boxId,
-        workerHost: this.workerHostFor(providerRef, machine),
-        providerRef,
+        workerHost: this.workerHostFor(driverRef, machine),
+        driverRef,
         createdAtMs: this.deps.clock.now().getTime(),
         // Surface the pool-owned label so the pool's hydrate/reconcile ownership
         // gate (which keys on POOL_OWNED_LABEL) re-adopts or cleans up this
@@ -306,8 +302,8 @@ export class FlyBoxProvider implements BoxProvider {
   }
 
   /** Single-machine item URL. */
-  private machineUrl(providerRef: string): string {
-    return `${this.machinesUrl()}/${providerRef}`;
+  private machineUrl(driverRef: string): string {
+    return `${this.machinesUrl()}/${driverRef}`;
   }
 
   private headers(): Record<string, string> {
@@ -351,15 +347,15 @@ export class FlyBoxProvider implements BoxProvider {
    * `user@host:port`.
    *
    * A bare IPv6 literal (e.g. a Fly private `fdaa:0:...`) is rendered bracketed
-   * (`user@[fdaa:0:...]:port`) so `@symphony/ssh`'s `parseSshTarget` lifts the
+   * (`user@[fdaa:0:...]:port`) so the engine's SSH target parser lifts the
    * trailing `:port` into `-p` instead of gluing it into the hostname (which
    * left the probe/runner unable to connect). IPv4 / DNS / configured-template
    * hosts stay unbracketed.
    */
-  private workerHostFor(providerRef: string, machine: Record<string, unknown>): string {
+  private workerHostFor(driverRef: string, machine: Record<string, unknown>): string {
     const { sshUser, sshPort, sshHostTemplate, app } = this.config;
     if (sshHostTemplate) {
-      const host = sshHostTemplate.replaceAll("{machineId}", providerRef).replaceAll("{app}", app);
+      const host = sshHostTemplate.replaceAll("{machineId}", driverRef).replaceAll("{app}", app);
       return `${sshUser}@${host}:${sshPort}`;
     }
     const privateIp = typeof machine["private_ip"] === "string" ? machine["private_ip"] : "";
@@ -378,27 +374,26 @@ function sshHostLiteral(host: string): string {
   return host;
 }
 
-/** Resolves + validates the Fly configuration from `providerOptions`. */
-function resolveConfig(providerOptions: Record<string, unknown> | undefined): FlyConfig {
-  const app = readStringOption(providerOptions, "app", "app");
+/** Resolves + validates the Fly configuration from the driver options. */
+function resolveConfig(options: Readonly<Record<string, unknown>> | undefined): FlyConfig {
+  const app = readStringOption(options, "app", "app");
   if (!app) throw new Error("fly_app_required");
 
-  const image = readStringOption(providerOptions, "image", "image");
+  const image = readStringOption(options, "image", "image");
   if (!image) throw new Error("fly_image_required");
 
-  const token =
-    readStringOption(providerOptions, "api_token", "apiToken") ?? process.env.FLY_API_TOKEN;
+  const token = readStringOption(options, "api_token", "apiToken") ?? process.env.FLY_API_TOKEN;
   if (!token) throw new Error("fly_api_token_required");
 
   return {
     app,
     image,
-    region: readStringOption(providerOptions, "region", "region"),
+    region: readStringOption(options, "region", "region"),
     token,
-    apiHost: readStringOption(providerOptions, "api_host_name", "apiHostName") ?? DEFAULT_API_HOST,
-    sshUser: readStringOption(providerOptions, "ssh_user", "sshUser") ?? "root",
-    sshPort: readNumberOption(providerOptions, "ssh_port", "sshPort") ?? 22,
-    sshHostTemplate: readStringOption(providerOptions, "ssh_host_template", "sshHostTemplate"),
+    apiHost: readStringOption(options, "api_host_name", "apiHostName") ?? DEFAULT_API_HOST,
+    sshUser: readStringOption(options, "ssh_user", "sshUser") ?? "root",
+    sshPort: readNumberOption(options, "ssh_port", "sshPort") ?? 22,
+    sshHostTemplate: readStringOption(options, "ssh_host_template", "sshHostTemplate"),
   };
 }
 
@@ -422,7 +417,7 @@ function parseJson(text: string): unknown {
 
 /**
  * Adapts the global `fetch` to {@link FlyFetch}. Kept as a thin wrapper so the
- * provider never references the DOM `RequestInit`/`Response` types directly.
+ * driver never references the DOM `RequestInit`/`Response` types directly.
  */
 const globalFetch: FlyFetch = async (url, init) => {
   const response = await fetch(url, init);
@@ -432,3 +427,22 @@ const globalFetch: FlyFetch = async (url, init) => {
     text: async () => response.text(),
   };
 };
+
+/** The registered `fly` factory: constructs a driver over the global `fetch`. */
+export const flyBoxDriverFactory: BoxDriverFactory = {
+  kind: KIND,
+  create: (options, deps) => new FlyBoxDriver(options, deps),
+};
+
+/**
+ * Register this extension's box driver. Idempotent; called by the composition
+ * root (or a test) against its registry, defaulting to the process-wide one.
+ */
+export function registerFlyBoxDriver(
+  registries: { boxDrivers?: BoxDriverRegistry | undefined } = {},
+): void {
+  const drivers = registries.boxDrivers ?? defaultBoxDriverRegistry;
+  if (drivers.get(KIND) === undefined) {
+    drivers.register(flyBoxDriverFactory);
+  }
+}
