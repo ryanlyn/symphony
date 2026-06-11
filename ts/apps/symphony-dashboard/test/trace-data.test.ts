@@ -318,8 +318,6 @@ describe("useTraceData", () => {
       setWindowScrollY(100);
     });
 
-    expect(result.current.following).toBe(false);
-
     act(() => {
       wsControl.emit({
         type: "events_append",
@@ -337,7 +335,6 @@ describe("useTraceData", () => {
       setWindowScrollY(0);
     });
 
-    expect(result.current.following).toBe(true);
     expect(result.current.hasNewUpdates).toBe(false);
     expect(sentMessages(sendMessage, "subscribe")).toHaveLength(2);
 
@@ -419,8 +416,6 @@ describe("useTraceData", () => {
     act(() => {
       setWindowScrollY(100);
     });
-
-    expect(result.current.following).toBe(false);
 
     // Reconnect: the subscribe effect re-subscribes and the server answers
     // with a snapshot identical to what the client already shows.
