@@ -1,8 +1,14 @@
 import { errorMessage, isRecord, type Settings } from "@symphony/domain";
+import {
+  toolFailure,
+  toolSuccess,
+  unsupportedToolFailure,
+  type ToolProvider,
+  type ToolResult,
+  type ToolSpec,
+} from "@symphony/tool-sdk";
 
-import { type ToolResult, type ToolSpec } from "../tools.js";
-
-import { toolFailure, toolSuccess, unsupportedToolFailure } from "./result.js";
+import { linearEndpoint } from "./options.js";
 
 const LINEAR_MAX_RETRIES = 4;
 const MAX_ERROR_BODY_LOG_BYTES = 1000;
@@ -107,6 +113,14 @@ export async function executeLinearTool(
   }
 }
 
+/** The Linear tool pack: raw GraphQL access using Symphony tracker credentials. */
+export const linearToolProvider: ToolProvider = {
+  name: "linear",
+  toolSpecs: () => linearToolSpecs(),
+  executeTool: async (name, input, context) =>
+    executeLinearTool(name, input, context.settings, context.fetchImpl),
+};
+
 function normalizeLinearGraphqlInput(
   input: unknown,
 ):
@@ -140,7 +154,7 @@ async function fetchWithRateLimitRetry(
   logger: LinearToolLogger,
 ): Promise<Response> {
   for (let retryCount = 0; ; retryCount += 1) {
-    const response = await fetchImpl(settings.tracker.endpoint, {
+    const response = await fetchImpl(linearEndpoint(settings), {
       method: "POST",
       signal: AbortSignal.timeout(30_000),
       headers: {

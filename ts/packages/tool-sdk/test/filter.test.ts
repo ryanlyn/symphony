@@ -1,7 +1,13 @@
 import { test } from "vitest";
 import { assert } from "@symphony/test-utils";
 
-import { applyQuery, matchesFilter, parseFilter, parseQuerySpec, pickFields } from "@symphony/mcp";
+import {
+  applyQuery,
+  matchesFilter,
+  parseFilter,
+  parseQuerySpec,
+  pickFields,
+} from "@symphony/tool-sdk";
 
 test("predicates: eq, ne, in, nin, exists, and numeric comparisons", () => {
   const r = { state: "Todo", n: 3, labels: ["backend", "urgent"] };

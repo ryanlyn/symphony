@@ -1,7 +1,19 @@
 import { test, vi } from "vitest";
-import { LinearClient, parseConfig } from "@symphony/cli";
+import { parseConfig as parseWorkflowConfig } from "@symphony/cli";
 import type { LinearGraphQLClient } from "@linear/sdk";
+import { TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert } from "@symphony/test-utils";
+
+import { LinearClient, linearTrackerProvider } from "@symphony/linear-tracker";
+
+// Parse config against a private registry so the linear provider's aliases and option
+// validation apply without mutating the process-wide default registry.
+const trackers = new TrackerRegistry();
+trackers.register(linearTrackerProvider);
+
+function parseConfig(raw: Record<string, unknown>, env: NodeJS.ProcessEnv) {
+  return parseWorkflowConfig(raw, env, {}, trackers);
+}
 
 function mockGraphqlClient(
   requestFn: (...args: unknown[]) => Promise<unknown>,
@@ -12,7 +24,12 @@ function mockGraphqlClient(
 test("SDK path is used when no custom fetch is provided and apiKey is set", () => {
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -24,7 +41,7 @@ test("SDK path is used when no custom fetch is provided and apiKey is set", () =
 
 test("SDK path graphql method throws when no apiKey", async () => {
   const client = new LinearClient(
-    parseConfig({ tracker: { project_slug: "mono", active_states: ["Todo"] } }, {}),
+    parseConfig({ tracker: { kind: "linear", project_slug: "mono", active_states: ["Todo"] } }, {}),
     { graphqlClient: mockGraphqlClient(async () => ({})) },
   );
 
@@ -38,7 +55,12 @@ test("SDK path routes through injected graphqlClient.request", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -67,7 +89,12 @@ test("SDK path retries rate limit errors with exponential backoff", async () => 
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -109,7 +136,12 @@ test("SDK path honors Retry-After headers from rate limit errors", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -138,7 +170,12 @@ test("SDK path rejects requests that exceed the Linear timeout", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -168,7 +205,12 @@ test("SDK path stops retrying after max retries exceeded", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -196,7 +238,12 @@ test("SDK path reclassifies GraphQL errors", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -220,7 +267,12 @@ test("SDK path passes non-rate-limit errors through without retrying", async () 
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -275,6 +327,7 @@ test("SDK path fetchCandidateIssues resolves viewer and paginates", async () => 
   const settings = parseConfig(
     {
       tracker: {
+        kind: "linear",
         api_key: "lin_api_test",
         project_slug: "mono",
         active_states: ["Todo"],
@@ -331,6 +384,7 @@ test("SDK path retries assignee viewer lookup after transient failure", async ()
   const settings = parseConfig(
     {
       tracker: {
+        kind: "linear",
         api_key: "lin_api_test",
         project_slug: "mono",
         active_states: ["Todo"],
@@ -381,7 +435,12 @@ test("SDK path createIssue sends mutation and normalizes response", async () => 
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -411,7 +470,12 @@ test("SDK path archiveIssue sends mutation and checks success", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -430,7 +494,12 @@ test("SDK path archiveIssue throws on failure response", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -463,7 +532,12 @@ test("SDK path updateIssueState sends mutation and normalizes response", async (
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -511,7 +585,12 @@ test("SDK path fetchIssuesByIds deduplicates, batches, and orders", async () => 
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "mono", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "mono",
+        active_states: ["Todo"],
+      },
     },
     {},
   );
@@ -558,7 +637,12 @@ test("SDK path projectBySlug parses teams and states", async () => {
 
   const settings = parseConfig(
     {
-      tracker: { api_key: "lin_api_test", project_slug: "my-proj", active_states: ["Todo"] },
+      tracker: {
+        kind: "linear",
+        api_key: "lin_api_test",
+        project_slug: "my-proj",
+        active_states: ["Todo"],
+      },
     },
     {},
   );

@@ -9,8 +9,10 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "yaml": "catalog:",
     "@symphony/domain": "workspace:*",
-    "@symphony/issue": "workspace:*"
+    "@symphony/issue": "workspace:*",
+    "@symphony/tool-sdk": "workspace:*",
+    "@symphony/tracker-sdk": "workspace:*",
+    "yaml": "catalog:"
   }
 }

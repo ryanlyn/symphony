@@ -8,6 +8,9 @@
       "path": "./packages/agent-runner"
     },
     {
+      "path": "./packages/agent-sdk"
+    },
+    {
       "path": "./packages/cli-kit"
     },
     {
@@ -80,10 +83,22 @@
       "path": "./packages/test-utils"
     },
     {
+      "path": "./packages/tool-sdk"
+    },
+    {
       "path": "./packages/traceviz-emitter"
     },
     {
       "path": "./packages/traceviz-server"
+    },
+    {
+      "path": "./packages/tracker-sdk"
+    },
+    {
+      "path": "./packages/tracker-tools"
+    },
+    {
+      "path": "./packages/trackers"
     },
     {
       "path": "./packages/tui"

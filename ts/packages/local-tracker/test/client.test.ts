@@ -2,11 +2,21 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseConfig } from "@symphony/config";
+import { parseConfig as parseWorkflowConfig } from "@symphony/cli";
 import { test } from "vitest";
+import { TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert } from "@symphony/test-utils";
 
-import { BoardStore, LocalTrackerClient } from "@symphony/local-tracker";
+import { BoardStore, LocalTrackerClient, localTrackerProvider } from "@symphony/local-tracker";
+
+// Parse config against a private registry so the local provider's aliases and option
+// validation apply without mutating the process-wide default registry.
+const trackers = new TrackerRegistry();
+trackers.register(localTrackerProvider);
+
+function parseConfig(raw: Record<string, unknown>, env: NodeJS.ProcessEnv) {
+  return parseWorkflowConfig(raw, env, {}, trackers);
+}
 
 test("LocalTrackerClient reads candidates by active states from the board dir", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "board-client-"));

@@ -3,8 +3,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseConfig } from "@symphony/config";
+import { parseConfig as parseWorkflowConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
+import { ToolRegistry } from "@symphony/tool-sdk";
+import { TrackerRegistry } from "@symphony/tracker-sdk";
+import { registerBuiltinProviders } from "@symphony/trackers";
 import { test } from "vitest";
 import { assert } from "@symphony/test-utils";
 
@@ -16,6 +19,16 @@ import {
   type ObservabilityServerHandle,
 } from "@symphony/mcp";
 
+// Private registries holding the built-in providers, so the server is exercised without
+// mutating the process-default registries.
+const trackers = new TrackerRegistry();
+const tools = new ToolRegistry();
+registerBuiltinProviders(trackers, tools);
+
+function parseConfig(raw: Record<string, unknown>, env: NodeJS.ProcessEnv): Settings {
+  return parseWorkflowConfig(raw, env, {}, trackers);
+}
+
 async function localSettings(): Promise<Settings> {
   const dir = await mkdtemp(path.join(tmpdir(), "mcp-tools-list-local-"));
   await mkdir(dir, { recursive: true });
@@ -26,7 +39,7 @@ async function toolsListNames(settings: Settings): Promise<string[]> {
   let token: string | undefined;
   let handle: ObservabilityServerHandle | undefined;
   try {
-    handle = await startClaudeMcpServer(settings, { host: "127.0.0.1", port: 0 });
+    handle = await startClaudeMcpServer(settings, { host: "127.0.0.1", port: 0, tools });
     token = issueMcpToken(handle.authScope);
     const response = await fetch(handle.url("/claude-mcp"), {
       method: "POST",
@@ -80,10 +93,14 @@ test("MCP server rejects bearer tokens issued for another server instance", asyn
   let localToken: string | undefined;
   let linearToken: string | undefined;
   try {
-    localHandle = await startClaudeMcpServer(await localSettings(), { host: "127.0.0.1", port: 0 });
+    localHandle = await startClaudeMcpServer(await localSettings(), {
+      host: "127.0.0.1",
+      port: 0,
+      tools,
+    });
     linearHandle = await startClaudeMcpServer(
       parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {}),
-      { host: "127.0.0.1", port: 0 },
+      { host: "127.0.0.1", port: 0, tools },
     );
     localToken = issueMcpToken(localHandle.authScope);
     linearToken = issueMcpToken(linearHandle.authScope);
@@ -105,7 +122,7 @@ test("fixed-port MCP server accepts deterministic settings-scoped tokens", async
   let handle: ObservabilityServerHandle | undefined;
   let token: string | undefined;
   try {
-    handle = await startClaudeMcpServer(settings, { host: "127.0.0.1", port });
+    handle = await startClaudeMcpServer(settings, { host: "127.0.0.1", port, tools });
     token = issueMcpToken(mcpAuthScopeForSettings(settings, "127.0.0.1", port));
 
     assert.equal(handle.authScope, mcpAuthScopeForSettings(settings, "127.0.0.1", port));
@@ -120,7 +137,11 @@ test("MCP rejects array request bodies as parse errors", async () => {
   let token: string | undefined;
   let handle: ObservabilityServerHandle | undefined;
   try {
-    handle = await startClaudeMcpServer(await localSettings(), { host: "127.0.0.1", port: 0 });
+    handle = await startClaudeMcpServer(await localSettings(), {
+      host: "127.0.0.1",
+      port: 0,
+      tools,
+    });
     token = issueMcpToken(handle.authScope);
     const response = await fetch(handle.url("/claude-mcp"), {
       method: "POST",

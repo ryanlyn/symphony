@@ -1,14 +1,26 @@
 import { test } from "vitest";
 import { parseConfig } from "@symphony/config";
 import { assert } from "@symphony/test-utils";
+import { TrackerRegistry } from "@symphony/tracker-sdk";
 
-import { JiraClient, JiraMcpClient } from "@symphony/jira-tracker";
+import {
+  JiraClient,
+  JiraMcpClient,
+  jiraMcpTrackerProvider,
+  jiraTrackerProvider,
+} from "@symphony/jira-tracker";
 
 interface FetchCall {
   url: string;
   body: Record<string, unknown>;
   headers: Record<string, string>;
 }
+
+// Private registry: Jira options in the tracker config section are normalized by the
+// registered provider during parsing.
+const trackers = new TrackerRegistry();
+trackers.register(jiraTrackerProvider);
+trackers.register(jiraMcpTrackerProvider);
 
 test("Jira REST client searches scoped candidates and normalizes Jira fields", async () => {
   const calls: FetchCall[] = [];
@@ -25,6 +37,8 @@ test("Jira REST client searches scoped candidates and normalizes Jira fields", a
       },
     },
     {},
+    {},
+    trackers,
   );
   const client = new JiraClient(settings, {
     fetchImpl: fetchSequence(
@@ -92,6 +106,8 @@ test("Jira MCP client calls configured external tools and normalizes returned is
       },
     },
     {},
+    {},
+    trackers,
   );
   const client = new JiraMcpClient(settings, {
     fetchImpl: fetchSequence(
@@ -142,6 +158,8 @@ function jiraSettings() {
       },
     },
     {},
+    {},
+    trackers,
   );
 }
 

@@ -17,6 +17,9 @@
       "path": "../../packages/agent-runner"
     },
     {
+      "path": "../../packages/agent-sdk"
+    },
+    {
       "path": "../../packages/cli-kit"
     },
     {
@@ -83,7 +86,16 @@
       "path": "../../packages/ssh"
     },
     {
+      "path": "../../packages/tool-sdk"
+    },
+    {
       "path": "../../packages/traceviz-emitter"
+    },
+    {
+      "path": "../../packages/tracker-sdk"
+    },
+    {
+      "path": "../../packages/trackers"
     },
     {
       "path": "../../packages/tui"

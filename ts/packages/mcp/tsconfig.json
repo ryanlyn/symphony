@@ -14,16 +14,22 @@
       "path": "../domain"
     },
     {
-      "path": "../issue"
-    },
-    {
-      "path": "../jira-tracker"
-    },
-    {
-      "path": "../local-tracker"
+      "path": "../tool-sdk"
     },
     {
       "path": "../worker-host-pool"
+    },
+    {
+      "path": "../config"
+    },
+    {
+      "path": "../test-utils"
+    },
+    {
+      "path": "../tracker-sdk"
+    },
+    {
+      "path": "../trackers"
     }
   ]
 }

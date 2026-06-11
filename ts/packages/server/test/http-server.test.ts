@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { test, vi } from "vitest";
+import { beforeAll, test, vi } from "vitest";
 import {
   issueMcpToken,
   Orchestrator,
@@ -13,9 +13,17 @@ import {
 import { normalizeIssue } from "@symphony/issue";
 import type { WorkflowDefinition } from "@symphony/domain";
 import { assert } from "@symphony/test-utils";
+import { registerBuiltinProviders } from "@symphony/trackers";
 
 import { IssueStore, startObservabilityServer } from "@symphony/server";
 import { startClaudeMcpServer } from "@symphony/server";
+
+// The observability server resolves tool packs and tracker ops through the process-default
+// registries (it offers no injection point), so populate them the same way the CLI
+// composition root does before serving (in a hook rather than at module scope).
+beforeAll(() => {
+  registerBuiltinProviders();
+});
 
 test("observability HTTP API exposes state, issue, runs, refresh, and errors", async () => {
   const workflow = workflowFixture();
@@ -394,6 +402,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
 function workflowFixture(): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
+      kind: "linear",
       api_key: "linear-token",
       project_slug: "mono",
       active_states: ["Todo", "In Progress"],

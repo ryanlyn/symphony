@@ -1,6 +1,7 @@
 import os from "node:os";
 
-import { Executor } from "@symphony/acp";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
@@ -11,49 +12,38 @@ import type { DefaultSettingsOptions } from "@symphony/config";
 import type { RuntimeTrackerClient, Settings } from "@symphony/domain";
 import { createWorkspaceForIssue, removeIssueWorkspaces, runHook } from "@symphony/workspace";
 import { appendLogEvent } from "@symphony/log-file";
-import { JiraClient, JiraMcpClient } from "@symphony/jira-tracker";
 import {
   deleteResumeState,
   readResumeState,
   resumeStateMatches,
   writeResumeState,
 } from "@symphony/resume-state";
-import { LinearClient } from "@symphony/linear-tracker";
-import { LocalTrackerClient } from "@symphony/local-tracker";
-import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
+import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
+import { registerBuiltinProviders } from "@symphony/trackers";
+
+/**
+ * Composition root: the CLI decides which tracker backends, tool packs, and agent
+ * executors this binary supports. Everything downstream (config parsing, dispatch
+ * validation, MCP tools, executor selection) resolves them through the registries.
+ * Called from every CLI entrypoint before config is parsed; idempotent so entrypoints
+ * and tests can call it freely.
+ */
+export function registerBuiltinBackends(): void {
+  registerBuiltinProviders();
+  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
+    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+  }
+}
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
   return { tmpdir: os.tmpdir() };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unhandled tracker kind: ${String(value)}`);
 }
 
 export function createTrackerClient(
   settings: Settings,
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimeTrackerClient {
-  const kind = settings.tracker.kind;
-  if (kind === undefined) throw new Error("tracker.kind is required");
-  switch (kind) {
-    case "memory":
-      return new MemoryTrackerClient(memoryIssuesFromEnv(env));
-    case "linear": {
-      const client = new LinearClient(settings);
-      // Resolve project slugs (e.g. from project_labels) in the background; from origin/main.
-      void client.resolveProjectSlugs();
-      return client;
-    }
-    case "local":
-      return new LocalTrackerClient(settings);
-    case "jira":
-      return new JiraClient(settings);
-    case "jira-mcp":
-      return new JiraMcpClient(settings);
-    default:
-      return assertNever(kind);
-  }
+  return defaultTrackerRegistry.require(settings.tracker.kind).createClient(settings, { env });
 }
 
 function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
@@ -63,10 +53,11 @@ function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
     readResumeState,
     resumeStateMatches,
     writeResumeState,
-    executorFactory: (settings) => {
-      const agent = settings.agents[settings.agent.kind];
-      if (!agent) throw new Error(`agents.${settings.agent.kind} is required`);
-      return new Executor(settings.agent.kind);
+    executorFactory: async (settings) => {
+      const kind = settings.agent.kind;
+      const agent = settings.agents[kind];
+      if (!agent) throw new Error(`agents.${kind} is required`);
+      return defaultAgentExecutorRegistry.require(agent.executor).createExecutor(kind, settings);
     },
   };
 }
