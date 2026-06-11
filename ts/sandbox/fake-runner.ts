@@ -1,4 +1,5 @@
 import type { AgentUpdate, Issue, RunResult, UsageTotals } from "@symphony/cli";
+import type { ClockPort } from "@symphony/domain";
 import type { RuntimeRunner } from "@symphony/runtime";
 
 import { sleep } from "./fixtures.js";
@@ -39,8 +40,18 @@ export interface FakeRunnerConfig {
  * Creates a RuntimeRunner function with configurable behavior per issue.
  * Supports success/failure, turn counts, latency, stalls, usage reporting,
  * session crashes, and arbitrary update sequences.
+ *
+ * When a `clock` is provided, per-turn latency waits on that clock instead of
+ * the wall clock, so a sandbox scenario driving a {@link FakeClock} can advance
+ * runner latency in virtual time. Without a clock it falls back to real sleeps.
  */
-export function createFakeAgentRunner(config: FakeRunnerConfig = {}): RuntimeRunner {
+export function createFakeAgentRunner(
+  config: FakeRunnerConfig = {},
+  clock?: ClockPort,
+): RuntimeRunner {
+  const waitMs = clock
+    ? (ms: number): Promise<void> => new Promise((resolve) => clock.setTimeout(resolve, ms))
+    : sleep;
   const defaultBehavior: Required<FakeRunnerIssueBehavior> = {
     shouldSucceed: true,
     errorMessage: "FakeAgentRunner: simulated failure",
@@ -113,7 +124,7 @@ export function createFakeAgentRunner(config: FakeRunnerConfig = {}): RuntimeRun
       }
 
       if (behavior.latencyPerTurnMs > 0) {
-        await sleep(behavior.latencyPerTurnMs);
+        await waitMs(behavior.latencyPerTurnMs);
       }
 
       if (behavior.crashMidTurn && turn === behavior.crashAtTurn) {
