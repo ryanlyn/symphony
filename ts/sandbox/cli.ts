@@ -62,7 +62,7 @@ export async function runSandboxCli(args = process.argv.slice(2)): Promise<void>
 
   process.stderr.write(`  Issues: ${scenario.issues.length}, Ticks: ${scenario.pollTicks ?? 1}\n`);
 
-  const result = await runScenario(scenario);
+  const result = await runScenario({ clockMode: "real", ...scenario });
 
   const assertions = scenario.assertions ?? [];
   const assertionResults = assertions.length > 0 ? checkAssertions(result, assertions) : [];
