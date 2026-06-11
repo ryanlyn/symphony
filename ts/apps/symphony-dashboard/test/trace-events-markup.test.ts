@@ -60,6 +60,30 @@ describe("trace event markup", () => {
     expect(html).toContain('tabindex="0"');
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Toggle shell details");
+    expect(html).toContain("Input");
+    expect(html).toContain("echo hello");
+  });
+
+  test("omits empty tool call input details", () => {
+    const html = renderToStaticMarkup(
+      createElement(ToolCallEvent, {
+        event: {
+          kind: "tool_call",
+          timestamp: "2026-06-04T10:00:01.000Z",
+          toolName: "shell",
+          input: {},
+          output: "hello",
+          isError: false,
+          durationMs: 24,
+          nestedEvents: [],
+        },
+      }),
+    );
+
+    expect(html).not.toContain("Input");
+    expect(html).not.toContain("{}");
+    expect(html).toContain("Output");
+    expect(html).toContain("hello");
   });
 
   test("renders unknown timeline events with raw payload", () => {
