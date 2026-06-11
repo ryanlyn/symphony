@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { test } from "vitest";
+import { test, vi } from "vitest";
 import {
   safeIdentifier,
   workspacePath,
@@ -10,11 +10,12 @@ import {
   createWorkspaceForIssue,
   removeWorkspace,
   removeIssueWorkspaces,
+  shellEscape,
 } from "@symphony/cli";
 import type { Settings } from "@symphony/domain";
+import { assert, tempDir, sampleIssue } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir, sampleIssue } from "../../../test/helpers.js";
+import { runHook } from "../src/index.js";
 
 function makeSettings(
   root: string,
@@ -26,6 +27,16 @@ function makeSettings(
     worker: { sshHosts: [], sshTimeoutMs: 5_000 },
     hooks: { timeoutMs: 5_000, ...hooks },
   } as unknown as Settings;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 // --- safeIdentifier ---
@@ -90,14 +101,30 @@ test('validateWorkspaceCwd — newline in path throws "invalid_workspace_cwd"', 
   );
 });
 
-test("validateWorkspaceCwd — rejects directory targets that are symlinks", async () => {
+test("validateWorkspaceCwd — accepts final symlinks that resolve inside the root", async () => {
   const root = await tempDir("ws-validate");
   const real = path.join(root, "real");
   const link = path.join(root, "link");
   await fs.mkdir(real);
   await fs.symlink(real, link);
   const settings = makeSettings(root);
-  await assert.rejects(() => validateWorkspaceCwd(settings, link), /unsafe symlink/);
+  const result = await validateWorkspaceCwd(settings, link);
+  assert.equal(result, await fs.realpath(real));
+});
+
+test("validateWorkspaceCwd — accepts symlinked components that resolve inside the root", async () => {
+  const root = await tempDir("ws-validate");
+  const canonicalRoot = await fs.realpath(root);
+  const realParent = path.join(canonicalRoot, "real-parent");
+  const workspace = path.join(realParent, "MT-1");
+  const linkParent = path.join(canonicalRoot, "link-parent");
+  await fs.mkdir(workspace, { recursive: true });
+  await fs.symlink(realParent, linkParent);
+
+  const settings = makeSettings(root);
+  const result = await validateWorkspaceCwd(settings, path.join(linkParent, "MT-1"));
+
+  assert.equal(result, await fs.realpath(workspace));
 });
 
 test("validateWorkspaceCwd — rejects workspace equal to workspace root", async () => {
@@ -136,6 +163,292 @@ test("createWorkspaceForIssue — runs afterCreate hook on new workspace", async
   const hookFile = path.join(ws, ".hook-ran");
   const stat = await fs.stat(hookFile);
   assert.ok(stat.isFile());
+});
+
+test("createWorkspaceForIssue — renders Liquid template variables in afterCreate hook", async () => {
+  const root = await tempDir("ws-create-tpl");
+  const settings = makeSettings(root, {
+    afterCreate: "printf '%s' {{ issue.identifier }} > .issue-id",
+  });
+  const ws = await createWorkspaceForIssue(settings, sampleIssue);
+  const content = await fs.readFile(path.join(ws, ".issue-id"), "utf8");
+  assert.equal(content, sampleIssue.identifier);
+});
+
+test("runHook — renders Liquid template variables when issue is provided", async () => {
+  const root = await tempDir("ws-hook-tpl");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "title.txt");
+  await runHook(
+    `printf '%s' {{ issue.title }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, sampleIssue.title);
+});
+
+test("runHook — shell-escapes issue fields to prevent injection", async () => {
+  const root = await tempDir("ws-hook-inject");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "escaped.txt");
+  const maliciousIssue = {
+    ...sampleIssue,
+    title: '"; rm -rf / #',
+  };
+  await runHook(
+    `printf '%s' {{ issue.title }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    maliciousIssue,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, '"; rm -rf / #');
+});
+
+test("runHook — keeps raw issue values for Liquid conditionals and comparisons", async () => {
+  const root = await tempDir("ws-hook-logic");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "logic.txt");
+  const command = [
+    `{% if issue.branch_name %}printf branch{% else %}printf no-branch{% endif %} > ${JSON.stringify(outFile)}`,
+    `{% if issue.state == "Todo" %}printf ":todo"{% endif %} >> ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, { ...sampleIssue, branchName: null });
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "no-branch:todo");
+});
+
+test("runHook — renders loops over issue arrays as shell-safe words", async () => {
+  const root = await tempDir("ws-hook-loop");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "labels.txt");
+  const issue = { ...sampleIssue, labels: ["backend", "needs review"] };
+  const command = [
+    `for label in {% for label in issue.labels %}{{ label }} {% endfor %}; do`,
+    '  printf "<%s>" "$label"',
+    `done > ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, issue);
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "<backend><needs review>");
+});
+
+test("runHook — exposes blocked_by issue refs in hook templates", async () => {
+  const root = await tempDir("ws-hook-blockers");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "blockers.txt");
+  const issue = {
+    ...sampleIssue,
+    blockers: [{ identifier: "MT-0", state: "Todo", stateType: "unstarted" as const }],
+  };
+  const command = [
+    `for blocker in {% for blocker in issue.blocked_by %}{{ blocker.identifier }} {% endfor %}; do`,
+    '  printf "%s" "$blocker"',
+    `done > ${JSON.stringify(outFile)}`,
+  ].join("\n");
+
+  await runHook(command, root, settings.hooks, null, {}, issue);
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "MT-0");
+});
+
+test("runHook — supports raw filter for deliberate unescaped output", async () => {
+  const root = await tempDir("ws-hook-raw");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "raw-filter.txt");
+  await runHook(
+    `printf '%s' "{{ issue.identifier | raw }}" > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, sampleIssue.identifier);
+});
+
+test("runHook — supports explicit shell_escape filter without double escaping", async () => {
+  const root = await tempDir("ws-hook-shell-escape-filter");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "shell-escape-filter.txt");
+  const issue = { ...sampleIssue, title: "quoted ' value" };
+  await runHook(
+    `printf '%s' {{ issue.title | shell_escape }} > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    issue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, issue.title);
+});
+
+test("runHook — fails loudly for unknown issue template variables", async () => {
+  const root = await tempDir("ws-hook-unknown");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "unknown.txt");
+
+  await assert.rejects(
+    () =>
+      runHook(
+        `printf '%s' {{ issue.not_a_field }} > ${JSON.stringify(outFile)}`,
+        root,
+        settings.hooks,
+        null,
+        {},
+        sampleIssue,
+      ),
+    /undefined variable|not_a_field/i,
+  );
+});
+
+test("runHook — leaves non-issue double-brace syntax untouched", async () => {
+  const root = await tempDir("ws-hook-non-issue");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "go-template.txt");
+  await runHook(
+    `printf '%s' '{{.State.Running}}' > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+    null,
+    {},
+    sampleIssue,
+  );
+
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "{{.State.Running}}");
+});
+
+test("runHook — passes command through unmodified when no issue context", async () => {
+  const root = await tempDir("ws-hook-no-tpl");
+  const settings = makeSettings(root);
+  const outFile = path.join(root, "raw.txt");
+  await runHook(
+    `printf "%s" "{{ issue.identifier }}" > ${JSON.stringify(outFile)}`,
+    root,
+    settings.hooks,
+  );
+  const content = await fs.readFile(outFile, "utf8");
+  assert.equal(content, "{{ issue.identifier }}");
+});
+
+test("createWorkspaceForIssue — refuses afterCreate when cwd is swapped to an out-of-root symlink", async () => {
+  const root = await tempDir("ws-create");
+  const canonicalRoot = await fs.realpath(root);
+  const outside = await tempDir("ws-create-outside");
+  const marker = path.join(outside, "hook-ran");
+  const workspace = path.join(canonicalRoot, safeIdentifier(sampleIssue.identifier));
+  const realRealpath = fs.realpath;
+  let swapped = false;
+  const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (filePath, options) => {
+    const resolved = await realRealpath(filePath, options);
+    if (!swapped && path.resolve(String(filePath)) === workspace) {
+      swapped = true;
+      await fs.rm(workspace, { recursive: true, force: true });
+      await fs.symlink(outside, workspace);
+    }
+    return resolved;
+  });
+
+  try {
+    const settings = makeSettings(root, {
+      afterCreate: `touch ${JSON.stringify(marker)}`,
+    });
+
+    await assert.rejects(
+      () => createWorkspaceForIssue(settings, sampleIssue),
+      /unsafe symlink in workspace path|workspace outside root/,
+    );
+    assert.equal(swapped, true);
+    assert.equal(await fileExists(marker), false);
+  } finally {
+    realpathSpy.mockRestore();
+  }
+});
+
+test("runHook — abort terminates subprocesses before they write later markers", async () => {
+  const root = await tempDir("ws-hook-abort");
+  const settings = makeSettings(root);
+  const started = path.join(root, "started.txt");
+  const marker = path.join(root, "marker.txt");
+  const controller = new AbortController();
+  const command = [
+    `printf started > ${shellEscape(started)}`,
+    `sleep 0.2`,
+    `printf late > ${shellEscape(marker)}`,
+  ].join("\n");
+
+  const promise = runHook(command, root, settings.hooks, null, {
+    abortSignal: controller.signal,
+  });
+
+  await vi.waitFor(async () => {
+    assert.equal(await fileExists(started), true);
+  });
+  controller.abort();
+
+  await assert.rejects(() => promise, /hook canceled/);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+
+  assert.equal(await fileExists(marker), false);
+});
+
+test("createWorkspaceForIssue — replaces a stale final file and runs afterCreate", async () => {
+  const root = await tempDir("ws-create");
+  const stalePath = path.join(root, safeIdentifier(sampleIssue.identifier));
+  await fs.writeFile(stalePath, "stale");
+  const settings = makeSettings(root, { afterCreate: "touch .hook-ran" });
+
+  const ws = await createWorkspaceForIssue(settings, sampleIssue);
+
+  assert.equal(ws, await fs.realpath(stalePath));
+  assert.ok((await fs.stat(ws)).isDirectory());
+  assert.ok((await fs.stat(path.join(ws, ".hook-ran"))).isFile());
+});
+
+test("createWorkspaceForIssue — retries when an existing segment disappears before lstat", async () => {
+  const root = await tempDir("ws-create");
+  const issueRoot = path.join(root, safeIdentifier(sampleIssue.identifier));
+  await fs.mkdir(issueRoot);
+  const canonicalIssueRoot = await fs.realpath(issueRoot);
+  const realLstat = fs.lstat;
+  let injected = false;
+  const lstatSpy = vi.spyOn(fs, "lstat").mockImplementation(async (filePath, options) => {
+    if (!injected && path.resolve(String(filePath)) === canonicalIssueRoot) {
+      injected = true;
+      throw Object.assign(new Error("transient missing path"), { code: "ENOENT" });
+    }
+    return realLstat(filePath, options);
+  });
+
+  try {
+    const settings = makeSettings(root);
+    const ws = await createWorkspaceForIssue(settings, sampleIssue, {
+      slotIndex: 0,
+      ensembleSize: 2,
+    });
+
+    assert.equal(ws, path.join(canonicalIssueRoot, "0"));
+    assert.ok((await fs.stat(ws)).isDirectory());
+    assert.equal(injected, true);
+  } finally {
+    lstatSpy.mockRestore();
+  }
 });
 
 // --- shared workspace (isolation: "none") ---
@@ -224,6 +537,20 @@ test("removeWorkspace — runs beforeRemove hook before deletion", async () => {
   await removeWorkspace(settings, ws);
   const stat = await fs.stat(markerFile);
   assert.ok(stat.isFile());
+});
+
+test("removeIssueWorkspaces — passes issue context to beforeRemove hook", async () => {
+  const root = await tempDir("ws-remove-issue-context");
+  const markerFile = path.join(root, "issue-marker");
+  const settings = makeSettings(root, {
+    beforeRemove: `printf '%s' {{ issue.identifier }} > ${JSON.stringify(markerFile)}`,
+  });
+  await createWorkspaceForIssue(settings, sampleIssue);
+
+  await removeIssueWorkspaces(settings, sampleIssue.identifier, null, sampleIssue);
+
+  const content = await fs.readFile(markerFile, "utf8");
+  assert.equal(content, sampleIssue.identifier);
 });
 
 test("removeWorkspace — nonexistent workspace returns empty array", async () => {

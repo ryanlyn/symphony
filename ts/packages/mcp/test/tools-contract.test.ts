@@ -1,264 +1,173 @@
+import { mkdir, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { test } from "vitest";
-import { executeTool, parseConfig } from "@symphony/cli";
+import { parseConfig } from "@symphony/config";
+import type { Settings } from "@symphony/domain";
+import { registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
+import { ToolRegistry } from "@symphony/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
+import { executeTool, toolSpecs } from "@symphony/mcp";
 
-test("linear_graphql tool validates name, input, and API key before network", async () => {
-  const settings = parseConfig({ tracker: { project_slug: "mono" } }, {});
-  const calls: unknown[] = [];
-  const fetchImpl = (async () => {
-    calls.push("called");
-    return jsonResponse({ data: {} });
-  }) as typeof fetch;
+// Private registries holding the providers this contract exercises, so the mount contract
+// is exercised exactly as composed in production without mutating the process-default
+// registries.
+const trackers = new TrackerRegistry();
+const tools = new ToolRegistry();
+registerLinearTracker({ trackers, tools });
+registerLocalTracker({ trackers, tools });
+registerMemoryTracker({ trackers });
+registerJiraTrackers({ trackers });
+tools.register(createTrackerToolProvider(trackers));
 
-  assert.deepEqual(await executeTool("unknown", {}, settings, fetchImpl), {
+const TRACKER_TOOL_NAMES = [
+  "tracker_read_issue",
+  "tracker_query",
+  "tracker_update_status",
+  "tracker_comment",
+  "tracker_create_issue",
+];
+
+const LOCAL_TOOL_NAMES = [
+  "local_update_status",
+  "local_comment",
+  "local_create_issue",
+  "local_read_issue",
+  "local_query",
+];
+
+function settingsFor(
+  tracker: Record<string, unknown>,
+  rest: Record<string, unknown> = {},
+): Settings {
+  return parseConfig({ tracker, ...rest }, {}, {}, trackers);
+}
+
+function linearSettings(rest: Record<string, unknown> = {}): Settings {
+  return settingsFor({ kind: "linear", api_key: "linear-token", project_slug: "mono" }, rest);
+}
+
+async function localSettings(): Promise<Settings> {
+  const dir = await mkdtemp(path.join(tmpdir(), "mcp-tools-contract-"));
+  await mkdir(dir, { recursive: true });
+  return settingsFor({ kind: "local", path: dir });
+}
+
+function specNames(settings: Settings): string[] {
+  return toolSpecs(settings, tools).map((spec) => spec.name);
+}
+
+test("default mount advertises the tracker pack plus the dispatch tracker's own pack", async () => {
+  assert.deepEqual(specNames(linearSettings()), [...TRACKER_TOOL_NAMES, "linear_graphql"]);
+  assert.deepEqual(specNames(await localSettings()), [...TRACKER_TOOL_NAMES, ...LOCAL_TOOL_NAMES]);
+
+  // Jira backends have no pack of their own; only the neutral tracker pack is mounted.
+  assert.deepEqual(
+    specNames(settingsFor({ kind: "jira", base_url: "https://jira.example.com" })),
+    TRACKER_TOOL_NAMES,
+  );
+  assert.deepEqual(
+    specNames(settingsFor({ kind: "jira-mcp", base_url: "https://jira.example.com" })),
+    TRACKER_TOOL_NAMES,
+  );
+
+  // The neutral pack still mounts for memory, but the backend exposes no tool ops.
+  assert.deepEqual(specNames(settingsFor({ kind: "memory" })), []);
+});
+
+test("settings.tools overrides the default mount", () => {
+  assert.deepEqual(specNames(linearSettings({ tools: ["tracker"] })), TRACKER_TOOL_NAMES);
+  assert.deepEqual(specNames(linearSettings({ tools: ["linear"] })), ["linear_graphql"]);
+});
+
+test("unknown pack names in settings.tools fail with the registered set", () => {
+  const settings = linearSettings({ tools: ["bogus"] });
+  assert.throws(
+    () => toolSpecs(settings, tools),
+    /unsupported tool pack: bogus \(known tool packs: linear, local, tracker\)/,
+  );
+});
+
+test("unknown tool names fail listing every mounted tool", async () => {
+  assert.deepEqual(await executeTool("unknown", {}, linearSettings(), fetch, tools), {
     success: false,
-    error: "Unsupported tool.",
+    error: 'Unsupported tool: "unknown".',
     result: {
       error: {
-        message: "Unsupported tool.",
-        supportedTools: ["linear_graphql"],
+        message: 'Unsupported tool: "unknown".',
+        supportedTools: [...TRACKER_TOOL_NAMES, "linear_graphql"],
       },
     },
   });
-  assert.deepEqual(await executeTool("linear_graphql", {}, settings, fetchImpl), {
-    success: false,
-    error: "`linear_graphql` requires a non-empty `query` string.",
-    result: {
-      error: {
-        message: "`linear_graphql` requires a non-empty `query` string.",
+
+  // Memory mounts only the neutral pack, which advertises nothing.
+  assert.deepEqual(
+    await executeTool("memory_bogus", {}, settingsFor({ kind: "memory" }), fetch, tools),
+    {
+      success: false,
+      error: 'Unsupported tool: "memory_bogus".',
+      result: {
+        error: {
+          message: 'Unsupported tool: "memory_bogus".',
+          supportedTools: [],
+        },
       },
     },
+  );
+});
+
+test("common tracker tools work against the local board provider", async () => {
+  const settings = await localSettings();
+  const run = (name: string, input: unknown) => executeTool(name, input, settings, fetch, tools);
+
+  const created = await run("tracker_create_issue", {
+    title: "Common",
+    body: "details",
+    status: "Todo",
   });
-  assert.deepEqual(
-    await executeTool("linear_graphql", "query { viewer { id } }", settings, fetchImpl),
-    {
-      success: false,
-      error:
-        "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
-      result: {
-        error: {
-          message:
-            "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
-        },
-      },
-    },
-  );
-  assert.deepEqual(
-    await executeTool("linear_graphql", { query: "query { viewer { id } }" }, settings, fetchImpl),
-    {
-      success: false,
-      error:
-        "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
-      result: {
-        error: {
-          message:
-            "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
-        },
-      },
-    },
-  );
-  assert.equal(calls.length, 0);
-});
+  assert.equal(created.success, true);
 
-test("linear_graphql tool rejects non-object variables instead of silently dropping them", async () => {
-  assert.deepEqual(
-    await executeTool(
-      "linear_graphql",
-      { query: "query { viewer { id } }", variables: [] },
-      linearSettings(),
-    ),
-    {
-      success: false,
-      error: "`linear_graphql.variables` must be a JSON object when provided.",
-      result: {
-        error: {
-          message: "`linear_graphql.variables` must be a JSON object when provided.",
-        },
-      },
-    },
-  );
-});
+  const moved = await run("tracker_update_status", { issueId: "BOARD-1", status: "In Progress" });
+  assert.equal(moved.success, true);
 
-test("linear_graphql tool accepts null variables and rejects blank queries", async () => {
-  assert.deepEqual(
-    await executeTool("linear_graphql", { query: "   ", variables: null }, linearSettings()),
-    {
-      success: false,
-      error: "`linear_graphql` requires a non-empty `query` string.",
-      result: {
-        error: {
-          message: "`linear_graphql` requires a non-empty `query` string.",
-        },
-      },
-    },
-  );
+  const commented = await run("tracker_comment", {
+    issueId: "BOARD-1",
+    body: "using common tools",
+  });
+  assert.equal(commented.success, true);
 
-  const calls: Array<Record<string, unknown>> = [];
-  const result = await executeTool(
-    "linear_graphql",
-    { query: "query { viewer { id } }", variables: null },
-    linearSettings(),
-    (async (_input, init) => {
-      calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-      return jsonResponse({ data: { viewer: { id: "viewer-1" } } });
-    }) as typeof fetch,
-  );
+  const read = await run("tracker_read_issue", { issueId: "BOARD-1" });
+  assert.equal(read.success, true);
+  assert.equal((read.result as { issue: { state: string } }).issue.state, "In Progress");
 
-  assert.equal(result.success, true);
-  assert.deepEqual(calls[0]?.variables, {});
-});
-
-test("linear_graphql tool treats GraphQL errors as failed operations on 200 and 400", async () => {
-  const settings = linearSettings();
-
-  assert.deepEqual(
-    await executeTool(
-      "linear_graphql",
-      { query: "query Bad { nope }" },
-      settings,
-      fetchSequence(jsonResponse({ errors: [{ message: "bad query" }] })),
-    ),
-    {
-      success: false,
-      result: { errors: [{ message: "bad query" }] },
-    },
-  );
-  assert.deepEqual(
-    await executeTool(
-      "linear_graphql",
-      { query: "query Bad { nope }" },
-      settings,
-      fetchSequence(jsonResponse({ errors: [{ message: "bad query" }] }, 400)),
-    ),
-    {
-      success: false,
-      result: { errors: [{ message: "bad query" }] },
-    },
-  );
-});
-
-test("linear_graphql tool reports HTTP, invalid JSON, and network failures", async () => {
-  const settings = linearSettings();
-
-  assert.deepEqual(
-    await executeTool(
-      "linear_graphql",
-      { query: "query { viewer { id } }" },
-      settings,
-      fetchSequence(
-        jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" }),
-        jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" }),
-        jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" }),
-        jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" }),
-        jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" }),
-      ),
-    ),
-    {
-      success: false,
-      error: "Linear GraphQL request failed with HTTP 429.",
-      result: {
-        error: {
-          message: "Linear GraphQL request failed with HTTP 429.",
-          status: 429,
-        },
-      },
-    },
-  );
-  assert.match(
-    (
-      await executeTool(
-        "linear_graphql",
-        { query: "query { viewer { id } }" },
-        settings,
-        fetchSequence(new Response("not json", { status: 200 })),
-      )
-    ).error ?? "",
-    /linear_invalid_json/,
-  );
-  assert.match(
-    (
-      await executeTool(
-        "linear_graphql",
-        { query: "query { viewer { id } }" },
-        settings,
-        (async () => {
-          throw new Error("socket closed");
-        }) as typeof fetch,
-      )
-    ).error ?? "",
-    /Linear GraphQL request failed before receiving a successful response/,
-  );
-});
-
-test("linear_graphql tool retries 429 responses like the Linear client", async () => {
-  const calls: number[] = [];
-  const result = await executeTool(
-    "linear_graphql",
-    { query: "query { viewer { id } }" },
-    linearSettings(),
-    (async () => {
-      calls.push(Date.now());
-      return calls.length === 1
-        ? jsonResponse({ message: "rate limited" }, 429, { "retry-after": "0" })
-        : jsonResponse({ data: { viewer: { id: "viewer-1" } } });
-    }) as typeof fetch,
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(calls.length, 2);
-});
-
-test("linear_graphql tool bounds HTTP requests with the Linear connect timeout", async () => {
-  const signals: Array<boolean> = [];
-  const result = await executeTool(
-    "linear_graphql",
-    { query: "query { viewer { id } }" },
-    linearSettings(),
-    (async (_input, init) => {
-      signals.push(init?.signal instanceof AbortSignal);
-      return jsonResponse({ data: { viewer: { id: "viewer-1" } } });
-    }) as typeof fetch,
-  );
-
-  assert.equal(result.success, true);
-  assert.deepEqual(signals, [true]);
-});
-
-test("linear_graphql tool sends variables through unchanged", async () => {
-  const calls: Array<Record<string, unknown>> = [];
-  const result = await executeTool(
-    "linear_graphql",
-    { query: "query Viewer($id: String!) { viewer { id } }", variables: { id: "viewer-1" } },
-    linearSettings(),
-    (async (_input, init) => {
-      calls.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-      return jsonResponse({ data: { viewer: { id: "viewer-1" } } });
-    }) as typeof fetch,
-  );
-
-  assert.equal(result.success, true);
-  assert.deepEqual(calls[0], {
-    query: "query Viewer($id: String!) { viewer { id } }",
-    variables: { id: "viewer-1" },
+  const queried = await run("tracker_query", { select: ["id", "state"] });
+  assert.equal(queried.success, true);
+  assert.deepEqual((queried.result as { rows: Array<{ id: string }> }).rows[0], {
+    id: "BOARD-1",
+    state: "In Progress",
   });
 });
 
-function linearSettings() {
-  return parseConfig({ tracker: { api_key: "linear-token", project_slug: "mono" } }, {});
-}
-
-function fetchSequence(...responses: Response[]): typeof fetch {
-  return (async () => {
-    const response = responses.shift();
-    if (!response) throw new Error("unexpected fetch");
-    return response;
-  }) as typeof fetch;
-}
-
-function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
+test("a throwing pack surfaces as a failed tool result, not a thrown error", async () => {
+  const boomTools = new ToolRegistry();
+  boomTools.register({
+    name: "boom",
+    toolSpecs: () => [
+      { name: "boom_tool", description: "always throws", inputSchema: { type: "object" } },
+    ],
+    executeTool: async () => {
+      throw new Error("pack exploded");
+    },
   });
-}
+
+  const settings = settingsFor({ kind: "memory" }, { tools: ["boom"] });
+  const result = await executeTool("boom_tool", {}, settings, fetch, boomTools);
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /pack exploded/);
+});

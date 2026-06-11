@@ -11,22 +11,22 @@
   ],
   "references": [
     {
+      "path": "../agent-sdk"
+    },
+    {
       "path": "../domain"
-    },
-    {
-      "path": "../child-process"
-    },
-    {
-      "path": "../ssh"
-    },
-    {
-      "path": "../workspace"
     },
     {
       "path": "../mcp"
     },
     {
       "path": "../policies"
+    },
+    {
+      "path": "../ssh"
+    },
+    {
+      "path": "../workspace"
     }
   ]
 }

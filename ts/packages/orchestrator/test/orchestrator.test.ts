@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import type { ClockPort } from "@symphony/ports";
-
-import { assert } from "../../../test/assert.js";
+import type { ClockPort } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 function fakeClock(initial = new Date()) {
   let tick = initial.getTime();
@@ -45,7 +44,7 @@ test("orchestrator claims ensemble slots independently and snapshots backend-neu
     sessionId: "session-1",
     resumeId: "resume-1",
     executorPid: "123",
-    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, secondsRunning: 0 },
+    usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
   });
 
   const snapshot = orchestrator.snapshot();
@@ -56,6 +55,69 @@ test("orchestrator claims ensemble slots independently and snapshots backend-neu
 
   orchestrator.finish(issue.id, 0, true);
   assert.equal(orchestrator.snapshot().retrying[0]?.attempt, 1);
+});
+
+test("orchestrator preserves pending ensemble retries per slot", () => {
+  const clock = fakeClock(new Date("2026-01-01T00:00:00.000Z"));
+  const settings = parseConfig({
+    agent: { ensemble_size: 2, max_retry_backoff_ms: 60_000 },
+    worker: { ssh_hosts: ["worker-a", "worker-b"], max_concurrent_agents_per_host: 2 },
+  });
+  const orchestrator = new Orchestrator(settings, clock);
+  const issue = normalizeIssue({
+    id: "ensemble-retry-collision",
+    identifier: "MT-ENSEMBLE-RETRY-COLLISION",
+    title: "Retry collision",
+    state: { name: "Todo", type: "unstarted" },
+  });
+
+  const first = orchestrator.claim(issue);
+  const second = orchestrator.claim(issue);
+  assert.equal(first?.slotIndex, 0);
+  assert.equal(second?.slotIndex, 1);
+
+  orchestrator.applyUpdate(issue.id, 0, {
+    type: "turn_completed",
+    workspacePath: "/work/slot-0",
+  });
+  orchestrator.applyUpdate(issue.id, 1, {
+    type: "turn_completed",
+    workspacePath: "/work/slot-1",
+  });
+
+  orchestrator.finish(issue.id, 0, true, "slot 0 failed");
+  orchestrator.finish(issue.id, 1, true, "slot 1 failed");
+
+  const pending = orchestrator
+    .snapshot()
+    .retrying.toSorted((left, right) => (left.slotIndex ?? -1) - (right.slotIndex ?? -1));
+  assert.equal(pending.length, 2);
+  assert.equal(pending[0]?.slotIndex, 0);
+  assert.equal(pending[0]?.workerHost, first?.workerHost);
+  assert.equal(pending[0]?.workspacePath, "/work/slot-0");
+  assert.equal(pending[0]?.error, "slot 0 failed");
+  assert.equal(pending[1]?.slotIndex, 1);
+  assert.equal(pending[1]?.workerHost, second?.workerHost);
+  assert.equal(pending[1]?.workspacePath, "/work/slot-1");
+  assert.equal(pending[1]?.error, "slot 1 failed");
+
+  clock.advance(10_000);
+  assert.equal(orchestrator.eligibleIssues([issue])[0]?.identifier, issue.identifier);
+
+  const retryFirst = orchestrator.claim(issue);
+  assert.equal(retryFirst?.slotIndex, 0);
+  assert.equal(retryFirst?.retryAttempt, 1);
+  assert.equal(retryFirst?.workerHost, first?.workerHost);
+  const remaining = orchestrator.snapshot().retrying;
+  assert.equal(remaining.length, 1);
+  assert.equal(remaining[0]?.slotIndex, 1);
+  assert.equal(remaining[0]?.workspacePath, "/work/slot-1");
+
+  const retrySecond = orchestrator.claim(issue);
+  assert.equal(retrySecond?.slotIndex, 1);
+  assert.equal(retrySecond?.retryAttempt, 1);
+  assert.equal(retrySecond?.workerHost, second?.workerHost);
+  assert.equal(orchestrator.snapshot().retrying.length, 0);
 });
 
 test("refreshRunningIssue updates the tracker state of all slots for a running issue", () => {
@@ -277,6 +339,44 @@ test("orchestrator assigns SSH worker hosts by least loaded capacity", () => {
   assert.equal(orchestrator.claim(thirdIssue)?.workerHost, "worker-a:2200");
 });
 
+test("orchestrator retries on the previous worker host while it has capacity", () => {
+  const settings = parseConfig({
+    worker: { ssh_hosts: ["worker-a", "worker-b"], max_concurrent_agents_per_host: 2 },
+    agent: { max_concurrent_agents: 4 },
+  });
+  const orchestrator = new Orchestrator(settings);
+  const runningIssue = normalizeIssue({
+    id: "running",
+    identifier: "MT-RUNNING",
+    title: "Running",
+    state: { name: "Todo", type: "unstarted" },
+  });
+  const retryIssue = normalizeIssue({
+    id: "retry-sticky-host",
+    identifier: "MT-RETRY-STICKY",
+    title: "Retry sticky host",
+    state: { name: "Todo", type: "unstarted" },
+  });
+
+  assert.equal(orchestrator.claim(runningIssue)?.workerHost, "worker-a");
+  orchestrator.state.retryAttempts.set(slotKey(retryIssue.id, 0), {
+    issueId: retryIssue.id,
+    identifier: retryIssue.identifier,
+    attempt: 1,
+    monotonicDeadlineMs: 0,
+    dueAtIso: new Date(Date.now() - 1).toISOString(),
+    slotIndex: 0,
+    workerHost: "worker-a",
+    workspacePath: "/work/worker-a/MT-RETRY-STICKY",
+    error: "agent exited",
+  });
+
+  const retryClaim = orchestrator.claim(retryIssue);
+
+  assert.equal(retryClaim?.workerHost, "worker-a");
+  assert.equal(retryClaim?.retryAttempt, 1);
+});
+
 test("config reload that adds worker pools leaves running workspaces in place", () => {
   // Mirrors runtime.reloadWorkflowIfConfigured, which swaps orchestrator.settings in place.
   const orchestrator = new Orchestrator(
@@ -419,6 +519,62 @@ test("orchestrator snapshots capacity-blocked dispatch candidates", () => {
   assert.equal(workerOrchestrator.snapshot().blocked[0]?.reason, "worker_host_capacity");
 });
 
+test("orchestrator reschedules due retries that are still capacity-blocked", () => {
+  const clock = fakeClock(new Date("2026-01-01T00:00:00.000Z"));
+  const settings = parseConfig({
+    agent: { max_concurrent_agents: 1, max_retry_backoff_ms: 60_000 },
+  });
+  const orchestrator = new Orchestrator(settings, clock);
+  const running = normalizeIssue({
+    id: "running",
+    identifier: "MT-RUN",
+    title: "Running",
+    state: { name: "Todo", type: "unstarted" },
+  });
+  const retryIssue = normalizeIssue({
+    id: "capacity-blocked-retry",
+    identifier: "MT-CAPACITY-RETRY",
+    title: "Capacity blocked retry",
+    state: { name: "Todo", type: "unstarted" },
+  });
+
+  assert.ok(orchestrator.claim(running));
+  orchestrator.state.retryAttempts.set(slotKey(retryIssue.id, 0), {
+    issueId: retryIssue.id,
+    identifier: retryIssue.identifier,
+    attempt: 1,
+    monotonicDeadlineMs: clock.monotonicMs() - 1,
+    dueAtIso: "2025-12-31T23:59:59.999Z",
+    slotIndex: 0,
+    workerHost: null,
+    workspacePath: "/work/MT-CAPACITY-RETRY",
+    issueUrl: retryIssue.url ?? null,
+    error: "agent exited",
+  });
+
+  assert.deepEqual(orchestrator.eligibleIssues([retryIssue]), []);
+  let retry = orchestrator.snapshot().retrying[0];
+  assert.equal(orchestrator.snapshot().blocked[0]?.reason, "global_concurrency_cap");
+  assert.equal(retry?.attempt, 2);
+  assert.equal(retry?.monotonicDeadlineMs, clock.monotonicMs() + 20_000);
+  assert.equal(retry?.dueAtIso, "2026-01-01T00:00:20.000Z");
+  assert.equal(retry?.error, "dispatch blocked by global concurrency cap");
+
+  assert.deepEqual(orchestrator.eligibleIssues([retryIssue]), []);
+  retry = orchestrator.snapshot().retrying[0];
+  assert.equal(orchestrator.snapshot().blocked.length, 0);
+  assert.equal(retry?.attempt, 2);
+  assert.equal(retry?.monotonicDeadlineMs, clock.monotonicMs() + 20_000);
+
+  clock.advance(20_000);
+  assert.deepEqual(orchestrator.eligibleIssues([retryIssue]), []);
+  retry = orchestrator.snapshot().retrying[0];
+  assert.equal(orchestrator.snapshot().blocked[0]?.reason, "global_concurrency_cap");
+  assert.equal(retry?.attempt, 3);
+  assert.equal(retry?.monotonicDeadlineMs, clock.monotonicMs() + 40_000);
+  assert.equal(retry?.dueAtIso, "2026-01-01T00:01:00.000Z");
+});
+
 test("orchestrator gates retry attempts until backoff is due and clears terminal retries", () => {
   const clock = fakeClock();
   const settings = parseConfig({ agent: { max_retry_backoff_ms: 2_000 } });
@@ -449,7 +605,7 @@ test("orchestrator gates retry attempts until backoff is due and clears terminal
   assert.equal(orchestrator.snapshot().retrying.length, 0);
 });
 
-test("orchestrator uses Elixir retry delays for failures and active continuations", () => {
+test("orchestrator uses configured retry delays for failures and active continuations", () => {
   const settings = parseConfig({ agent: { max_retry_backoff_ms: 60_000 } });
   const orchestrator = new Orchestrator(settings);
   const issue = normalizeIssue({
@@ -512,7 +668,7 @@ test("orchestrator retry dispatch reopens slots blocked only by stale claims", (
     state: { name: "Todo", type: "unstarted" },
   });
   orchestrator.state.claimed.add(slotKey(issue.id, 0));
-  orchestrator.state.retryAttempts.set(issue.id, {
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 0), {
     issueId: issue.id,
     identifier: issue.identifier,
     attempt: 1,
@@ -538,7 +694,7 @@ test("orchestrator retries an ensemble issue in its original slot", () => {
     state: { name: "Todo", type: "unstarted" },
   });
 
-  orchestrator.state.retryAttempts.set(issue.id, {
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 2), {
     issueId: issue.id,
     identifier: issue.identifier,
     attempt: 1,

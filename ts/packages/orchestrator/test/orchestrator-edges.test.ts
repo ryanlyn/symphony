@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import type { ClockPort } from "@symphony/ports";
-
-import { assert } from "../../../test/assert.js";
+import type { ClockPort } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return normalizeIssue({
@@ -68,7 +67,7 @@ test("claim — preferred slot honored on retry", () => {
   const orchestrator = new Orchestrator(settings);
   const issue = makeIssue();
 
-  orchestrator.state.retryAttempts.set(issue.id, {
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 2), {
     issueId: issue.id,
     identifier: issue.identifier,
     attempt: 1,

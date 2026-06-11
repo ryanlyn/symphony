@@ -4,8 +4,7 @@ import path from "node:path";
 
 import { test, beforeEach, afterEach } from "vitest";
 import type { Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { createResumeStateStore, resumeStateMatches } from "@symphony/resume-state";
 import type { ResumeState, ResumeStateStore } from "@symphony/resume-state";

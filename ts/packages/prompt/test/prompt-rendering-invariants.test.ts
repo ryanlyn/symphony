@@ -3,14 +3,12 @@ import fc from "fast-check";
 import { buildPrompt } from "@symphony/cli";
 import { effectivePromptTemplate, defaultPromptTemplate } from "@symphony/cli";
 import type { Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith } from "@symphony/test-utils";
 
 // --- Helper arbitraries ---
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
-  return {
-    id: "issue-1",
+  return issueWith({
     identifier: "ENG-42",
     title: "Fix the login bug",
     description: "Users cannot log in when using SSO.",
@@ -18,12 +16,8 @@ function makeIssue(overrides: Partial<Issue> = {}): Issue {
     stateType: "started",
     branchName: "fix/login-bug",
     url: "https://linear.app/team/issue/ENG-42",
-    priority: 1,
-    labels: [],
-    blockers: [],
-    assignedToWorker: true,
     ...overrides,
-  };
+  });
 }
 
 /** Arbitrary that produces strings guaranteed to be whitespace-only per JS trim() semantics. */
@@ -42,6 +36,29 @@ const strictWhitespaceOnlyArb = fc
     fc.integer({ min: 1, max: 200 }).map((n) => " ".repeat(n)),
   )
   .filter((s) => s.trim() === "");
+
+const knownPromptVariableRoots = new Set(["issue", "attempt", "ensemble"]);
+
+const liquidOutputSyntaxWords = new Set([
+  "and",
+  "blank",
+  "contains",
+  "empty",
+  "false",
+  "nil",
+  "not",
+  "null",
+  "or",
+  "true",
+]);
+
+function isUnknownVariableReferenceName(name: string): boolean {
+  return (
+    /^[a-z_]+$/.test(name) &&
+    !knownPromptVariableRoots.has(name) &&
+    !liquidOutputSyntaxWords.has(name)
+  );
+}
 
 /** Arbitrary that produces valid Liquid variable names that do NOT exist in the template context. */
 const unknownVariableNameArb = fc
@@ -78,7 +95,7 @@ const unknownVariableNameArb = fc
     { minLength: 3, maxLength: 12 },
   )
   .map((a) => a.join(""))
-  .filter((s) => !["issue", "attempt", "ensemble"].includes(s) && /^[a-z_]/.test(s));
+  .filter(isUnknownVariableReferenceName);
 
 /** Arbitrary that produces filter names that do not exist in Liquid's built-in set. */
 const unknownFilterNameArb = fc
@@ -352,6 +369,21 @@ describe("INVARIANT: When the workflow prompt body is empty or whitespace-only, 
 });
 
 describe("INVARIANT: When a prompt template references an unknown variable, rendering SHALL fail strictly.", () => {
+  test("unknown variable arbitrary excludes Liquid output syntax words", () => {
+    for (const varName of liquidOutputSyntaxWords) {
+      assert.equal(isUnknownVariableReferenceName(varName), false);
+    }
+  });
+
+  test("representative unknown variable references still fail strictly", async () => {
+    assert.equal(isUnknownVariableReferenceName("zz_unknown_variable"), true);
+
+    const template = "Hello {{ zz_unknown_variable }}";
+    const issue = makeIssue();
+
+    await assert.rejects(() => buildPrompt(template, issue));
+  });
+
   test("when prompt template references unknown variable, rendering fails strictly", async () => {
     await fc.assert(
       fc.asyncProperty(unknownVariableNameArb, async (varName) => {

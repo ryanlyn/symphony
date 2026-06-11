@@ -14,25 +14,43 @@ import { settingsForIssueState, validateDispatchConfig } from "@symphony/config"
 import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
 import { ProjectionActor } from "@symphony/projections";
 import { RetryScheduler } from "@symphony/retry-scheduler";
-import { AGENT_UPDATE_TYPES } from "@symphony/domain";
+import { workflowFileChanged, workflowStampsEqual } from "@symphony/workflow";
+import { durationMs, errorMessage, systemClock, type ClockPort } from "@symphony/domain";
+import type {
+  RuntimeAppStatus,
+  RuntimeEventType,
+  RuntimePollStatus,
+  RuntimeRetryEntry,
+  RuntimeRunHistoryEntry,
+  RuntimeRunOutcome,
+  RuntimeRunningEntry,
+  RuntimeSnapshot,
+} from "@symphony/runtime-events";
 import type {
   AgentKind,
   AgentUpdate,
-  AgentUpdateType,
-  DispatchBlockEntry,
   Issue,
   RunningEntry,
   RuntimeTrackerClient,
-  UsageTotals,
   WorkflowDefinition,
 } from "@symphony/domain";
 
 export type RuntimeRunner = (input: Parameters<typeof runAgentAttempt>[0]) => Promise<RunResult>;
 
-export type RuntimeAppStatus = "starting" | "idle" | "polling" | "running" | "stopping" | "error";
-export type RuntimePollStatus = "idle" | "checking" | "error";
-export const RUNTIME_RUN_OUTCOMES = ["success", "failed", "stalled", "canceled"] as const;
-export type RuntimeRunOutcome = (typeof RUNTIME_RUN_OUTCOMES)[number];
+export { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@symphony/runtime-events";
+export type {
+  RuntimeAppStatus,
+  RuntimeBlockedEntry,
+  RuntimeEvent,
+  RuntimeEventType,
+  RuntimePollStatus,
+  RuntimeRetryEntry,
+  RuntimeRunHistoryEntry,
+  RuntimeRunLastEvent,
+  RuntimeRunningEntry,
+  RuntimeRunOutcome,
+  RuntimeSnapshot,
+} from "@symphony/runtime-events";
 export {
   RUNTIME_RECONCILIATION_REASONS,
   type RuntimeReconciliationReason,
@@ -42,124 +60,6 @@ export type RuntimeResumeInvalidationReason =
   | "stalled"
   | "missing"
   | RuntimeReconciliationReason;
-export const RUNTIME_EVENT_TYPES = [
-  ...AGENT_UPDATE_TYPES,
-  "dry_run",
-  "poll_error",
-  "dispatch_skipped",
-  "run_started",
-  "dispatch_refresh_failed",
-  "run_completed",
-  "run_failed",
-  "workflow_reloaded",
-  "workflow_reload_failed",
-  "reconcile_refresh_failed",
-  "workspace_cleanup",
-  "run_reconciled",
-  "run_stalled",
-  "startup_workspace_cleanup",
-  "startup_workspace_cleanup_failed",
-  "resume_state_invalidated",
-  "resume_state_invalidation_failed",
-  "retry_timer_due",
-  "retry_timer_error",
-  "refresh_error",
-] as const;
-export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
-export type RuntimeRunLastEvent = AgentUpdateType | "agent_stalled";
-
-export interface RuntimeEvent {
-  type: RuntimeEventType;
-  message: string;
-  at: string;
-}
-
-export interface RuntimeRunHistoryEntry {
-  id: string;
-  issueId: string;
-  issueIdentifier: string;
-  issueTitle?: string | null | undefined;
-  state?: string | null | undefined;
-  slotIndex: number;
-  ensembleSize?: number | undefined;
-  agentKind: AgentKind;
-  outcome: RuntimeRunOutcome;
-  turnCount: number;
-  sessionId?: string | null | undefined;
-  resumeId?: string | null | undefined;
-  executorPid?: string | null | undefined;
-  workspace?: string | null | undefined;
-  workerHost?: string | null | undefined;
-  usageTotals?: UsageTotals | undefined;
-  startedAt: string;
-  endedAt: string;
-  durationMs?: number | undefined;
-  error?: string | undefined;
-  lastEvent?: RuntimeRunLastEvent | null | undefined;
-  lastMessage?: unknown;
-  lastEventAt?: string | null | undefined;
-  retryAttempt?: number | null | undefined;
-}
-
-export interface RuntimeRunningEntry {
-  runId?: string | undefined;
-  issueId: string;
-  issueIdentifier: string;
-  issueUrl?: string | null | undefined;
-  title: string;
-  state: string;
-  slotIndex: number;
-  ensembleSize: number;
-  agentKind: AgentKind;
-  sessionId?: string | null | undefined;
-  resumeId?: string | null | undefined;
-  executorPid?: string | null | undefined;
-  workerHost?: string | null | undefined;
-  turnCount: number;
-  startedAt: string;
-  lastEvent?: AgentUpdateType | null | undefined;
-  lastMessage?: unknown;
-  lastEventAt?: string | null | undefined;
-  workspacePath?: string | null | undefined;
-  usageTotals: UsageTotals;
-  retryAttempt?: number | null | undefined;
-}
-
-export interface RuntimeRetryEntry {
-  issueId: string;
-  identifier: string;
-  issueUrl?: string | null | undefined;
-  attempt: number;
-  dueAtIso: string;
-  monotonicDeadlineMs: number;
-  error?: string | undefined;
-  slotIndex?: number | undefined;
-  workerHost?: string | null | undefined;
-  workspacePath?: string | null | undefined;
-}
-
-export type RuntimeBlockedEntry = DispatchBlockEntry;
-
-export interface RuntimeSnapshot {
-  appStatus: RuntimeAppStatus;
-  workflowPath: string;
-  poll: {
-    status: RuntimePollStatus;
-    candidates: number;
-    eligible: number;
-    lastPollAt: string | null;
-    nextPollAt: string | null;
-    lastError: string | null;
-  };
-  running: RuntimeRunningEntry[];
-  retrying: RuntimeRetryEntry[];
-  blocked: RuntimeBlockedEntry[];
-  runHistory: RuntimeRunHistoryEntry[];
-  usageTotals: UsageTotals;
-  rateLimits: unknown;
-  logFile: string | null;
-  recentEvents: RuntimeEvent[];
-}
 
 export interface SymphonyRuntimeOptions {
   workflow: WorkflowDefinition;
@@ -173,6 +73,7 @@ export interface SymphonyRuntimeOptions {
         settings: WorkflowDefinition["settings"],
         issueIdentifier?: string | null,
         workerHost?: string | null,
+        issue?: Issue,
       ) => Promise<void>)
     | undefined;
   deleteResumeState?:
@@ -181,7 +82,12 @@ export interface SymphonyRuntimeOptions {
   appendLogEvent?: ((logFile: string, event: Record<string, unknown>) => Promise<void>) | undefined;
   onAgentUpdate?: ((issue: Issue, update: AgentUpdate) => void) | undefined;
   onIssueDispatched?: ((issue: Issue) => void) | undefined;
-  now?: (() => Date) | undefined;
+  clock?: ClockPort | undefined;
+  /**
+   * Settings validation run before each poll, after any workflow reload. The composition
+   * root binds this to its registries; the default validates against the process-wide ones.
+   */
+  validateDispatch?: ((settings: WorkflowDefinition["settings"]) => void) | undefined;
 }
 
 export interface RuntimeStartOptions {
@@ -192,6 +98,46 @@ export interface RuntimeStartOptions {
 export interface PollOptions {
   dryRun?: boolean | undefined;
   waitForRuns?: boolean | undefined;
+}
+
+interface PollIntent {
+  dryRun: boolean;
+  waitForRuns: boolean;
+}
+
+type RetrySnapshotEntry = ReturnType<Orchestrator["snapshot"]>["retrying"][number];
+
+function pollIntent(options: PollOptions = {}): PollIntent {
+  return {
+    dryRun: options.dryRun === true,
+    waitForRuns: options.waitForRuns === true,
+  };
+}
+
+function pollOptionsFromIntent(intent: PollIntent): PollOptions {
+  const options: PollOptions = {};
+  if (intent.dryRun) options.dryRun = true;
+  if (intent.waitForRuns) options.waitForRuns = true;
+  return options;
+}
+
+function pollOptionsCover(active: PollOptions, requested: PollOptions): boolean {
+  const activeIntent = pollIntent(active);
+  const requestedIntent = pollIntent(requested);
+  return (
+    (!activeIntent.dryRun || requestedIntent.dryRun) &&
+    (activeIntent.waitForRuns || !requestedIntent.waitForRuns)
+  );
+}
+
+function mergePollOptions(existing: PollOptions | null, requested: PollOptions): PollOptions {
+  if (!existing) return pollOptionsFromIntent(pollIntent(requested));
+  const existingIntent = pollIntent(existing);
+  const requestedIntent = pollIntent(requested);
+  return pollOptionsFromIntent({
+    dryRun: existingIntent.dryRun && requestedIntent.dryRun,
+    waitForRuns: existingIntent.waitForRuns || requestedIntent.waitForRuns,
+  });
 }
 
 class ActiveRunHandle {
@@ -229,9 +175,10 @@ export class SymphonyRuntime {
   private client: RuntimeTrackerClient;
   private readonly orchestrator: Orchestrator;
   private readonly runner: RuntimeRunner;
-  private readonly now: () => Date;
+  private readonly clock: ClockPort;
+  private readonly validateDispatch: (settings: WorkflowDefinition["settings"]) => void;
   private readonly listeners = new Set<(snapshot: RuntimeSnapshot) => void>();
-  private readonly retryScheduler = new RetryScheduler();
+  private readonly retryScheduler: RetryScheduler;
   private readonly inFlight = new Set<Promise<void>>();
   private stopped = false;
   private appStatus: RuntimeAppStatus = "starting";
@@ -246,13 +193,17 @@ export class SymphonyRuntime {
   private startupCleanupDone = false;
   private nextRunNumber = 1;
   private pollInProgress: Promise<void> | null = null;
+  private activePollOptions: PollOptions | null = null;
+  private pendingPollOptions: PollOptions | null = null;
 
   constructor(private readonly input: SymphonyRuntimeOptions) {
     this.client =
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
-    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings);
+    this.clock = input.clock ?? systemClock;
+    this.orchestrator = input.orchestrator ?? new Orchestrator(input.workflow.settings, this.clock);
     this.runner = input.runner ?? runAgentAttempt;
-    this.now = input.now ?? (() => new Date());
+    this.validateDispatch = input.validateDispatch ?? validateDispatchConfig;
+    this.retryScheduler = new RetryScheduler(this.clock);
     this.appStatus = "idle";
   }
 
@@ -311,13 +262,14 @@ export class SymphonyRuntime {
       } catch {
         // Intentionally ignored: the error is already logged as poll_error.
       }
-      await delay(this.workflow.settings.polling.intervalMs, () => this.stopped);
+      await delay(this.clock, this.workflow.settings.polling.intervalMs, () => this.stopped);
     } while (!this.stopped);
   }
 
   stop(): void {
     this.stopped = true;
     this.appStatus = "stopping";
+    this.pendingPollOptions = null;
     // finishExternally (abort + release) mirrors the other abort sites and clears
     // isActive, so the resulting agent_run_aborted rejection is treated as a clean
     // shutdown in runClaim rather than recorded as a failed run.
@@ -328,33 +280,63 @@ export class SymphonyRuntime {
 
   async pollOnce(options: PollOptions = {}): Promise<void> {
     if (this.pollInProgress) {
+      this.queuePendingPoll(options);
       return this.pollInProgress;
     }
-    const poll = this.pollOnceUnlocked(options);
+    const poll = this.pollUntilQueueDrained(options);
     this.pollInProgress = poll;
     try {
       await poll;
     } finally {
-      if (this.pollInProgress === poll) this.pollInProgress = null;
+      if (this.pollInProgress === poll) {
+        this.pollInProgress = null;
+        this.activePollOptions = null;
+        this.pendingPollOptions = null;
+      }
     }
+  }
+
+  private async pollUntilQueueDrained(options: PollOptions): Promise<void> {
+    let nextOptions = options;
+    while (true) {
+      this.activePollOptions = nextOptions;
+      await this.pollOnceUnlocked(nextOptions);
+      this.activePollOptions = null;
+      const pending = this.pendingPollOptions;
+      this.pendingPollOptions = null;
+      if (!pending) return;
+      nextOptions = pending;
+    }
+  }
+
+  private queuePendingPoll(options: PollOptions = {}, force = false): void {
+    if (
+      !force &&
+      ((this.activePollOptions && pollOptionsCover(this.activePollOptions, options)) ||
+        (this.pendingPollOptions && pollOptionsCover(this.pendingPollOptions, options)))
+    ) {
+      return;
+    }
+    this.pendingPollOptions = mergePollOptions(this.pendingPollOptions, options);
   }
 
   private async pollOnceUnlocked(options: PollOptions = {}): Promise<void> {
     this.pollStatus = "checking";
     this.appStatus = this.inFlight.size > 0 ? "running" : "polling";
-    this.lastPollAt = this.now().toISOString();
+    this.lastPollAt = this.clock.now().toISOString();
     this.lastError = null;
     this.emit();
 
     const dispatched: Array<Promise<void>> = [];
     try {
       await this.reloadWorkflowIfConfigured();
-      validateDispatchConfig(this.workflow.settings);
+      this.validateDispatch(this.workflow.settings);
       await this.cleanupTerminalWorkspacesOnce();
       await this.reconcileStalledRuns();
       await this.reconcileTrackedIssues();
       const issues = await this.client.fetchCandidateIssues();
       const eligibleIssues = this.orchestrator.eligibleIssues(issues);
+      if (!options.dryRun) this.syncRetryTimersForIssues(issues);
       this.candidates = issues.length;
       this.eligible = eligibleIssues.length;
 
@@ -373,7 +355,7 @@ export class SymphonyRuntime {
       this.pollStatus = "idle";
       this.appStatus = this.inFlight.size > 0 ? "running" : "idle";
       this.nextPollAt = new Date(
-        this.now().getTime() + this.workflow.settings.polling.intervalMs,
+        this.clock.now().getTime() + this.workflow.settings.polling.intervalMs,
       ).toISOString();
     } catch (error) {
       this.pollStatus = "error";
@@ -398,6 +380,7 @@ export class SymphonyRuntime {
       this.addEvent("dispatch_skipped", `${refreshed.identifier} stale_before_dispatch`);
       return [];
     }
+    this.syncRetryTimer(refreshed.id);
     const key = slotKey(refreshed.id, claim.slotIndex);
     const runId = `run-${this.nextRunNumber}`;
     this.nextRunNumber += 1;
@@ -442,7 +425,7 @@ export class SymphonyRuntime {
     workerHost: string | null,
     handle: ActiveRunHandle,
   ): Promise<void> {
-    const startedAt = this.now().toISOString();
+    const startedAt = this.clock.now().toISOString();
     try {
       const result = await this.runner({
         issue,
@@ -463,36 +446,26 @@ export class SymphonyRuntime {
       if (!handle.isActive) return;
       const finalIssue = result.finalIssue ?? (await this.fetchIssueOrSelf(issue));
       if (!handle.isActive) return;
-      const entry = this.orchestrator
-        .snapshot()
-        .running.find((item) => item.issue.id === issue.id && item.slotIndex === slotIndex);
+      const entry = this.runningEntry(issue.id, slotIndex);
       this.orchestrator.finish(issue.id, slotIndex, true, undefined, "continuation");
       this.syncRetryTimer(issue.id);
-      this.recordHistory({
-        id: runId,
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        issueTitle: issue.title,
-        state: finalIssue.state,
-        slotIndex,
-        ensembleSize: entry?.ensembleSize,
-        agentKind,
-        outcome: "success",
-        turnCount: result.turnCount,
-        sessionId: entry?.sessionId,
-        resumeId: result.resumeId,
-        executorPid: entry?.executorPid,
-        workspace: result.workspace,
-        workerHost: entry?.workerHost,
-        usageTotals: entry?.usageTotals,
-        startedAt,
-        endedAt: this.now().toISOString(),
-        durationMs: durationMs(startedAt, this.now().toISOString()),
-        lastEvent: entry?.lastAgentEvent,
-        lastMessage: entry?.lastAgentMessage,
-        lastEventAt: entry?.lastAgentTimestamp?.toISOString() ?? null,
-        retryAttempt: entry?.retryAttempt,
-      });
+      this.recordHistory(
+        buildRunHistoryEntry({
+          id: runId,
+          issue,
+          state: finalIssue.state,
+          slotIndex,
+          agentKind,
+          outcome: "success",
+          turnCount: result.turnCount,
+          runningEntry: entry,
+          resumeId: result.resumeId,
+          workspacePath: result.workspace,
+          startedAt,
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
+        }),
+      );
       this.addEvent("run_completed", `${issue.identifier} turns=${result.turnCount}`);
     } catch (error) {
       // Skip runs that are no longer active: superseded, finished externally, or
@@ -500,39 +473,27 @@ export class SymphonyRuntime {
       // rejects with agent_run_aborted; recording it as a failure would emit a
       // run_failed event the TUI renders as a red error banner on Ctrl+C.
       if (!handle.isActive) return;
-      const entry = this.orchestrator
-        .snapshot()
-        .running.find((item) => item.issue.id === issue.id && item.slotIndex === slotIndex);
+      const entry = this.runningEntry(issue.id, slotIndex);
       await this.invalidateResumeStateForRunningEntry(entry, "failure");
       if (!handle.isActive) return;
       this.orchestrator.finish(issue.id, slotIndex, true, errorMessage(error), "failure");
       this.syncRetryTimer(issue.id);
-      this.recordHistory({
-        id: runId,
-        issueId: issue.id,
-        issueIdentifier: issue.identifier,
-        issueTitle: issue.title,
-        state: issue.state,
-        slotIndex,
-        ensembleSize: entry?.ensembleSize,
-        agentKind,
-        outcome: "failed",
-        turnCount: entry?.turnCount ?? 0,
-        sessionId: entry?.sessionId,
-        resumeId: entry?.resumeId,
-        executorPid: entry?.executorPid,
-        workspace: entry?.workspacePath,
-        workerHost: entry?.workerHost,
-        usageTotals: entry?.usageTotals,
-        startedAt,
-        endedAt: this.now().toISOString(),
-        durationMs: durationMs(startedAt, this.now().toISOString()),
-        error: errorMessage(error),
-        lastEvent: entry?.lastAgentEvent ?? "turn_failed",
-        lastMessage: entry?.lastAgentMessage,
-        lastEventAt: entry?.lastAgentTimestamp?.toISOString() ?? null,
-        retryAttempt: entry?.retryAttempt,
-      });
+      this.recordHistory(
+        buildRunHistoryEntry({
+          id: runId,
+          issue,
+          slotIndex,
+          agentKind,
+          outcome: "failed",
+          turnCount: entry?.turnCount ?? 0,
+          runningEntry: entry,
+          startedAt,
+          endedAt: this.clock.now().toISOString(),
+          durationMs: durationMs(startedAt, this.clock.now().toISOString()),
+          error: errorMessage(error),
+          fallbackLastEvent: "turn_failed",
+        }),
+      );
       this.addEvent("run_failed", `${issue.identifier} ${errorMessage(error)}`);
     } finally {
       handle.release();
@@ -547,7 +508,10 @@ export class SymphonyRuntime {
   private async reloadWorkflowIfConfigured(): Promise<void> {
     if (!this.input.reloadWorkflow) return;
     try {
+      if (!(await workflowFileChanged(this.input.workflow))) return;
+      const previous = this.input.workflow;
       const workflow = await this.input.reloadWorkflow();
+      if (workflow === previous || workflowStampsEqual(previous.stamp, workflow.stamp)) return;
       this.input.workflow = workflow;
       this.orchestrator.settings = workflow.settings;
       if (!this.input.client && this.input.clientFactory) {
@@ -609,6 +573,7 @@ export class SymphonyRuntime {
           this.workflow.settings,
           issue.identifier || tracked.get(issue.id)?.identifier,
           tracked.get(issue.id)?.workerHost,
+          issue,
         );
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
       } else {
@@ -631,14 +596,12 @@ export class SymphonyRuntime {
       const currentEntry = this.runningEntry(snapshotEntry.issue.id, snapshotEntry.slotIndex);
       if (!currentEntry) continue;
       const effective = settingsForIssueState(this.workflow.settings, currentEntry.issue.state);
-      const timeoutMs =
-        effective.agents[currentEntry.agentKind]?.stallTimeoutMs ??
-        (currentEntry.agentKind === "claude"
-          ? effective.claude.stallTimeoutMs
-          : effective.codex.stallTimeoutMs);
+      const agent = effective.agents[currentEntry.agentKind];
+      if (!agent) throw new Error(`agents.${currentEntry.agentKind} is required`);
+      const timeoutMs = agent.stallTimeoutMs;
       if (timeoutMs <= 0) continue;
       const lastActivity = currentEntry.lastAgentTimestamp ?? currentEntry.startedAt;
-      const elapsedMs = this.now().getTime() - lastActivity.getTime();
+      const elapsedMs = this.clock.now().getTime() - lastActivity.getTime();
       if (elapsedMs <= timeoutMs) continue;
 
       const key = slotKey(currentEntry.issue.id, currentEntry.slotIndex);
@@ -652,32 +615,24 @@ export class SymphonyRuntime {
       this.syncRetryTimer(entry.issue.id);
       activeHandle?.finishExternally();
       await this.invalidateResumeStateForRunningEntry(currentEntry, "stalled");
-      this.recordHistory({
-        id: runId,
-        issueId: entry.issue.id,
-        issueIdentifier: entry.identifier,
-        issueTitle: entry.issue.title,
-        state: entry.issue.state,
-        slotIndex: entry.slotIndex,
-        ensembleSize: entry.ensembleSize,
-        agentKind: entry.agentKind,
-        outcome: "stalled",
-        turnCount: entry.turnCount,
-        sessionId: entry.sessionId,
-        resumeId: entry.resumeId,
-        executorPid: entry.executorPid,
-        workspace: entry.workspacePath,
-        workerHost: entry.workerHost,
-        usageTotals: entry.usageTotals,
-        startedAt: entry.startedAt.toISOString(),
-        endedAt: this.now().toISOString(),
-        durationMs: Math.max(0, this.now().getTime() - entry.startedAt.getTime()),
-        error,
-        lastEvent: entry.lastAgentEvent ?? "agent_stalled",
-        lastMessage: entry.lastAgentMessage,
-        lastEventAt: entry.lastAgentTimestamp?.toISOString() ?? null,
-        retryAttempt: entry.retryAttempt,
-      });
+      const endedAt = this.clock.now().toISOString();
+      this.recordHistory(
+        buildRunHistoryEntry({
+          id: runId,
+          issue: entry.issue,
+          issueIdentifier: entry.identifier,
+          slotIndex: entry.slotIndex,
+          agentKind: entry.agentKind,
+          outcome: "stalled",
+          turnCount: entry.turnCount,
+          runningEntry: entry,
+          startedAt: entry.startedAt.toISOString(),
+          endedAt,
+          durationMs: durationMs(entry.startedAt.toISOString(), endedAt),
+          error,
+          fallbackLastEvent: "agent_stalled",
+        }),
+      );
       this.addEvent("run_stalled", `${entry.identifier} ${error}`);
     }
   }
@@ -698,7 +653,12 @@ export class SymphonyRuntime {
       );
       let cleaned = 0;
       for (const issue of terminalIssues) {
-        await this.removeIssueWorkspaces(this.workflow.settings, issue.identifier);
+        await this.removeIssueWorkspaces(
+          this.workflow.settings,
+          issue.identifier,
+          undefined,
+          issue,
+        );
         cleaned += 1;
       }
       if (cleaned > 0) this.addEvent("startup_workspace_cleanup", `terminal=${cleaned}`);
@@ -757,6 +717,10 @@ export class SymphonyRuntime {
 
   private syncRetryTimer(issueId: string): void {
     const retry = this.orchestrator.snapshot().retrying.find((entry) => entry.issueId === issueId);
+    this.syncRetryTimerEntry(issueId, retry);
+  }
+
+  private syncRetryTimerEntry(issueId: string, retry: RetrySnapshotEntry | undefined): void {
     if (!retry) {
       this.clearRetryTimer(issueId);
       return;
@@ -772,8 +736,11 @@ export class SymphonyRuntime {
       ) {
         return;
       }
-      if (this.pollInProgress) return;
-      this.addEvent("retry_timer_due", `${scheduled.identifier} attempt=${scheduled.attempt}`);
+      this.addEvent("retry_timer_due", `${scheduled.issueIdentifier} attempt=${scheduled.attempt}`);
+      if (this.pollInProgress) {
+        this.queuePendingPoll({}, true);
+        return;
+      }
       this.pollOnce().catch((error) => {
         this.lastError = errorMessage(error);
         this.addEvent("retry_timer_error", this.lastError);
@@ -785,12 +752,20 @@ export class SymphonyRuntime {
     this.retryScheduler.clear(issueId);
   }
 
+  private syncRetryTimersForIssues(issues: Issue[]): void {
+    const retryByIssueId = new Map<string, RetrySnapshotEntry>();
+    for (const retry of this.orchestrator.snapshot().retrying) {
+      if (!retryByIssueId.has(retry.issueId)) retryByIssueId.set(retry.issueId, retry);
+    }
+    for (const issue of issues) this.syncRetryTimerEntry(issue.id, retryByIssueId.get(issue.id));
+  }
+
   private recordHistory(entry: RuntimeRunHistoryEntry): void {
     this.projection.recordRunHistory(entry);
   }
 
   private addEvent(type: RuntimeEventType, message: string): void {
-    const event = { type, message, at: this.now().toISOString() };
+    const event = { type, message, at: this.clock.now().toISOString() };
     this.projection.recordEvent(event);
     void this.appendLogEvent(this.workflow.settings.logging.logFile, {
       at: event.at,
@@ -806,9 +781,10 @@ export class SymphonyRuntime {
     settings: WorkflowDefinition["settings"],
     issueIdentifier?: string | null,
     workerHost?: string | null,
+    issue?: Issue,
   ): Promise<void> {
     if (this.input.removeIssueWorkspaces) {
-      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost);
+      return this.input.removeIssueWorkspaces(settings, issueIdentifier, workerHost, issue);
     }
     throw new Error("runtime_adapter_missing: removeIssueWorkspaces");
   }
@@ -851,12 +827,64 @@ export class SymphonyRuntime {
       });
     }
     return {
-      requested_at: this.now().toISOString(),
+      requested_at: this.clock.now().toISOString(),
       queued: true,
       coalesced,
       operations: ["poll", "reconcile"],
     };
   }
+}
+
+interface BuildRunHistoryEntryInput {
+  id: string;
+  issue: Issue;
+  issueIdentifier?: string | undefined;
+  state?: RuntimeRunHistoryEntry["state"];
+  slotIndex: number;
+  agentKind: AgentKind;
+  outcome: RuntimeRunOutcome;
+  turnCount: number;
+  runningEntry?: RunningEntry | undefined;
+  resumeId?: RuntimeRunHistoryEntry["resumeId"];
+  workspacePath?: RuntimeRunHistoryEntry["workspacePath"];
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  error?: string | undefined;
+  fallbackLastEvent?: RuntimeRunHistoryEntry["lastEvent"];
+}
+
+function buildRunHistoryEntry(input: BuildRunHistoryEntryInput): RuntimeRunHistoryEntry {
+  const entry = input.runningEntry;
+  const resumeId = "resumeId" in input ? input.resumeId : entry?.resumeId;
+  const workspacePath = "workspacePath" in input ? input.workspacePath : entry?.workspacePath;
+
+  return {
+    id: input.id,
+    issueId: input.issue.id,
+    issueIdentifier: input.issueIdentifier ?? input.issue.identifier,
+    issueTitle: input.issue.title,
+    state: "state" in input ? input.state : input.issue.state,
+    slotIndex: input.slotIndex,
+    ensembleSize: entry?.ensembleSize,
+    agentKind: input.agentKind,
+    outcome: input.outcome,
+    turnCount: input.turnCount,
+    sessionId: entry?.sessionId,
+    resumeId,
+    executorPid: entry?.executorPid,
+    workspacePath,
+    workerHost: entry?.workerHost,
+    usageTotals: entry?.usageTotals,
+    startedAt: input.startedAt,
+    endedAt: input.endedAt,
+    durationMs: input.durationMs,
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    lastEvent: entry?.lastAgentEvent ?? input.fallbackLastEvent,
+    lastMessage: entry?.lastAgentMessage,
+    lastEventAt: entry?.lastAgentTimestamp?.toISOString() ?? null,
+    retryAttempt: entry?.retryAttempt,
+  };
 }
 
 function runtimeRunningEntry(entry: RunningEntry, runId: string | undefined): RuntimeRunningEntry {
@@ -865,7 +893,7 @@ function runtimeRunningEntry(entry: RunningEntry, runId: string | undefined): Ru
     issueId: entry.issue.id,
     issueIdentifier: entry.identifier,
     issueUrl: entry.issue.url ?? null,
-    title: entry.issue.title,
+    issueTitle: entry.issue.title,
     state: entry.issue.state,
     slotIndex: entry.slotIndex,
     ensembleSize: entry.ensembleSize,
@@ -899,7 +927,7 @@ function runtimeRetryEntry(entry: {
 }): RuntimeRetryEntry {
   return {
     issueId: entry.issueId,
-    identifier: entry.identifier,
+    issueIdentifier: entry.identifier,
     issueUrl: entry.issueUrl ?? null,
     attempt: entry.attempt,
     dueAtIso: entry.dueAtIso,
@@ -911,23 +939,15 @@ function runtimeRetryEntry(entry: {
   };
 }
 
-async function delay(ms: number, stopped: () => boolean): Promise<void> {
+async function delay(clock: ClockPort, ms: number, stopped: () => boolean): Promise<void> {
   const stepMs = Math.min(Math.max(ms, 25), 250);
   let remaining = ms;
   while (remaining > 0 && !stopped()) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(stepMs, remaining)));
+    await new Promise<void>((resolve) => clock.setTimeout(resolve, Math.min(stepMs, remaining)));
     remaining -= stepMs;
   }
 }
 
 function missingRuntimeClient(): RuntimeTrackerClient {
   throw new Error("runtime tracker client or clientFactory is required");
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function durationMs(startedAt: string, endedAt: string): number {
-  return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
 }

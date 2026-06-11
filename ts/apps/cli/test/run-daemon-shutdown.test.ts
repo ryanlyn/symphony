@@ -2,9 +2,9 @@ import path from "node:path";
 
 import { parseConfig } from "@symphony/config";
 import { afterEach, beforeEach, test, vi } from "vitest";
+import { assert, tempDir } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import type * as daemonModule from "../src/daemon.js";
 
 const mocks = vi.hoisted(() => ({
   loadWorkflow: vi.fn(),
@@ -59,6 +59,7 @@ vi.mock("@symphony/workflow", () => ({
 
 vi.mock("@symphony/log-file", () => ({
   configureLogFile: mocks.configureLogFile,
+  appendLogEvent: vi.fn(),
 }));
 
 vi.mock("@symphony/server", () => ({
@@ -84,7 +85,10 @@ vi.mock("@symphony/traceviz-emitter", () => ({
   },
 }));
 
-vi.mock("../src/daemon.js", () => ({
+// Keep the real registerBuiltinBackends so runDaemon populates the default registries the
+// same way the CLI entrypoints do; only the runtime-facing adapters are stubbed.
+vi.mock("../src/daemon.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof daemonModule>()),
   createTrackerClient: mocks.createTrackerClient,
   runAgentAttempt: mocks.runAgentAttempt,
   runtimeAdapters: {},
@@ -102,6 +106,13 @@ function addedProcessListeners(
 ): ProcessListener[] {
   const known = new Set(baseline);
   return process.listeners(event).filter((listener) => !known.has(listener));
+}
+
+function assertNoAddedProcessListeners(
+  event: ProcessEvent,
+  baseline: ReadonlyArray<ProcessListener>,
+): void {
+  assert.deepEqual(addedProcessListeners(event, baseline), []);
 }
 
 async function workflowFixture() {
@@ -208,11 +219,8 @@ test("runDaemon stops gracefully on the first SIGINT and returns success", async
     stderrWriteSpy.mock.calls.some((call) => String(call[0]).includes("ELIFECYCLE")),
     false,
   );
-
-  process.off("SIGINT", sigintHandler as ProcessListener);
-  for (const handler of sigtermHandlers) {
-    process.off("SIGTERM", handler as ProcessListener);
-  }
+  assertNoAddedProcessListeners("SIGINT", sigintBaseline);
+  assertNoAddedProcessListeners("SIGTERM", sigtermBaseline);
 });
 
 test("runDaemon still reports real startup failures", async () => {
@@ -237,11 +245,6 @@ test("runDaemon still reports real startup failures", async () => {
     stderrWriteSpy.mock.calls.some((call) => String(call[0]).includes("listen failed")),
     true,
   );
-
-  for (const handler of addedProcessListeners("SIGINT", sigintBaseline)) {
-    process.off("SIGINT", handler as ProcessListener);
-  }
-  for (const handler of addedProcessListeners("SIGTERM", sigtermBaseline)) {
-    process.off("SIGTERM", handler as ProcessListener);
-  }
+  assertNoAddedProcessListeners("SIGINT", sigintBaseline);
+  assertNoAddedProcessListeners("SIGTERM", sigtermBaseline);
 });

@@ -3,27 +3,10 @@ import fc from "fast-check";
 import { ensembleSize, isTerminalState } from "@symphony/cli";
 import { ENSEMBLE_SIZE_MAX } from "@symphony/domain";
 import type { Issue } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert, issueWith as baseIssue } from "@symphony/test-utils";
 
 function issueWith(labels: string[]): Issue {
-  return {
-    id: "id-1",
-    identifier: "TEST-1",
-    title: "Test",
-    state: "Todo",
-    stateType: "unstarted",
-    description: null,
-    branchName: null,
-    url: null,
-    priority: null,
-    createdAt: null,
-    updatedAt: null,
-    labels,
-    blockers: [],
-    assigneeId: null,
-    assignedToWorker: true,
-  };
+  return baseIssue({ title: "Test", priority: null, labels });
 }
 
 test("INVARIANT: When a valid ensemble label with a positive integer is present, ensembleSize SHALL return that integer.", () => {
@@ -34,6 +17,15 @@ test("INVARIANT: When a valid ensemble label with a positive integer is present,
       assert.equal(result, n);
       assert.ok(result !== null && result >= 1);
       assert.ok(Number.isInteger(result));
+    }),
+  );
+});
+
+test("INVARIANT: When an ensemble label exceeds the domain maximum, ensembleSize SHALL return null.", () => {
+  fc.assert(
+    fc.property(fc.integer({ min: ENSEMBLE_SIZE_MAX + 1, max: 2_000_000 }), (n) => {
+      const issue = issueWith([`ensemble:${n}`]);
+      assert.equal(ensembleSize(issue), null);
     }),
   );
 });

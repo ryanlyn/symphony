@@ -1,24 +1,53 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { test, vi } from "vitest";
+import { beforeAll, test, vi } from "vitest";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   createWorkspaceForIssue,
+  loadWorkflow,
   normalizeIssue,
   Orchestrator,
   parseConfig,
+  removeIssueWorkspaces,
   runtimeAdapters,
+  slotKey,
 } from "@symphony/cli";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import {
+  RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME_EVENTS,
+  RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
+} from "@symphony/runtime-events";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
+import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir, writeExecutable } from "../../../test/helpers.js";
+import {
+  RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,
+  RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME,
+  SymphonyRuntime,
+} from "@symphony/runtime";
 
-import { SymphonyRuntime } from "@symphony/runtime";
+// The runtime validates dispatch config against the process-default registries, which the
+// CLI composition root populates before constructing a runtime. Mirror that wiring here (in
+// a hook rather than at module scope) for the backends this suite dispatches on - the
+// linear tracker and the ACP executor - so polling resolves the same providers as
+// production.
+beforeAll(() => {
+  registerLinearTracker();
+  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
+    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+  }
+});
 
 function runtimeOptions(options: SymphonyRuntimeOptions): SymphonyRuntimeOptions {
   return { ...runtimeAdapters, ...options };
 }
+
+test("runtime exports canonical runtime-events vocabulary values", () => {
+  assert.equal(RUNTIME_EVENT_TYPES_FROM_RUNTIME, RUNTIME_EVENT_TYPES_FROM_RUNTIME_EVENTS);
+  assert.equal(RUNTIME_RUN_OUTCOMES_FROM_RUNTIME, RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS);
+});
 
 test("runtime dry-run polls, computes eligibility, and does not start agents", async () => {
   const issue = issueFixture("issue-1", "MT-1");
@@ -115,7 +144,7 @@ test("runtime schedules continuation retry after normal worker exit even when is
 
   const retry = runtime.snapshot().retrying[0];
   assert.ok(retry);
-  assert.equal(retry.identifier, "MT-INACTIVE-CONTINUATION");
+  assert.equal(retry.issueIdentifier, "MT-INACTIVE-CONTINUATION");
   assert.equal(retry.attempt, 1);
   const delayMs = new Date(retry.dueAtIso).getTime() - beforeRun;
   assert.ok(delayMs >= 900 && delayMs <= 1_500);
@@ -205,6 +234,91 @@ test("runtime reloads workflow settings on each poll with last-known-good fallba
   assert.equal(runtime.workflow.settings.tracker.dispatch.acceptUnrouted, false);
   assert.ok(
     runtime.snapshot().recentEvents.some((event) => event.type === "workflow_reload_failed"),
+  );
+});
+
+test("runtime skips reload side effects when workflow content is unchanged", async () => {
+  const issue = issueFixture("issue-unchanged-reload", "MT-UNCHANGED-RELOAD");
+  const dir = await tempDir("symphony-runtime-unchanged-workflow");
+  const workflowFile = path.join(dir, "WORKFLOW.md");
+  await fs.writeFile(workflowFile, workflowMarkdown({ intervalMs: 5 }));
+  const workflow = await loadWorkflow(workflowFile, {}, { cwd: dir });
+  let reloads = 0;
+  let clientBuilds = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      reloadWorkflow: async () => {
+        reloads += 1;
+        return loadWorkflow(workflowFile, {}, { cwd: dir });
+      },
+      clientFactory: () => {
+        clientBuilds += 1;
+        return {
+          fetchCandidateIssues: async () => [issue],
+          fetchIssuesByIds: async () => [issue],
+        };
+      },
+      runner: async () => {
+        throw new Error("dry-run should not call runner");
+      },
+    }),
+  );
+
+  await runtime.pollOnce({ dryRun: true });
+  await runtime.pollOnce({ dryRun: true });
+
+  assert.equal(reloads, 0);
+  assert.equal(clientBuilds, 1);
+  assert.equal(
+    runtime.snapshot().recentEvents.some((event) => event.type === "workflow_reloaded"),
+    false,
+  );
+});
+
+test("runtime reloads stamped workflow when file content changes", async () => {
+  const issue = issueFixture("issue-changed-reload", "MT-CHANGED-RELOAD");
+  const dir = await tempDir("symphony-runtime-changed-workflow");
+  const workflowFile = path.join(dir, "WORKFLOW.md");
+  await fs.writeFile(workflowFile, workflowMarkdown({ intervalMs: 5 }));
+  const workflow = await loadWorkflow(workflowFile, {}, { cwd: dir });
+  let reloads = 0;
+  let clientBuilds = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      reloadWorkflow: async () => {
+        reloads += 1;
+        return loadWorkflow(workflowFile, {}, { cwd: dir });
+      },
+      clientFactory: () => {
+        clientBuilds += 1;
+        return {
+          fetchCandidateIssues: async () => [issue],
+          fetchIssuesByIds: async () => [issue],
+        };
+      },
+      runner: async () => {
+        throw new Error("dry-run should not call runner");
+      },
+    }),
+  );
+
+  await fs.writeFile(
+    workflowFile,
+    workflowMarkdown({ acceptUnrouted: false, intervalMs: 9, prompt: "Changed prompt" }),
+  );
+
+  await runtime.pollOnce({ dryRun: true });
+
+  assert.equal(reloads, 1);
+  assert.equal(clientBuilds, 2);
+  assert.equal(runtime.workflow.promptTemplate, "Changed prompt");
+  assert.equal(runtime.workflow.settings.polling.intervalMs, 9);
+  assert.equal(runtime.snapshot().poll.eligible, 0);
+  assert.equal(
+    runtime.snapshot().recentEvents.some((event) => event.type === "workflow_reloaded"),
+    true,
   );
 });
 
@@ -405,7 +519,6 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
   const issue = issueFixture("issue-stalled", "MT-STALLED");
   const root = await tempDir("symphony-ts-runtime-stall-resume");
   const workflow = workflowFixture(root);
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
   const deletedResumeStates: string[] = [];
@@ -479,7 +592,6 @@ test("runtime stall reconciliation uses agents-level stall timeout defaults", as
     workspace: { root },
     agents: { stall_timeout_ms: 50 },
   });
-  assert.equal(settings.codex.stallTimeoutMs, 300_000);
   assert.equal(settings.agents.codex.stallTimeoutMs, 50);
   const workflow: WorkflowDefinition = {
     path: "/tmp/WORKFLOW.md",
@@ -545,7 +657,6 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
   const root = await tempDir("symphony-ts-runtime-ensemble-stall-race");
   const workflow = workflowFixture(root);
   workflow.settings.agent.ensembleSize = 2;
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   workflow.settings.worker.sshTimeoutMs = 2_000;
   const orchestrator = new Orchestrator(workflow.settings);
@@ -648,7 +759,6 @@ test("runtime does not stall a stale ensemble slot snapshot after its runner com
 test("runtime does not record late success after stall reconciliation wins", async () => {
   const issue = issueFixture("issue-late-success", "MT-LATE-SUCCESS");
   const workflow = workflowFixture();
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let aborted = false;
@@ -708,7 +818,6 @@ test("runtime keeps a retry handle active when a stalled generation finishes lat
   const root = await tempDir("symphony-ts-runtime-stale-finally");
   const workflow = workflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
-  workflow.settings.codex.stallTimeoutMs = 50;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings);
   let attempts = 0;
@@ -804,6 +913,59 @@ test("runtime coalesces overlapping pollOnce calls", async () => {
   assert.ok(unblockFetch);
   unblockFetch();
   await Promise.all([first, second]);
+});
+
+test("runtime preserves stronger overlapping pollOnce dispatch intent", async () => {
+  const issue = issueFixture("issue-overlap-dispatch", "MT-OVERLAP-DISPATCH");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const fetchControl: { release?: () => void } = {};
+  let fetches = 0;
+  let runnerCalls = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow: workflowFixture(),
+      client: {
+        fetchCandidateIssues: async () => {
+          fetches += 1;
+          if (fetches === 1) {
+            await new Promise<void>((resolve) => {
+              fetchControl.release = resolve;
+            });
+          }
+          return [issue];
+        },
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => {
+        runnerCalls += 1;
+        return {
+          workspace: "/tmp/symphony/MT-OVERLAP-DISPATCH",
+          turnCount: 1,
+          updates: [],
+          resumeId: "overlap-dispatch",
+          agentKind: "codex",
+          finalIssue: doneIssue,
+        };
+      },
+    }),
+  );
+
+  try {
+    const first = runtime.pollOnce({ dryRun: true });
+    await waitFor(() => fetches === 1, 1_000);
+    const second = runtime.pollOnce({ waitForRuns: true });
+    await vi.waitFor(() => assert.equal(fetches, 1));
+
+    const unblockFetch = fetchControl.release;
+    assert.ok(unblockFetch);
+    unblockFetch();
+    await Promise.all([first, second]);
+
+    assert.equal(fetches, 2);
+    assert.equal(runnerCalls, 1);
+  } finally {
+    runtime.stop();
+  }
 });
 
 test("runtime keeps polling after a candidate fetch throws in the recurring loop", async () => {
@@ -918,6 +1080,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
   const orchestrator = new Orchestrator(workflow.settings);
   assert.ok(orchestrator.claim(activeIssue));
   orchestrator.finish(activeIssue.id, 0, true);
+  const cleanupIssues: Array<Issue | undefined> = [];
 
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -927,6 +1090,10 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
         fetchCandidateIssues: async () => [],
         fetchIssuesByIds: async (ids) => (ids.includes(activeIssue.id) ? [doneIssue] : []),
       },
+      removeIssueWorkspaces: async (settings, identifier, workerHost, issue) => {
+        cleanupIssues.push(issue);
+        await removeIssueWorkspaces(settings, identifier, workerHost, issue);
+      },
     }),
   );
 
@@ -934,6 +1101,7 @@ test("runtime reconciliation removes terminal retry workspaces before polling", 
 
   assert.equal(orchestrator.snapshot().retrying.length, 0);
   await assert.rejects(() => fs.stat(workspace), /ENOENT/);
+  assert.equal(cleanupIssues[0]?.id, doneIssue.id);
   assert.equal(runtime.snapshot().recentEvents[0]?.type, "dry_run");
   assert.ok(runtime.snapshot().recentEvents.some((event) => event.type === "workspace_cleanup"));
 });
@@ -1060,7 +1228,7 @@ test("runtime records failed attempts as retryable work and keeps polling", asyn
   assert.equal(snapshot.retrying[0]?.attempt, 1);
   assert.equal(snapshot.retrying[0]?.error, "agent exited: boom");
 
-  const retry = orchestrator.snapshot().retrying[0];
+  const retry = orchestrator.state.retryAttempts.get(slotKey(issue.id, 0));
   assert.ok(retry);
   retry.dueAtIso = new Date(Date.now() - 1).toISOString();
   retry.monotonicDeadlineMs = 0;
@@ -1159,6 +1327,71 @@ test("runtime schedules retry refresh timers independently of the poll cadence",
   runtime.stop();
 });
 
+test("runtime replays retry timer due while a poll is active", async () => {
+  const issue = issueFixture("issue-timer-overlap", "MT-TIMER-OVERLAP");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const workflow = workflowFixture();
+  workflow.settings.polling.intervalMs = 60_000;
+  workflow.settings.agent.maxRetryBackoffMs = 1;
+  const fetchControl: { release?: () => void } = {};
+  let attempts = 0;
+  let blockCandidateFetch = false;
+  let candidateFetches = 0;
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      client: {
+        fetchCandidateIssues: async () => {
+          candidateFetches += 1;
+          if (blockCandidateFetch) {
+            blockCandidateFetch = false;
+            await new Promise<void>((resolve) => {
+              fetchControl.release = resolve;
+            });
+          }
+          return [issue];
+        },
+        fetchIssuesByIds: async () => (attempts >= 2 ? [doneIssue] : [issue]),
+      },
+      runner: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("agent exited: retry me");
+        return {
+          workspace: "/tmp/symphony/MT-TIMER-OVERLAP",
+          turnCount: 1,
+          updates: [],
+          resumeId: "timer-overlap",
+          agentKind: "codex",
+          finalIssue: doneIssue,
+        };
+      },
+    }),
+  );
+
+  try {
+    await runtime.pollOnce({ waitForRuns: true });
+    assert.equal(attempts, 1);
+    blockCandidateFetch = true;
+
+    const dryPoll = runtime.pollOnce({ dryRun: true });
+    await waitFor(() => candidateFetches === 2, 1_000);
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+    const unblockFetch = fetchControl.release;
+    assert.ok(unblockFetch);
+    unblockFetch();
+    await dryPoll;
+
+    await waitFor(() => attempts === 2, 1_000);
+    assert.equal(
+      runtime.snapshot().recentEvents.some((event) => event.type === "retry_timer_due"),
+      true,
+    );
+  } finally {
+    runtime.stop();
+  }
+});
+
 function workflowFixture(root = "/tmp/symphony-ts-runtime-test"): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
@@ -1177,6 +1410,35 @@ function workflowFixture(root = "/tmp/symphony-ts-runtime-test"): WorkflowDefini
     promptTemplate: "Issue {{ issue.identifier }}",
     settings,
   };
+}
+
+function workflowMarkdown({
+  acceptUnrouted = true,
+  intervalMs = 5,
+  prompt = "Issue {{ issue.identifier }}",
+}: {
+  acceptUnrouted?: boolean;
+  intervalMs?: number;
+  prompt?: string;
+} = {}): string {
+  return [
+    "---",
+    "tracker:",
+    "  kind: linear",
+    "  api_key: linear-token",
+    "  project_slug: mono",
+    "  active_states:",
+    "    - Todo",
+    "    - In Progress",
+    "  terminal_states:",
+    "    - Done",
+    "  dispatch:",
+    `    accept_unrouted: ${acceptUnrouted}`,
+    "polling:",
+    `  interval_ms: ${intervalMs}`,
+    "---",
+    prompt,
+  ].join("\n");
 }
 
 function issueFixture(id: string, identifier: string): Issue {

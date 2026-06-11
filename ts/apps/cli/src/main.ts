@@ -19,9 +19,12 @@ import { configureLogFile } from "@symphony/log-file";
 import { SymphonyRuntime } from "@symphony/runtime";
 import { RuntimeApp } from "@symphony/tui";
 import { loadWorkflow } from "@symphony/workflow";
+import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { defaultToolRegistry } from "@symphony/tool-sdk";
+import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
 import { TraceEmitter } from "@symphony/traceviz-emitter";
 import { defaultIssueStorePath, IssueStore } from "@symphony/server";
-import type { Settings, WorkflowDefinition } from "@symphony/domain";
+import { errorMessage, type Settings, type WorkflowDefinition } from "@symphony/domain";
 
 import {
   createRunsCommand,
@@ -32,6 +35,7 @@ import {
 import {
   createTrackerClient,
   runAgentAttempt,
+  registerBuiltinBackends,
   runtimeAdapters,
   runtimeDefaultSettingsOptions,
 } from "./daemon.js";
@@ -71,6 +75,7 @@ export function parseCliArgs(args: string[]): CliParseResult {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
+  registerBuiltinBackends();
   let status = 0;
   const command = configureCommandForMain(createRootCommand());
 
@@ -99,17 +104,22 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
 }
 
 export async function runDaemon(options: CliOptions): Promise<number> {
+  registerBuiltinBackends();
   try {
     let boundServerPort: number | null = null;
     const loadRuntimeWorkflow = async () => {
-      const workflow = await loadWorkflow(
-        options.workflowPath ?? undefined,
-        process.env,
-        runtimeDefaultSettingsOptions(),
-      );
+      const workflow = await loadWorkflow(options.workflowPath ?? undefined, process.env, {
+        ...runtimeDefaultSettingsOptions(),
+        trackers: defaultTrackerRegistry,
+      });
       applyCliOverrides(workflow, options);
       if (boundServerPort !== null) workflow.settings.server.port = boundServerPort;
-      validateDispatchConfig(workflow.settings);
+      validateDispatchConfig(
+        workflow.settings,
+        defaultTrackerRegistry,
+        defaultAgentExecutorRegistry,
+        defaultToolRegistry,
+      );
       return workflow;
     };
     const workflow = await loadRuntimeWorkflow();
@@ -123,6 +133,13 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       clientFactory: createTrackerClient,
       reloadWorkflow: loadRuntimeWorkflow,
       runner: runAgentAttempt,
+      validateDispatch: (settings) =>
+        validateDispatchConfig(
+          settings,
+          defaultTrackerRegistry,
+          defaultAgentExecutorRegistry,
+          defaultToolRegistry,
+        ),
       onAgentUpdate: (issue, update) => {
         traceEmitter.emit(issue.id, issue.identifier, update);
       },
@@ -158,57 +175,63 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     process.on("SIGTERM", requestStop);
 
     let server: Awaited<ReturnType<typeof startObservabilityServer>> | null = null;
-    if (options.dashboard) {
-      server = await startObservabilityServer(runtime, {
-        host: workflow.settings.server.host,
-        port: workflow.settings.server.port ?? 0,
-        ...(workflow.settings.server.traceDir !== undefined && {
-          traceDir: workflow.settings.server.traceDir,
-        }),
-        ...(workflow.settings.server.staticDir !== undefined && {
-          staticDir: workflow.settings.server.staticDir,
-        }),
-        issueStore,
-      });
-      workflow.settings.server.port = server.port;
-      boundServerPort = server.port;
-      process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
-    }
-
-    instance =
-      options.tui && process.stdout.isTTY
-        ? render(
-            React.createElement(RuntimeApp, {
-              runtime,
-              dashboardUrl: server?.url("/") ?? null,
-              projectUrl: projectUrlForSettings(workflow.settings),
-            }),
-          )
-        : null;
-
-    if (!instance) {
-      runtime.subscribe((snapshot) => {
-        process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
-      });
-    }
-
     try {
+      if (options.dashboard) {
+        server = await startObservabilityServer(runtime, {
+          host: workflow.settings.server.host,
+          port: workflow.settings.server.port ?? 0,
+          ...(workflow.settings.server.traceDir !== undefined && {
+            traceDir: workflow.settings.server.traceDir,
+          }),
+          ...(workflow.settings.server.staticDir !== undefined && {
+            staticDir: workflow.settings.server.staticDir,
+          }),
+          issueStore,
+          tools: defaultToolRegistry,
+        });
+        workflow.settings.server.port = server.port;
+        boundServerPort = server.port;
+        process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
+      }
+
+      instance =
+        options.tui && process.stdout.isTTY
+          ? render(
+              React.createElement(RuntimeApp, {
+                runtime,
+                dashboardUrl: server?.url("/") ?? null,
+                projectUrl: projectUrlForSettings(workflow.settings),
+              }),
+            )
+          : null;
+
+      if (!instance) {
+        runtime.subscribe((snapshot) => {
+          process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
+        });
+      }
+
       await runtime.start({ once: options.once, dryRun: options.dryRun });
+      return 0;
     } finally {
       // Leave the signal handlers attached through teardown so a second Ctrl+C
       // can't slip past them and kill the process mid-shutdown.
-      instance?.unmount();
-      await server?.stop();
-      issueStore.close();
+      try {
+        instance?.unmount();
+        await server?.stop();
+        issueStore.close();
+      } finally {
+        process.off("SIGINT", requestStop);
+        process.off("SIGTERM", requestStop);
+      }
     }
-    return 0;
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${errorMessage(error)}\n`);
     return 1;
   }
 }
 
-export function createDaemonCommand(name = "symphony-ts"): Command {
+function createDaemonCommand(name = "symphony-ts"): Command {
   return new Command(name)
     .description("Run the Symphony TypeScript orchestrator.")
     .allowExcessArguments(false)
@@ -253,7 +276,5 @@ function applyCliOverrides(workflow: WorkflowDefinition, options: CliOptions): v
 }
 
 export function projectUrlForSettings(settings: Settings): string | undefined {
-  const slug = settings.tracker.projectSlug?.trim();
-  if (!slug) return undefined;
-  return `https://linear.app/project/${encodeURIComponent(slug)}/issues`;
+  return defaultTrackerRegistry.providerFor(settings)?.projectUrl?.(settings);
 }

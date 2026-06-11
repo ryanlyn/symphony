@@ -1,8 +1,8 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { selectLeastLoadedHost } from "@symphony/cli";
+import { assert } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
+import { selectLeastLoadedHost } from "@symphony/policies";
 
 const arbCap = () => fc.integer({ min: 0, max: 20 });
 
@@ -65,15 +65,49 @@ test("INVARIANT: When the host list is empty, null SHALL be returned", () => {
   );
 });
 
+test("selectLeastLoadedHost keeps an available preferred host even when another host is less loaded", () => {
+  const input = {
+    hosts: ["worker-a", "worker-b"],
+    runningCounts: new Map([
+      ["worker-a", 1],
+      ["worker-b", 0],
+    ]),
+    cap: 2,
+    preferredHost: "worker-a",
+  };
+  const result = selectLeastLoadedHost(input);
+
+  assert.equal(result, "worker-a");
+});
+
+test("selectLeastLoadedHost falls back when the preferred host is at capacity", () => {
+  const input = {
+    hosts: ["worker-a", "worker-b"],
+    runningCounts: new Map([
+      ["worker-a", 2],
+      ["worker-b", 0],
+    ]),
+    cap: 2,
+    preferredHost: "worker-a",
+  };
+  const result = selectLeastLoadedHost(input);
+
+  assert.equal(result, "worker-b");
+});
+
 test("INVARIANT: When at least one host is below the cap, the system SHALL always select a host", () => {
   fc.assert(
     fc.property(
       fc.integer({ min: 1, max: 20 }).chain((cap) =>
         fc
-          .array(fc.tuple(fc.string({ minLength: 1, maxLength: 10 }), fc.nat({ max: cap + 5 })), {
-            minLength: 1,
-            maxLength: 8,
-          })
+          .uniqueArray(
+            fc.tuple(fc.string({ minLength: 1, maxLength: 10 }), fc.nat({ max: cap + 5 })),
+            {
+              minLength: 1,
+              maxLength: 8,
+              selector: ([host]) => host,
+            },
+          )
           .map((pairs) => ({
             hosts: pairs.map((p) => p[0]),
             counts: pairs.map((p) => p[1]),

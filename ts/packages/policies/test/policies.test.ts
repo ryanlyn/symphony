@@ -1,12 +1,12 @@
 import { test, describe } from "vitest";
+import type { Issue, Settings } from "@symphony/domain";
+import { assert } from "@symphony/test-utils";
+
 import {
   actionForStopReason,
   resumeIdentityMatches,
   reconciliationStopReason,
-} from "@symphony/cli";
-import type { Issue, Settings } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+} from "@symphony/policies";
 
 // --- actionForStopReason ---
 

@@ -9,8 +9,7 @@ import {
   shouldDispatchIssue,
   slotKey,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return normalizeIssue({
@@ -159,6 +158,14 @@ describe("shouldDispatchIssue", () => {
     // Claim all 3 slots
     claimed.add(slotKey(issue.id, 1));
     claimed.add(slotKey(issue.id, 2));
+    assert.equal(shouldDispatchIssue(issue, settings, state), false);
+  });
+
+  test("ignores oversized ensemble labels and uses settings slot count", () => {
+    const settings = makeSettings({ agent: { ensemble_size: 1 } });
+    const issue = makeIssue({ labels: ["ensemble:101"] });
+    const claimed = new Set([slotKey(issue.id, 0)]);
+    const state = { runningCount: 0, claimedSlots: claimed };
     assert.equal(shouldDispatchIssue(issue, settings, state), false);
   });
 });
@@ -419,6 +426,13 @@ describe("firstUnclaimedSlot", () => {
     assert.equal(firstUnclaimedSlot(issue, settings, claimed), 3);
   });
 
+  test("oversized ensemble label falls back to settings ensemble_size", () => {
+    const settings = makeSettings({ agent: { ensemble_size: 1 } });
+    const issue = makeIssue({ labels: ["ensemble:101"] });
+    const claimed = new Set([slotKey(issue.id, 0)]);
+    assert.equal(firstUnclaimedSlot(issue, settings, claimed), null);
+  });
+
   test("preferred slot out of range falls through to linear scan", () => {
     const settings = makeSettings({ agent: { ensemble_size: 2 } });
     const issue = makeIssue();
@@ -432,6 +446,13 @@ describe("firstUnclaimedSlot", () => {
     const issue = makeIssue();
     const claimed = new Set<string>();
     assert.equal(firstUnclaimedSlot(issue, settings, claimed, -1), 0);
+  });
+
+  test("fractional preferred slot falls through to linear scan", () => {
+    const settings = makeSettings({ agent: { ensemble_size: 2 } });
+    const issue = makeIssue();
+    const claimed = new Set<string>();
+    assert.equal(firstUnclaimedSlot(issue, settings, claimed, 0.5), 0);
   });
 });
 

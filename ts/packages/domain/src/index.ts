@@ -48,6 +48,16 @@ export function isValidEnsembleSize(n: number): boolean {
   return Number.isInteger(n) && n >= 1 && n <= ENSEMBLE_SIZE_MAX;
 }
 
+export function normalizeHttpBindHost(host: string): string {
+  return host.trim() === "" ? "127.0.0.1" : host;
+}
+
+export function httpUrlHost(host: string): string {
+  const normalized = normalizeHttpBindHost(host);
+  if (normalized === "0.0.0.0" || normalized === "::") return "127.0.0.1";
+  return normalized.includes(":") && !normalized.startsWith("[") ? `[${normalized}]` : normalized;
+}
+
 // --- Session protocol types ---
 
 export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
@@ -64,9 +74,12 @@ export const AGENT_USAGE_ACCOUNTING_VALUES = ["per-turn", "cumulative"] as const
 
 export type AgentUsageAccounting = (typeof AGENT_USAGE_ACCOUNTING_VALUES)[number];
 
-export const TRACKER_KINDS = ["linear", "memory", "local", "slack"] as const;
-
-export type TrackerKind = (typeof TRACKER_KINDS)[number];
+/**
+ * Identifies a tracker backend by name (e.g. `"linear"`, `"local"`, `"memory"`).
+ * Open-ended: the set of supported kinds is whatever the composition root registered
+ * in its tracker provider registry, not a closed union owned by the domain.
+ */
+export type TrackerKind = string;
 
 export const ISSUE_STATE_TYPES = [
   "backlog",
@@ -79,22 +92,56 @@ export const ISSUE_STATE_TYPES = [
 
 export type IssueStateType = (typeof ISSUE_STATE_TYPES)[number];
 
+// --- Leaf helpers ---
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function isOneOf<const Values extends readonly string[]>(
+  value: string,
+  values: Values,
+): value is Values[number] {
+  return (values as readonly string[]).includes(value);
+}
+
+export function normalizeStateType(value: string | null | undefined): IssueStateType | null {
+  if (value === null || value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+  return isOneOf(normalized, ISSUE_STATE_TYPES) ? normalized : null;
+}
+
+export function durationMs(startedAt: string, endedAt: string): number {
+  return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
+}
+
+// --- Clock ---
+
+export interface ClockPort {
+  now(): Date;
+  monotonicMs(): number;
+  setTimeout(callback: () => void, delayMs: number): TimerHandle;
+  clearTimeout(handle: TimerHandle): void;
+}
+
+export interface TimerHandle {
+  unref?: (() => void) | undefined;
+}
+
+export const systemClock: ClockPort = {
+  now: () => new Date(),
+  monotonicMs: () => performance.now(),
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 export const PRIORITY_VALUES = [1, 2, 3, 4] as const;
 
 export type Priority = (typeof PRIORITY_VALUES)[number];
-
-export const CODEX_APPROVAL_POLICY_NAMES = [
-  "untrusted",
-  "on-failure",
-  "on-request",
-  "never",
-] as const;
-
-export type CodexApprovalPolicyName = (typeof CODEX_APPROVAL_POLICY_NAMES)[number];
-
-export const CODEX_SANDBOX_MODES = ["read-only", "workspace-write", "danger-full-access"] as const;
-
-export type CodexSandboxMode = (typeof CODEX_SANDBOX_MODES)[number];
 
 /**
  * Minimal reference to a related issue - just enough to identify it and check its state.
@@ -163,42 +210,31 @@ export interface DispatchSettings {
 
 /**
  * Connection and filtering rules for the issue tracker that feeds work into this instance.
+ *
+ * Only fields every backend shares live here. Provider-specific keys of the `tracker:`
+ * config section (e.g. Linear's `project_slug`, the local board's `path`) are normalized
+ * and validated by the registered tracker provider and carried opaquely in {@link options}.
  */
 export interface TrackerSettings {
   /** Backend adapter selector. `"memory"` is an in-process fixture used for tests. */
   kind?: TrackerKind | undefined;
-  endpoint: string;
+  /** Tracker API endpoint; when unset, the provider's default endpoint applies. */
+  endpoint?: string | undefined;
+  /** Tracker credential; supports `$VAR` and `op://` references plus provider env fallbacks. */
   apiKey?: string | undefined;
-  /** @deprecated Use `projectSlugs` instead. Single Linear project slug; required when `kind === "linear"`. */
-  projectSlug?: string | undefined;
-  /** Linear project slugs to monitor. Mutually exclusive with `projectLabels`. */
-  projectSlugs?: string[] | undefined;
-  /** Linear project labels for dynamic discovery. Mutually exclusive with `projectSlugs`. */
-  projectLabels?: string[] | undefined;
   /** Tracker assignee identity (or `$VAR`) used to scope candidate queries to one user. */
   assignee?: string | undefined;
-  /** Local tracker board directory (e.g. `.symphony/local`). Used when `kind === "local"`. */
-  path?: string | undefined;
-  /**
-   * Local tracker issue-id prefix (e.g. `"BOARD-"`, `"XXX-"`). Issue files are `<prefix><n>.md`
-   * and new ids are minted with this prefix. Defaults to `"BOARD-"`. Used when `kind === "local"`.
-   */
-  idPrefix?: string | undefined;
-  /** Slack channel IDs to watch for mentions. Used when `kind === "slack"`. */
-  channels?: string[] | undefined;
-  /**
-   * Slack user id of the bot/worker identity (e.g. `"U0123ABCD"`). When set, only messages that
-   * mention this user become candidate issues. When unset, any `<@U...>` mention is treated as a
-   * candidate (back-compat). Used when `kind === "slack"`.
-   */
-  botUserId?: string | undefined;
-  /** Slack emoji-name → workflow-state overrides (merged over defaults). */
-  emojiStates?: Record<string, string> | undefined;
   /** Tracker state names considered eligible for dispatch (case-insensitive match). */
   activeStates: string[];
   /** Tracker state names that mark an issue as finished; running agents on these issues are stopped and their workspaces cleaned up. */
   terminalStates: string[];
   dispatch: DispatchSettings;
+  /**
+   * Provider-specific settings, normalized and validated by the tracker provider registered
+   * for {@link kind}. Read through the provider package's typed accessor (e.g.
+   * `linearTrackerOptions(settings)`), never by key from core code.
+   */
+  options: Record<string, unknown>;
 }
 
 /**
@@ -241,11 +277,16 @@ export interface AgentSettings {
 }
 
 /**
- * Agent record selecting the Agent Client Protocol (ACP) executor, which drives an external
- * bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
+ * Per-kind agent record: how to run sessions for one entry of {@link Settings.agents}.
+ *
+ * `executor` selects the runtime driver by name and is open-ended - the supported set is
+ * whatever the composition root registered in its agent executor registry. The remaining
+ * fields are interpreted by that executor; today's built-in `"acp"` executor drives an
+ * external bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
  */
 export interface AgentConfig {
-  executor: "acp";
+  /** Runtime driver selector (e.g. `"acp"`), resolved through the agent executor registry. */
+  executor: string;
   /** Shell command launched per session (run via `bash -lc` in the workspace, or over SSH on remote workers). Also determines the provider config format: `claude-agent-acp` → `.claude/settings.local.json`, `codex-acp` → `.codex/config.toml`. */
   bridgeCommand: string;
   /** Shape of `PromptResponse.usage` emitted by this ACP bridge. Symphony always converts it to cumulative per-run totals before handing it to the orchestrator. */
@@ -258,58 +299,6 @@ export interface AgentConfig {
   stallTimeoutMs: number;
   /** When true, launch the bridge with only the MCP servers Symphony injected (no user-side MCP config). */
   strictMcpConfig?: boolean | undefined;
-}
-
-/**
- * Legacy top-level codex configuration section. Fields `turnTimeoutMs` and `stallTimeoutMs`
- * feed defaults into the `agents.codex` AgentConfig record. Remaining fields are retained
- * for backward compatibility with existing workflow YAML files but are not consumed at runtime.
- */
-export interface CodexSettings {
-  /** Shell command launched per session; invoked via `bash -lc` in the workspace directory. */
-  command: string;
-  /**
-   * Codex `AskForApproval` value. Either a named policy string (e.g. `"never"`, `"on-request"`)
-   * or a structured policy map.
-   */
-  approvalPolicy: CodexApprovalPolicyName | Record<string, unknown>;
-  /** Codex `SandboxMode` value applied to the whole thread, e.g. `"workspace-write"`, `"read-only"`, `"danger-full-access"`. */
-  threadSandbox: CodexSandboxMode;
-  /**
-   * Optional Codex `SandboxPolicy` override applied per turn. `null` falls back to a workspace-write
-   * policy scoped to the workspace directory with no network access.
-   */
-  turnSandboxPolicy: Record<string, unknown> | null;
-  /** Hard limit (ms) on a single Codex turn before it is treated as timed out. */
-  turnTimeoutMs: number;
-  /** Per-request read timeout (ms). Retained for config compatibility; not consumed at runtime. */
-  readTimeoutMs: number;
-  /** Inactivity window (ms) before a session with no events is force-aborted as stalled. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
-  /** Reasoning effort/summary configuration passed to `turn/start`. */
-  reasoning: CodexReasoning | null;
-}
-
-export interface CodexReasoning {
-  /** Summary detail level returned in reasoning items (e.g. `"concise"`, `"detailed"`, `"auto"`). */
-  summary: "concise" | "detailed" | "auto";
-}
-
-/**
- * Runtime knobs for the Claude Code backend, driven via an ACP bridge subprocess.
- * Mirrored into the `claude` entry of {@link Settings.agents} as an {@link AgentConfig}.
- */
-export interface ClaudeSettings {
-  /** Shell command for the Claude Code ACP bridge; invoked via `bash -lc` in the workspace. */
-  command: string;
-  /** Hard limit (ms) on a single Claude turn before it is force-cancelled. */
-  turnTimeoutMs: number;
-  /** Inactivity window (ms) before a stalled session is aborted. `<= 0` disables stall detection. */
-  stallTimeoutMs: number;
-  /** When true, launch Claude with only Symphony's injected MCP servers (ignore user MCP config). */
-  strictMcpConfig: boolean;
-  /** Provider-specific settings written to `.claude/settings.local.json` in the workspace. */
-  providerConfig?: Record<string, unknown> | undefined;
 }
 
 /**
@@ -416,20 +405,25 @@ export interface Settings {
   /**
    * Per-kind executor configuration keyed by agent kind (the same string used as
    * {@link AgentSettings.kind}). When an issue is dispatched to kind `K`, `agents[K]` is the
-   * source of truth for how to run the executor; the top-level `codex` / `claude` blocks are
-   * kept in sync for those two well-known kinds and act as convenience views.
+   * single source of truth for how to run the executor. The top-level `codex:` / `claude:`
+   * workflow sections are parse-time conveniences that merge into `agents.codex` /
+   * `agents.claude`; they do not exist at runtime.
    */
   agents: Record<string, AgentConfig>;
-  codex: CodexSettings;
-  claude: ClaudeSettings;
+  /**
+   * Tool packs mounted on the MCP endpoint, by pack name. When unset, the composition root
+   * mounts the provider-neutral `tracker` pack plus the dispatch tracker's own pack. Several
+   * packs can be mounted while a single tracker drives dispatch.
+   */
+  tools?: string[] | undefined;
   observability: ObservabilitySettings;
   server: ServerSettings;
   logging: LoggingSettings;
   /**
    * Partial settings layered on top of the base config while an issue sits in a given tracker
    * state. Keys are normalized state names (trimmed, lowercased, e.g. `"in progress"`); a
-   * matching entry's `agent` / `codex` / `claude` fragments are merged over the defaults for
-   * the duration of that issue's stay in the state.
+   * matching entry's `agent` scheduling fragment and per-kind `agents` record fragments are
+   * merged over the defaults for the duration of that issue's stay in the state.
    */
   statusOverrides: Map<string, PartialRuntimeSettings>;
 }
@@ -442,9 +436,21 @@ export interface Settings {
  */
 export interface PartialRuntimeSettings {
   agent?: Partial<AgentSettings> | undefined;
-  codex?: Partial<CodexSettings> | undefined;
-  claude?: Partial<ClaudeSettings> | undefined;
+  /** Per-kind overrides merged into the matching {@link Settings.agents} records. */
+  agents?: Record<string, Partial<AgentConfig>> | undefined;
 }
+
+export interface WorkflowContentStamp {
+  mtimeMs: number;
+  size: number;
+  contentHash: string;
+}
+
+/**
+ * Opaque parsed representation of a prompt template. Produced by workflow loading and
+ * consumed by prompt rendering so callers can avoid reparsing the same template.
+ */
+export type ParsedPromptTemplate = unknown[];
 
 /**
  * Parsed contents of a workflow file - a Markdown document with YAML front matter delimited
@@ -462,6 +468,10 @@ export interface WorkflowDefinition {
    * slot index and size. Empty bodies fall back to a built-in default.
    */
   promptTemplate: string;
+  /** Parsed form of the effective prompt template, cached for prompt rendering. */
+  parsedPromptTemplate?: ParsedPromptTemplate | undefined;
+  /** Last observed file stamp used to skip unchanged reload work. */
+  stamp?: WorkflowContentStamp | undefined;
   /** Normalized, validated runtime settings derived from `config` plus env. */
   settings: Settings;
 }
@@ -560,6 +570,10 @@ export interface UsageTotals {
   secondsRunning: number;
 }
 
+export type UsageTokenUpdate = Partial<
+  Pick<UsageTotals, "inputTokens" | "outputTokens" | "totalTokens">
+>;
+
 export type UsageUpdateKind = "cumulative" | "delta";
 
 /**
@@ -614,7 +628,7 @@ export interface AgentUpdateBase {
   executorPid?: string | null | undefined;
   timestamp?: Date | undefined;
   message?: unknown;
-  usage?: Partial<UsageTotals> | undefined;
+  usage?: UsageTokenUpdate | undefined;
   /** Whether usage fields are cumulative session high-water marks or per-update deltas. */
   usageKind?: UsageUpdateKind | undefined;
   rateLimits?: unknown;
@@ -655,17 +669,17 @@ export interface TurnStartedUpdate extends AgentUpdateBase {
 export interface TurnCompletedUpdate extends AgentUpdateBase {
   type: "turn_completed";
   message: { response: PromptResponse };
-  usage?: Partial<UsageTotals>;
+  usage?: UsageTokenUpdate;
 }
 export interface TurnCancelledUpdate extends AgentUpdateBase {
   type: "turn_cancelled";
   message: { response: PromptResponse };
-  usage?: Partial<UsageTotals>;
+  usage?: UsageTokenUpdate;
 }
 export interface TurnFailedUpdate extends AgentUpdateBase {
   type: "turn_failed";
   message: string | { response: PromptResponse };
-  usage?: Partial<UsageTotals>;
+  usage?: UsageTokenUpdate;
 }
 
 export interface ApprovalRequiredUpdate extends AgentUpdateBase {
@@ -752,7 +766,7 @@ export type TraceEvent = {
     issueIdentifier: string;
     timestamp: string | null;
     message: AgentUpdateMessage<K> | null;
-    usage: Partial<UsageTotals> | null;
+    usage: UsageTokenUpdate | null;
     workspacePath: string | null;
     sessionId: string | null;
     executorPid: string | null;

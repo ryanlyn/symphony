@@ -1,5 +1,5 @@
-import type { SessionNotification, ToolCallContent } from "@agentclientprotocol/sdk";
-import type { TraceEvent } from "@symphony/domain";
+import type { ToolCallContent } from "@agentclientprotocol/sdk";
+import { isRecord, type TraceEvent } from "@symphony/domain";
 
 import type { DisplayEvent, ToolCallDisplayEvent, TokenUsage } from "./models/display-events.js";
 
@@ -25,8 +25,8 @@ function parseLine(line: string): TraceEvent | null {
   if (!trimmed) return null;
   try {
     const obj: unknown = JSON.parse(trimmed);
-    if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return null;
-    const rec = obj as Record<string, unknown>;
+    if (!isRecord(obj)) return null;
+    const rec = obj;
     if (typeof rec.type !== "string") return null;
     if (!rec.issueId && !rec.issueIdentifier) return null;
     return rec as unknown as TraceEvent;
@@ -35,17 +35,66 @@ function parseLine(line: string): TraceEvent | null {
   }
 }
 
-function extractTextFromNotification(msg: SessionNotification): string {
-  const update = msg.update;
+function getSessionNotificationUpdate(message: unknown): Record<string, unknown> | null {
+  if (!isRecord(message)) return null;
+  const update = message.update;
+  return isRecord(update) ? update : null;
+}
+
+function extractTextFromUpdate(update: Record<string, unknown>): string {
   if (
     update.sessionUpdate === "agent_message_chunk" ||
     update.sessionUpdate === "user_message_chunk" ||
     update.sessionUpdate === "agent_thought_chunk"
   ) {
     const block = update.content;
-    if (block.type === "text") return block.text;
+    if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+      return block.text;
+    }
   }
   return "";
+}
+
+function getToolCallId(update: { toolCallId?: unknown }): string | null {
+  return typeof update.toolCallId === "string" && update.toolCallId.length > 0
+    ? update.toolCallId
+    : null;
+}
+
+function extractTextFromToolCallContent(content: ToolCallContent[]): string | null {
+  const texts = content
+    .map((item: unknown) => {
+      if (!isRecord(item)) return "";
+      if (item.type === "content") {
+        const block = item.content;
+        return isRecord(block) && block.type === "text" && typeof block.text === "string"
+          ? block.text
+          : "";
+      }
+      if (item.type === "terminal") {
+        return typeof item.output === "string" ? item.output : "";
+      }
+      return "";
+    })
+    .filter(Boolean);
+
+  return texts.join("\n") || null;
+}
+
+function displayEventTimestampMs(event: DisplayEvent): number {
+  const timestampMs = new Date(event.timestamp).getTime();
+  return Number.isNaN(timestampMs) ? Infinity : timestampMs;
+}
+
+function sortDisplayEventsChronologically(events: DisplayEvent[]): DisplayEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const timestampDiff =
+        displayEventTimestampMs(left.event) - displayEventTimestampMs(right.event);
+      return timestampDiff === 0 ? left.index - right.index : timestampDiff;
+    })
+    .map(({ event }) => event);
 }
 
 /**
@@ -69,6 +118,16 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
     }
   }
 
+  function consumeLatestTurnStart(): void {
+    for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
+      const record = turnStartedRecords[i];
+      if (record !== undefined && !record.consumed) {
+        record.consumed = true;
+        break;
+      }
+    }
+  }
+
   for (const line of lines) {
     const raw = parseLine(line);
     if (!raw) continue;
@@ -77,12 +136,11 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
     switch (raw.type) {
       case "session_notification": {
-        const msg = raw.message;
-        if (!msg || !("update" in msg)) break;
-        const update = msg.update;
+        const update = getSessionNotificationUpdate(raw.message);
+        if (!update) break;
         const sessionUpdate = update.sessionUpdate;
         if (sessionUpdate === "agent_message_chunk" || sessionUpdate === "user_message_chunk") {
-          const text = extractTextFromNotification(msg);
+          const text = extractTextFromUpdate(update);
           if (text) {
             if (pendingText && pendingText.kind === "message") {
               pendingText.text += text;
@@ -92,7 +150,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             }
           }
         } else if (sessionUpdate === "agent_thought_chunk") {
-          const text = extractTextFromNotification(msg);
+          const text = extractTextFromUpdate(update);
           if (text) {
             if (pendingText && pendingText.kind === "thought") {
               pendingText.text += text;
@@ -102,10 +160,16 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             }
           }
         } else if (sessionUpdate === "tool_call") {
+          const id = getToolCallId(update);
+          if (!id) break;
           flushPendingText();
-          const name = update.title ?? (update.kind as string) ?? "unknown";
-          const id = update.toolCallId ?? "";
-          const input = (update.rawInput as Record<string, unknown>) ?? {};
+          const name =
+            typeof update.title === "string"
+              ? update.title
+              : typeof update.kind === "string"
+                ? update.kind
+                : "unknown";
+          const input = isRecord(update.rawInput) ? update.rawInput : {};
 
           const toolCall: ToolCallDisplayEvent = {
             kind: "tool_call",
@@ -119,7 +183,8 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
           };
           pendingToolCalls.set(id, { event: toolCall, toolUseId: id, startTs: ts });
         } else if (sessionUpdate === "tool_call_update") {
-          const toolUseId = update.toolCallId ?? "";
+          const toolUseId = getToolCallId(update);
+          if (!toolUseId) break;
           const status = update.status;
 
           if (status === "completed" || status === "failed") {
@@ -129,25 +194,13 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
             } else if (update.rawOutput != null) {
               output = JSON.stringify(update.rawOutput);
             } else {
-              const content = update.content as Array<ToolCallContent> | undefined;
-              if (content && content.length > 0) {
-                const texts = content
-                  .map((c) => {
-                    if (c.type === "content") {
-                      const block = c.content;
-                      return block.type === "text" ? block.text : "";
-                    }
-                    if (c.type === "terminal") {
-                      return ((c as Record<string, unknown>).output as string) ?? "";
-                    }
-                    return "";
-                  })
-                  .filter(Boolean);
-                output = texts.join("\n") || null;
+              const content = update.content;
+              if (Array.isArray(content) && content.length > 0) {
+                output = extractTextFromToolCallContent(content as ToolCallContent[]);
               }
             }
             const isError = status === "failed";
-            const pending = toolUseId ? pendingToolCalls.get(toolUseId) : undefined;
+            const pending = pendingToolCalls.get(toolUseId);
             if (pending) {
               pendingToolCalls.delete(toolUseId);
               const toolCallEvent = pending.event;
@@ -159,6 +212,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               const endMs = new Date(ts).getTime();
               toolCallEvent.durationMs =
                 Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+              toolCallEvent.timestamp = ts;
               events.push(toolCallEvent);
             } else {
               events.push({
@@ -223,20 +277,29 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
         break;
       }
 
-      case "turn_failed":
-      case "turn_cancelled": {
+      case "turn_failed": {
         flushPendingText();
-        for (let i = turnStartedRecords.length - 1; i >= 0; i--) {
-          const record = turnStartedRecords[i];
-          if (record !== undefined && !record.consumed) {
-            record.consumed = true;
-            break;
-          }
-        }
+        consumeLatestTurnStart();
         const msg = raw.message;
         events.push({
           kind: "turn_failed",
           text: `Turn ${raw.type}: ${typeof msg === "string" ? msg : JSON.stringify(msg ?? "")}`,
+          timestamp: ts,
+        });
+        break;
+      }
+
+      case "turn_cancelled": {
+        flushPendingText();
+        consumeLatestTurnStart();
+        const response = isRecord(raw.message) ? raw.message.response : null;
+        const stopReason = isRecord(response) ? response.stopReason : null;
+        events.push({
+          kind: "turn_failed",
+          text:
+            typeof stopReason === "string" && stopReason.length > 0
+              ? `Turn cancelled: ${stopReason}`
+              : "Turn cancelled",
           timestamp: ts,
         });
         break;
@@ -268,12 +331,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
   flushPendingText();
 
-  // Flush any remaining pending tool calls that never got a result
-  for (const [, pending] of pendingToolCalls) {
-    events.push(pending.event);
-  }
-
-  return events;
+  return sortDisplayEventsChronologically(events);
 }
 
 export interface TicketMetadata {

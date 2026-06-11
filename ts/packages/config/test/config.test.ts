@@ -5,15 +5,48 @@ import path from "node:path";
 import { test } from "vitest";
 import {
   loadWorkflow,
-  parseConfig,
+  parseConfig as parseConfigWith,
   parseWorkflowContent,
   settingsForIssueState,
-  validateDispatchConfig,
+  validateDispatchConfig as validateDispatchConfigWith,
   workflowFilePath,
 } from "@symphony/cli";
+import { acpExecutorProvider } from "@symphony/acp";
+import { AgentExecutorRegistry } from "@symphony/agent-sdk";
+import type { Settings } from "@symphony/domain";
+import { jiraTrackerOptions, registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
+import { ToolRegistry } from "@symphony/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
+import { assert, tempDir } from "@symphony/test-utils";
 
-import { assert } from "../../../test/assert.js";
-import { tempDir } from "../../../test/helpers.js";
+import type { DefaultSettingsOptions } from "@symphony/config";
+
+// Private registries keep these tests hermetic: the process-wide default registries belong
+// to the composition root and stay untouched here.
+const trackers = new TrackerRegistry();
+const tools = new ToolRegistry();
+registerLinearTracker({ trackers, tools });
+registerLocalTracker({ trackers, tools });
+registerMemoryTracker({ trackers });
+registerJiraTrackers({ trackers });
+tools.register(createTrackerToolProvider(trackers));
+const executors = new AgentExecutorRegistry();
+executors.register(acpExecutorProvider);
+
+function parseConfig(
+  raw: Record<string, unknown> = {},
+  env: NodeJS.ProcessEnv = {},
+  defaults: DefaultSettingsOptions = {},
+): Settings {
+  return parseConfigWith(raw, env, defaults, trackers);
+}
+
+function validateDispatchConfig(settings: Settings, tools?: ToolRegistry): void {
+  validateDispatchConfigWith(settings, trackers, executors, tools);
+}
 
 test("config resolves env-backed Linear token and assignee", () => {
   const settings = parseConfig(
@@ -103,10 +136,49 @@ test("config resolves op:// references from env var fallback", async () => {
   await fs.chmod(opScript, 0o755);
 
   const settings = parseConfig(
-    {},
+    { tracker: { kind: "linear" } },
     { LINEAR_API_KEY: "op://vault/item/key", PATH: `${root}:${process.env.PATH}` },
   );
   assert.equal(settings.tracker.apiKey, "env-secret");
+});
+
+test("non-Linear tracker configs ignore Linear secret env fallbacks", () => {
+  for (const kind of ["local", "memory"] as const) {
+    const settings = parseConfig(
+      { tracker: { kind } },
+      {
+        LINEAR_API_KEY: "op://vault/item/key",
+        LINEAR_ASSIGNEE: "op://vault/item/assignee",
+        PATH: "/nonexistent",
+      },
+    );
+    assert.equal(settings.tracker.kind, kind);
+    assert.equal(settings.tracker.apiKey, undefined);
+    assert.equal(settings.tracker.assignee, undefined);
+  }
+});
+
+test("non-Linear tracker configs still resolve explicitly configured secrets", async () => {
+  const root = await tempDir("symphony-op-mock");
+  const opScript = path.join(root, "op");
+  await fs.writeFile(
+    opScript,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.0.0"; else echo "resolved-secret"; fi\n',
+  );
+  await fs.chmod(opScript, 0o755);
+
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "local",
+        api_key: "op://vault/item/key",
+        assignee: "op://vault/item/assignee",
+      },
+    },
+    { PATH: `${root}:${process.env.PATH}` },
+  );
+  assert.equal(settings.tracker.apiKey, "resolved-secret");
+  assert.equal(settings.tracker.assignee, "resolved-secret");
 });
 
 test("config throws when op:// reference used but op CLI not installed", () => {
@@ -120,6 +192,7 @@ test("config falls back to canonical env vars when explicit env refs resolve emp
   const settings = parseConfig(
     {
       tracker: {
+        kind: "linear",
         api_key: "$EMPTY_TOKEN",
         assignee: "$EMPTY_ASSIGNEE",
       },
@@ -136,13 +209,128 @@ test("config falls back to canonical env vars when explicit env refs resolve emp
   assert.equal(settings.tracker.assignee, "fallback@example.com");
 });
 
-test("config defaults and validation match Elixir parity", () => {
+test("jira tracker config resolves canonical env fallbacks", () => {
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira",
+        project_keys: ["ENG"],
+      },
+    },
+    {
+      JIRA_BASE_URL: "https://example.atlassian.net",
+      JIRA_EMAIL: "bot@example.com",
+      JIRA_API_KEY: "jira-token",
+    },
+  );
+
+  const options = jiraTrackerOptions(settings);
+  assert.equal(options.baseUrl, "https://example.atlassian.net");
+  assert.equal(options.email, "bot@example.com");
+  assert.equal(settings.tracker.apiKey, "jira-token");
+  assert.deepEqual(options.projectKeys, ["ENG"]);
+  validateDispatchConfig(settings);
+});
+
+test("jira tracker options reject wrong types with tracker.<key> messages", () => {
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "jira", base_url: 5 } }),
+    /tracker.baseUrl must be a string/,
+  );
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "jira", project_keys: "ENG" } }),
+    /tracker.projectKeys must be a list of strings/,
+  );
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "jira", issue_type: "Task", surprise: true } }),
+    /unsupported tracker option\(s\) for kind "jira": surprise/,
+  );
+});
+
+test("jira-mcp tracker config parses MCP settings and tool aliases", () => {
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira-mcp",
+        project_keys: ["ENG"],
+        mcp: {
+          url: "http://127.0.0.1:5123/mcp",
+          token: "$MCP_TOKEN",
+          tools: {
+            read_issue: "jira_get",
+            update_status: "jira_transition",
+            create_issue: "jira_create",
+          },
+        },
+      },
+    },
+    { MCP_TOKEN: "mcp-token" },
+  );
+
+  const options = jiraTrackerOptions(settings);
+  assert.equal(options.mcp?.url, "http://127.0.0.1:5123/mcp");
+  assert.equal(options.mcp?.token, "mcp-token");
+  assert.equal(options.mcp?.tools?.readIssue, "jira_get");
+  assert.equal(options.mcp?.tools?.updateStatus, "jira_transition");
+  assert.equal(options.mcp?.tools?.createIssue, "jira_create");
+  validateDispatchConfig(settings);
+});
+
+test("config defaults and validation match expected defaults", () => {
   const settings = parseConfig({}, {});
 
   assert.equal(settings.tracker.kind, undefined);
-  assert.deepEqual(settings.claude.providerConfig, { permissions: { defaultMode: "dontAsk" } });
+  assert.deepEqual(settings.agents.claude.providerConfig, {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
   assert.equal(settings.observability.renderIntervalMs, 16);
   assert.throws(() => validateDispatchConfig(settings), /tracker.kind is required/);
+});
+
+test("claude.model overrides the pinned model in the provider config", () => {
+  const settings = parseConfig({ claude: { model: "claude-haiku-4-5" } });
+
+  assert.deepEqual(settings.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
+});
+
+test("claude provider_config without a model key picks up claude.model", () => {
+  const settings = parseConfig({
+    claude: {
+      model: "claude-haiku-4-5",
+      provider_config: { permissions: { defaultMode: "acceptEdits" } },
+    },
+  });
+
+  assert.deepEqual(settings.agents.claude.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "acceptEdits" },
+  });
+});
+
+test("explicit claude provider_config model wins over claude.model", () => {
+  const settings = parseConfig({
+    claude: { provider_config: { model: "claude-sonnet-4-6" } },
+  });
+
+  assert.deepEqual(settings.agents.claude.providerConfig, { model: "claude-sonnet-4-6" });
+});
+
+test("status override of claude.model re-pins the provider config", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      "In Review": { claude: { model: "claude-haiku-4-5" } },
+    },
+  });
+
+  const effective = settingsForIssueState(settings, "In Review");
+  assert.deepEqual(effective.agents.claude?.providerConfig, {
+    model: "claude-haiku-4-5",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde paths", () => {
@@ -263,6 +451,11 @@ test("workspace root falls back to default when env reference is unset or empty"
   assert.equal(override.workspace.rootExpression, fallback);
 });
 
+test("server.host falls back to loopback when configured as an empty string", () => {
+  const settings = parseConfig({ server: { host: "" } });
+  assert.equal(settings.server.host, "127.0.0.1");
+});
+
 test("dispatch config rejects blank routes and normalizes unique route names", () => {
   assert.throws(
     () => parseConfig({ tracker: { dispatch: { only_routes: ["backend", " "] } } }),
@@ -277,40 +470,33 @@ test("dispatch config rejects blank routes and normalizes unique route names", (
   );
 });
 
-test("Codex sandbox config rejects non-parity shapes", () => {
-  assert.throws(
-    () => parseConfig({ codex: { turn_sandbox_policy: "workspace-write" } }),
-    /codex.turn_sandbox_policy must be a map/,
-  );
-  assert.throws(
-    () => parseConfig({ codex: { thread_sandbox: { type: "workspaceWrite" } } }),
-    /codex.thread_sandbox must be a string/,
-  );
-
-  assert.equal(parseConfig().codex.turnSandboxPolicy, null);
-});
-
-test("config validates literal-only backend, approval, and sandbox names", () => {
+test("config validates literal-only backend names and rejects removed Codex keys", () => {
   const settings = parseConfig({
     tracker: { kind: "memory" },
-    codex: { approval_policy: "never", thread_sandbox: "danger-full-access" },
   });
 
   assert.equal(settings.tracker.kind, "memory");
-  assert.equal(settings.codex.approvalPolicy, "never");
-  assert.equal(settings.codex.threadSandbox, "danger-full-access");
 
   assert.throws(
-    () => parseConfig({ tracker: { kind: "github" } }),
-    /unsupported tracker.kind: github/,
+    () => validateDispatchConfig(parseConfig({ tracker: { kind: "github" } })),
+    /unsupported tracker.kind: github \(known kinds: jira, jira-mcp, linear, local, memory\)/,
   );
   assert.throws(
-    () => parseConfig({ codex: { approval_policy: "ask-always" } }),
-    /unsupported codex.approval_policy: ask-always/,
+    () =>
+      validateDispatchConfigWith(
+        parseConfig({ tracker: { kind: "github" } }),
+        new TrackerRegistry(),
+        executors,
+      ),
+    /unsupported tracker.kind: github \(no tracker providers registered - register tracker extensions at the composition root\)/,
+  );
+  assert.throws(
+    () => parseConfig({ codex: { approval_policy: "never" } }),
+    /codex contains unsupported keys: approval_policy/,
   );
   assert.throws(
     () => parseConfig({ codex: { thread_sandbox: "workspaceWrite" } }),
-    /unsupported codex.thread_sandbox: workspaceWrite/,
+    /codex contains unsupported keys: thread_sandbox/,
   );
   assert.throws(
     () =>
@@ -319,7 +505,7 @@ test("config validates literal-only backend, approval, and sandbox names", () =>
           Todo: { codex: { thread_sandbox: "workspaceWrite" } },
         },
       }),
-    /unsupported status_overrides\.\*\.codex\.thread_sandbox: workspaceWrite/,
+    /status_overrides.todo.codex contains unsupported keys: thread_sandbox/,
   );
 });
 
@@ -335,6 +521,7 @@ test("agents map overrides known runtime settings via ACP records", () => {
       codex: {
         bridge_command: "codex-custom",
         turn_timeout_ms: 120_000,
+        stall_timeout_ms: 42_000,
       },
       claude: {
         bridge_command: "claude-agent-acp",
@@ -350,8 +537,14 @@ test("agents map overrides known runtime settings via ACP records", () => {
 
   assert.equal(settings.agents.codex.bridgeCommand, "codex-custom");
   assert.equal(settings.agents.codex.turnTimeoutMs, 120_000);
-  assert.equal(settings.claude.command, "claude-agent-acp");
-  assert.deepEqual(settings.claude.providerConfig, { permissions: { defaultMode: "acceptEdits" } });
+  assert.equal(settings.agents.codex.stallTimeoutMs, 42_000);
+  assert.equal(settings.agents.codex.bridgeCommand, "codex-custom");
+  assert.equal(settings.agents.codex.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.codex.stallTimeoutMs, 42_000);
+  assert.equal(settings.agents.claude.bridgeCommand, "claude-agent-acp");
+  assert.deepEqual(settings.agents.claude.providerConfig, {
+    permissions: { defaultMode: "acceptEdits" },
+  });
   assert.deepEqual(settings.agents.pi, {
     executor: "acp",
     bridgeCommand: "pi-acp",
@@ -367,12 +560,20 @@ test("custom ACP agents default to cumulative usage unless using a known per-tur
   const settings = parseConfig({
     agents: {
       pi: { bridge_command: "pi-acp" },
+      codex_alias: { bridge_command: "codex-acp" },
       claude_alias: { bridge_command: "claude-agent-acp" },
     },
   });
 
   assert.equal(settings.agents.pi.usageAccounting, "cumulative");
+  assert.equal(settings.agents.pi.providerConfig, undefined);
+  assert.equal(settings.agents.codex_alias.usageAccounting, "per-turn");
+  assert.equal(settings.agents.codex_alias.providerConfig, undefined);
   assert.equal(settings.agents.claude_alias.usageAccounting, "per-turn");
+  assert.deepEqual(settings.agents.claude_alias.providerConfig, {
+    model: "claude-opus-4-6[1m]",
+    permissions: { defaultMode: "dontAsk" },
+  });
 });
 
 test("agents map accepts shared timeout defaults with legacy per-agent overrides", () => {
@@ -394,8 +595,8 @@ test("agents map accepts shared timeout defaults with legacy per-agent overrides
   assert.equal(settings.agents.codex.stallTimeoutMs, 0);
   assert.equal(settings.agents.claude.turnTimeoutMs, 120_000);
   assert.equal(settings.agents.claude.stallTimeoutMs, 5_000);
-  assert.equal(settings.claude.turnTimeoutMs, 120_000);
-  assert.equal(settings.claude.stallTimeoutMs, 5_000);
+  assert.equal(settings.agents.claude.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 5_000);
   assert.equal(settings.agents.pi.turnTimeoutMs, 90_000);
   assert.equal(settings.agents.pi.stallTimeoutMs, 0);
 });
@@ -438,6 +639,21 @@ test("dispatch validation requires configured agents for active and override sta
   );
 });
 
+test("top-level tools selects tool packs and is validated against the registry", () => {
+  assert.equal(parseConfig({ tracker: { kind: "memory" } }).tools, undefined);
+
+  const settings = parseConfig({ tracker: { kind: "memory" }, tools: ["tracker", "local"] });
+  assert.deepEqual(settings.tools, ["tracker", "local"]);
+
+  validateDispatchConfig(settings, tools);
+
+  const unknown = parseConfig({ tracker: { kind: "memory" }, tools: ["surprise"] });
+  assert.throws(
+    () => validateDispatchConfig(unknown, tools),
+    /unsupported tool pack: surprise \(known tool packs: linear, local, tracker\)/,
+  );
+});
+
 test("undocumented top-level compatibility keys are ignored", () => {
   const settings = parseConfig({
     tracker_kind: "memory",
@@ -449,7 +665,7 @@ test("undocumented top-level compatibility keys are ignored", () => {
 
   assert.equal(settings.tracker.kind, undefined);
   assert.equal(settings.agent.maxTurns, 20);
-  assert.equal(settings.codex.command, "codex-acp");
+  assert.equal(settings.agents.codex.bridgeCommand, "codex-acp");
   assert.notEqual(settings.workspace.root, "/tmp/legacy-root");
   assert.equal(settings.hooks.beforeRun, null);
 });
@@ -460,7 +676,7 @@ test("known workflow sections reject unsupported nested keys after alias normali
       parseConfig({
         tracker: { kind: "memory", project_slug: "mono", surprise: true },
       }),
-    /tracker contains unsupported keys: surprise/,
+    /unsupported tracker option\(s\) for kind "memory": project_slug, surprise/,
   );
 
   assert.throws(
@@ -472,12 +688,12 @@ test("known workflow sections reject unsupported nested keys after alias normali
   );
 });
 
-test("status overrides normalize state names and deep merge Codex policy maps", () => {
+test("status overrides normalize state names and merge backend timeout settings", () => {
   const settings = parseConfig({
     status_overrides: {
       "In Progress": {
         agent: { kind: "claude", max_turns: 5 },
-        codex: { approval_policy: { reject: { rules: false } } },
+        codex: { turn_timeout_ms: 120_000 },
       },
     },
   });
@@ -485,13 +701,29 @@ test("status overrides normalize state names and deep merge Codex policy maps", 
   const effective = settingsForIssueState(settings, "in progress");
   assert.equal(effective.agent.kind, "claude");
   assert.equal(effective.agent.maxTurns, 5);
-  assert.deepEqual(effective.codex.approvalPolicy, {
-    reject: {
-      sandbox_approval: true,
-      rules: false,
-      mcp_elicitations: true,
+  assert.equal(effective.agents.codex.turnTimeoutMs, 120_000);
+});
+
+test("status overrides rederive agents timeout records from overridden backend blocks", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      Todo: {
+        codex: { turn_timeout_ms: 120_000, stall_timeout_ms: 45_000 },
+        claude: { turn_timeout_ms: 180_000, stall_timeout_ms: 60_000 },
+      },
     },
   });
+
+  const effective = settingsForIssueState(settings, "todo");
+
+  assert.equal(effective.agents.codex.turnTimeoutMs, 120_000);
+  assert.equal(effective.agents.codex.stallTimeoutMs, 45_000);
+  assert.equal(effective.agents.codex?.turnTimeoutMs, 120_000);
+  assert.equal(effective.agents.codex?.stallTimeoutMs, 45_000);
+  assert.equal(effective.agents.claude.turnTimeoutMs, 180_000);
+  assert.equal(effective.agents.claude.stallTimeoutMs, 60_000);
+  assert.equal(effective.agents.claude?.turnTimeoutMs, 180_000);
+  assert.equal(effective.agents.claude?.stallTimeoutMs, 60_000);
 });
 
 test("dispatch validation preflights backend commands reachable through status overrides", () => {
@@ -531,7 +763,11 @@ test("config rejects empty strings and booleans for typed fields", () => {
     () => parseConfig({ observability: { dashboard_enabled: "" } }),
     /expected a boolean/,
   );
-  assert.throws(() => parseConfig({ tracker: { kind: "" } }), /unsupported tracker.kind/);
+  // A blank kind parses as "unset" and is rejected when dispatch is validated.
+  assert.throws(
+    () => validateDispatchConfig(parseConfig({ tracker: { kind: "" } })),
+    /tracker.kind is required/,
+  );
 });
 
 test("stall_timeout_ms=0 is accepted as a valid value at top-level and in status overrides", () => {
@@ -546,12 +782,12 @@ test("stall_timeout_ms=0 is accepted as a valid value at top-level and in status
     },
   });
 
-  assert.equal(settings.codex.stallTimeoutMs, 0);
-  assert.equal(settings.claude.stallTimeoutMs, 0);
+  assert.equal(settings.agents.codex.stallTimeoutMs, 0);
+  assert.equal(settings.agents.claude.stallTimeoutMs, 0);
 
   const effective = settingsForIssueState(settings, "Todo");
-  assert.equal(effective.codex.stallTimeoutMs, 0);
-  assert.equal(effective.claude.stallTimeoutMs, 0);
+  assert.equal(effective.agents.codex.stallTimeoutMs, 0);
+  assert.equal(effective.agents.claude.stallTimeoutMs, 0);
 });
 
 test("hooks accept explicit null as disabled", () => {
@@ -580,8 +816,15 @@ test("config reports useful errors for list fields and agent executors", () => {
     /worker.ssh_hosts must be a list of strings/,
   );
   assert.throws(
-    () => parseConfig({ agents: { pi: { executor: "foo" } } }),
-    /unsupported agents\.pi\.executor/,
+    () =>
+      validateDispatchConfig(
+        parseConfig({
+          tracker: { kind: "memory" },
+          agent: { kind: "pi" },
+          agents: { pi: { executor: "foo", bridge_command: "pi-bridge" } },
+        }),
+      ),
+    /unsupported agents\.pi\.executor: foo \(known executors: acp\)/,
   );
 });
 
@@ -620,17 +863,18 @@ test("status overrides reject legacy per-state map and unknown sections", () => 
 test("copied workflow examples load independently in the TypeScript port", async () => {
   const root = path.resolve("..");
   for (const name of ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"]) {
-    const workflow = await loadWorkflow(path.join(root, "ts", name), {
-      LINEAR_API_KEY: "test-token",
-      LINEAR_ASSIGNEE: "worker@example.com",
-    });
+    const workflow = await loadWorkflow(
+      path.join(root, "ts", name),
+      { LINEAR_API_KEY: "test-token", LINEAR_ASSIGNEE: "worker@example.com" },
+      { trackers },
+    );
     assert.equal(workflow.settings.tracker.dispatch.acceptUnrouted, true);
     assert.equal(workflow.settings.tracker.dispatch.routeLabelPrefix, "Symphony:");
     assert.ok(workflow.promptTemplate.length > 100);
   }
 });
 
-test("workflow path defaults match Elixir SYMPHONY_WORKFLOW then cwd WORKFLOW.md", async () => {
+test("workflow path defaults match SYMPHONY_WORKFLOW then cwd WORKFLOW.md", async () => {
   const root = await tempDir("symphony-ts-workflow-env");
   const workflowPath = path.join(root, "CUSTOM_WORKFLOW.md");
   await fs.writeFile(workflowPath, "plain prompt");
@@ -638,10 +882,11 @@ test("workflow path defaults match Elixir SYMPHONY_WORKFLOW then cwd WORKFLOW.md
   assert.equal(workflowFilePath({ SYMPHONY_WORKFLOW: workflowPath }, root), workflowPath);
   assert.equal(workflowFilePath({}, root), path.join(root, "WORKFLOW.md"));
 
-  const workflow = await loadWorkflow(undefined, {
-    SYMPHONY_WORKFLOW: workflowPath,
-    LINEAR_API_KEY: "test-token",
-  });
+  const workflow = await loadWorkflow(
+    undefined,
+    { SYMPHONY_WORKFLOW: workflowPath, LINEAR_API_KEY: "test-token" },
+    { trackers },
+  );
   assert.equal(workflow.path, workflowPath);
   assert.deepEqual(workflow.config, {});
   assert.equal(workflow.promptTemplate, "plain prompt");
@@ -652,7 +897,7 @@ test("workflow path defaults match Elixir SYMPHONY_WORKFLOW then cwd WORKFLOW.md
   );
 });
 
-test("workflow parsing treats front matter as optional like Elixir", () => {
+test("workflow parsing treats front matter as optional", () => {
   assert.deepEqual(parseWorkflowContent(" plain prompt\n"), {
     config: {},
     body: "plain prompt",
@@ -689,15 +934,15 @@ test("parses local tracker config with path", () => {
     {},
   );
   assert.equal(settings.tracker.kind, "local");
-  assert.equal(settings.tracker.path, ".symphony/local");
+  assert.equal(settings.tracker.options.path, ".symphony/local");
 });
 
 test("local tracker id_prefix defaults to BOARD- and can be overridden", () => {
   const def = parseConfig({ tracker: { kind: "local" } }, {});
-  assert.equal(def.tracker.idPrefix, "BOARD-");
+  assert.equal(def.tracker.options.idPrefix, "BOARD-");
 
   const custom = parseConfig({ tracker: { kind: "local", id_prefix: "XXX-" } }, {});
-  assert.equal(custom.tracker.idPrefix, "XXX-");
+  assert.equal(custom.tracker.options.idPrefix, "XXX-");
 });
 
 test("an unsafe id_prefix is rejected at config parse", () => {
@@ -808,7 +1053,7 @@ test("config validation accepts project_slugs as an alternative to project_slug"
     {},
   );
 
-  assert.deepEqual(settings.tracker.projectSlugs, ["slug-a", "slug-b"]);
+  assert.deepEqual(settings.tracker.options.projectSlugs, ["slug-a", "slug-b"]);
   validateDispatchConfig(settings);
 });
 
@@ -827,7 +1072,7 @@ test("config validation accepts project_labels as an alternative to project_slug
     {},
   );
 
-  assert.deepEqual(settings.tracker.projectLabels, ["team:backend"]);
+  assert.deepEqual(settings.tracker.options.projectLabels, ["team:backend"]);
   validateDispatchConfig(settings);
 });
 

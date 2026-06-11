@@ -36,6 +36,12 @@
     },
     {
       "path": "../retry-scheduler"
+    },
+    {
+      "path": "../runtime-events"
+    },
+    {
+      "path": "../workflow"
     }
   ]
 }

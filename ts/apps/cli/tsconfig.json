@@ -17,6 +17,9 @@
       "path": "../../packages/agent-runner"
     },
     {
+      "path": "../../packages/agent-sdk"
+    },
+    {
       "path": "../../packages/cli-kit"
     },
     {
@@ -32,19 +35,25 @@
       "path": "../../packages/humanize"
     },
     {
-      "path": "../../packages/ssh"
-    },
-    {
-      "path": "../../packages/workspace"
-    },
-    {
       "path": "../../packages/issue"
+    },
+    {
+      "path": "../../extensions/jira-tracker"
+    },
+    {
+      "path": "../../extensions/linear-tracker"
+    },
+    {
+      "path": "../../extensions/local-tracker"
     },
     {
       "path": "../../packages/log-file"
     },
     {
       "path": "../../packages/mcp"
+    },
+    {
+      "path": "../../extensions/memory-tracker"
     },
     {
       "path": "../../packages/orchestrator"
@@ -74,13 +83,16 @@
       "path": "../../packages/server"
     },
     {
-      "path": "../../packages/linear-tracker"
+      "path": "../../packages/ssh"
     },
     {
-      "path": "../../packages/local-tracker"
+      "path": "../../packages/tool-sdk"
     },
     {
-      "path": "../../packages/memory-tracker"
+      "path": "../../packages/traceviz-emitter"
+    },
+    {
+      "path": "../../packages/tracker-sdk"
     },
     {
       "path": "../../packages/slack-tracker"
@@ -90,6 +102,9 @@
     },
     {
       "path": "../../packages/workflow"
+    },
+    {
+      "path": "../../packages/workspace"
     }
   ]
 }

@@ -1,6 +1,7 @@
 import os from "node:os";
 
-import { Executor } from "@symphony/acp";
+import { acpExecutorProvider } from "@symphony/acp";
+import { defaultAgentExecutorRegistry, type AgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
@@ -9,6 +10,10 @@ import {
 } from "@symphony/agent-runner";
 import type { DefaultSettingsOptions } from "@symphony/config";
 import type { RuntimeTrackerClient, Settings } from "@symphony/domain";
+import { registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { createWorkspaceForIssue, removeIssueWorkspaces, runHook } from "@symphony/workspace";
 import { appendLogEvent } from "@symphony/log-file";
 import {
@@ -17,54 +22,66 @@ import {
   resumeStateMatches,
   writeResumeState,
 } from "@symphony/resume-state";
-import { LinearClient } from "@symphony/linear-tracker";
-import { LocalTrackerClient } from "@symphony/local-tracker";
-import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
-import { SlackTrackerClient, SlackWebTransport } from "@symphony/slack-tracker";
+import { defaultToolRegistry, type ToolRegistry } from "@symphony/tool-sdk";
+import {
+  createTrackerToolProvider,
+  defaultTrackerRegistry,
+  type TrackerRegistry,
+} from "@symphony/tracker-sdk";
+
+export interface BackendRegistries {
+  trackers?: TrackerRegistry | undefined;
+  tools?: ToolRegistry | undefined;
+  executors?: AgentExecutorRegistry | undefined;
+}
+
+/**
+ * Composition root: the CLI decides which extensions and agent executors this binary
+ * supports. Each extension registers itself; the CLI only lists them here. Everything
+ * downstream (config parsing, dispatch validation, MCP tools, executor selection)
+ * resolves through the registries. Called from every CLI entrypoint before config is
+ * parsed; idempotent so entrypoints and tests can call it freely.
+ */
+export function registerBuiltinBackends(registries: BackendRegistries = {}): void {
+  const trackers = registries.trackers ?? defaultTrackerRegistry;
+  const tools = registries.tools ?? defaultToolRegistry;
+  const executors = registries.executors ?? defaultAgentExecutorRegistry;
+
+  registerLinearTracker({ trackers, tools });
+  registerLocalTracker({ trackers, tools });
+  registerMemoryTracker({ trackers });
+  registerJiraTrackers({ trackers });
+  if (tools.get("tracker") === undefined) {
+    tools.register(createTrackerToolProvider(trackers));
+  }
+  if (executors.get(acpExecutorProvider.executor) === undefined) {
+    executors.register(acpExecutorProvider);
+  }
+}
 
 export function runtimeDefaultSettingsOptions(): DefaultSettingsOptions {
   return { tmpdir: os.tmpdir() };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unhandled tracker kind: ${String(value)}`);
 }
 
 export function createTrackerClient(
   settings: Settings,
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimeTrackerClient {
-  const kind = settings.tracker.kind;
-  if (kind === undefined) throw new Error("tracker.kind is required");
-  switch (kind) {
-    case "memory":
-      return new MemoryTrackerClient(memoryIssuesFromEnv(env));
-    case "linear": {
-      const client = new LinearClient(settings);
-      // Resolve project slugs (e.g. from project_labels) in the background; from origin/main.
-      void client.resolveProjectSlugs();
-      return client;
-    }
-    case "local":
-      return new LocalTrackerClient(settings);
-    case "slack":
-      return new SlackTrackerClient(settings, new SlackWebTransport(settings));
-    default:
-      return assertNever(kind);
-  }
+  return defaultTrackerRegistry.require(settings.tracker.kind).createClient(settings, { env });
 }
 
-export function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
+function createRunAgentAttemptAdapters(): RunAgentAttemptAdapters {
   return {
     createWorkspaceForIssue,
     runHook,
     readResumeState,
     resumeStateMatches,
     writeResumeState,
-    executorFactory: (settings) => {
-      const agent = settings.agents[settings.agent.kind];
-      if (!agent) throw new Error(`agents.${settings.agent.kind} is required`);
-      return new Executor(settings.agent.kind);
+    executorFactory: async (settings) => {
+      const kind = settings.agent.kind;
+      const agent = settings.agents[kind];
+      if (!agent) throw new Error(`agents.${kind} is required`);
+      return defaultAgentExecutorRegistry.require(agent.executor).createExecutor(kind, settings);
     },
   };
 }

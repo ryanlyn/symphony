@@ -68,6 +68,16 @@ export interface LinearSandboxScenario {
   maxConcurrentAgents?: number;
   /** Assertions to check after scenario completes. */
   assertions?: Assertion[];
+  /** Optional hook invoked after each poll tick, before the inter-tick delay. */
+  afterPoll?: (context: LinearSandboxPollHookContext) => Promise<void> | void;
+}
+
+export interface LinearSandboxPollHookContext {
+  tick: number;
+  ctx: LinearSandboxContext;
+  createdIssues: Issue[];
+  snapshots: RuntimeSnapshot[];
+  events: RuntimeEvent[];
 }
 
 export interface LinearSandboxResult {
@@ -115,10 +125,7 @@ export async function setupLinearSandbox(): Promise<LinearSandboxContext> {
       },
       codex: {
         command: "echo codex",
-        approvalPolicy: "never",
-        threadSandbox: "workspace-write",
         turnTimeoutMs: 60_000,
-        readTimeoutMs: 5_000,
         stallTimeoutMs: 30_000,
       },
     },
@@ -352,6 +359,20 @@ export async function runLinearScenario(
           errors.push(err instanceof Error ? err : new Error(String(err)));
         }
         ticksExecuted += 1;
+
+        if (scenario.afterPoll) {
+          try {
+            await scenario.afterPoll({
+              tick,
+              ctx,
+              createdIssues,
+              snapshots,
+              events,
+            });
+          } catch (err) {
+            errors.push(err instanceof Error ? err : new Error(String(err)));
+          }
+        }
 
         if (tick < ticks - 1) {
           await sleep(tickDelayMs);

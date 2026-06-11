@@ -21,6 +21,7 @@ worker:
   ssh_timeout_ms: 60000
 hooks:
   after_create: |
+    set -euo pipefail
     git clone --depth 1 https://github.com/ryanlyn/symphony .
     if command -v mise >/dev/null 2>&1; then
       mise trust
@@ -30,14 +31,6 @@ agent:
   kind: codex
   max_concurrent_agents: 10
   max_turns: 20
-codex:
-  approval_policy: never
-  thread_sandbox: workspace-write
-  turn_sandbox_policy:
-    type: workspaceWrite
-    writableRoots:
-      - /Users/ryan/dev/symphony-workspaces
-    networkAccess: true
 agents:
   turn_timeout_ms: 3600000
   stall_timeout_ms: 300000

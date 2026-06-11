@@ -1,8 +1,7 @@
 import { test } from "vitest";
 import { AGENT_UPDATE_TYPES } from "@symphony/domain";
 import type { DispatchBlockEntry } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@symphony/runtime-events";
 import type {
@@ -324,14 +323,14 @@ test("RuntimeRetryEntry serialization round-trip preserves numeric attempt witho
   const retries: RuntimeRetryEntry[] = [
     {
       issueId: "issue-1",
-      identifier: "MT-1",
+      issueIdentifier: "MT-1",
       attempt: 1,
       dueAtIso: "2026-05-26T00:00:00.000Z",
       monotonicDeadlineMs: 1000,
     },
     {
       issueId: "issue-2",
-      identifier: "MT-2",
+      issueIdentifier: "MT-2",
       attempt: 5,
       dueAtIso: "2026-05-26T01:00:00.000Z",
       monotonicDeadlineMs: 5000,
@@ -355,7 +354,7 @@ test("RuntimeRetryEntry serialization round-trip preserves numeric attempt witho
 test("RuntimeRetryEntry optional fields serialize correctly across the JSON boundary", () => {
   const minimal: RuntimeRetryEntry = {
     issueId: "issue-min",
-    identifier: "MT-MIN",
+    issueIdentifier: "MT-MIN",
     attempt: 1,
     dueAtIso: "2026-05-26T00:00:00.000Z",
     monotonicDeadlineMs: 1000,
@@ -363,7 +362,7 @@ test("RuntimeRetryEntry optional fields serialize correctly across the JSON boun
 
   const full: RuntimeRetryEntry = {
     issueId: "issue-full",
-    identifier: "MT-FULL",
+    issueIdentifier: "MT-FULL",
     attempt: 3,
     dueAtIso: "2026-05-26T02:00:00.000Z",
     monotonicDeadlineMs: 3000,
@@ -414,7 +413,7 @@ test("RuntimeRunningEntry usageTotals fields survive snapshot serialization with
       {
         issueId: "issue-1",
         issueIdentifier: "MT-1",
-        title: "First task",
+        issueTitle: "First task",
         state: "InProgress",
         slotIndex: 0,
         ensembleSize: 1,
@@ -426,7 +425,7 @@ test("RuntimeRunningEntry usageTotals fields survive snapshot serialization with
       {
         issueId: "issue-2",
         issueIdentifier: "MT-2",
-        title: "Second task",
+        issueTitle: "Second task",
         state: "InProgress",
         slotIndex: 0,
         ensembleSize: 1,
@@ -487,7 +486,7 @@ test("RuntimeSnapshot arrays can hold heterogeneous entries simultaneously", () 
       {
         issueId: "i1",
         issueIdentifier: "MT-1",
-        title: "Task 1",
+        issueTitle: "Task 1",
         state: "InProgress",
         slotIndex: 0,
         ensembleSize: 2,
@@ -499,7 +498,7 @@ test("RuntimeSnapshot arrays can hold heterogeneous entries simultaneously", () 
       {
         issueId: "i1",
         issueIdentifier: "MT-1",
-        title: "Task 1",
+        issueTitle: "Task 1",
         state: "InProgress",
         slotIndex: 1,
         ensembleSize: 2,
@@ -512,7 +511,7 @@ test("RuntimeSnapshot arrays can hold heterogeneous entries simultaneously", () 
     retrying: [
       {
         issueId: "i2",
-        identifier: "MT-2",
+        issueIdentifier: "MT-2",
         attempt: 2,
         dueAtIso: "2026-05-26T00:05:00.000Z",
         monotonicDeadlineMs: 300000,

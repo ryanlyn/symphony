@@ -7,6 +7,23 @@ import { parseTraceLines } from "../src/parser.js";
 
 const FIXTURE_PATH = path.join(import.meta.dirname, "fixtures/minimal-trace.jsonl");
 
+function makeChunk(
+  sessionUpdate: "agent_thought_chunk" | "agent_message_chunk" | "user_message_chunk",
+  text: string,
+  timestamp = "2026-01-01T00:00:00Z",
+): string {
+  return JSON.stringify({
+    type: "session_notification",
+    issueId: "id",
+    issueIdentifier: "T-1",
+    timestamp,
+    message: {
+      sessionId: "s1",
+      update: { sessionUpdate, content: { type: "text", text } },
+    },
+  });
+}
+
 describe("parseTraceLines with minimal fixture", () => {
   const lines = readFileSync(FIXTURE_PATH, "utf-8").split("\n");
 
@@ -161,23 +178,6 @@ describe("parseTraceLines reasoning/thought extraction", () => {
 });
 
 describe("parseTraceLines chunk combining", () => {
-  function makeChunk(
-    sessionUpdate: "agent_thought_chunk" | "agent_message_chunk" | "user_message_chunk",
-    text: string,
-    timestamp = "2026-01-01T00:00:00Z",
-  ): string {
-    return JSON.stringify({
-      type: "session_notification",
-      issueId: "id",
-      issueIdentifier: "T-1",
-      timestamp,
-      message: {
-        sessionId: "s1",
-        update: { sessionUpdate, content: { type: "text", text } },
-      },
-    });
-  }
-
   it("combines consecutive thought chunks into a single event", () => {
     const lines = [
       makeChunk("agent_thought_chunk", "The user is asking "),
@@ -274,6 +274,175 @@ describe("parseTraceLines chunk combining", () => {
     expect(events[2]).toMatchObject({ kind: "message", text: "Done." });
   });
 
+  it("does not emit tool calls before they complete", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Bash",
+            toolCallId: "tc1",
+            rawInput: { command: "sleep 10" },
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "still working", "2026-01-01T00:00:01Z"),
+    ];
+
+    const events = parseTraceLines(lines);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "message", text: "still working" });
+  });
+
+  it("timestamps completed tool calls at completion time", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Bash",
+            toolCallId: "tc1",
+            rawInput: { command: "sleep 2" },
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "while tool runs", "2026-01-01T00:00:02Z"),
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tc1",
+            status: "completed",
+            rawOutput: "ok",
+          },
+        },
+      }),
+    ];
+
+    const events = parseTraceLines(lines);
+
+    expect(events[0]).toMatchObject({
+      kind: "message",
+      text: "while tool runs",
+      timestamp: "2026-01-01T00:00:02Z",
+    });
+    expect(events[1]).toMatchObject({
+      kind: "tool_call",
+      toolName: "Bash",
+      output: "ok",
+      durationMs: 2000,
+      timestamp: "2026-01-01T00:00:03Z",
+    });
+  });
+
+  it("returns display events in nondecreasing timestamp order", () => {
+    const lines = [
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title: "Slow",
+            toolCallId: "slow",
+            rawInput: {},
+          },
+        },
+      }),
+      makeChunk("agent_message_chunk", "middle", "2026-01-01T00:00:02Z"),
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:03Z",
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "slow",
+            status: "completed",
+            rawOutput: "done",
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "turn_completed",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:04Z",
+      }),
+    ];
+
+    const events = parseTraceLines(lines);
+    const timestamps = events.map((event) => new Date(event.timestamp).getTime());
+
+    expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+  });
+
+  it("skips malformed tool calls without toolCallId", () => {
+    const makeToolCall = (title: string, timestamp: string): string =>
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp,
+        message: {
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "tool_call",
+            title,
+            rawInput: { command: title },
+          },
+        },
+      });
+
+    const events = parseTraceLines([
+      makeToolCall("First", "2026-01-01T00:00:00Z"),
+      makeToolCall("Second", "2026-01-01T00:00:01Z"),
+    ]);
+
+    expect(events.filter((event) => event.kind === "tool_call")).toHaveLength(0);
+  });
+
+  it("skips malformed session notifications without dropping valid events", () => {
+    const lines = [
+      makeChunk("agent_message_chunk", "before "),
+      JSON.stringify({
+        type: "session_notification",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:01Z",
+        message: "bad",
+      }),
+      makeChunk("agent_message_chunk", "after", "2026-01-01T00:00:02Z"),
+    ];
+
+    expect(() => parseTraceLines(lines)).not.toThrow();
+
+    const events = parseTraceLines(lines);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "message", text: "before after" });
+  });
+
   it("flushes pending text before turn_started", () => {
     const lines = [
       makeChunk("agent_message_chunk", "end of turn"),
@@ -324,6 +493,60 @@ describe("parseTraceLines turn handling", () => {
     const turns = events.filter((e) => e.kind === "turn_started");
     expect(turns.length).toBe(1);
     expect(turns[0]!.kind === "turn_started" && turns[0]!.turnIndex).toBe(1);
+  });
+
+  it("renders turn_cancelled without serializing the PromptResponse", () => {
+    const lines = [
+      JSON.stringify({
+        type: "turn_cancelled",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp: "2026-01-01T00:00:00Z",
+        message: {
+          response: {
+            stopReason: "cancelled",
+            usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+            output: [{ type: "text", text: "serialized-response-marker" }],
+          },
+        },
+      }),
+    ];
+    const events = parseTraceLines(lines);
+    const turnFailed = events.find((e) => e.kind === "turn_failed");
+
+    expect(turnFailed).toMatchObject({
+      kind: "turn_failed",
+      text: "Turn cancelled: cancelled",
+    });
+    expect(turnFailed?.kind === "turn_failed" && turnFailed.text).not.toContain(
+      "serialized-response-marker",
+    );
+  });
+
+  it("renders malformed turn_cancelled records without dropping valid events", () => {
+    const makeTurnCancelled = (message: Record<string, unknown>, timestamp: string): string =>
+      JSON.stringify({
+        type: "turn_cancelled",
+        issueId: "id",
+        issueIdentifier: "T-1",
+        timestamp,
+        message,
+      });
+
+    const lines = [
+      makeChunk("agent_message_chunk", "before", "2026-01-01T00:00:00Z"),
+      makeTurnCancelled({}, "2026-01-01T00:00:01Z"),
+      makeChunk("agent_message_chunk", "after", "2026-01-01T00:00:02Z"),
+      makeTurnCancelled({ response: null }, "2026-01-01T00:00:03Z"),
+    ];
+
+    expect(() => parseTraceLines(lines)).not.toThrow();
+
+    const events = parseTraceLines(lines);
+    expect(events[0]).toMatchObject({ kind: "message", text: "before" });
+    expect(events[1]).toMatchObject({ kind: "turn_failed", text: "Turn cancelled" });
+    expect(events[2]).toMatchObject({ kind: "message", text: "after" });
+    expect(events[3]).toMatchObject({ kind: "turn_failed", text: "Turn cancelled" });
   });
 });
 

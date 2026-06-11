@@ -5,10 +5,8 @@ import {
   normalizeRouteName,
   defaultSettings,
   settingsForIssueState,
-  parseConfig,
 } from "@symphony/cli";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 // --- normalizeStateName ---
 
@@ -92,7 +90,7 @@ test("INVARIANT: When no override is present, settingsForIssueState SHALL return
         const settings = defaultSettings();
         const result = settingsForIssueState(settings, state);
         assert.equal(result.agent.maxConcurrentAgents, settings.agent.maxConcurrentAgents);
-        assert.equal(result.codex.turnTimeoutMs, settings.codex.turnTimeoutMs);
+        assert.equal(result.agents.codex.turnTimeoutMs, settings.agents.codex.turnTimeoutMs);
       },
     ),
   );
@@ -137,40 +135,10 @@ test("INVARIANT: settingsForIssueState partial overrides SHALL preserve unmentio
   fc.assert(
     fc.property(fc.integer({ min: 100_000, max: 9_000_000 }), (timeout) => {
       const settings = defaultSettings();
-      settings.statusOverrides.set("review", { codex: { turnTimeoutMs: timeout } });
+      settings.statusOverrides.set("review", { agents: { codex: { turnTimeoutMs: timeout } } });
       const result = settingsForIssueState(settings, "review");
-      assert.equal(result.codex.turnTimeoutMs, timeout);
-      assert.equal(result.codex.readTimeoutMs, settings.codex.readTimeoutMs);
-      assert.equal(result.codex.stallTimeoutMs, settings.codex.stallTimeoutMs);
-    }),
-  );
-});
-
-// --- parseConfig deep merge for status_overrides ---
-
-test("parseConfig — status_overrides deep merges codex approval_policy", () => {
-  fc.assert(
-    fc.property(fc.boolean(), fc.boolean(), (sandbox, rules) => {
-      const raw = {
-        tracker: { kind: "memory", project_slug: "test" },
-        status_overrides: {
-          "in progress": {
-            codex: {
-              approval_policy: {
-                reject: { sandbox_approval: sandbox, rules },
-              },
-            },
-          },
-        },
-      };
-      const settings = parseConfig(raw);
-      const effective = settingsForIssueState(settings, "in progress");
-      const policy = effective.codex.approvalPolicy as Record<string, unknown> | null;
-      assert.ok(policy !== null && typeof policy === "object");
-      const reject = (policy as { reject?: Record<string, unknown> }).reject;
-      assert.ok(reject !== undefined);
-      assert.equal(reject.sandbox_approval, sandbox);
-      assert.equal(reject.rules, rules);
+      assert.equal(result.agents.codex.turnTimeoutMs, timeout);
+      assert.equal(result.agents.codex.stallTimeoutMs, settings.agents.codex.stallTimeoutMs);
     }),
   );
 });

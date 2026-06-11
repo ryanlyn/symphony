@@ -1,14 +1,16 @@
 /**
  * Trace routes for the unified dashboard.
  *
- * Exposes ticket/event/stats data from TraceWatcher via REST endpoints.
+ * Exposes ticket/event data from TraceWatcher via REST endpoints. The
+ * dashboard computes trace stats client-side from the events.
  * Issue metadata (title, url) comes from a local SQLite store rather than trace files.
  */
 
 import { Hono } from "hono";
-import { TraceWatcher, computeStats } from "@symphony/traceviz-server";
+import { TraceWatcher } from "@symphony/traceviz-server";
 
 import type { IssueStore } from "./issue-store.js";
+import { decodePathParam, invalidPathParameterError } from "./path-params.js";
 
 export interface TraceRoutesResult {
   app: Hono;
@@ -42,7 +44,8 @@ export function createTraceRoutes(traceDir: string, issueStore: IssueStore): Tra
   });
 
   app.get("/api/v1/tickets/:id/exists", (c) => {
-    const issueId = decodeURIComponent(c.req.param("id"));
+    const issueId = decodePathParam(c.req.param("id"));
+    if (issueId === null) return c.json({ error: invalidPathParameterError }, 400);
     const exists = watcher.hasTicket(issueId);
     return c.json({ exists });
   });
@@ -62,7 +65,8 @@ export function createTraceRoutes(traceDir: string, issueStore: IssueStore): Tra
   });
 
   app.get("/api/v1/tickets/:id/events", (c) => {
-    const issueId = decodeURIComponent(c.req.param("id"));
+    const issueId = decodePathParam(c.req.param("id"));
+    if (issueId === null) return c.json({ error: invalidPathParameterError }, 400);
     const events = watcher.getEventsForTicket(issueId);
     const ticketInfo = watcher.getTicketInfo(issueId);
     const record = issueStore.get(issueId);
@@ -71,12 +75,6 @@ export function createTraceRoutes(traceDir: string, issueStore: IssueStore): Tra
       identifier: record?.issueIdentifier ?? ticketInfo?.identifier ?? issueId,
       events,
     });
-  });
-
-  app.get("/api/v1/tickets/:id/stats", (c) => {
-    const issueId = decodeURIComponent(c.req.param("id"));
-    const events = watcher.getEventsForTicket(issueId);
-    return c.json(computeStats(events));
   });
 
   return { app, watcher };

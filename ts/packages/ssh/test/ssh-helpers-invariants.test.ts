@@ -1,8 +1,7 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
 import { PORT_MAX } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { assert } from "@symphony/test-utils";
 
 import { shellEscape, sshArgs, remoteShellCommand, parseSshTarget } from "@symphony/ssh";
 

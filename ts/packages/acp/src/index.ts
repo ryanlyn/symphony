@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -19,22 +20,26 @@ import {
   type WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
 import { acquireAgentMcpEndpoint, type AgentMcpEndpointLease } from "@symphony/mcp";
-import { stopChild, withTimeout } from "@symphony/child-process";
 import { actionForStopReason } from "@symphony/policies/stopReason";
 import { shellEscape, startSshProcess } from "@symphony/ssh";
 import { validateWorkspaceCwd } from "@symphony/workspace";
 import { execa } from "execa";
-import type {
-  AgentConfig,
-  AgentKind,
-  AgentExecutor,
-  AgentSession,
-  AgentUpdate,
-  AgentUpdateType,
-  Issue,
-  Settings,
-  UsageTotals,
+import {
+  errorMessage,
+  type AgentConfig,
+  type AgentKind,
+  type AgentExecutor,
+  type AgentSession,
+  type AgentUpdate,
+  type AgentUpdateType,
+  type Issue,
+  type Settings,
+  type UsageTokenUpdate,
+  type UsageTotals,
 } from "@symphony/domain";
+import type { AgentExecutorProvider } from "@symphony/agent-sdk";
+
+import { stopChild, withTimeout } from "./childProcess.js";
 
 interface Session extends AgentSession {
   connection: ClientSideConnection;
@@ -49,8 +54,30 @@ interface Session extends AgentSession {
   loadingReplay: boolean;
   replayedUpdateCount: number;
   usageTotals: UsageTotals;
-  pendingTurn?: { reject: (error: Error) => void } | undefined;
+  sawCallUsageThisTurn: boolean;
+  turnStartTotals: UsageTotals;
+  lastCallUsageSeq: number;
+  callUsageBaseline?: UsageTokenUpdate | undefined;
+  pendingTurn?: { reject: (error: Error) => void; allowSessionIdRotation: boolean } | undefined;
 }
+
+/**
+ * The ACP executor: drives an external bridge subprocess (e.g. `codex-acp`,
+ * `claude-agent-acp`) over the Agent Client Protocol, locally or via SSH.
+ */
+export const acpExecutorProvider: AgentExecutorProvider = {
+  executor: "acp",
+  validateAgent(kind, config) {
+    if (!config.bridgeCommand.trim()) {
+      throw new Error(
+        kind === "claude"
+          ? "claude.command is required"
+          : `agents.${kind}.bridgeCommand is required`,
+      );
+    }
+  },
+  createExecutor: (kind) => new Executor(kind),
+};
 
 export class Executor implements AgentExecutor {
   readonly kind: AgentKind;
@@ -79,7 +106,6 @@ export class Executor implements AgentExecutor {
     let session: Session | null = null;
     try {
       mcpEndpoint = await acquireAgentMcpEndpoint(input.settings, input.workerHost ?? null);
-      await writeProviderConfig(agentConfig, agentKind, workspace, input.workerHost ?? null);
       child = startBridgeProcess(agentConfig, workspace, input.workerHost ?? null);
       const client = acpClient({
         workspace,
@@ -116,6 +142,9 @@ export class Executor implements AgentExecutor {
         loadingReplay: false,
         replayedUpdateCount: 0,
         usageTotals: emptyUsageTotals(),
+        sawCallUsageThisTurn: false,
+        turnStartTotals: emptyUsageTotals(),
+        lastCallUsageSeq: 0,
         stop: async () => {
           await this.stopSession(nextSession);
         },
@@ -154,15 +183,23 @@ export class Executor implements AgentExecutor {
     let settled = false;
 
     return new Promise<AgentUpdate[]>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const cancelTurn = () => {
         void session.connection.cancel({ sessionId: requireSessionId(session) }).catch((err) => {
           process.stderr.write(`session cancel failed: ${err}\n`);
         });
         finishReject(new Error("acp turn timed out"));
-      }, session.agentConfig.turnTimeoutMs);
+      };
+      let stallTimer: ReturnType<typeof setTimeout> | undefined;
+      const resetStallTimer = () => {
+        if (session.agentConfig.stallTimeoutMs <= 0) return;
+        if (stallTimer) clearTimeout(stallTimer);
+        stallTimer = setTimeout(cancelTurn, session.agentConfig.stallTimeoutMs);
+      };
+      const hardTimer = setTimeout(cancelTurn, session.agentConfig.turnTimeoutMs);
 
       const cleanup = () => {
-        clearTimeout(timer);
+        clearTimeout(hardTimer);
+        if (stallTimer) clearTimeout(stallTimer);
         session.onUpdate = previous;
         session.pendingTurn = undefined;
       };
@@ -181,8 +218,12 @@ export class Executor implements AgentExecutor {
         reject(error);
       };
 
-      session.pendingTurn = { reject: finishReject };
+      resetStallTimer();
+      session.sawCallUsageThisTurn = false;
+      session.turnStartTotals = { ...session.usageTotals };
+      session.pendingTurn = { reject: finishReject, allowSessionIdRotation: true };
       session.onUpdate = (update) => {
+        resetStallTimer();
         updates.push(update);
         previous?.(update);
       };
@@ -202,10 +243,17 @@ export class Executor implements AgentExecutor {
           prompt: [{ type: "text", text: prompt }],
         })
         .then((response) => {
-          const usage = normalizeSessionUsage(session, extractUsage(response.usage ?? undefined));
+          if (settled) return;
+          const usage = finalizeTurnUsage(session, extractUsage(response.usage ?? undefined));
           const action = actionForStopReason(response.stopReason);
+          const terminalType =
+            action === "continue"
+              ? "turn_completed"
+              : action === "cancel"
+                ? "turn_cancelled"
+                : "turn_failed";
           const base = {
-            sessionUpdate: acpProtocolUpdate(session, "turn_completed", { response }),
+            sessionUpdate: acpProtocolUpdate(session, terminalType, { response }),
             sessionId: session.sessionId,
             resumeId: session.resumeId,
             executorPid: session.executorPid,
@@ -225,7 +273,8 @@ export class Executor implements AgentExecutor {
           }
         })
         .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
+          if (settled) return;
+          const message = errorMessage(error);
           this.emit(session, {
             type: "turn_failed",
             sessionId,
@@ -263,12 +312,28 @@ export class Executor implements AgentExecutor {
 }
 
 function handleSessionUpdate(session: Session, notification: SessionNotification): void {
+  const canAcceptRotation =
+    session.pendingTurn?.allowSessionIdRotation === true && Boolean(session.sessionId);
+  if (session.sessionId && notification.sessionId !== session.sessionId && !canAcceptRotation) {
+    session.onUpdate?.({
+      type: "malformed",
+      sessionUpdate: acpProtocolUpdate(session, "malformed", notification),
+      sessionId: session.sessionId,
+      resumeId: session.resumeId,
+      executorPid: session.executorPid,
+      message: `acp_session_update_mismatch: active session ${session.sessionId}, notification session ${notification.sessionId}`,
+      timestamp: new Date(),
+    });
+    return;
+  }
+  if (session.pendingTurn) session.pendingTurn.allowSessionIdRotation = false;
   session.sessionId = notification.sessionId;
   session.resumeId = notification.sessionId;
   if (session.loadingReplay) {
     session.replayedUpdateCount += 1;
     return;
   }
+  const usage = consumeCallUsage(session, notification);
   session.onUpdate?.({
     type: "session_notification",
     sessionUpdate: acpProtocolUpdate(session, "session_notification", notification),
@@ -277,7 +342,129 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
     executorPid: session.executorPid,
     message: notification,
     timestamp: new Date(),
+    ...(usage && { usage, usageKind: "cumulative" as const }),
   });
+}
+
+/**
+ * Patched bridges attach a per-model-call token bucket to usage_update
+ * notifications under _meta["symphony/callUsage"] (see ts/vendor/README.md).
+ * Buckets are deltas for exactly one call, so they accumulate additively
+ * regardless of the agent's turn-level usage accounting mode. Returns the
+ * running session totals when a new bucket was consumed.
+ */
+function consumeCallUsage(
+  session: Session,
+  notification: SessionNotification,
+): UsageTokenUpdate | undefined {
+  if (notification.update?.sessionUpdate !== "usage_update") return undefined;
+  const meta = (notification.update as { _meta?: Record<string, unknown> | null })._meta;
+  if (!meta) return undefined;
+  const rawCall = meta["symphony/callUsage"];
+  const call = parseUsageBucket(rawCall);
+  if (!call) return undefined;
+  const seq = bucketSeq(rawCall);
+  if (seq !== null) {
+    if (seq <= session.lastCallUsageSeq) return undefined;
+    session.lastCallUsageSeq = seq;
+  }
+  session.sawCallUsageThisTurn = true;
+  addUsageTotals(session, call);
+  const total = parseUsageBucket(meta["symphony/totalUsage"]);
+  if (total) {
+    // The bridge also reports its own cumulative counter; use it as a floor
+    // so missed bucket notifications cannot under-count the session.
+    // The baseline captures spend that predates this session (resumed
+    // threads), measured before the first observed call.
+    session.callUsageBaseline ??= subtractUsage(total, call);
+    maxUsageTotals(session, subtractUsage(total, session.callUsageBaseline));
+  }
+  return usageSnapshot(session);
+}
+
+/**
+ * Turn-end usage. The bridge's turn-level report is normalized to a
+ * session-cumulative value (a per-turn report is the turn's delta, so it is
+ * offset from the turn-start totals; a cumulative report already is one) and
+ * applied as a monotonic floor on the session totals. With per-call buckets
+ * this reconciles gaps without re-adding what the buckets already counted;
+ * without buckets it reproduces plain turn-level accounting.
+ */
+function finalizeTurnUsage(
+  session: Session,
+  reported: UsageTokenUpdate | undefined,
+): UsageTokenUpdate | undefined {
+  if (!reported) return session.sawCallUsageThisTurn ? usageSnapshot(session) : undefined;
+  const reportedCumulative =
+    session.agentConfig.usageAccounting === "cumulative"
+      ? reported
+      : addUsage(session.turnStartTotals, reported);
+  maxUsageTotals(session, reportedCumulative);
+  return usageSnapshot(session);
+}
+
+function parseUsageBucket(value: unknown): UsageTokenUpdate | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const bucket = value as Record<string, unknown>;
+  const field = (key: string): number => {
+    const raw = bucket[key];
+    return typeof raw === "number" ? nonNegativeFinite(raw) : 0;
+  };
+  const inputTokens = field("inputTokens") + field("cachedReadTokens") + field("cachedWriteTokens");
+  const outputTokens = field("outputTokens");
+  const rawTotal = bucket["totalTokens"];
+  const totalTokens =
+    (typeof rawTotal === "number" ? nonNegativeUsageValue(rawTotal) : undefined) ??
+    inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function bucketSeq(value: unknown): number | null {
+  if (typeof value !== "object" || value === null) return null;
+  const seq = (value as Record<string, unknown>)["seq"];
+  return typeof seq === "number" && Number.isFinite(seq) ? seq : null;
+}
+
+function addUsageTotals(session: Session, usage: UsageTokenUpdate): void {
+  session.usageTotals = {
+    inputTokens: session.usageTotals.inputTokens + (usage.inputTokens ?? 0),
+    outputTokens: session.usageTotals.outputTokens + (usage.outputTokens ?? 0),
+    totalTokens: session.usageTotals.totalTokens + (usage.totalTokens ?? 0),
+    secondsRunning: session.usageTotals.secondsRunning,
+  };
+}
+
+function maxUsageTotals(session: Session, usage: UsageTokenUpdate): void {
+  session.usageTotals = {
+    inputTokens: Math.max(session.usageTotals.inputTokens, usage.inputTokens ?? 0),
+    outputTokens: Math.max(session.usageTotals.outputTokens, usage.outputTokens ?? 0),
+    totalTokens: Math.max(session.usageTotals.totalTokens, usage.totalTokens ?? 0),
+    secondsRunning: session.usageTotals.secondsRunning,
+  };
+}
+
+function addUsage(left: UsageTokenUpdate, right: UsageTokenUpdate): UsageTokenUpdate {
+  return {
+    inputTokens: (left.inputTokens ?? 0) + (right.inputTokens ?? 0),
+    outputTokens: (left.outputTokens ?? 0) + (right.outputTokens ?? 0),
+    totalTokens: (left.totalTokens ?? 0) + (right.totalTokens ?? 0),
+  };
+}
+
+function subtractUsage(left: UsageTokenUpdate, right: UsageTokenUpdate): UsageTokenUpdate {
+  return {
+    inputTokens: Math.max((left.inputTokens ?? 0) - (right.inputTokens ?? 0), 0),
+    outputTokens: Math.max((left.outputTokens ?? 0) - (right.outputTokens ?? 0), 0),
+    totalTokens: Math.max((left.totalTokens ?? 0) - (right.totalTokens ?? 0), 0),
+  };
+}
+
+function usageSnapshot(session: Session): UsageTokenUpdate {
+  return {
+    inputTokens: session.usageTotals.inputTokens,
+    outputTokens: session.usageTotals.outputTokens,
+    totalTokens: session.usageTotals.totalTokens,
+  };
 }
 
 function handlePermissionRequest(
@@ -394,6 +581,7 @@ async function openSession(
   resumeId: string | null,
   mcpServers: McpServer[],
 ): Promise<string> {
+  const meta = providerConfigMeta(session);
   if (resumeId && supportsResume(session.init)) {
     try {
       await withTimeout(
@@ -401,6 +589,7 @@ async function openSession(
           sessionId: resumeId,
           cwd: session.workspace,
           mcpServers,
+          ...(meta && { _meta: meta }),
         }),
         30_000,
         "acp resume timed out",
@@ -410,7 +599,7 @@ async function openSession(
       session.onUpdate?.({
         type: "resume_state_warning",
         workspacePath: session.workspace,
-        message: `acp_resume_failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `acp_resume_failed: ${errorMessage(error)}`,
         timestamp: new Date(),
       });
     }
@@ -420,7 +609,12 @@ async function openSession(
     try {
       session.loadingReplay = true;
       await withTimeout(
-        session.connection.loadSession({ sessionId: resumeId, cwd: session.workspace, mcpServers }),
+        session.connection.loadSession({
+          sessionId: resumeId,
+          cwd: session.workspace,
+          mcpServers,
+          ...(meta && { _meta: meta }),
+        }),
         30_000,
         "acp load timed out",
       );
@@ -440,76 +634,64 @@ async function openSession(
       session.onUpdate?.({
         type: "resume_state_warning",
         workspacePath: session.workspace,
-        message: `acp_load_failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `acp_load_failed: ${errorMessage(error)}`,
         timestamp: new Date(),
       });
     }
   }
 
   const created = await withTimeout(
-    session.connection.newSession({ cwd: session.workspace, mcpServers }),
+    session.connection.newSession({
+      cwd: session.workspace,
+      mcpServers,
+      ...(meta && { _meta: meta }),
+    }),
     30_000,
     "acp new session timed out",
   );
   return created.sessionId;
 }
 
-async function writeProviderConfig(
-  agentConfig: AgentConfig,
-  agentKind: string,
-  workspace: string,
-  workerHost: string | null,
-): Promise<void> {
-  if (!agentConfig.providerConfig) return;
-
-  const isClaudeBridge = agentKind === "claude";
-  const relativePath = isClaudeBridge ? ".claude/settings.local.json" : ".codex/config.toml";
-  const content = isClaudeBridge
-    ? JSON.stringify(agentConfig.providerConfig, null, 2)
-    : toToml(agentConfig.providerConfig);
-
-  const filePath = path.join(workspace, relativePath);
-  if (workerHost) {
-    const escaped = shellEscape(content);
-    const mkdirCmd = `mkdir -p ${shellEscape(path.dirname(filePath))} && printf '%s' ${escaped} > ${shellEscape(filePath)}`;
-    const proc = startSshProcess(workerHost, mkdirCmd);
-    await new Promise<void>((resolve, reject) => {
-      proc.on("close", (code) =>
-        code === 0
-          ? resolve()
-          : reject(new Error(`failed to write provider config (exit ${code})`)),
-      );
-      proc.on("error", reject);
-    });
-  } else {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, content);
-  }
+/**
+ * Provider config rides the session request's _meta instead of config files
+ * written into the workspace. The vendored claude bridge consumes a
+ * settings.json-shaped overlay under symphony/settings; the vendored codex
+ * bridge consumes config.toml-shaped overrides under symphony/config (see
+ * ts/vendor/README.md). Bridges that don't know the keys ignore them.
+ */
+function providerConfigMeta(session: Session): Record<string, unknown> | undefined {
+  const providerConfig = session.agentConfig.providerConfig;
+  if (!providerConfig) return undefined;
+  const isClaudeBridge =
+    session.agentKind === "claude" ||
+    /(^|\s|\/)claude-agent-acp(\s|$)/.test(session.agentConfig.bridgeCommand);
+  return { [isClaudeBridge ? "symphony/settings" : "symphony/config"]: providerConfig };
 }
 
-function toToml(obj: Record<string, unknown>, prefix = ""): string {
-  const lines: string[] = [];
-  const sections: [string, Record<string, unknown>][] = [];
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === null || value === undefined) continue;
-    if (typeof value === "object" && !Array.isArray(value)) {
-      sections.push([prefix ? `${prefix}.${key}` : key, value as Record<string, unknown>]);
-    } else {
-      lines.push(`${key} = ${toTomlValue(value)}`);
-    }
-  }
-  for (const [section, nested] of sections) {
-    lines.push(`\n[${section}]`);
-    lines.push(toToml(nested, section).trim());
-  }
-  return lines.join("\n") + "\n";
-}
+const VENDORED_BRIDGE_PACKAGES: Record<string, string> = {
+  "codex-acp": "@agentclientprotocol/codex-acp",
+  "claude-agent-acp": "@agentclientprotocol/claude-agent-acp",
+};
 
-function toTomlValue(value: unknown): string {
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  if (Array.isArray(value)) return `[${value.map(toTomlValue).join(", ")}]`;
-  return JSON.stringify(value);
+/**
+ * Resolve bare bridge names to the vendored workspace packages so local runs
+ * always use Symphony's patched bridges rather than whatever PATH provides.
+ * Remote hosts keep the configured command verbatim (the vendored install
+ * only exists locally), as do custom commands and explicit paths.
+ */
+export function resolveBridgeCommand(bridgeCommand: string, workerHost: string | null): string {
+  if (workerHost) return bridgeCommand;
+  const [bin, ...args] = bridgeCommand.trim().split(/\s+/);
+  const packageName = bin ? VENDORED_BRIDGE_PACKAGES[bin] : undefined;
+  if (!packageName) return bridgeCommand;
+  try {
+    const require = createRequire(import.meta.url);
+    const manifestPath = require.resolve(`${packageName}/package.json`);
+    const binPath = path.join(path.dirname(manifestPath), "dist", "index.js");
+    return [shellEscape(process.execPath), shellEscape(binPath), ...args].join(" ");
+  } catch {
+    return bridgeCommand;
+  }
 }
 
 function startBridgeProcess(
@@ -517,7 +699,7 @@ function startBridgeProcess(
   workspace: string,
   workerHost: string | null,
 ): ChildProcessWithoutNullStreams {
-  const command = `exec ${agentConfig.bridgeCommand}`;
+  const command = `exec ${resolveBridgeCommand(agentConfig.bridgeCommand, workerHost)}`;
   if (workerHost) {
     return startSshProcess(workerHost, `cd ${shellEscape(workspace)} && ${command}`);
   }
@@ -580,7 +762,7 @@ function acpProtocolUpdate(
   };
 }
 
-function extractUsage(usage: Usage | undefined): Partial<UsageTotals> | undefined {
+function extractUsage(usage: Usage | undefined): UsageTokenUpdate | undefined {
   if (!usage) return undefined;
   const inputTokens =
     nonNegativeFinite(usage.inputTokens) +
@@ -592,37 +774,6 @@ function extractUsage(usage: Usage | undefined): Partial<UsageTotals> | undefine
     inputTokens,
     outputTokens,
     totalTokens,
-  };
-}
-
-function normalizeSessionUsage(
-  session: Session,
-  usage: Partial<UsageTotals> | undefined,
-): Partial<UsageTotals> | undefined {
-  if (!usage) return undefined;
-  if (session.agentConfig.usageAccounting === "cumulative") {
-    session.usageTotals = {
-      inputTokens: Math.max(session.usageTotals.inputTokens, usage.inputTokens ?? 0),
-      outputTokens: Math.max(session.usageTotals.outputTokens, usage.outputTokens ?? 0),
-      totalTokens: Math.max(session.usageTotals.totalTokens, usage.totalTokens ?? 0),
-      secondsRunning: session.usageTotals.secondsRunning,
-    };
-    return {
-      inputTokens: session.usageTotals.inputTokens,
-      outputTokens: session.usageTotals.outputTokens,
-      totalTokens: session.usageTotals.totalTokens,
-    };
-  }
-  session.usageTotals = {
-    inputTokens: session.usageTotals.inputTokens + (usage.inputTokens ?? 0),
-    outputTokens: session.usageTotals.outputTokens + (usage.outputTokens ?? 0),
-    totalTokens: session.usageTotals.totalTokens + (usage.totalTokens ?? 0),
-    secondsRunning: session.usageTotals.secondsRunning,
-  };
-  return {
-    inputTokens: session.usageTotals.inputTokens,
-    outputTokens: session.usageTotals.outputTokens,
-    totalTokens: session.usageTotals.totalTokens,
   };
 }
 

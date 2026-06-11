@@ -9,10 +9,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { serveStatic } from "@hono/node-server/serve-static";
 import { parseTraceLines, extractTicketMetadata, computeStats } from "@symphony/traceviz-server";
+
+import { createTracevizApp } from "./app.js";
 
 const filePath = process.argv[2];
 if (!filePath) {
@@ -20,7 +20,8 @@ if (!filePath) {
   process.exit(1);
 }
 
-const resolved = path.resolve(filePath);
+const invocationCwd = process.env.INIT_CWD ?? process.cwd();
+const resolved = path.resolve(invocationCwd, filePath);
 if (!fs.existsSync(resolved)) {
   console.error(`File not found: ${resolved}`);
   process.exit(1);
@@ -41,38 +42,12 @@ if (!fs.existsSync(dashboardDist)) {
   process.exit(1);
 }
 
-const app = new Hono();
-
-app.get("/api/v1/tickets", (c) => {
-  return c.json({
-    tickets: [
-      {
-        issueId,
-        identifier,
-        turnCount: events.filter((e) => e.kind === "turn_started").length,
-        status: "completed" as const,
-        startedAt: events[0]?.timestamp,
-      },
-    ],
-  });
-});
-
-app.get("/api/v1/tickets/:id/events", (c) => {
-  return c.json({ events });
-});
-
-app.get("/api/v1/tickets/:id/stats", (c) => {
-  return c.json(stats);
-});
-
-app.get("/health", (c) => c.json({ status: "ok" }));
-
-app.use("/*", serveStatic({ root: path.relative(process.cwd(), dashboardDist) }));
-
-// SPA fallback: serve index.html for any unmatched route
-app.get("/*", (c) => {
-  const html = fs.readFileSync(path.join(dashboardDist, "index.html"), "utf-8");
-  return c.html(html);
+const app = createTracevizApp({
+  dashboardDist,
+  events,
+  identifier,
+  issueId,
+  stats,
 });
 
 const PORT = 4040;

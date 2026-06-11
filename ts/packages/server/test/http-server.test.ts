@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { test, vi } from "vitest";
+import { beforeAll, test, vi } from "vitest";
 import {
   issueMcpToken,
   Orchestrator,
@@ -12,13 +12,26 @@ import {
 } from "@symphony/cli";
 import { normalizeIssue } from "@symphony/issue";
 import type { WorkflowDefinition } from "@symphony/domain";
-
-import { assert } from "../../../test/assert.js";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { defaultToolRegistry } from "@symphony/tool-sdk";
+import { createTrackerToolProvider, defaultTrackerRegistry } from "@symphony/tracker-sdk";
+import { assert } from "@symphony/test-utils";
 
 import { IssueStore, startObservabilityServer } from "@symphony/server";
 import { startClaudeMcpServer } from "@symphony/server";
 
-test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, and errors", async () => {
+// The observability server resolves tool packs and tracker ops through the process-default
+// registries (it offers no injection point), so populate them the same way the CLI
+// composition root does before serving (in a hook rather than at module scope). This suite
+// dispatches on the linear tracker and mounts the neutral tracker pack plus linear's own.
+beforeAll(() => {
+  registerLinearTracker();
+  if (defaultToolRegistry.get("tracker") === undefined) {
+    defaultToolRegistry.register(createTrackerToolProvider(defaultTrackerRegistry));
+  }
+});
+
+test("observability HTTP API exposes state, issue, runs, refresh, and errors", async () => {
   const workflow = workflowFixture();
   const orchestrator = new Orchestrator(workflow.settings);
   const issue = normalizeIssue({
@@ -64,6 +77,10 @@ test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, 
     assert.equal(issuePayload.status, "running");
     assert.equal(issuePayload.running.session_id, "thread-http");
 
+    const encodedIssuePayload = await getJson(server.url("/api/v1/MT%2DHTTP"));
+    assert.equal(encodedIssuePayload.status, "running");
+    assert.equal(encodedIssuePayload.running.session_id, "thread-http");
+
     const runs = await getJson(server.url("/api/v1/runs"));
     assert.equal(runs.view, "runs");
     assert.equal(runs.summary.running, 1);
@@ -77,10 +94,6 @@ test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, 
         message: "Dashboard assets not found. Run: pnpm build",
       },
     });
-
-    const events = await getEventStream(server.url("/api/v1/events"));
-    assert.match(events, /event: state/);
-    assert.match(events, /MT-HTTP/);
 
     const refresh = await postJson(server.url("/api/v1/refresh"));
     assert.equal(refresh.queued, true);
@@ -101,7 +114,7 @@ test("observability HTTP API exposes Elixir-shaped state, issue, runs, refresh, 
 test("standalone Claude MCP server preserves route and JSON-RPC error contracts", async () => {
   const workflow = workflowFixture();
   const server = await startClaudeMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
-  const token = issueMcpToken();
+  const token = issueMcpToken(server.authScope);
   try {
     const missing = await getJson(server.url("/missing"), 404);
     assert.deepEqual(missing, { error: { code: "not_found", message: "Route not found" } });
@@ -113,6 +126,13 @@ test("standalone Claude MCP server preserves route and JSON-RPC error contracts"
 
     const badJson = await postRawMcp(server.url("/claude-mcp"), "{", 400, token);
     assert.deepEqual(badJson, {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+
+    const arrayBody = await postRawMcp(server.url("/claude-mcp"), "[]", 400, token);
+    assert.deepEqual(arrayBody, {
       jsonrpc: "2.0",
       id: null,
       error: { code: -32700, message: "Parse error" },
@@ -147,6 +167,35 @@ test("standalone Claude MCP server preserves route and JSON-RPC error contracts"
   }
 });
 
+test("standalone Claude MCP server rejects top-level JSON arrays as parse errors", async () => {
+  const workflow = workflowFixture();
+  const server = await startClaudeMcpServer(workflow.settings, { host: "127.0.0.1", port: 0 });
+  const token = issueMcpToken(server.authScope);
+  try {
+    const topLevelArray = await postRawMcp(server.url("/claude-mcp"), "[]", 400, token);
+    assert.deepEqual(topLevelArray, {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  } finally {
+    revokeMcpToken(token);
+    await server.stop();
+  }
+});
+
+test("standalone Claude MCP server emits connectable URLs for wildcard and empty hosts", async () => {
+  const workflow = workflowFixture();
+  for (const host of ["0.0.0.0", ""] as const) {
+    const server = await startClaudeMcpServer(workflow.settings, { host, port: 0 });
+    try {
+      assert.match(server.url("/claude-mcp"), /^http:\/\/127\.0\.0\.1:\d+\/claude-mcp$/);
+    } finally {
+      await server.stop();
+    }
+  }
+});
+
 test("observability HTTP API serves trace routes when issueStore is provided", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "symphony-http-issue-store-"));
   const traceDir = path.join(root, "traces");
@@ -174,7 +223,26 @@ test("observability HTTP API serves trace routes when issueStore is provided", a
   }
 });
 
-test("observability HTTP API matches Elixir snapshot timeout and unavailable branches", async () => {
+test("observability HTTP API returns structured 400 for malformed issue identifiers", async () => {
+  const server = await startObservabilityServer(fakeRuntime("snapshot_unavailable"), {
+    host: "127.0.0.1",
+    port: 0,
+    staticDir: "/tmp/nonexistent-dashboard-dist",
+  });
+  try {
+    const malformed = await getJson(server.url("/api/v1/%E0%A4%A"), 400);
+    assert.deepEqual(malformed, {
+      error: {
+        code: "invalid_path_parameter",
+        message: "Malformed percent encoding in path parameter",
+      },
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("observability HTTP API matches snapshot timeout and unavailable branches", async () => {
   const unavailable = await startObservabilityServer(fakeRuntime("snapshot_unavailable"), {
     host: "127.0.0.1",
     port: 0,
@@ -235,7 +303,7 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
     },
   });
   const server = await startObservabilityServer(runtime, { host: "127.0.0.1", port: 0 });
-  const token = issueMcpToken();
+  const token = issueMcpToken(server.authScope);
   const originalFetch = globalThis.fetch;
   const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((async (
     url: string | URL | Request,
@@ -271,7 +339,17 @@ test("Claude MCP endpoint authorizes bearer tokens and executes Linear tools", a
       200,
       token,
     );
-    assert.equal(tools.result.tools[0].name, "linear_graphql");
+    assert.deepEqual(
+      tools.result.tools.map((tool: { name: string }) => tool.name),
+      [
+        "tracker_read_issue",
+        "tracker_query",
+        "tracker_update_status",
+        "tracker_comment",
+        "tracker_create_issue",
+        "linear_graphql",
+      ],
+    );
 
     const toolCall = await postMcp(
       server.url("/claude-mcp"),
@@ -381,6 +459,7 @@ test("observability Claude MCP endpoint uses workflow settings reloaded by the r
 function workflowFixture(): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
+      kind: "linear",
       api_key: "linear-token",
       project_slug: "mono",
       active_states: ["Todo", "In Progress"],
@@ -437,29 +516,6 @@ async function postRawMcp(
   assert.equal(response.status, expectedStatus);
   assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
   return response.json();
-}
-
-async function getEventStream(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = AbortSignal.timeout(2_000);
-  timeout.addEventListener("abort", () => controller.abort(timeout.reason));
-  const response = await fetch(url, { signal: controller.signal });
-  assert.equal(response.status, 200);
-  assert.equal(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
-  assert.equal(response.headers.get("cache-control"), "no-cache, no-transform");
-  const reader = response.body?.getReader();
-  assert.ok(reader);
-  let text = "";
-  try {
-    while (!text.includes("event: state")) {
-      const read = await reader.read();
-      if (read.done) break;
-      text += Buffer.from(read.value).toString("utf8");
-    }
-    return text;
-  } finally {
-    controller.abort();
-  }
 }
 
 function fakeRuntime(code: "snapshot_timeout" | "snapshot_unavailable"): SymphonyRuntime {

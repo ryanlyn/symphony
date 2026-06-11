@@ -1,50 +1,48 @@
-import type { Settings, TrackerKind } from "@symphony/domain";
-import type { SlackTransport } from "@symphony/slack-tracker";
+import type { Settings } from "@symphony/domain";
+import {
+  defaultToolRegistry,
+  executeMountedTool,
+  mountedToolSpecs,
+  type ToolProvider,
+  type ToolRegistry,
+  type ToolResult,
+  type ToolSpec,
+} from "@symphony/tool-sdk";
 
-import { executeLinearTool, linearToolSpecs } from "./tools/linear.js";
-import { executeLocalTool, localToolSpecs } from "./tools/local.js";
-import { executeSlackTool, slackToolSpecs, slackTransportFor } from "./tools/slack.js";
+export type { ToolResult, ToolSpec } from "@symphony/tool-sdk";
 
-export interface ToolSpec {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
+/** The provider-neutral pack mounted for every tracker backend. */
+const NEUTRAL_PACK = "tracker";
+
+/**
+ * Tool packs mounted for the given settings: the explicit `tools:` list when configured,
+ * otherwise the neutral tracker pack plus the dispatch tracker's own pack when one is
+ * registered. Several packs can serve one endpoint while a single tracker drives dispatch.
+ * Unknown pack names fail loudly with the list of registered packs.
+ */
+function mountedPacks(
+  settings: Settings,
+  registry: ToolRegistry = defaultToolRegistry,
+): ToolProvider[] {
+  const names = settings.tools ?? defaultPackNames(settings, registry);
+  return names.map((name) => registry.require(name));
 }
 
-export interface ToolResult {
-  success: boolean;
-  result?: unknown;
-  error?: string;
-}
-
-/** Injectables for tests; production builds real clients from settings. */
-export interface ToolDeps {
-  now?: () => Date;
-  slackTransport?: SlackTransport;
-}
-
-function trackerKind(settings: Settings): TrackerKind {
-  return settings.tracker.kind ?? "linear";
-}
-
-function assertNever(value: never): never {
-  throw new Error(`unhandled tracker kind: ${String(value)}`);
-}
-
-export function toolSpecs(settings: Settings): ToolSpec[] {
-  const kind = trackerKind(settings);
-  switch (kind) {
-    case "linear":
-      return linearToolSpecs();
-    case "local":
-      return localToolSpecs();
-    case "slack":
-      return slackToolSpecs();
-    case "memory":
-      return [];
-    default:
-      return assertNever(kind);
+function defaultPackNames(settings: Settings, registry: ToolRegistry): string[] {
+  const names = [NEUTRAL_PACK];
+  const kind = settings.tracker.kind;
+  if (kind !== undefined && kind !== NEUTRAL_PACK && registry.get(kind) !== undefined) {
+    names.push(kind);
   }
+  return names;
+}
+
+/** Tools advertised over the Symphony MCP endpoint for the mounted packs. */
+export function toolSpecs(
+  settings: Settings,
+  registry: ToolRegistry = defaultToolRegistry,
+): ToolSpec[] {
+  return mountedToolSpecs(mountedPacks(settings, registry), settings);
 }
 
 export async function executeTool(
@@ -52,28 +50,10 @@ export async function executeTool(
   input: unknown,
   settings: Settings,
   fetchImpl: typeof fetch = fetch,
-  deps: ToolDeps = {},
+  registry: ToolRegistry = defaultToolRegistry,
 ): Promise<ToolResult> {
-  const kind = trackerKind(settings);
-  switch (kind) {
-    case "linear":
-      return executeLinearTool(name, input, settings, fetchImpl);
-    case "local":
-      return executeLocalTool(name, input, settings);
-    case "slack":
-      return executeSlackTool(
-        name,
-        input,
-        settings,
-        slackTransportFor(settings, fetchImpl, deps.slackTransport),
-      );
-    case "memory":
-      return {
-        success: false,
-        error: "Unsupported tool.",
-        result: { error: { message: "Unsupported tool.", supportedTools: [] } },
-      };
-    default:
-      return assertNever(kind);
-  }
+  return executeMountedTool(mountedPacks(settings, registry), name, input, {
+    settings,
+    fetchImpl,
+  });
 }

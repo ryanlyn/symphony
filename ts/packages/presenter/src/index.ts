@@ -4,20 +4,81 @@ import type {
   RuntimeSnapshot,
 } from "@symphony/runtime-events";
 import { humanizeAgentMessage } from "@symphony/humanize";
-import type { UsageTotals } from "@symphony/domain";
+import { durationMs, type UsageTotals } from "@symphony/domain";
 
 export interface PresenterParams {
   [key: string]: string | boolean | number | undefined;
+}
+
+export interface TokensPayload {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface UsageTotalsPayload extends TokensPayload {
+  seconds_running: number;
+}
+
+export interface RunningEntryPayload {
+  issue_id: string;
+  issue_identifier: string;
+  issue_url: string | null;
+  state: string;
+  slot_index: number;
+  ensemble_size: number;
+  worker_host: string | null;
+  workspace_path: string | null;
+  session_id: string | null;
+  resume_id: string | null;
+  turn_count: number;
+  agent_kind: string;
+  executor_pid: string | null;
+  usage_totals: UsageTotalsPayload;
+  last_event: string | null;
+  last_message: string | null;
+  started_at: string;
+  last_event_at: string | null;
+  tokens: TokensPayload;
+}
+
+export interface RetryEntryPayload {
+  issue_id: string;
+  issue_identifier: string;
+  issue_url: string | null;
+  attempt: number;
+  due_at: string;
+  error: string | null;
+  worker_host: string | null;
+  workspace_path: string | null;
+}
+
+export interface BlockedEntryPayload {
+  issue_id: string;
+  issue_identifier: string;
+  issue_url: string | null;
+  state: string;
+  reason: string;
+  label: string;
+  worker_host: string | null;
+}
+
+export interface OpsStatePayload {
+  generated_at: string;
+  counts: { running: number; retrying: number; blocked: number };
+  blocked_by_reason: Record<string, number>;
+  running: RunningEntryPayload[];
+  retrying: RetryEntryPayload[];
+  blocked: BlockedEntryPayload[];
+  usage_totals: UsageTotalsPayload;
+  rate_limits: unknown;
 }
 
 type RunsPayloadResult =
   | { status: "ok"; payload: Record<string, unknown> }
   | { status: "run_not_found" };
 
-export function statePayload(
-  snapshot: RuntimeSnapshot,
-  generatedAt = nowIso(),
-): Record<string, unknown> {
+export function statePayload(snapshot: RuntimeSnapshot, generatedAt = nowIso()): OpsStatePayload {
   return {
     generated_at: generatedAt,
     counts: {
@@ -29,7 +90,7 @@ export function statePayload(
     running: snapshot.running.map(runningEntryPayload),
     retrying: snapshot.retrying.map((entry) => ({
       issue_id: entry.issueId,
-      issue_identifier: entry.identifier,
+      issue_identifier: entry.issueIdentifier,
       issue_url: entry.issueUrl ?? null,
       attempt: entry.attempt,
       due_at: entry.dueAtIso,
@@ -48,8 +109,9 @@ export function issuePayload(
   issueIdentifier: string,
 ): { status: "ok"; payload: Record<string, unknown> } | { status: "issue_not_found" } {
   const running = snapshot.running.find((entry) => entry.issueIdentifier === issueIdentifier);
-  const retry = snapshot.retrying.find((entry) => entry.identifier === issueIdentifier);
+  const retry = snapshot.retrying.find((entry) => entry.issueIdentifier === issueIdentifier);
   if (!running && !retry) return { status: "issue_not_found" };
+  const currentRetryAttempt = issueCurrentRetryAttempt(running, retry);
 
   return {
     status: "ok",
@@ -62,8 +124,8 @@ export function issuePayload(
         host: running?.workerHost ?? retry?.workerHost ?? null,
       },
       attempts: {
-        restart_count: retry ? Math.max(retry.attempt - 1, 0) : 0,
-        current_retry_attempt: retry?.attempt ?? 0,
+        restart_count: Math.max(currentRetryAttempt - 1, 0),
+        current_retry_attempt: currentRetryAttempt,
       },
       running: running ? runningIssuePayload(running) : null,
       retry: retry
@@ -89,6 +151,13 @@ export function issuePayload(
       tracked: {},
     },
   };
+}
+
+function issueCurrentRetryAttempt(
+  running: RuntimeRunningEntry | undefined,
+  retry: RuntimeSnapshot["retrying"][number] | undefined,
+): number {
+  return running?.retryAttempt ?? retry?.attempt ?? 0;
 }
 
 export function runsPayload(
@@ -197,7 +266,7 @@ function runningRunPayload(entry: RuntimeRunningEntry, logFile: string | null): 
     id: entry.runId ?? `running-${entry.issueIdentifier}-${entry.slotIndex}`,
     issue_id: entry.issueId,
     issue_identifier: entry.issueIdentifier,
-    issue_title: entry.title,
+    issue_title: entry.issueTitle,
     state: entry.state,
     slot_index: entry.slotIndex,
     ensemble_size: entry.ensembleSize,
@@ -248,7 +317,7 @@ function historyRunPayload(entry: RuntimeRunHistoryEntry, logFile: string | null
     outcome: entry.outcome,
     retry_attempt: entry.retryAttempt ?? 0,
     worker_host: entry.workerHost ?? null,
-    workspace_path: entry.workspace ?? null,
+    workspace_path: entry.workspacePath ?? null,
     resume_id: entry.resumeId ?? null,
     session_id: entry.sessionId ?? null,
     executor_pid: entry.executorPid ?? null,
@@ -260,19 +329,19 @@ function historyRunPayload(entry: RuntimeRunHistoryEntry, logFile: string | null
     last_event_at: entry.lastEventAt ?? null,
     started_at: entry.startedAt,
     ended_at: entry.endedAt,
-    duration_ms: entry.durationMs ?? durationBetween(entry.startedAt, entry.endedAt),
+    duration_ms: entry.durationMs ?? durationMs(entry.startedAt, entry.endedAt),
     cost: { estimated_cost_usd: null },
     tokens: tokenPayload(usage),
     log_hints: logHints(
       logFile,
-      entry.workspace ?? null,
+      entry.workspacePath ?? null,
       entry.sessionId ?? null,
       entry.issueIdentifier,
     ),
   };
 }
 
-function blockedEntryPayload(entry: RuntimeSnapshot["blocked"][number]): Record<string, unknown> {
+function blockedEntryPayload(entry: RuntimeSnapshot["blocked"][number]): BlockedEntryPayload {
   return {
     issue_id: entry.issueId,
     issue_identifier: entry.identifier,
@@ -284,7 +353,7 @@ function blockedEntryPayload(entry: RuntimeSnapshot["blocked"][number]): Record<
   };
 }
 
-function runningEntryPayload(entry: RuntimeRunningEntry): Record<string, unknown> {
+function runningEntryPayload(entry: RuntimeRunningEntry): RunningEntryPayload {
   return {
     issue_id: entry.issueId,
     issue_identifier: entry.issueIdentifier,
@@ -312,6 +381,7 @@ function runningIssuePayload(entry: RuntimeRunningEntry): Record<string, unknown
   return {
     slot_index: entry.slotIndex,
     ensemble_size: entry.ensembleSize,
+    retry_attempt: entry.retryAttempt ?? 0,
     worker_host: entry.workerHost ?? null,
     workspace_path: entry.workspacePath ?? null,
     session_id: entry.sessionId ?? null,
@@ -394,15 +464,20 @@ function retriesPayload(runs: RunPayload[]): Array<Record<string, unknown>> {
   for (const run of runs)
     grouped.set(run.issue_identifier, [...(grouped.get(run.issue_identifier) ?? []), run]);
   return [...grouped.entries()]
-    .filter(([, issueRuns]) => issueRuns.length > 1)
-    .map(([identifier, issueRuns]) => {
+    .map(([identifier, issueRuns]) => ({
+      identifier,
+      issueRuns,
+      retryAttempts: distinctRetryAttempts(issueRuns),
+    }))
+    .filter(({ retryAttempts }) => retryAttempts.some((attempt) => attempt > 0))
+    .map(({ identifier, issueRuns, retryAttempts }) => {
       const sortedRuns = [...issueRuns].sort(compareLatestRun);
       const latest = sortedRuns[0];
       return {
         issue_identifier: identifier,
         issue_id: latest?.issue_id ?? null,
         issue_title: latest?.issue_title ?? null,
-        attempts: issueRuns.length,
+        attempts: retryAttempts.length,
         latest_outcome: latest?.outcome ?? "unknown",
         total_tokens: sum(issueRuns, (run) => run.tokens.total_tokens),
         latest_run_id: latest?.id ?? null,
@@ -418,12 +493,11 @@ function retriesPayload(runs: RunPayload[]): Array<Record<string, unknown>> {
     });
 }
 
-function usagePayload(usage: UsageTotals): {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  seconds_running: number;
-} {
+function distinctRetryAttempts(runs: RunPayload[]): number[] {
+  return [...new Set(runs.map((run) => run.retry_attempt))].sort((left, right) => left - right);
+}
+
+function usagePayload(usage: UsageTotals): UsageTotalsPayload {
   return {
     input_tokens: usage.inputTokens,
     output_tokens: usage.outputTokens,
@@ -432,11 +506,7 @@ function usagePayload(usage: UsageTotals): {
   };
 }
 
-function tokenPayload(usage: UsageTotals): {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-} {
+function tokenPayload(usage: UsageTotals): TokensPayload {
   return {
     input_tokens: usage.inputTokens,
     output_tokens: usage.outputTokens,
@@ -512,10 +582,6 @@ function limitParam(value: string | boolean | number | undefined): number {
 
 function durationSince(startedAt: string): number {
   return Math.max(0, Date.now() - new Date(startedAt).getTime());
-}
-
-function durationBetween(startedAt: string, endedAt: string): number {
-  return Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime());
 }
 
 function sum<T>(values: T[], callback: (value: T) => number): number {

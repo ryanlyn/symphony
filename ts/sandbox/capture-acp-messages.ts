@@ -61,7 +61,7 @@ function settingsForAgent(kind: "claude" | "codex", workspaceRoot: string): Sett
           executor: "acp",
           bridge_command: "claude-agent-acp",
           provider_config: {
-            permission_mode: "dontAsk",
+            permissions: { defaultMode: "dontAsk" },
           },
           turn_timeout_ms: 120_000,
           stall_timeout_ms: 60_000,
@@ -120,7 +120,7 @@ async function captureSession(kind: "claude" | "codex"): Promise<void> {
   } finally {
     await session.stop();
     await traceEmitter.drain();
-    fs.copyFileSync(TraceEmitter.tracePathForIssue(traceDir, issueIdentifier), outFile);
+    fs.copyFileSync(TraceEmitter.tracePathForIssue(traceDir, issueId), outFile);
     fs.rmSync(traceDir, { recursive: true, force: true });
     console.log(`[${kind}] Wrote ${updates.length} updates to ${outFile}`);
   }

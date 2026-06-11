@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test, vi } from "vitest";
+import { acpExecutorProvider } from "@symphony/acp";
+import { AgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   buildPrompt,
   continuationPrompt,
@@ -18,10 +20,23 @@ import {
   shellEscape,
   validateWorkspaceCwd,
 } from "@symphony/cli";
+import type { Settings } from "@symphony/cli";
 import type { ResumeState } from "@symphony/resume-state";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
 
-import { assert } from "./assert.js";
-import { sampleIssue, tempDir, writeExecutable } from "./helpers.js";
+// Private executor registry standing in for the CLI composition root: attempts resolve
+// the ACP executor through an explicit adapter instead of the process-default registry.
+const executors = new AgentExecutorRegistry();
+executors.register(acpExecutorProvider);
+
+const executorAdapters = {
+  executorFactory: async (settings: Settings) => {
+    const kind = settings.agent.kind;
+    const agent = settings.agents[kind];
+    if (!agent) throw new Error(`agents.${kind} is required`);
+    return executors.require(agent.executor).createExecutor(kind, settings);
+  },
+};
 
 function resumeKey(workspace: string, workerHost?: string | null): string {
   return `${workerHost ?? "local"}\0${workspace}`;
@@ -68,7 +83,7 @@ test("prompt rendering is strict and exposes ensemble context", async () => {
   );
 });
 
-test("empty workflow prompt uses the Elixir default prompt template", async () => {
+test("empty workflow prompt uses the default prompt template", async () => {
   const prompt = await buildPrompt("", { ...sampleIssue, description: null });
 
   assert.match(prompt, /You are working on an issue from the configured tracker\./);
@@ -76,7 +91,7 @@ test("empty workflow prompt uses the Elixir default prompt template", async () =
   assert.match(prompt, /No description provided\./);
 });
 
-test("continuation prompt matches the Elixir runner guidance", () => {
+test("continuation prompt matches the runner guidance", () => {
   assert.equal(
     continuationPrompt(2, 3),
     `Continuation guidance:
@@ -107,7 +122,7 @@ test("workspace path is safe, per-slot, and runs after_create in the slot direct
   assert.equal((await fs.readFile(path.join(workspace, "created.cwd"), "utf8")).trim(), workspace);
 });
 
-test("workspace identifiers preserve Elixir safe_identifier semantics", async () => {
+test("workspace identifiers preserve safe identifier semantics", async () => {
   assert.equal(safeIdentifier("  A B  "), "__A_B__");
   assert.equal(safeIdentifier(""), "");
   assert.equal(safeIdentifier(null), "");
@@ -251,11 +266,64 @@ test("remote workspace creation and removal use SSH hooks and validate remote pa
     /workspace outside root/,
   );
   const traceText = await fs.readFile(trace, "utf8");
-  assert.match(traceText, /-T -p 2200 worker-01 bash -lc/);
+  assert.match(traceText, /-T -p 2200 -- worker-01 bash -lc/);
   assert.match(traceText, /printf "%s\\n" "\$HOME"/);
   assert.match(traceText, /rm -rf/);
 
   vi.unstubAllEnvs();
+});
+
+test("remote workspace cwd validation accepts a missing path inside the workspace root", async () => {
+  const root = await tempDir("symphony-ts-remote-missing-workspace");
+  const trace = path.join(root, "ssh.trace");
+  const remoteHome = path.join(root, "remote-home");
+
+  const { canonicalRemoteHome, binDir } = await installEvalSsh(root, trace, remoteHome);
+  vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+
+  try {
+    const workspaceRoot = path.join(canonicalRemoteHome, "workspaces");
+    const workspace = path.join(workspaceRoot, "MT-MISSING");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    const settings = parseConfig({
+      workspace: { root: "~/workspaces" },
+      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+    });
+
+    const result = await validateWorkspaceCwd(settings, workspace, "worker-01:2200");
+
+    assert.equal(result, workspace);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("remote workspace cwd validation reports symlink escapes through missing tail paths", async () => {
+  const root = await tempDir("symphony-ts-remote-symlink-escape");
+  const trace = path.join(root, "ssh.trace");
+  const remoteHome = path.join(root, "remote-home");
+
+  const { canonicalRemoteHome, binDir } = await installEvalSsh(root, trace, remoteHome);
+  vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+
+  try {
+    const workspaceRoot = path.join(canonicalRemoteHome, "workspaces");
+    const outside = await tempDir("symphony-ts-remote-outside");
+    const link = path.join(workspaceRoot, "link-out");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await fs.symlink(outside, link);
+    const settings = parseConfig({
+      workspace: { root: "~/workspaces" },
+      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+    });
+
+    await assert.rejects(
+      () => validateWorkspaceCwd(settings, path.join(link, "missing"), "worker-01:2200"),
+      /symlink_escape/,
+    );
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 test("agent attempts run workspace hooks at lifecycle boundaries and tolerate after_run failures", async () => {
@@ -287,6 +355,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 `,
   );
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: workspaceRoot },
     hooks: {
       after_create: `echo after_create >> ${JSON.stringify(hookLog)}`,
@@ -309,7 +378,11 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     settings,
   };
 
-  const result = await runAgentAttempt({ issue: sampleIssue, workflow });
+  const result = await runAgentAttempt({
+    issue: sampleIssue,
+    workflow,
+    adapters: executorAdapters,
+  });
 
   assert.equal(result.turnCount, 1);
   assert.deepEqual((await fs.readFile(hookLog, "utf8")).trim().split("\n"), [
@@ -359,6 +432,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
   );
   const sharedRoot = path.join(root, "shared");
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: sharedRoot, isolation: "none" },
     agents: {
       codex: {
@@ -377,10 +451,11 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     settings,
   };
 
-  const first = await runAgentAttempt({ issue: sampleIssue, workflow });
+  const first = await runAgentAttempt({ issue: sampleIssue, workflow, adapters: executorAdapters });
   const second = await runAgentAttempt({
     issue: { ...sampleIssue, identifier: "MT-77" },
     workflow,
+    adapters: executorAdapters,
   });
 
   const canonicalRoot = await fs.realpath(sharedRoot);
@@ -451,6 +526,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 `,
   );
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: path.join(root, "workspaces") },
     agent: { kind: "claude", max_turns: 2 },
     agents: {
@@ -474,7 +550,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     issue: sampleIssue,
     workflow,
     fetchIssue: async () => sampleIssue,
-    adapters: resumeStore.adapters,
+    adapters: { ...resumeStore.adapters, ...executorAdapters },
   });
 
   const resume = resumeStore.read(result.workspace);
@@ -518,6 +594,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
   vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
 
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: "~/workspaces" },
     worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
     hooks: {
@@ -546,7 +623,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     issue: sampleIssue,
     workflow,
     workerHost: "worker-01:2200",
-    adapters: resumeStore.adapters,
+    adapters: { ...resumeStore.adapters, ...executorAdapters },
   });
 
   assert.equal(
@@ -633,6 +710,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 `,
   );
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: workspaceRoot },
     agents: {
       codex: {
@@ -656,6 +734,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
     workflow,
     onUpdate: (update) => updates.push(`${update.type}:${String(update.message ?? "")}`),
     adapters: {
+      ...executorAdapters,
       readResumeState: async () =>
         ({ status: "error", reason: "resume_state_decode_failed" }) as const,
       writeResumeState: async () => {},
@@ -695,6 +774,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
   );
 
   const settings = parseConfig({
+    server: { port: 0 },
     workspace: { root: workspaceRoot },
     agents: {
       codex: {
@@ -724,7 +804,12 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
   ]);
 
   await assert.rejects(
-    () => runAgentAttempt({ issue: sampleIssue, workflow, adapters: resumeStore.adapters }),
+    () =>
+      runAgentAttempt({
+        issue: sampleIssue,
+        workflow,
+        adapters: { ...resumeStore.adapters, ...executorAdapters },
+      }),
     /timed out/,
   );
   assert.equal(resumeStore.read(workspace)?.resumeId, "thread-stale");
@@ -826,12 +911,21 @@ async function installEvalSsh(
     path.join(bin, "ssh"),
     `#!/bin/sh
 printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
-for arg in "$@"; do last_arg="$arg"; done
+is_tunnel=0
+for arg in "$@"; do
+  if [ "$arg" = "-N" ]; then is_tunnel=1; fi
+  last_arg="$arg"
+done
+if [ "$is_tunnel" = "1" ]; then
+  trap 'exit 0' TERM INT
+  while :; do sleep 1; done
+fi
 case "$last_arg" in
   *'printf "%s\\n" "$HOME"'*)
     printf '%s\\n' ${shellEscape(canonicalRemoteHome)}
     exit 0
     ;;
+  *'/dev/tcp/127.0.0.1/'*) exit 0 ;;
 esac
 export HOME=${shellEscape(canonicalRemoteHome)}
 eval "$last_arg"
