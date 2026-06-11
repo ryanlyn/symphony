@@ -5,18 +5,26 @@ import path from "node:path";
 import { test } from "vitest";
 import { parseConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
+import { registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { ToolRegistry } from "@symphony/tool-sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinProviders } from "@symphony/trackers";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert } from "@symphony/test-utils";
 
 import { executeTool, toolSpecs } from "@symphony/mcp";
 
-// Private registries holding the built-in providers, so the mount contract is exercised
-// exactly as composed in production without mutating the process-default registries.
+// Private registries holding the providers this contract exercises, so the mount contract
+// is exercised exactly as composed in production without mutating the process-default
+// registries.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
-registerBuiltinProviders(trackers, tools);
+registerLinearTracker({ trackers, tools });
+registerLocalTracker({ trackers, tools });
+registerMemoryTracker({ trackers });
+registerJiraTrackers({ trackers });
+tools.register(createTrackerToolProvider(trackers));
 
 const TRACKER_TOOL_NAMES = [
   "tracker_read_issue",

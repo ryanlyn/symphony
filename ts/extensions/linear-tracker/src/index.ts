@@ -15,3 +15,4 @@ export {
 } from "./options.js";
 export { linearTrackerProvider } from "./provider.js";
 export { executeLinearTool, linearToolProvider, linearToolSpecs } from "./tools.js";
+export { registerLinearTracker } from "./register.js";

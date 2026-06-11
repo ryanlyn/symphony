@@ -10,16 +10,16 @@
   ],
   "references": [
     {
-      "path": "../domain"
+      "path": "../../packages/domain"
     },
     {
-      "path": "../issue"
+      "path": "../../packages/issue"
     },
     {
-      "path": "../tool-sdk"
+      "path": "../../packages/tool-sdk"
     },
     {
-      "path": "../tracker-sdk"
+      "path": "../../packages/tracker-sdk"
     }
   ]
 }

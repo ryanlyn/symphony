@@ -1,5 +1,10 @@
 import { normalizeIssue } from "@symphony/issue";
-import { rejectUnknownOptions, type TrackerProvider } from "@symphony/tracker-sdk";
+import {
+  defaultTrackerRegistry,
+  rejectUnknownOptions,
+  type TrackerProvider,
+  type TrackerRegistry,
+} from "@symphony/tracker-sdk";
 import {
   ISSUE_STATE_TYPES,
   isRecord,
@@ -119,3 +124,14 @@ export const memoryTrackerProvider: TrackerProvider = {
     return new MemoryTrackerClient(memoryIssuesFromEnv(context.env));
   },
 };
+
+/**
+ * Register this extension's tracker provider. Idempotent; called by the composition root
+ * (or a test) against its registry, defaulting to the process-wide one.
+ */
+export function registerMemoryTracker(registries: { trackers?: TrackerRegistry } = {}): void {
+  const trackers = registries.trackers ?? defaultTrackerRegistry;
+  if (trackers.get(memoryTrackerProvider.kind) === undefined) {
+    trackers.register(memoryTrackerProvider);
+  }
+}

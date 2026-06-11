@@ -2,8 +2,9 @@
 
 This workspace is organized as a small provider-agnostic core plus self-contained extension
 packages. The measure of cohesion we hold it to: adding a new backend (a tracker, a tool
-pack, and over time an agent executor) is one new package plus one registration line at the
-composition root - never a sweep through domain, config, MCP, and CLI code.
+pack, and over time an agent executor) is one new package that implements and registers its
+own contracts, plus one line at the composition root invoking that registration - never a
+sweep through domain, config, MCP, and CLI code.
 
 ## Layers
 
@@ -13,10 +14,8 @@ never from above.
 ```
 apps/cli, apps/traceviz                       composition roots / binaries
 ─────────────────────────────────────────────────────────────────────────
-@symphony/trackers                            built-in extension bundle
-@symphony/linear-tracker, local-tracker,      extensions (tracker providers
-@symphony/memory-tracker, jira-tracker,       and tool packs)
-@symphony/tracker-tools
+extensions/{linear,local,memory,jira}-tracker extensions (tracker providers
+                                              and their tool packs)
 ─────────────────────────────────────────────────────────────────────────
 @symphony/config, workflow, runtime,          engine (provider-agnostic)
 orchestrator, dispatch, agent-runner, acp,
@@ -31,22 +30,23 @@ mcp, server, tui, presenter, projections, …
   backend knowledge: `TrackerKind` is an open string and `TrackerSettings` contains only
   fields every tracker shares, plus an opaque `options` bag owned by the provider.
 - **tracker-sdk** defines the `TrackerProvider` contract (dispatch client, config
-  ownership, normalized `TrackerToolOps`), the `TrackerRegistry`, and option parsing
-  helpers. **tool-sdk** defines the `ToolProvider` contract for agent-facing tool packs,
+  ownership, normalized `TrackerToolOps`), the `TrackerRegistry`, option parsing helpers,
+  and the provider-neutral `tracker` pack (`createTrackerToolProvider`), which serves the
+  `tracker_*` tools for whichever provider drives dispatch. **tool-sdk** defines the `ToolProvider` contract for agent-facing tool packs,
   the `ToolRegistry`, mount/routing helpers, `ToolSpec`/`ToolResult` shapes and result
   helpers, and the read-only query/filter DSL tool implementations reuse. **agent-sdk**
   defines the `AgentExecutorProvider` contract and `AgentExecutorRegistry` for runtime
   drivers behind `agents.<kind>.executor`.
 - **extensions** implement those contracts. Each tracker package owns everything about its
   backend: its slice of the `tracker:` config section (aliases, validation, env fallbacks,
-  defaults), the runtime client, its tool pack and `TrackerToolOps`, and operator URLs.
-  `tracker-tools` is the provider-neutral tool pack built only from SDK surface.
+  defaults), the runtime client, its tool pack and `TrackerToolOps`, operator URLs, and
+  its own registration (`registerLinearTracker(...)` etc.) - there is no central bundle.
 - **engine** packages never import a provider or pack. They resolve `tracker.kind` through
   a `TrackerRegistry` and tool packs through a `ToolRegistry` (the process-wide defaults
   unless one is injected).
-- **composition roots** decide what the binary supports. `apps/cli` calls
-  `registerBuiltinBackends()` inside its entrypoints; a downstream embedder can register a
-  different set against its own registries.
+- **composition roots** decide what the binary supports. `apps/cli`'s
+  `registerBuiltinBackends()` invokes each built-in extension's registration inside the
+  entrypoints; a downstream embedder invokes a different set against its own registries.
 
 ## The tracker extension point
 
@@ -93,20 +93,21 @@ A mount is one flat tool namespace: name collisions across mounted packs fail lo
 mount time. A pack that throws surfaces as a failed `ToolResult` (JSON-RPC `isError`),
 never as a transport-level error.
 
-The `tracker` pack (in `@symphony/tracker-tools`) implements the five provider-neutral
-`tracker_*` tools purely against `TrackerToolOps`, so any tracker whose provider implements
+The `tracker` pack (`createTrackerToolProvider` in `@symphony/tracker-sdk`) implements the
+five provider-neutral `tracker_*` tools purely against `TrackerToolOps`, so any tracker whose provider implements
 `createToolOps` gets read/query/status/comment/create tools without writing a pack.
 Provider-specific packs (`linear`, `local`) live in their tracker packages and carry the
 tools only that backend can offer.
 
 ### Adding a tracker backend
 
-1. Create `packages/<name>-tracker` depending on `@symphony/domain` and
+1. Create `extensions/<name>-tracker` depending on `@symphony/domain` and
    `@symphony/tracker-sdk` (plus `@symphony/issue` for `normalizeIssue`, and
    `@symphony/tool-sdk` if it ships a tool pack).
 2. Implement a `RuntimeTrackerClient` and export a `TrackerProvider` that wires config
    parsing, validation, the client, and `createToolOps` for the neutral tools.
-3. Register it: add the provider (and any pack) to the builtin set in `packages/trackers`.
+3. Export a `register<Name>Tracker(registries?)` function that registers the provider (and
+   any pack) idempotently, and invoke it from `registerBuiltinBackends()` in `apps/cli`.
 4. Add the package to the workspace plumbing (`pnpm install`, `pnpm tsconfig:refs --write`).
 
 `test/tracker-extension.test.ts` is the executable form of this recipe: it defines a fake
@@ -158,9 +159,9 @@ The layering is checked mechanically, not just documented. `.dependency-cruiser.
 graph of every source file against the layer rules above, plus the file-level rules no
 other gate covers: no circular imports, cross-package imports only through a package's
 published surface (its `exports` map), and no package importing an app. An engine package
-that imports a tracker provider fails CI. A new extension package must be added to the
-`EXTENSION` pattern in `.dependency-cruiser.cjs` (or use the `-tracker` suffix) or it is
-treated as engine and loses extension privileges.
+that imports a tracker provider fails CI. Extension membership is by directory: anything
+under `extensions/` gets the extension rules by construction, and the engine (all of
+`packages/`) may never import from it.
 
 `pnpm architecture:graph` renders the same graph as Mermaid for inspection.
 
@@ -177,4 +178,5 @@ and knip flags dependencies that are declared but unused.
 - Secrets resolution (`$VAR`, `op://`, env fallbacks) is core config machinery; providers
   only declare *which* env vars back their credentials.
 - Tool failures are data (`ToolResult` with `isError`), never thrown across the MCP seam.
-- `@symphony/trackers` exists so the built-in set is declared in exactly one place.
+- The built-in set is declared in exactly one place: the composition root's
+  `registerBuiltinBackends()`.

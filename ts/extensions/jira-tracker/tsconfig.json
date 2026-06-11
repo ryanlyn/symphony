@@ -6,18 +6,17 @@
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo"
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.ts"
   ],
   "references": [
     {
-      "path": "../domain"
+      "path": "../../packages/domain"
     },
     {
-      "path": "../issue"
+      "path": "../../packages/issue"
     },
     {
-      "path": "../tracker-sdk"
+      "path": "../../packages/tracker-sdk"
     }
   ]
 }

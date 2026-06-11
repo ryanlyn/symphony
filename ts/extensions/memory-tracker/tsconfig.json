@@ -11,13 +11,13 @@
   ],
   "references": [
     {
-      "path": "../domain"
+      "path": "../../packages/domain"
     },
     {
-      "path": "../tool-sdk"
+      "path": "../../packages/issue"
     },
     {
-      "path": "../tracker-sdk"
+      "path": "../../packages/tracker-sdk"
     }
   ]
 }

@@ -29,22 +29,10 @@
       "path": "./packages/issue"
     },
     {
-      "path": "./packages/jira-tracker"
-    },
-    {
-      "path": "./packages/linear-tracker"
-    },
-    {
-      "path": "./packages/local-tracker"
-    },
-    {
       "path": "./packages/log-file"
     },
     {
       "path": "./packages/mcp"
-    },
-    {
-      "path": "./packages/memory-tracker"
     },
     {
       "path": "./packages/orchestrator"
@@ -95,12 +83,6 @@
       "path": "./packages/tracker-sdk"
     },
     {
-      "path": "./packages/tracker-tools"
-    },
-    {
-      "path": "./packages/trackers"
-    },
-    {
       "path": "./packages/tui"
     },
     {
@@ -111,6 +93,18 @@
     },
     {
       "path": "./packages/workspace"
+    },
+    {
+      "path": "./extensions/jira-tracker"
+    },
+    {
+      "path": "./extensions/linear-tracker"
+    },
+    {
+      "path": "./extensions/local-tracker"
+    },
+    {
+      "path": "./extensions/memory-tracker"
     },
     {
       "path": "./apps/cli"

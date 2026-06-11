@@ -1,7 +1,7 @@
 import os from "node:os";
 
 import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { defaultAgentExecutorRegistry, type AgentExecutorRegistry } from "@symphony/agent-sdk";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
@@ -10,6 +10,10 @@ import {
 } from "@symphony/agent-runner";
 import type { DefaultSettingsOptions } from "@symphony/config";
 import type { RuntimeTrackerClient, Settings } from "@symphony/domain";
+import { registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { createWorkspaceForIssue, removeIssueWorkspaces, runHook } from "@symphony/workspace";
 import { appendLogEvent } from "@symphony/log-file";
 import {
@@ -18,20 +22,40 @@ import {
   resumeStateMatches,
   writeResumeState,
 } from "@symphony/resume-state";
-import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinProviders } from "@symphony/trackers";
+import { defaultToolRegistry, type ToolRegistry } from "@symphony/tool-sdk";
+import {
+  createTrackerToolProvider,
+  defaultTrackerRegistry,
+  type TrackerRegistry,
+} from "@symphony/tracker-sdk";
+
+export interface BackendRegistries {
+  trackers?: TrackerRegistry | undefined;
+  tools?: ToolRegistry | undefined;
+  executors?: AgentExecutorRegistry | undefined;
+}
 
 /**
- * Composition root: the CLI decides which tracker backends, tool packs, and agent
- * executors this binary supports. Everything downstream (config parsing, dispatch
- * validation, MCP tools, executor selection) resolves them through the registries.
- * Called from every CLI entrypoint before config is parsed; idempotent so entrypoints
- * and tests can call it freely.
+ * Composition root: the CLI decides which extensions and agent executors this binary
+ * supports. Each extension registers itself; the CLI only lists them here. Everything
+ * downstream (config parsing, dispatch validation, MCP tools, executor selection)
+ * resolves through the registries. Called from every CLI entrypoint before config is
+ * parsed; idempotent so entrypoints and tests can call it freely.
  */
-export function registerBuiltinBackends(): void {
-  registerBuiltinProviders();
-  if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
-    defaultAgentExecutorRegistry.register(acpExecutorProvider);
+export function registerBuiltinBackends(registries: BackendRegistries = {}): void {
+  const trackers = registries.trackers ?? defaultTrackerRegistry;
+  const tools = registries.tools ?? defaultToolRegistry;
+  const executors = registries.executors ?? defaultAgentExecutorRegistry;
+
+  registerLinearTracker({ trackers, tools });
+  registerLocalTracker({ trackers, tools });
+  registerMemoryTracker({ trackers });
+  registerJiraTrackers({ trackers });
+  if (tools.get("tracker") === undefined) {
+    tools.register(createTrackerToolProvider(trackers));
+  }
+  if (executors.get(acpExecutorProvider.executor) === undefined) {
+    executors.register(acpExecutorProvider);
   }
 }
 

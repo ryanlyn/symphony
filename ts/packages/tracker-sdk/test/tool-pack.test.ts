@@ -4,7 +4,7 @@ import type { ToolProvider } from "@symphony/tool-sdk";
 import { TrackerRegistry, type TrackerProvider, type TrackerToolOps } from "@symphony/tracker-sdk";
 import { assert, makeSettings } from "@symphony/test-utils";
 
-import { createTrackerToolProvider } from "@symphony/tracker-tools";
+import { createTrackerToolProvider } from "@symphony/tracker-sdk";
 
 const TRACKER_TOOL_NAMES = [
   "tracker_read_issue",

@@ -11,7 +11,8 @@ import {
   type ToolResult,
   type ToolSpec,
 } from "@symphony/tool-sdk";
-import type { TrackerRegistry, TrackerToolOps } from "@symphony/tracker-sdk";
+import type { TrackerRegistry } from "./registry.js";
+import type { TrackerToolOps } from "./provider.js";
 
 const TRACKER_TOOL_NAMES = [
   "tracker_read_issue",

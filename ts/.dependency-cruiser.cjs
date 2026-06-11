@@ -5,28 +5,24 @@
  * Layer model (dependencies must point strictly downward):
  *
  *   apps        apps/*                              - anything
- *   bundle      packages/trackers                   - extensions + SDKs + support + leaf
- *   extension   packages/*-tracker, tracker-tools   - SDKs + extension support + leaf
+ *   extension   extensions/*                        - SDKs + extension support + leaf
  *   engine      every other packages/*              - engine + SDKs + support + leaf
  *   sdk         packages/{tracker,tool,agent}-sdk   - leaf only
  *   support     packages/issue                      - leaf only
  *   leaf        packages/domain                     - no workspace dependencies
  *
- * A new extension package must be added to EXTENSION below (or use the `-tracker` suffix);
- * an unlisted package lands in the engine layer, where importing it from the engine is
- * legal - keep the list in lockstep with docs/ARCHITECTURE.md.
+ * Extension membership is by directory: anything under extensions/ gets the extension
+ * rules by construction, and the engine (all of packages/) may never import from it.
  *
  * Cross-package imports resolve through pnpm workspace symlinks to the target package's
  * published `dist/` surface (Node `exports` encapsulation forbids anything else at
- * runtime), so layer rules match on `packages/<name>/` path prefixes regardless of
- * whether the edge lands on dist/index.js or a sanctioned subpath export.
+ * runtime), so layer rules match on path prefixes regardless of whether the edge lands
+ * on dist/index.js or a sanctioned subpath export.
  */
 
 const LEAF = "packages/domain/";
 const SDK = "packages/(?:tracker-sdk|tool-sdk|agent-sdk)/";
 const SUPPORT = "packages/issue/";
-const EXTENSION = "packages/(?:[^/]+-tracker|tracker-tools)/";
-const BUNDLE = "packages/trackers/";
 
 module.exports = {
   forbidden: [
@@ -52,13 +48,13 @@ module.exports = {
         "Another workspace package may only be imported through its package name (resolved " +
         "to its built dist/ via the exports map), never by reaching into its src/ files.",
       severity: "error",
-      from: { path: "^((?:packages|apps)/[^/]+)/" },
-      to: { path: "^(?:packages|apps)/[^/]+/src/", pathNot: "^$1/" },
+      from: { path: "^((?:packages|extensions|apps)/[^/]+)/" },
+      to: { path: "^(?:packages|extensions|apps)/[^/]+/src/", pathNot: "^$1/" },
     },
     {
       name: "packages-must-not-import-apps",
       severity: "error",
-      from: { path: "^packages/" },
+      from: { path: "^(?:packages|extensions)/" },
       to: { path: "^apps/" },
     },
     {
@@ -66,20 +62,22 @@ module.exports = {
       comment: "domain is the dependency root; it imports nothing internal.",
       severity: "error",
       from: { path: "^(packages/domain)/" },
-      to: { path: "^(?:packages|apps)/", pathNot: "^$1/" },
+      to: { path: "^(?:packages|extensions|apps)/", pathNot: "^$1/" },
     },
     {
-      name: "sdks-depend-on-leaf-only",
-      comment: "Extension SDKs sit directly on the domain; they must stay engine-free.",
+      name: "sdks-depend-on-sdk-layers-only",
+      comment:
+        "Extension SDKs sit directly on the domain and may build on each other (tracker-sdk " +
+        "uses tool-sdk's tool contract; no-circular keeps that a DAG). They stay engine-free.",
       severity: "error",
       from: { path: "^(packages/(?:tracker-sdk|tool-sdk|agent-sdk))/" },
-      to: { path: "^(?:packages|apps)/", pathNot: ["^$1/", `^${LEAF}`] },
+      to: { path: "^(?:packages|extensions|apps)/", pathNot: ["^$1/", `^${LEAF}`, `^${SDK}`] },
     },
     {
       name: "extension-support-depends-on-leaf-only",
       severity: "error",
       from: { path: "^(packages/issue)/" },
-      to: { path: "^(?:packages|apps)/", pathNot: ["^$1/", `^${LEAF}`] },
+      to: { path: "^(?:packages|extensions|apps)/", pathNot: ["^$1/", `^${LEAF}`] },
     },
     {
       name: "extensions-depend-on-sdk-layers-only",
@@ -87,32 +85,20 @@ module.exports = {
         "A provider or tool pack must be implementable from the SDK surface alone; importing " +
         "engine packages would couple extensions to the core they extend.",
       severity: "error",
-      from: { path: "^(packages/(?:[^/]+-tracker|tracker-tools))/" },
+      from: { path: "^(extensions/[^/]+)/" },
       to: {
-        path: "^(?:packages|apps)/",
+        path: "^(?:packages|extensions|apps)/",
         pathNot: ["^$1/", `^${LEAF}`, `^${SDK}`, `^${SUPPORT}`],
-      },
-    },
-    {
-      name: "bundle-aggregates-extensions-only",
-      severity: "error",
-      from: { path: "^(packages/trackers)/" },
-      to: {
-        path: "^(?:packages|apps)/",
-        pathNot: ["^$1/", `^${LEAF}`, `^${SDK}`, `^${SUPPORT}`, `^${EXTENSION}`],
       },
     },
     {
       name: "engine-must-not-import-extensions",
       comment:
         "The engine resolves backends through the SDK registries; importing a provider " +
-        "or the bundle would defeat the extension architecture (docs/ARCHITECTURE.md).",
+        "would defeat the extension architecture (docs/ARCHITECTURE.md).",
       severity: "error",
-      from: {
-        path: "^packages/",
-        pathNot: [`^${EXTENSION}`, `^${BUNDLE}`],
-      },
-      to: { path: [`^${EXTENSION}`, `^${BUNDLE}`] },
+      from: { path: "^packages/" },
+      to: { path: "^extensions/" },
     },
   ],
   options: {
@@ -129,7 +115,7 @@ module.exports = {
     },
     exclude: { path: "\\.d\\.ts$" },
     reporterOptions: {
-      dot: { collapsePattern: "^(packages|apps)/[^/]+" },
+      dot: { collapsePattern: "^(packages|extensions|apps)/[^/]+" },
       mermaid: { minify: false },
     },
   },

@@ -13,3 +13,4 @@ export {
   stringListOption,
   stringOption,
 } from "./options.js";
+export { createTrackerToolProvider } from "./toolPack.js";

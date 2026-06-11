@@ -12,17 +12,23 @@ import {
 } from "@symphony/cli";
 import { normalizeIssue } from "@symphony/issue";
 import type { WorkflowDefinition } from "@symphony/domain";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { defaultToolRegistry } from "@symphony/tool-sdk";
+import { createTrackerToolProvider, defaultTrackerRegistry } from "@symphony/tracker-sdk";
 import { assert } from "@symphony/test-utils";
-import { registerBuiltinProviders } from "@symphony/trackers";
 
 import { IssueStore, startObservabilityServer } from "@symphony/server";
 import { startClaudeMcpServer } from "@symphony/server";
 
 // The observability server resolves tool packs and tracker ops through the process-default
 // registries (it offers no injection point), so populate them the same way the CLI
-// composition root does before serving (in a hook rather than at module scope).
+// composition root does before serving (in a hook rather than at module scope). This suite
+// dispatches on the linear tracker and mounts the neutral tracker pack plus linear's own.
 beforeAll(() => {
-  registerBuiltinProviders();
+  registerLinearTracker();
+  if (defaultToolRegistry.get("tracker") === undefined) {
+    defaultToolRegistry.register(createTrackerToolProvider(defaultTrackerRegistry));
+  }
 });
 
 test("observability HTTP API exposes state, issue, runs, refresh, and errors", async () => {

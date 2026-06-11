@@ -41,7 +41,7 @@ export class TrackerRegistry {
       const hint =
         known.length > 0
           ? ` (known kinds: ${known.join(", ")})`
-          : " (no tracker providers registered - call registerBuiltinTrackerProviders() at the composition root)";
+          : " (no tracker providers registered - register tracker extensions at the composition root)";
       throw new Error(`unsupported tracker.kind: ${kind}${hint}`);
     }
     return provider;

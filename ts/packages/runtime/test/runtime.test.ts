@@ -14,11 +14,11 @@ import {
   runtimeAdapters,
   slotKey,
 } from "@symphony/cli";
+import { registerLinearTracker } from "@symphony/linear-tracker";
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME_EVENTS,
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
 } from "@symphony/runtime-events";
-import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import type { Issue, RunResult, SymphonyRuntimeOptions, WorkflowDefinition } from "@symphony/cli";
 import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
 
@@ -30,10 +30,11 @@ import {
 
 // The runtime validates dispatch config against the process-default registries, which the
 // CLI composition root populates before constructing a runtime. Mirror that wiring here (in
-// a hook rather than at module scope) so polling resolves the same tracker and executor
-// providers as production.
+// a hook rather than at module scope) for the backends this suite dispatches on - the
+// linear tracker and the ACP executor - so polling resolves the same providers as
+// production.
 beforeAll(() => {
-  registerBuiltinTrackerProviders();
+  registerLinearTracker();
   if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
     defaultAgentExecutorRegistry.register(acpExecutorProvider);
   }

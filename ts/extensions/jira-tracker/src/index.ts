@@ -1,9 +1,4 @@
-export {
-  JiraClient,
-  JiraMcpClient,
-  normalizeJiraIssue,
-  type JiraClientDeps,
-} from "./client.js";
+export { JiraClient, JiraMcpClient, normalizeJiraIssue, type JiraClientDeps } from "./client.js";
 export {
   jiraTrackerOptions,
   type JiraMcpOptions,
@@ -11,3 +6,4 @@ export {
   type JiraTrackerOptions,
 } from "./options.js";
 export { jiraMcpTrackerProvider, jiraTrackerProvider } from "./provider.js";
+export { registerJiraTrackers } from "./register.js";

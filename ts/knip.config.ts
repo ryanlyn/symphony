@@ -7,13 +7,12 @@ const config: KnipConfig = {
       paths: {
         "@symphony/cli": ["apps/cli/src/index.ts"],
         "@symphony/cli/runs": ["apps/cli/src/runs.ts"],
-        "@symphony/*": ["packages/*/src/index.ts"],
+        "@symphony/*": ["packages/*/src/index.ts", "extensions/*/src/index.ts"],
       },
       ignoreDependencies: [
         "@symphony/dispatch",
         "@symphony/humanize",
         "@symphony/log-file",
-        "@symphony/memory-tracker",
         "@symphony/orchestrator",
         "@symphony/policies",
         "@symphony/projections",
@@ -32,13 +31,16 @@ const config: KnipConfig = {
     "apps/cli": {
       includeEntryExports: true,
     },
-    "packages/local-tracker": {
+    "extensions/local-tracker": {
       includeEntryExports: true,
     },
     "packages/mcp": {
       includeEntryExports: true,
     },
     "packages/*": {
+      entry: ["src/index.{ts,tsx}"],
+    },
+    "extensions/*": {
       entry: ["src/index.{ts,tsx}"],
     },
   },

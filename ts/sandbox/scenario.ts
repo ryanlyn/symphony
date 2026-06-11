@@ -1,7 +1,7 @@
 import { acpExecutorProvider } from "@symphony/acp";
 import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { SymphonyRuntime } from "@symphony/runtime";
-import { registerBuiltinTrackerProviders } from "@symphony/trackers";
 import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@symphony/cli";
 import type { RuntimeEvent, RuntimeSnapshot, SymphonyRuntimeOptions } from "@symphony/runtime";
 
@@ -62,12 +62,12 @@ export interface SandboxScenario {
 
 /**
  * The sandbox harness is its own composition root: the runtime validates dispatch
- * config against the process-default registries on every poll, so the built-in
- * tracker backends and the ACP executor must be registered before a scenario runs.
- * Idempotent, and registers builtins only.
+ * config against the process-default registries on every poll. Scenario settings
+ * always dispatch on the memory tracker, so that backend and the ACP executor must
+ * be registered before a scenario runs. Idempotent.
  */
 function registerSandboxBackends(): void {
-  registerBuiltinTrackerProviders();
+  registerMemoryTracker();
   if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
     defaultAgentExecutorRegistry.register(acpExecutorProvider);
   }

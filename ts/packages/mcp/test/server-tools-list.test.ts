@@ -5,9 +5,10 @@ import path from "node:path";
 
 import { parseConfig as parseWorkflowConfig } from "@symphony/config";
 import type { Settings } from "@symphony/domain";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
 import { ToolRegistry } from "@symphony/tool-sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinProviders } from "@symphony/trackers";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 import { test } from "vitest";
 import { assert } from "@symphony/test-utils";
 
@@ -19,11 +20,14 @@ import {
   type ObservabilityServerHandle,
 } from "@symphony/mcp";
 
-// Private registries holding the built-in providers, so the server is exercised without
-// mutating the process-default registries.
+// Private registries holding the providers this suite exercises (linear and local
+// dispatch, plus the neutral tracker pack), so the server is exercised without mutating
+// the process-default registries.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
-registerBuiltinProviders(trackers, tools);
+registerLinearTracker({ trackers, tools });
+registerLocalTracker({ trackers, tools });
+tools.register(createTrackerToolProvider(trackers));
 
 function parseConfig(raw: Record<string, unknown>, env: NodeJS.ProcessEnv): Settings {
   return parseWorkflowConfig(raw, env, {}, trackers);

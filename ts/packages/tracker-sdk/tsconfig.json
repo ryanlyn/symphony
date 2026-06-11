@@ -12,6 +12,9 @@
   "references": [
     {
       "path": "../domain"
+    },
+    {
+      "path": "../tool-sdk"
     }
   ]
 }

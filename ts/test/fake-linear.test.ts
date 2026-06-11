@@ -3,18 +3,20 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, test } from "vitest";
 import { setupServer } from "msw/node";
 import { executeTool, LinearClient, parseConfig } from "@symphony/cli";
+import { registerLinearTracker } from "@symphony/linear-tracker";
 import { assert, tempDir } from "@symphony/test-utils";
 import { ToolRegistry } from "@symphony/tool-sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinProviders } from "@symphony/trackers";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 
 import { createFakeLinearHandlers } from "./fake-linear-server.js";
 
-// Private registries with the builtin backends, so config parsing applies the Linear
-// provider's aliases/validation and tool calls mount the builtin packs.
+// Private registries with the linear backend and the neutral tracker pack, so config
+// parsing applies the Linear provider's aliases/validation and tool calls mount the
+// default packs.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
-registerBuiltinProviders(trackers, tools);
+registerLinearTracker({ trackers, tools });
+tools.register(createTrackerToolProvider(trackers));
 
 const fakeViewer = { id: "viewer-001", name: "Fake User", email: "fake@example.com" };
 const fakeProject = {

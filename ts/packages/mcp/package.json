@@ -20,8 +20,11 @@
   },
   "devDependencies": {
     "@symphony/config": "workspace:*",
+    "@symphony/jira-tracker": "workspace:*",
+    "@symphony/linear-tracker": "workspace:*",
+    "@symphony/local-tracker": "workspace:*",
+    "@symphony/memory-tracker": "workspace:*",
     "@symphony/test-utils": "workspace:*",
-    "@symphony/tracker-sdk": "workspace:*",
-    "@symphony/trackers": "workspace:*"
+    "@symphony/tracker-sdk": "workspace:*"
   }
 }

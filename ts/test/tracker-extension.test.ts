@@ -4,7 +4,7 @@ import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
 import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
 import { executeTool, toolSpecs } from "@symphony/mcp";
 import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider } from "@symphony/tracker-tools";
+import { createTrackerToolProvider } from "@symphony/tracker-sdk";
 import {
   TrackerRegistry,
   rejectUnknownOptions,

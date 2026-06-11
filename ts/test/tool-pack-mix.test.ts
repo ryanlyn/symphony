@@ -3,16 +3,19 @@ import { parseConfig, validateDispatchConfig } from "@symphony/config";
 import type { Issue, Settings } from "@symphony/domain";
 import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
 import { executeTool, toolSpecs } from "@symphony/mcp";
+import { registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
 import { ToolRegistry, type ToolProvider } from "@symphony/tool-sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinProviders } from "@symphony/trackers";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert, tempDir } from "@symphony/test-utils";
 
 /**
  * Mixed tool mounts are a user-facing contract: one tracker drives dispatch while the
  * `tools:` config list mounts any combination of packs on the MCP endpoint - e.g.
  * `tools: [tracker, linear, local]` on a Jira-dispatch deployment. Everything here runs
- * against private registries with the builtin providers registered.
+ * against private registries holding the jira, linear, and local extensions plus the
+ * neutral tracker pack.
  */
 
 // Stand-in for the composition root's executor registration; the default agent records
@@ -33,7 +36,10 @@ function executorRegistry(): AgentExecutorRegistry {
 function builtinRegistries(): { trackers: TrackerRegistry; tools: ToolRegistry } {
   const trackers = new TrackerRegistry();
   const tools = new ToolRegistry();
-  registerBuiltinProviders(trackers, tools);
+  registerJiraTrackers({ trackers });
+  registerLinearTracker({ trackers, tools });
+  registerLocalTracker({ trackers, tools });
+  tools.register(createTrackerToolProvider(trackers));
   return { trackers, tools };
 }
 

@@ -11,25 +11,16 @@
   ],
   "references": [
     {
-      "path": "../jira-tracker"
+      "path": "../../packages/domain"
     },
     {
-      "path": "../linear-tracker"
+      "path": "../../packages/issue"
     },
     {
-      "path": "../local-tracker"
+      "path": "../../packages/tool-sdk"
     },
     {
-      "path": "../memory-tracker"
-    },
-    {
-      "path": "../tool-sdk"
-    },
-    {
-      "path": "../tracker-sdk"
-    },
-    {
-      "path": "../tracker-tools"
+      "path": "../../packages/tracker-sdk"
     }
   ]
 }

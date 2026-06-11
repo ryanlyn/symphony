@@ -135,11 +135,7 @@ function parseJiraMcpTools(raw: unknown): Record<string, string> {
   return tools;
 }
 
-function mcpString(
-  record: Record<string, unknown>,
-  key: string,
-  path: string,
-): string | undefined {
+function mcpString(record: Record<string, unknown>, key: string, path: string): string | undefined {
   const value = record[key];
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "string") throw new Error(`${path} must be a string`);

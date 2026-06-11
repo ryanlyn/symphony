@@ -64,15 +64,16 @@ records a `workflow_reload_failed` event.
 See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the layering rules and the tracker extension
 contract (including the recipe for adding a new tracker backend).
 
-- `apps/cli` is the composition root: it registers the built-in tracker providers and wires
+- `apps/cli` is the composition root: it invokes the built-in extensions' registration and wires
   configuration, agent runners, the runtime, the TUI, and the observability server into the
   shipped binary.
 - `apps/traceviz` renders trace event streams for local inspection.
 - `packages/tracker-sdk` is the extension SDK: the `TrackerProvider` contract, the provider
   registry, and the helpers tracker backends build on.
-- `packages/linear-tracker`, `packages/local-tracker`, and `packages/memory-tracker` are
-  self-contained tracker providers (config parsing, runtime client, and agent tools);
-  `packages/trackers` bundles them as the built-in set.
+- `extensions/*` are the backend extensions: `linear-tracker`, `local-tracker`,
+  `memory-tracker`, and `jira-tracker` are self-contained tracker providers (config
+  parsing, runtime client, tool packs) that each export their own registration; the CLI
+  invokes the built-in set at its composition root.
 - The remaining `packages/*` are the provider-agnostic engine: domain model, configuration
   loader, prompt renderer, runtime, policies, MCP server, dashboards, logging, SSH, and
   support libraries.

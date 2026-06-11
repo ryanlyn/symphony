@@ -35,7 +35,7 @@ export class ToolRegistry {
       const hint =
         known.length > 0
           ? ` (known tool packs: ${known.join(", ")})`
-          : " (no tool packs registered - call registerBuiltinToolProviders() at the composition root)";
+          : " (no tool packs registered - register tool packs at the composition root)";
       throw new Error(`unsupported tool pack: ${name}${hint}`);
     }
     return provider;

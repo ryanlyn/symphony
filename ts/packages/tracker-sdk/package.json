@@ -9,6 +9,7 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*"
+    "@symphony/domain": "workspace:*",
+    "@symphony/tool-sdk": "workspace:*"
   }
 }

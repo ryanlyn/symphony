@@ -14,10 +14,12 @@ import {
 import { acpExecutorProvider } from "@symphony/acp";
 import { AgentExecutorRegistry } from "@symphony/agent-sdk";
 import type { Settings } from "@symphony/domain";
-import { jiraTrackerOptions } from "@symphony/jira-tracker";
+import { jiraTrackerOptions, registerJiraTrackers } from "@symphony/jira-tracker";
+import { registerLinearTracker } from "@symphony/linear-tracker";
+import { registerLocalTracker } from "@symphony/local-tracker";
+import { registerMemoryTracker } from "@symphony/memory-tracker";
 import { ToolRegistry } from "@symphony/tool-sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { registerBuiltinToolProviders, registerBuiltinTrackerProviders } from "@symphony/trackers";
+import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert, tempDir } from "@symphony/test-utils";
 
 import type { DefaultSettingsOptions } from "@symphony/config";
@@ -25,7 +27,12 @@ import type { DefaultSettingsOptions } from "@symphony/config";
 // Private registries keep these tests hermetic: the process-wide default registries belong
 // to the composition root and stay untouched here.
 const trackers = new TrackerRegistry();
-registerBuiltinTrackerProviders(trackers);
+const tools = new ToolRegistry();
+registerLinearTracker({ trackers, tools });
+registerLocalTracker({ trackers, tools });
+registerMemoryTracker({ trackers });
+registerJiraTrackers({ trackers });
+tools.register(createTrackerToolProvider(trackers));
 const executors = new AgentExecutorRegistry();
 executors.register(acpExecutorProvider);
 
@@ -455,7 +462,7 @@ test("config validates literal-only backend names and rejects removed Codex keys
         new TrackerRegistry(),
         executors,
       ),
-    /unsupported tracker.kind: github \(no tracker providers registered - call registerBuiltinTrackerProviders\(\) at the composition root\)/,
+    /unsupported tracker.kind: github \(no tracker providers registered - register tracker extensions at the composition root\)/,
   );
   assert.throws(
     () => parseConfig({ codex: { approval_policy: "never" } }),
@@ -612,8 +619,6 @@ test("top-level tools selects tool packs and is validated against the registry",
   const settings = parseConfig({ tracker: { kind: "memory" }, tools: ["tracker", "local"] });
   assert.deepEqual(settings.tools, ["tracker", "local"]);
 
-  const tools = new ToolRegistry();
-  registerBuiltinToolProviders(tools, trackers);
   validateDispatchConfig(settings, tools);
 
   const unknown = parseConfig({ tracker: { kind: "memory" }, tools: ["surprise"] });
