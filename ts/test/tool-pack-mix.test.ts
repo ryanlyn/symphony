@@ -93,7 +93,10 @@ test("a jira-dispatch workflow mounts the tracker, linear, and local packs side 
 
 test("a linear tool call routes to the linear pack and uses its transport", async () => {
   const { trackers, tools } = builtinRegistries();
-  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers);
+  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers, {
+    tool_options: { linear: { api_key: "linear-token" } },
+  });
+  validateDispatchConfig(settings, trackers, executorRegistry(), tools);
 
   // Stub transport: the assertion is the routing and the result envelope, not a live call.
   const calls: Array<{ url: string; authorization: string | null }> = [];
@@ -119,8 +122,56 @@ test("a linear tool call routes to the linear pack and uses its transport", asyn
   assert.deepEqual(result, { success: true, result: { data: { viewer: { id: "user-1" } } } });
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, "https://api.linear.app/graphql");
-  // The pack runs on the workflow's shared tracker credential.
-  assert.equal(calls[0]?.authorization, "jira-token");
+  // The pack runs on its own `tool_options.linear` credential; the dispatch tracker's
+  // credential (here Jira's) must never be sent to Linear.
+  assert.equal(calls[0]?.authorization, "linear-token");
+  assert.notEqual(calls[0]?.authorization, "jira-token");
+});
+
+test("a linear tool call on a foreign dispatch tracker never falls back to its credential", async () => {
+  const { trackers, tools } = builtinRegistries();
+  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers);
+
+  const calls: string[] = [];
+  const fakeFetch: typeof fetch = async () => {
+    calls.push("called");
+    return new Response("{}", { status: 200 });
+  };
+
+  // No tool_options.linear and an empty environment: the call must fail before any
+  // network request instead of borrowing the Jira credential.
+  const result = await executeTool(
+    "linear_graphql",
+    { query: "query Me { viewer { id } }" },
+    settings,
+    fakeFetch,
+    tools,
+    {},
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /missing Linear auth/);
+  assert.equal(calls.length, 0);
+});
+
+test("the linear pack rejects unknown tool_options keys and wrong types", () => {
+  const { trackers, tools } = builtinRegistries();
+
+  const unknownKey = parseJiraWithPacks(["tracker", "linear", "local"], trackers, {
+    tool_options: { linear: { surprise: true } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(unknownKey, trackers, executorRegistry(), tools),
+    /tool_options\.linear\.surprise is not supported \(known keys: apiKey, api_key, endpoint\)/,
+  );
+
+  const wrongType = parseJiraWithPacks(["tracker", "linear", "local"], trackers, {
+    tool_options: { linear: { api_key: 5 } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(wrongType, trackers, executorRegistry(), tools),
+    /tool_options\.linear\.api_key must be a string/,
+  );
 });
 
 test("local pack tools round-trip a real board directory while jira drives dispatch", async () => {

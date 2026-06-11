@@ -19,6 +19,7 @@ export function mcpAuthScopeForSettings(
     host,
     port,
     tools: settings.tools ?? null,
+    toolOptions: settings.toolOptions ? canonicalToolOptions(settings.toolOptions) : null,
     tracker: {
       kind: tracker.kind ?? null,
       endpoint: tracker.endpoint ?? null,
@@ -37,6 +38,17 @@ export function mcpAuthScopeForSettings(
 function canonicalRecord(record: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/** Pack-name-sorted copy of the per-pack tool options with each pack's record canonical. */
+function canonicalToolOptions(
+  toolOptions: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  return Object.fromEntries(
+    Object.entries(toolOptions)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([pack, options]) => [pack, canonicalRecord(options)]),
   );
 }
 

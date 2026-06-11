@@ -65,7 +65,7 @@ function trackerToolSpecs(): ToolSpec[] {
     {
       name: "tracker_query",
       description:
-        "Query issues from the configured tracker. Args: states?, issueIds?, jql? (Jira), where?, select?, order_by?, limit?, offset?.",
+        "Query issues from the configured tracker. Args: states?, issueIds?, jql? (native query string, for trackers with a query language), where?, select?, order_by?, limit?, offset?.",
       inputSchema: {
         type: "object",
         additionalProperties: true,

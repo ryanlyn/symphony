@@ -12,7 +12,7 @@ import {
   workflowFilePath,
 } from "@symphony/cli";
 import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
 import type { Settings } from "@symphony/domain";
 import { jiraTrackerOptions, registerJiraTrackers } from "@symphony/jira-tracker";
 import { registerLinearTracker } from "@symphony/linear-tracker";
@@ -548,6 +548,46 @@ test("custom ACP agents default to cumulative usage unless using a known per-tur
   });
 });
 
+test("records selecting a non-default executor do not inherit ACP option defaults", () => {
+  const received: Array<Record<string, unknown>> = [];
+  const otherProvider: AgentExecutorProvider = {
+    executor: "other",
+    parseOptions: (options) => {
+      received.push(structuredClone(options));
+      const unknown = Object.keys(options).filter((key) => key !== "workerCount");
+      if (unknown.length > 0) {
+        throw new Error(
+          `unsupported agent option(s) for the other executor: ${unknown.join(", ")}`,
+        );
+      }
+      return { ...options };
+    },
+    createExecutor: () => {
+      throw new Error("not under test");
+    },
+  };
+  const privateExecutors = new AgentExecutorRegistry();
+  privateExecutors.register(acpExecutorProvider);
+  privateExecutors.register(otherProvider);
+
+  const settings = parseConfigWith(
+    { agents: { pi: { executor: "other", turn_timeout_ms: 120_000 } } },
+    {},
+    {},
+    trackers,
+    privateExecutors,
+  );
+
+  // The ACP-flavored defaults (bridgeCommand, providerConfig, ...) never reach the foreign
+  // executor's parser; only the record's own keys do.
+  assert.deepEqual(received, [{}]);
+  assert.deepEqual(settings.agents.pi?.options, {});
+  assert.equal(settings.agents.pi?.executor, "other");
+  // Shared timeouts still inherit and parse normally.
+  assert.equal(settings.agents.pi?.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.pi?.stallTimeoutMs, 300_000);
+});
+
 test("agents map accepts shared timeout defaults with legacy per-agent overrides", () => {
   const settings = parseConfig({
     agents: {
@@ -725,6 +765,24 @@ test("status overrides normalize state names and merge backend timeout settings"
   assert.equal(effective.agent.kind, "claude");
   assert.equal(effective.agent.maxTurns, 5);
   assert.equal(effective.agents.codex.turnTimeoutMs, 120_000);
+});
+
+test("per-state agent overrides store provider-normalized option values", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      Todo: { agents: { claude: { strict_mcp_config: "false" } } },
+    },
+  });
+
+  // The provider coerces the YAML-friendly string to a boolean; the stored overlay must
+  // carry the coerced value, not the raw fragment.
+  const effective = settingsForIssueState(settings, "todo");
+  assert.equal(effective.agents.claude?.options.strictMcpConfig, false);
+  // Unrelated states keep the base record untouched.
+  assert.equal(
+    settingsForIssueState(settings, "done").agents.claude?.options.strictMcpConfig,
+    true,
+  );
 });
 
 test("status overrides rederive agents timeout records from overridden backend blocks", () => {

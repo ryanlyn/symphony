@@ -480,7 +480,11 @@ function parseAgent(
   }
   const aliased = normalizeAliases(providerRaw, { ...(provider?.configAliases ?? {}) });
   const defaults = baseAgents[kind] ?? customAgentDefaultsForBridge(aliased, claudeDefaults);
-  const merged = { ...defaults.options, ...aliased };
+  // Option bags belong to one executor: a record selecting a different executor than its
+  // defaults (including the ACP-flavored custom-kind fallback) starts from an empty bag.
+  // Shared timeouts still inherit below.
+  const inheritedOptions = executor === defaults.executor ? defaults.options : {};
+  const merged = { ...inheritedOptions, ...aliased };
   const options = parseAgentOptions(provider, merged, env, `agents.${kind}`);
 
   return {
@@ -591,8 +595,9 @@ function parseStatusOverrideAgents(
 /**
  * Build a sparse fragment from an explicit per-state agent record: shared keys stay
  * top-level, the remaining keys are aliased by the base record's executor provider and kept
- * as a sparse options overlay. The overlay is validated by parsing it merged over the base
- * options, but stored unmerged so defaults never leak into the fragment.
+ * as a sparse options overlay. The overlay is the diff of the provider-parsed merge against
+ * the base options, so coercions and derived keys land normalized while base defaults never
+ * leak into the fragment.
  */
 function agentRecordOverrideFragment(
   raw: AgentRecordOverrideRaw,
@@ -611,12 +616,36 @@ function agentRecordOverrideFragment(
   }
   const provider = executors.get(base?.executor);
   const aliased = normalizeAliases(providerRaw, { ...(provider?.configAliases ?? {}) });
-  if (base) parseAgentOptions(provider, { ...base.options, ...aliased }, env, label);
+  const options =
+    base && Object.keys(aliased).length > 0
+      ? sparseOptionsOverlay(
+          parseAgentOptions(provider, { ...base.options, ...aliased }, env, label),
+          base.options,
+        )
+      : aliased;
   return {
     ...(raw.turnTimeoutMs !== undefined ? { turnTimeoutMs: raw.turnTimeoutMs } : {}),
     ...(raw.stallTimeoutMs !== undefined ? { stallTimeoutMs: raw.stallTimeoutMs } : {}),
-    ...(Object.keys(aliased).length > 0 ? { options: aliased } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   };
+}
+
+/** Keys of a parsed options bag whose values differ from the base record's options. */
+function sparseOptionsOverlay(
+  parsed: Record<string, unknown>,
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  const overlay: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!sameOptionValue(value, base[key])) overlay[key] = value;
+  }
+  return overlay;
+}
+
+function sameOptionValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function cloneSettings(settings: Settings): Settings {
@@ -629,6 +658,9 @@ function cloneSettings(settings: Settings): Settings {
     hooks: { ...settings.hooks },
     agent: { ...settings.agent },
     agents: cloneAgentRecords(settings.agents),
+    ...(settings.toolOptions !== undefined && {
+      toolOptions: structuredClone(settings.toolOptions),
+    }),
     observability: { ...settings.observability },
     server: { ...settings.server },
     logging: { ...settings.logging },
