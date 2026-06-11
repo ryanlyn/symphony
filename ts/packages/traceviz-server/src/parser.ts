@@ -81,6 +81,22 @@ function extractTextFromToolCallContent(content: ToolCallContent[]): string | nu
   return texts.join("\n") || null;
 }
 
+function displayEventTimestampMs(event: DisplayEvent): number {
+  const timestampMs = new Date(event.timestamp).getTime();
+  return Number.isNaN(timestampMs) ? Infinity : timestampMs;
+}
+
+function sortDisplayEventsChronologically(events: DisplayEvent[]): DisplayEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const timestampDiff =
+        displayEventTimestampMs(left.event) - displayEventTimestampMs(right.event);
+      return timestampDiff === 0 ? left.index - right.index : timestampDiff;
+    })
+    .map(({ event }) => event);
+}
+
 /**
  * Parse all lines from a JSONL trace file content into DisplayEvents.
  */
@@ -196,6 +212,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
               const endMs = new Date(ts).getTime();
               toolCallEvent.durationMs =
                 Number.isNaN(startMs) || Number.isNaN(endMs) ? null : endMs - startMs;
+              toolCallEvent.timestamp = ts;
               events.push(toolCallEvent);
             } else {
               events.push({
@@ -314,12 +331,7 @@ export function parseTraceLines(lines: string[]): DisplayEvent[] {
 
   flushPendingText();
 
-  // Flush any remaining pending tool calls that never got a result
-  for (const [, pending] of pendingToolCalls) {
-    events.push(pending.event);
-  }
-
-  return events;
+  return sortDisplayEventsChronologically(events);
 }
 
 export interface TicketMetadata {
