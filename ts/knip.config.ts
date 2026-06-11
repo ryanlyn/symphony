@@ -10,6 +10,9 @@ const config: KnipConfig = {
         "@symphony/*": ["packages/*/src/index.ts", "extensions/*/src/index.ts"],
       },
       ignoreDependencies: [
+        // Vendored bridges are consumed via their bins at runtime, not imports.
+        "@agentclientprotocol/claude-agent-acp",
+        "@agentclientprotocol/codex-acp",
         "@symphony/dispatch",
         "@symphony/humanize",
         "@symphony/log-file",
@@ -42,6 +45,13 @@ const config: KnipConfig = {
     },
     "extensions/*": {
       entry: ["src/index.{ts,tsx}"],
+    },
+    // Vendored upstream bridges ship prebuilt dist bundles; knip must not
+    // analyze them as source workspaces.
+    "vendor/*": {
+      entry: [],
+      project: [],
+      ignoreDependencies: [/.*/],
     },
   },
   ignoreDependencies: ["tsx"],

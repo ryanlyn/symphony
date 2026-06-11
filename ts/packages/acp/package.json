@@ -9,6 +9,8 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "workspace:*",
+    "@agentclientprotocol/codex-acp": "workspace:*",
     "@agentclientprotocol/sdk": "catalog:",
     "@symphony/agent-sdk": "workspace:*",
     "@symphony/domain": "workspace:*",

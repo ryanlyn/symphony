@@ -34,27 +34,50 @@ function eventsEqual(a: DisplayEvent[], b: DisplayEvent[]): boolean {
 }
 
 function useFollowMode() {
-  const [following, setFollowing] = useState(true);
+  const followingRef = useRef(true);
+  const hasNewUpdatesRef = useRef(false);
   const [hasNewUpdates, setHasNewUpdates] = useState(false);
+  const [followResumeVersion, setFollowResumeVersion] = useState(0);
+
+  const setNewUpdates = useCallback((next: boolean) => {
+    if (hasNewUpdatesRef.current === next) return;
+    hasNewUpdatesRef.current = next;
+    setHasNewUpdates(next);
+  }, []);
 
   useEffect(() => {
     const onScroll = () => {
       const atTop = window.scrollY < FOLLOW_THRESHOLD_PX;
-      setFollowing(atTop);
-      if (atTop) setHasNewUpdates(false);
+      if (followingRef.current === atTop) {
+        if (atTop) setNewUpdates(false);
+        return;
+      }
+
+      followingRef.current = atTop;
+      if (atTop) {
+        setNewUpdates(false);
+        setFollowResumeVersion((version) => version + 1);
+      }
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [setNewUpdates]);
 
-  const markNewUpdates = useCallback(() => setHasNewUpdates(true), []);
-  const clearNewUpdates = useCallback(() => setHasNewUpdates(false), []);
+  const markNewUpdates = useCallback(() => setNewUpdates(true), [setNewUpdates]);
+  const clearNewUpdates = useCallback(() => setNewUpdates(false), [setNewUpdates]);
   const scrollToTop = useCallback(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
-  return { following, hasNewUpdates, markNewUpdates, clearNewUpdates, scrollToTop };
+  return {
+    followingRef,
+    followResumeVersion,
+    hasNewUpdates,
+    markNewUpdates,
+    clearNewUpdates,
+    scrollToTop,
+  };
 }
 
 export function useTraceData() {
@@ -67,11 +90,15 @@ export function useTraceData() {
   const [traceExists, setTraceExists] = useState<boolean | null>(null);
 
   const { status: wsStatus, lastMessage, sendMessage } = useWebSocket();
-  const { following, hasNewUpdates, markNewUpdates, clearNewUpdates, scrollToTop } =
-    useFollowMode();
+  const {
+    followingRef,
+    followResumeVersion,
+    hasNewUpdates,
+    markNewUpdates,
+    clearNewUpdates,
+    scrollToTop,
+  } = useFollowMode();
   // The effects below must read state that may have changed since they were registered.
-  const followingRef = useRef(following);
-  followingRef.current = following;
   const needsCatchUpRef = useRef(false);
   const eventsRef = useRef(events);
   eventsRef.current = events;
@@ -201,11 +228,11 @@ export function useTraceData() {
 
   // Catch up when the user scrolls back to top.
   useEffect(() => {
-    if (following && needsCatchUpRef.current && selectedTicketId) {
+    if (followResumeVersion > 0 && needsCatchUpRef.current && selectedTicketId) {
       needsCatchUpRef.current = false;
       requestSnapshot(selectedTicketId);
     }
-  }, [following, selectedTicketId, requestSnapshot]);
+  }, [followResumeVersion, selectedTicketId, requestSnapshot]);
 
   useEffect(() => {
     if (!lastMessage) return;
@@ -275,7 +302,6 @@ export function useTraceData() {
     error,
     traceExists,
     wsStatus,
-    following,
     hasNewUpdates,
     scrollToTop,
   };
