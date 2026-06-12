@@ -59,6 +59,8 @@ interface Session extends AgentSession {
   lastCallUsageSeq: number;
   callUsageBaseline?: UsageTokenUpdate | undefined;
   pendingTurn?: { reject: (error: Error) => void; allowSessionIdRotation: boolean } | undefined;
+  /** Set when the bridge process exits; makes later turns fail fast instead of hanging. */
+  exitError?: Error | undefined;
 }
 
 /**
@@ -177,25 +179,38 @@ export class Executor implements AgentExecutor {
   }
 
   async runTurn(session: Session, prompt: string, _issue?: Issue): Promise<AgentUpdate[]> {
+    if (session.exitError) throw session.exitError;
     if (session.pendingTurn) throw new Error("ACP turn already running");
     const previous = session.onUpdate;
     const updates: AgentUpdate[] = [];
     let settled = false;
 
     return new Promise<AgentUpdate[]>((resolve, reject) => {
-      const cancelTurn = () => {
+      const cancelTurn = (reason: string) => {
         void session.connection.cancel({ sessionId: requireSessionId(session) }).catch((err) => {
           process.stderr.write(`session cancel failed: ${err}\n`);
         });
-        finishReject(new Error("acp turn timed out"));
+        finishReject(new Error(reason));
       };
       let stallTimer: ReturnType<typeof setTimeout> | undefined;
       const resetStallTimer = () => {
         if (session.agentConfig.stallTimeoutMs <= 0) return;
         if (stallTimer) clearTimeout(stallTimer);
-        stallTimer = setTimeout(cancelTurn, session.agentConfig.stallTimeoutMs);
+        stallTimer = setTimeout(
+          () =>
+            cancelTurn(
+              `acp turn stalled: no agent updates for ${formatDurationMs(session.agentConfig.stallTimeoutMs)}`,
+            ),
+          session.agentConfig.stallTimeoutMs,
+        );
       };
-      const hardTimer = setTimeout(cancelTurn, session.agentConfig.turnTimeoutMs);
+      const hardTimer = setTimeout(
+        () =>
+          cancelTurn(
+            `acp turn timed out after ${formatDurationMs(session.agentConfig.turnTimeoutMs)}`,
+          ),
+        session.agentConfig.turnTimeoutMs,
+      );
 
       const cleanup = () => {
         clearTimeout(hardTimer);
@@ -683,23 +698,114 @@ function binTargetForManifest(manifest: BridgePackageManifest, bin: string): str
 }
 
 /**
+ * Split a command line into top-level shell words, keeping quotes and
+ * `$(...)` substitutions intact. Approximation of POSIX word splitting that
+ * is good enough to locate the bridge binary inside commands such as
+ * `env CLAUDE_CODE_EXECUTABLE="$(command -v claude)" claude-agent-acp`.
+ */
+function shellWords(command: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let singleQuote = false;
+  let doubleQuote = false;
+  let parenDepth = 0;
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i]!;
+    if (singleQuote) {
+      current += ch;
+      if (ch === "'") singleQuote = false;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < command.length) {
+      current += ch + command[i + 1];
+      i += 1;
+      continue;
+    }
+    if (parenDepth > 0) {
+      current += ch;
+      if (ch === "$" && command[i + 1] === "(") parenDepth += 1;
+      else if (ch === ")") parenDepth -= 1;
+      continue;
+    }
+    if (doubleQuote) {
+      current += ch;
+      if (ch === '"') doubleQuote = false;
+      else if (ch === "$" && command[i + 1] === "(") parenDepth += 1;
+      continue;
+    }
+    if (ch === "'") {
+      singleQuote = true;
+      current += ch;
+    } else if (ch === '"') {
+      doubleQuote = true;
+      current += ch;
+    } else if (ch === "$" && command[i + 1] === "(") {
+      parenDepth += 1;
+      current += ch;
+    } else if (/\s/.test(ch)) {
+      if (current !== "") {
+        words.push(current);
+        current = "";
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current !== "") words.push(current);
+  return words;
+}
+
+/**
+ * Index of the word naming the bridge binary, skipping over a leading `env`
+ * prefix (its flags such as `-u NAME`/`-i` and `NAME=value` assignments).
+ * Returns -1 when no candidate exists.
+ */
+function bridgeBinIndex(words: string[]): number {
+  if (words.length === 0) return -1;
+  if (words[0] !== "env") return 0;
+  let i = 1;
+  while (i < words.length) {
+    const word = words[i]!;
+    if (word === "-u" || word === "--unset") {
+      i += 2;
+    } else if (word.startsWith("-")) {
+      i += 1;
+    } else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
+      i += 1;
+    } else {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
  * Resolve bare bridge names to the vendored workspace packages so local runs
  * always use Symphony's patched bridges rather than whatever PATH provides.
- * Remote hosts keep the configured command verbatim (the vendored install
- * only exists locally), as do custom commands and explicit paths.
+ * The bridge name is located through a leading `env`-prefix (flags and
+ * NAME=value assignments), so commands like
+ * `env -u ANTHROPIC_API_KEY claude-agent-acp` still resolve to the vendored
+ * build. Remote hosts keep the configured command verbatim (the vendored
+ * install only exists locally), as do custom commands and explicit paths.
  */
 export function resolveBridgeCommand(bridgeCommand: string, workerHost: string | null): string {
   if (workerHost) return bridgeCommand;
-  const [bin, ...args] = bridgeCommand.trim().split(/\s+/);
-  if (!bin) return bridgeCommand;
-  const packageName = VENDORED_BRIDGE_PACKAGES[bin];
+  const words = shellWords(bridgeCommand.trim());
+  const binIndex = bridgeBinIndex(words);
+  if (binIndex === -1) return bridgeCommand;
+  const packageName = VENDORED_BRIDGE_PACKAGES[words[binIndex]!];
   if (!packageName) return bridgeCommand;
   try {
     const require = createRequire(import.meta.url);
     const manifestPath = require.resolve(`${packageName}/package.json`);
     const manifest = require(manifestPath) as BridgePackageManifest;
-    const binPath = path.join(path.dirname(manifestPath), binTargetForManifest(manifest, bin));
-    return [shellEscape(process.execPath), shellEscape(binPath), ...args].join(" ");
+    const binPath = path.join(
+      path.dirname(manifestPath),
+      binTargetForManifest(manifest, words[binIndex]!),
+    );
+    const resolved = [...words];
+    resolved.splice(binIndex, 1, shellEscape(process.execPath), shellEscape(binPath));
+    return resolved.join(" ");
   } catch {
     return bridgeCommand;
   }
@@ -740,8 +846,12 @@ function wireProcessEvents(session: Session): void {
       stderr = "";
     }
     const message = `acp bridge exited${code === null ? "" : ` with status ${code}`}${signal ? ` signal ${signal}` : ""}`;
+    // Mark the session dead first: when the bridge dies between turns there is
+    // no pendingTurn to reject, and without the marker the next turn would
+    // block on the dead connection until a stall/turn timer fires (or forever).
+    session.exitError = new Error(message);
     session.onUpdate?.({ type: "process_exit", message, timestamp: new Date() });
-    session.pendingTurn?.reject(new Error(message));
+    session.pendingTurn?.reject(session.exitError);
   });
 }
 
@@ -795,6 +905,15 @@ function emptyUsageTotals(): UsageTotals {
     totalTokens: 0,
     secondsRunning: 0,
   };
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h${rest}m`;
 }
 
 function nonNegativeFinite(value: number | null | undefined): number {

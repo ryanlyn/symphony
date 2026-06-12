@@ -316,7 +316,7 @@ test("ACP executor times out stalled bridge turns and emits a typed failure", as
     await expectRejectsWithin(
       () => executor.runTurn(session, "hello", sampleIssue),
       500,
-      /acp turn timed out/,
+      /acp turn stalled: no agent updates/,
     );
   } finally {
     await session.stop();
@@ -577,6 +577,41 @@ test("session requests omit _meta when providerConfig is absent", async () => {
   await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
 });
 
+test("ACP executor fails turns fast after the bridge process exits", async () => {
+  const root = await tempDir("symphony-ts-acp-bridge-exit");
+  const fake = await writeFakeBridge(root);
+  const trace = path.join(root, "trace.jsonl");
+  // Long stall/turn timeouts: the failure must come from exit detection,
+  // not from a timer.
+  const settings = acpSettings(root, fake, trace, "exit-after-turn", 60_000, {
+    stallTimeoutMs: 60_000,
+  });
+  const updates: AgentUpdate[] = [];
+  const executor = new Executor("claude");
+  const session = await executor.startSession({
+    workspace: root,
+    settings,
+    issue: sampleIssue,
+    onUpdate: (update) => updates.push(update),
+  });
+  try {
+    await executor.runTurn(session, "hello", sampleIssue);
+    await vi.waitFor(
+      () => {
+        assert.ok(updates.some((update) => update.type === "process_exit"));
+      },
+      { timeout: 5_000, interval: 50 },
+    );
+    await expectRejectsWithin(
+      () => executor.runTurn(session, "again", sampleIssue),
+      500,
+      /acp bridge exited/,
+    );
+  } finally {
+    await session.stop();
+  }
+});
+
 test("resolveBridgeCommand points bare bridge names at the vendored packages", async () => {
   const codex = resolveBridgeCommand("codex-acp", null);
   assert.notEqual(codex, "codex-acp");
@@ -601,6 +636,35 @@ test("resolveBridgeCommand preserves arguments, custom commands, and remote host
   );
   assert.equal(resolveBridgeCommand("/usr/local/bin/codex-acp", null), "/usr/local/bin/codex-acp");
   assert.equal(resolveBridgeCommand("codex-acp", "worker-1"), "codex-acp");
+});
+
+test("resolveBridgeCommand resolves bridge names behind an env prefix", () => {
+  assert.match(
+    resolveBridgeCommand("env -u ANTHROPIC_API_KEY claude-agent-acp", null),
+    /^env -u ANTHROPIC_API_KEY '.*node'? '?.*vendor\/claude-agent-acp\/dist\/bundle\.js'?$/,
+  );
+  assert.match(
+    resolveBridgeCommand(
+      'env CLAUDE_CODE_EXECUTABLE="$(command -v claude)" claude-agent-acp',
+      null,
+    ),
+    /^env CLAUDE_CODE_EXECUTABLE="\$\(command -v claude\)" .*bundle\.js'?$/,
+  );
+  assert.match(
+    resolveBridgeCommand('env CODEX_PATH="$(command -v codex)" codex-acp --flag value', null),
+    /^env CODEX_PATH="\$\(command -v codex\)" .*index\.js'? --flag value$/,
+  );
+  // env prefix with no bridge name and unknown bridges stay verbatim.
+  assert.equal(resolveBridgeCommand("env -u FOO", null), "env -u FOO");
+  assert.equal(
+    resolveBridgeCommand("env FOO=bar my-custom-bridge", null),
+    "env FOO=bar my-custom-bridge",
+  );
+  // remote hosts keep the configured command verbatim.
+  assert.equal(
+    resolveBridgeCommand("env -u FOO claude-agent-acp", "worker-1"),
+    "env -u FOO claude-agent-acp",
+  );
 });
 
 function acpSettings(
@@ -792,6 +856,10 @@ class FakeAgent {
           totalTokens: 10
         }
       };
+    }
+    if (mode === "exit-after-turn") {
+      setTimeout(() => process.exit(0), 50);
+      return { stopReason: "end_turn" };
     }
     if (mode === "cancelled-turn") {
       return {

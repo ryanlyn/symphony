@@ -75,6 +75,9 @@ export function parseCliArgs(args: string[]): CliParseResult {
 }
 
 export async function main(args = process.argv.slice(2)): Promise<number> {
+  // `pnpm start -- <args>` forwards the literal `--` separator, which
+  // commander counts as an excess positional. Drop a single leading `--`.
+  if (args[0] === "--") args = args.slice(1);
   registerBuiltinBackends();
   let status = 0;
   const command = configureCommandForMain(createRootCommand());
