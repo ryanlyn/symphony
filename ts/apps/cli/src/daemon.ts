@@ -14,6 +14,7 @@ import { registerJiraTrackers } from "@symphony/jira-tracker";
 import { registerLinearTracker } from "@symphony/linear-tracker";
 import { registerLocalTracker } from "@symphony/local-tracker";
 import { registerMemoryTracker } from "@symphony/memory-tracker";
+import { registerSlackTracker } from "@symphony/slack-tracker";
 import {
   createWorkspaceForIssue,
   listIssueWorkspaceIdentifiers,
@@ -56,6 +57,7 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
   registerLocalTracker({ trackers, tools });
   registerMemoryTracker({ trackers });
   registerJiraTrackers({ trackers });
+  registerSlackTracker({ trackers, tools });
   if (tools.get("tracker") === undefined) {
     tools.register(createTrackerToolProvider(trackers));
   }

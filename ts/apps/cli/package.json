@@ -43,6 +43,7 @@
     "@symphony/retry-scheduler": "workspace:*",
     "@symphony/runtime": "workspace:*",
     "@symphony/server": "workspace:*",
+    "@symphony/slack-tracker": "workspace:*",
     "@symphony/ssh": "workspace:*",
     "@symphony/tool-sdk": "workspace:*",
     "@symphony/traceviz-emitter": "workspace:*",
