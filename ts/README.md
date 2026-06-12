@@ -274,7 +274,7 @@ Supported kinds:
   overridden under `tracker.mcp.tools`.
 - `local` - issues live as Markdown files on disk. No external service required.
 - `slack` - an @-mention of the bot (in a channel message or a thread reply) is an issue, the
-  thread carries the status (`@bot` commands and bot `status:` replies), and a thread reply is
+  thread carries the status (`@bot !` commands and bot `status:` replies), and a thread reply is
   a comment.
 - `memory` - an in-process tracker used for tests and dry runs.
 
@@ -430,7 +430,7 @@ The Slack tracker treats an @-mention of a bot as an issue - in a channel messag
 reply (a reply mention tracks its thread, anchored at the root, with the reply as the request).
 The request's text is the issue title/description, threaded replies are comments, and the
 issue's STATUS lives in the thread: the bot posts `status: <Name>` replies and humans transition
-with `@bot` command mentions; the latest event wins, and the bot mirrors the state onto its own
+with `@bot !` command mentions; the latest event wins, and the bot mirrors the state onto its own
 reaction for glanceability. See `WORKFLOW.slack.md` for a complete example workflow.
 
 Set up a Slack app:
@@ -505,10 +505,11 @@ Status is derived from the issue's thread: the bot's own `status: <Name>` replie
 `slack_update_status`) and human command mentions are ts-ordered events, and the latest wins.
 The human commands are:
 
-- `@bot done` / `@bot cancel` / `@bot in progress` / `@bot todo` - transition to the standard
-  state.
-- `@bot status <Name>` - transition to any configured active/terminal state (custom names too).
-- `@bot reopen` - back to the first active state.
+- `@bot !done` / `@bot !cancel` / `@bot !in progress` / `@bot !todo` - transition to the
+  standard state.
+- `@bot !status <Name>` - transition to any configured active/terminal state (custom names
+  too).
+- `@bot !reopen` - back to the first active state.
 - Any other `@bot` mention on a terminal issue re-opens it: mentioning the bot again always
   means "this needs attention".
 

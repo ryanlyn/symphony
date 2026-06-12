@@ -1,8 +1,13 @@
 import { defaultStateType, normalizeIssue } from "@symphony/issue";
 import type { Issue, IssueStateType, RuntimeTrackerClient, Settings } from "@symphony/domain";
 
-import { stateFromReactions, statusEmojiMap, stripLeadingMention } from "./mapping.js";
-import { requireTrackedMessage } from "./operations.js";
+import {
+  emojiForState,
+  stateFromReactions,
+  statusEmojiMap,
+  stripLeadingMention,
+} from "./mapping.js";
+import { mirrorStatusReaction, requireTrackedMessage } from "./operations.js";
 import { slackTrackerOptions } from "./options.js";
 import { resolveThreadState, type ThreadState } from "./threadState.js";
 import type { SlackChannelScan, SlackMessage, SlackTransport } from "./transport.js";
@@ -165,6 +170,8 @@ const DEFAULT_REPLY_LOOKBACK_DAYS = 2;
 
 export class SlackTrackerClient implements RuntimeTrackerClient {
   private scanCache: { at: number; key: string; scan: SlackChannelScan } | null = null;
+  /** Last state the reaction mirror was reconciled to, per issue (see healStatusMirror). */
+  private readonly mirroredStates = new Map<string, string>();
   /**
    * Oldest thread activity (epoch seconds) considered when hunting for NEW reply-mention
    * requests in untracked threads. Once tracked, a thread is marked with the bot's reaction
@@ -240,6 +247,7 @@ export class SlackTrackerClient implements RuntimeTrackerClient {
     const issues: Issue[] = [];
     for (const root of roots) {
       const thread = await resolveThreadState(this.settings, this.transport, root);
+      await this.healStatusMirror(root, thread.state);
       issues.push(
         slackMessageToIssue(root, this.settings, {
           permalinkBase: base,
@@ -249,6 +257,28 @@ export class SlackTrackerClient implements RuntimeTrackerClient {
       );
     }
     return issues;
+  }
+
+  /**
+   * Self-healing reaction mirror: when a HUMAN transitions status (`@bot !done`, a bare
+   * re-mention re-open), the bot's reaction still shows the previous state until the bot acts
+   * again. Reconcile the mirror to the thread-derived state during the poll, attempted once
+   * per state change per issue - a stale HUMAN-authored reaction is not removable by the bot
+   * (reactions are per-author), so retrying every poll would only churn the API.
+   */
+  private async healStatusMirror(root: SlackMessage, state: string): Promise<void> {
+    const key = `${root.channel}:${root.ts}`;
+    if (this.mirroredStates.get(key) === state) return;
+    const map = statusEmojiMap(this.settings);
+    const target = emojiForState(state, map);
+    const staleManaged = root.reactions.some(
+      (reaction) => typeof map[reaction] === "string" && reaction !== target,
+    );
+    const missingTarget = target !== null && !root.reactions.includes(target);
+    if (staleManaged || missingTarget) {
+      await mirrorStatusReaction(this.settings, this.transport, root.channel, root.ts, state);
+    }
+    this.mirroredStates.set(key, state);
   }
 
   private async scanCached(): Promise<SlackChannelScan> {

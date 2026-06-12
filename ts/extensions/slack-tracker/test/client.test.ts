@@ -333,3 +333,46 @@ test("untracked threads older than the reply lookback are not inspected", async 
   // The reply ts (epoch ~1000s) is far older than the 2-day lookback floor.
   assert.deepEqual(await client.fetchCandidateIssues(), []);
 });
+
+test("the bot's reaction mirror self-heals after a human command", async () => {
+  // A human `!done` changes the derived state, but the bot's stale :eyes: mirror lingers
+  // until the bot acts. The poll reconciles the mirror to the thread-derived state - once
+  // per state change, not on every poll (a stale HUMAN reaction is not removable anyway).
+  const transport = new InMemorySlackTransport(
+    {
+      C1: [
+        {
+          ts: "1700000000.000100",
+          text: "<@U_BOT> fix the thing",
+          reactions: ["eyes"],
+          replies: [{ ts: "1700000000.000200", text: "<@U_BOT> !done", user: "U_HUMAN" }],
+        },
+      ],
+    },
+    { botUserId: "U_BOT" },
+  );
+  let reactionCalls = 0;
+  const add = transport.addReaction.bind(transport);
+  const remove = transport.removeReaction.bind(transport);
+  transport.addReaction = async (channel, ts, name) => {
+    reactionCalls += 1;
+    return add(channel, ts, name);
+  };
+  transport.removeReaction = async (channel, ts, name) => {
+    reactionCalls += 1;
+    return remove(channel, ts, name);
+  };
+  const client = new SlackTrackerClient(settings(), transport);
+
+  // Done is terminal, so the issue is not a candidate - but the poll still heals the mirror.
+  assert.deepEqual(await client.fetchCandidateIssues(), []);
+  assert.deepEqual((await transport.getMessage("C1", "1700000000.000100"))!.reactions, [
+    "white_check_mark",
+  ]);
+  assert.ok(reactionCalls > 0);
+
+  // A second poll with an unchanged state attempts no further reaction writes.
+  const afterHeal = reactionCalls;
+  await client.fetchCandidateIssues();
+  assert.equal(reactionCalls, afterHeal);
+});

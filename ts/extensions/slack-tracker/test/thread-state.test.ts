@@ -36,39 +36,42 @@ function reply(ts: string, text: string, user?: string): SlackThreadReply {
 
 test("command grammar: keywords, explicit status, punctuation, and non-commands", () => {
   const s = settings();
-  assert.deepEqual(parseStatusCommand("<@U_BOT> done", "U_BOT", s), { state: "Done" });
-  assert.deepEqual(parseStatusCommand("<@U_BOT> Done!", "U_BOT", s), { state: "Done" });
-  assert.deepEqual(parseStatusCommand("<@U_BOT> cancel", "U_BOT", s), { state: "Cancelled" });
-  assert.deepEqual(parseStatusCommand("<@U_BOT> reopen", "U_BOT", s), { state: "Todo" });
-  assert.deepEqual(parseStatusCommand("<@U_BOT> in progress", "U_BOT", s), {
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !done", "U_BOT", s), { state: "Done" });
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !Done!", "U_BOT", s), { state: "Done" });
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !cancel", "U_BOT", s), { state: "Cancelled" });
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !reopen", "U_BOT", s), { state: "Todo" });
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !in progress", "U_BOT", s), {
     state: "In Progress",
   });
-  assert.deepEqual(parseStatusCommand("<@U_BOT> status In Progress", "U_BOT", s), {
+  assert.deepEqual(parseStatusCommand("<@U_BOT> !status In Progress", "U_BOT", s), {
     state: "In Progress",
   });
-  assert.deepEqual(parseStatusCommand("<@U_BOT|bot> status: done", "U_BOT", s), {
+  assert.deepEqual(parseStatusCommand("<@U_BOT|bot> !status: done", "U_BOT", s), {
     state: "Done",
   });
   // Free text after the mention is a bare mention, not a command.
   assert.equal(parseStatusCommand("<@U_BOT> thanks, looks done to me", "U_BOT", s), null);
+  // Without the bang, even an exact keyword is an ordinary prompt, not a transition.
+  assert.equal(parseStatusCommand("<@U_BOT> done", "U_BOT", s), null);
+  assert.equal(parseStatusCommand("<@U_BOT> status In Progress", "U_BOT", s), null);
   // The mention must lead the message for a command form.
-  assert.equal(parseStatusCommand("please <@U_BOT> done", "U_BOT", s), null);
+  assert.equal(parseStatusCommand("please <@U_BOT> !done", "U_BOT", s), null);
   // Unknown explicit status names are not commands.
-  assert.equal(parseStatusCommand("<@U_BOT> status Shipped", "U_BOT", s), null);
+  assert.equal(parseStatusCommand("<@U_BOT> !status Shipped", "U_BOT", s), null);
 });
 
 test("the latest command or bot status reply wins by ts order", () => {
   const s = settings();
   const thread = [
     reply("101.1", "status: In Progress", "U_BOT"),
-    reply("102.1", "<@U_BOT> done", "U_HUMAN"),
+    reply("102.1", "<@U_BOT> !done", "U_HUMAN"),
     reply("103.1", "status: In Progress", "U_BOT"),
   ];
   assert.equal(stateFromThread(root("<@U_BOT> fix it"), thread, s).state, "In Progress");
   // Reverse the order: the human command is now last and wins.
   const reversed = [
     reply("101.1", "status: In Progress", "U_BOT"),
-    reply("103.1", "<@U_BOT> done", "U_HUMAN"),
+    reply("103.1", "<@U_BOT> !done", "U_HUMAN"),
   ];
   assert.equal(stateFromThread(root("<@U_BOT> fix it"), reversed, s).state, "Done");
 });
@@ -129,7 +132,7 @@ test("a reply mention in a non-mention thread is the request, not a transition",
     [
       reply("101.1", "yeah, it's the cache layer", "U_OTHER"),
       reply("102.1", "<@U_BOT> please fix this #backend", "U_HUMAN"),
-      reply("103.1", "<@U_BOT> done", "U_HUMAN"),
+      reply("103.1", "<@U_BOT> !done", "U_HUMAN"),
     ],
     s,
   );

@@ -63,7 +63,7 @@ export function slackToolSpecs(): ToolSpec[] {
       name: "slack_read_thread",
       description:
         "Read a Slack issue's authoritative state: its source message, thread-derived status " +
-        "(human `@bot` commands and bot `status:` replies, latest wins), reactions, permalink, " +
+        "(human `@bot !` commands and bot `status:` replies, latest wins), reactions, permalink, " +
         "and the thread replies. Args: issueId.",
       inputSchema: {
         type: "object",

@@ -15,10 +15,11 @@ import type { SlackMessage, SlackThreadReply, SlackTransport } from "./transport
  * reaction and vice versa), so reactions cannot carry a jointly-edited status. The thread is the
  * shared, ts-ordered medium both sides can write to, so STATUS LIVES IN THE THREAD:
  *
- * - Humans transition status by mentioning the bot with a command reply: `@bot done`,
- *   `@bot cancel`, `@bot reopen`, `@bot status <Name>`.
+ * - Humans transition status by mentioning the bot with a `!`-prefixed command reply:
+ *   `@bot !done`, `@bot !cancel`, `@bot !reopen`, `@bot !status <Name>`. The bang keeps
+ *   transitions unmistakable next to ordinary prompts addressed to the bot.
  * - The bot (agent/runtime) transitions status by posting a `status: <Name>` reply.
- * - A bot-mention reply with NO recognized command re-opens a terminal issue to the default
+ * - A bot-mention reply with NO command re-opens a terminal issue to the default
  *   non-terminal state: mentioning the bot again always means "this needs attention".
  * - The latest event by ts wins. Reactions remain a bot-owned visibility mirror and the
  *   back-compat source for threads that have never seen a command or bot status reply.
@@ -32,7 +33,7 @@ const BOT_STATUS_RE = /^status:\s*(.+?)\s*$/i;
 /** Standard state names recognized even when a workflow does not list them explicitly. */
 const STANDARD_STATES = ["Todo", "In Progress", "Done", "Cancelled"];
 
-/** Command keywords (entire reply after the mention, punctuation-insensitive). */
+/** Command keywords (the `!`-prefixed reply body after the mention, punctuation-insensitive). */
 const COMMAND_STATES: Array<{ keywords: string[]; state: (settings: Settings) => string }> = [
   {
     keywords: ["done", "complete", "completed", "finished"],
@@ -82,8 +83,10 @@ function isTerminalState(state: string, settings: Settings): boolean {
 }
 
 /**
- * Parse a human status command: a reply that STARTS with the bot mention and whose remaining
- * first line is a recognized keyword or `status <Name>`. Anything else is a bare mention.
+ * Parse a human status command: a reply that STARTS with the bot mention, followed by a
+ * `!`-prefixed keyword or `!status <Name>` as the remaining first line. The explicit `!`
+ * separates transitions from ordinary prompts: `@bot !done` transitions, while `@bot done`
+ * (or any other phrasing) is a bare mention. Anything without the bang is a bare mention.
  */
 export function parseStatusCommand(
   text: string,
@@ -93,13 +96,18 @@ export function parseStatusCommand(
   const trimmed = text.trim();
   const stripped = stripLeadingMention(trimmed, botUserId);
   if (stripped === trimmed) return null; // the mention is not leading: not a command form
-  const firstLine = (stripped.split("\n")[0] ?? "").trim().replace(/[.!?]+$/, "");
-  const explicit = /^status:?\s+(.+)$/i.exec(firstLine);
+  const firstLine = (stripped.split("\n")[0] ?? "").trim();
+  if (!firstLine.startsWith("!")) return null; // no bang: an ordinary prompt, not a transition
+  const body = firstLine
+    .slice(1)
+    .trim()
+    .replace(/[.!?]+$/, "");
+  const explicit = /^status:?\s+(.+)$/i.exec(body);
   if (explicit) {
     const state = resolveStateName(explicit[1]!, settings);
     return state ? { state } : null;
   }
-  const lower = firstLine.toLowerCase();
+  const lower = body.toLowerCase();
   for (const command of COMMAND_STATES) {
     if (command.keywords.includes(lower)) return { state: command.state(settings) };
   }

@@ -384,7 +384,7 @@ test("a human command in the thread overrides the reaction reading", async () =>
           ts: "1.1",
           text: "<@U1> do the thing",
           reactions: ["eyes"],
-          replies: [{ ts: "1.2", text: "<@U1> done", user: "U_HUMAN" }],
+          replies: [{ ts: "1.2", text: "<@U1> !done", user: "U_HUMAN" }],
         },
       ],
     },

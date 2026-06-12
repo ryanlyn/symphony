@@ -96,7 +96,7 @@ export async function updateSlackStatus(
  * and drop the bot's own other managed reactions. `reactions.remove` only removes the caller's
  * own reaction, so human-authored reactions are untouched by construction.
  */
-async function mirrorStatusReaction(
+export async function mirrorStatusReaction(
   settings: Settings,
   transport: SlackTransport,
   channel: string,
