@@ -70,10 +70,8 @@ test("memory-tracker daemon leases a fake box, completes a run, and returns it t
   assert.ok(history);
   assert.equal(history?.outcome, "success");
   // The pool produced the workerHost string end to end: history + the in-run
-  // running entry both carry the fake box address, not a `pending://` sentinel
-  // or `local`.
+  // running entry both carry the concrete fake box address, never `local`.
   assert.match(history?.workerHost ?? "", /^fake:\/\/box-/);
-  assert.equal(history?.workerHost?.startsWith("pending://"), false);
 
   // Lease released healthy: the single box is back in the warm pool, not destroyed.
   const pool = harness.pool.snapshot();

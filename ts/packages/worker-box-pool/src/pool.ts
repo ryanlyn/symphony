@@ -151,6 +151,12 @@ class BoxPoolImpl implements BoxPool {
   // misbehaving listener can never block the destroy it precedes.
   private readonly recyclingCallbacks: Array<(boxId: string) => void> = [];
 
+  // Callbacks fired AFTER a waiter wake-up pass whenever capacity is still
+  // leasable (see onCapacityAvailable). The runtime registers its poll nudge
+  // here; errors are swallowed so a misbehaving listener can never break the
+  // settle/reconcile path that freed the capacity.
+  private readonly capacityAvailableCallbacks: Array<() => void> = [];
+
   // Synchronous capacity reservation taken BEFORE any provision await, so two
   // concurrent growth decisions cannot both allocate past `max`. Incremented in
   // the same synchronous tick the growth is decided; released on settle/reject.
@@ -519,6 +525,34 @@ class BoxPoolImpl implements BoxPool {
    */
   onMachineRecycling(cb: (boxId: string) => void): void {
     this.recyclingCallbacks.push(cb);
+  }
+
+  /**
+   * Registers a callback fired whenever a capacity-freeing event leaves the pool
+   * leasable (see {@link BoxPool.onCapacityAvailable}). Fired at the end of every
+   * waiter wake-up pass - a lease settle, a reconcile grow, a reaper top-up -
+   * AFTER the FIFO waiters had first claim on the freed box, and only when
+   * `canAcquire()` still holds, so a drained/disabled/spend-capped pool never
+   * notifies.
+   */
+  onCapacityAvailable(cb: () => void): void {
+    this.capacityAvailableCallbacks.push(cb);
+  }
+
+  /** Notifies every {@link onCapacityAvailable} listener; errors are swallowed. */
+  private notifyCapacityAvailable(): void {
+    if (this.capacityAvailableCallbacks.length === 0) return;
+    if (!this.canAcquire()) return;
+    for (const cb of this.capacityAvailableCallbacks) {
+      try {
+        cb();
+      } catch (error) {
+        this.logEvent({
+          event: "box_pool_capacity_callback_failed",
+          error: errorMessage(error),
+        });
+      }
+    }
   }
 
   /**
@@ -1188,7 +1222,6 @@ class BoxPoolImpl implements BoxPool {
    * acquire racing in.
    */
   private wakeWaiters(): void {
-    if (this.waiters.length === 0) return;
     // Iterate a snapshot; settleWaiter mutates the live array.
     for (const waiter of [...this.waiters]) {
       if (waiter.settled) continue;
@@ -1201,6 +1234,10 @@ class BoxPoolImpl implements BoxPool {
         this.settleWaiter(waiter, { status: "leased", lease });
       }
     }
+    // The FIFO waiters had first claim on the freed capacity; whatever remains
+    // leasable is announced so the runtime can nudge its poll (a waiter that
+    // consumed the only box leaves canAcquire() false and suppresses this).
+    this.notifyCapacityAvailable();
   }
 
   // --- lease settlement / spend accounting -------------------------------

@@ -39,6 +39,7 @@ import {
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME,
   SymphonyRuntime,
 } from "@symphony/runtime";
+import type { RuntimeSnapshot } from "@symphony/runtime";
 
 // The runtime validates dispatch config against the process-default registries, which the
 // CLI composition root populates before constructing a runtime. Mirror that wiring here (in
@@ -1422,6 +1423,8 @@ interface FakeBoxPool extends BoxPool {
   readonly reconcileCalls: BoxPoolSettings[];
   readonly drainCalls: Array<{ deadlineMs: number }>;
   lastLease: FakeLease | null;
+  /** Fires every registered onCapacityAvailable callback (test trigger). */
+  triggerCapacityAvailable(): void;
 }
 
 function makeFakeBoxPool(
@@ -1436,6 +1439,7 @@ function makeFakeBoxPool(
   const acquireCalls: AcquireCall[] = [];
   const reconcileCalls: BoxPoolSettings[] = [];
   const drainCalls: Array<{ deadlineMs: number }> = [];
+  const capacityCallbacks: Array<() => void> = [];
   const pool: FakeBoxPool = {
     acquireCalls,
     reconcileCalls,
@@ -1472,6 +1476,12 @@ function makeFakeBoxPool(
     },
     swapDriver(): void {},
     onMachineRecycling(): void {},
+    onCapacityAvailable(cb): void {
+      capacityCallbacks.push(cb);
+    },
+    triggerCapacityAvailable(): void {
+      for (const cb of capacityCallbacks) cb();
+    },
     async hydrate(): Promise<void> {},
     async drain(opts): Promise<void> {
       drainCalls.push({ deadlineMs: opts.deadlineMs });
@@ -1905,16 +1915,23 @@ test("box pool: a claim is a host-less reservation between claim and acquire, co
   const lease = makeFakeLease({ workerHost: "fake://box-reserved" });
   let runningDuringAcquire = -1;
   let reservingDuringAcquire: ReturnType<Orchestrator["snapshot"]>["reserving"] = [];
+  let snapshotReservingDuringAcquire: NonNullable<RuntimeSnapshot["reserving"]> = [];
   let runStartedDuringAcquire = true;
+  let runReservingDuringAcquire = false;
   const boxPool = makeFakeBoxPool({
     result: () => {
       // During the acquire window the slot is an honest, host-less reservation:
-      // NOT in running (no fake host anywhere) and no run_started emitted yet.
+      // NOT in running (no fake host anywhere), surfaced in the snapshot's
+      // reserving lane, marked by run_reserving, and no run_started emitted yet.
       runningDuringAcquire = runtime.snapshot().running.length;
       reservingDuringAcquire = orchestrator.snapshot().reserving;
+      snapshotReservingDuringAcquire = runtime.snapshot().reserving ?? [];
       runStartedDuringAcquire = runtime
         .snapshot()
         .recentEvents.some((event) => event.type === "run_started");
+      runReservingDuringAcquire = runtime
+        .snapshot()
+        .recentEvents.some((event) => event.type === "run_reserving");
       return { status: "leased", lease };
     },
   });
@@ -1943,13 +1960,21 @@ test("box pool: a claim is a host-less reservation between claim and acquire, co
   assert.equal(runningDuringAcquire, 0);
   assert.equal(reservingDuringAcquire.length, 1);
   assert.equal(reservingDuringAcquire[0]?.issueId, issue.id);
+  // The runtime snapshot mirrors the orchestrator's reserving lane (host-less).
+  assert.equal(snapshotReservingDuringAcquire.length, 1);
+  assert.equal(snapshotReservingDuringAcquire[0]?.issueId, issue.id);
+  assert.equal(snapshotReservingDuringAcquire[0]?.slotIndex, 0);
   assert.equal(runStartedDuringAcquire, false);
+  // run_reserving marked dispatch intent before the acquire resolved.
+  assert.equal(runReservingDuringAcquire, true);
   // run_started fired post-bind, exactly once, and the run carried the bound host.
   assert.equal(
     runtime.snapshot().recentEvents.filter((event) => event.type === "run_started").length,
     1,
   );
   assert.equal(runtime.snapshot().runHistory[0]?.workerHost, "fake://box-reserved");
+  // The bound run left the reserving lane.
+  assert.equal(runtime.snapshot().reserving?.length ?? 0, 0);
 });
 
 test("box pool: acquire uses the prior real workerHost as affinityKey on retry", async () => {
@@ -2118,6 +2143,61 @@ test("box pool: no_capacity restores the consumed retry entry so affinity and at
     assert.ok(
       snapshot.recentEvents.some((event) => event.message.includes("worker_host_capacity")),
     );
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("box pool: freed capacity nudges the poll so a capacity-blocked issue re-dispatches before the interval", async () => {
+  // The pool announces freed capacity (onCapacityAvailable, forwarded by the
+  // coordinator); the runtime must re-poll on its own so a worker_host_capacity
+  // skip re-dispatches within a scheduler turn instead of waiting out
+  // polling.intervalMs (set far beyond the test budget here to prove it).
+  const issue = issueFixture("issue-bp-nudge", "MT-BP-NUDGE");
+  const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
+  const workflow = boxPoolWorkflowFixture("/tmp/symphony-ts-runtime-boxpool-nudge");
+  workflow.settings.polling.intervalMs = 60_000;
+  let capacity = false;
+  const lease = makeFakeLease({ workerHost: "fake://box-nudge" });
+  const boxPool = makeFakeBoxPool({
+    canAcquire: () => capacity,
+    lease,
+  });
+  const runtime = new SymphonyRuntime(
+    runtimeOptions({
+      workflow,
+      boxPool,
+      client: {
+        fetchCandidateIssues: async () => [issue],
+        fetchIssuesByIds: async () => [issue],
+      },
+      runner: async () => ({
+        workspace: "/tmp/symphony/MT-BP-NUDGE",
+        turnCount: 1,
+        updates: [],
+        resumeId: "resume",
+        agentKind: "codex",
+        finalIssue: doneIssue,
+      }),
+    }),
+  );
+
+  try {
+    // No capacity: the issue blocks as worker_host_capacity; nothing dispatches.
+    await runtime.pollOnce();
+    assert.equal(boxPool.acquireCalls.length, 0);
+    assert.equal(runtime.snapshot().blocked[0]?.reason, "worker_host_capacity");
+
+    // A box lands warm: the pool announces capacity. The runtime re-polls and
+    // dispatches WITHOUT any manual poll (start() was never called and the
+    // interval is 60s, so only the nudge can drive this).
+    capacity = true;
+    boxPool.triggerCapacityAvailable();
+    await waitFor(() => runtime.snapshot().runHistory.length === 1, 2_000);
+
+    assert.equal(runtime.snapshot().runHistory[0]?.outcome, "success");
+    assert.equal(runtime.snapshot().runHistory[0]?.workerHost, "fake://box-nudge");
+    assert.equal(boxPool.acquireCalls.length, 1);
   } finally {
     runtime.stop();
   }
@@ -2544,9 +2624,10 @@ test("box pool: a stale-generation late resolve is a lease no-op (leaseId guard)
 });
 
 test("box pool: a reserving (in-acquire) slot is never stall-finished and records no bogus retry host", async () => {
-  // Regression for the latent sentinel bug: the old flow placed an in-acquire
-  // entry in `running` with lastAgentTimestamp=null and startedAt=claim time, so a
-  // slow cold provision could be stall-finished and `pending://...` persisted into
+  // Regression pin: an in-acquire slot must never look like a stalled run. A flow
+  // that placed the slot in `running` with lastAgentTimestamp=null and
+  // startedAt=claim time would let a slow cold provision (longer than
+  // stallTimeoutMs) be stall-finished, persisting a bogus non-concrete host into
   // RetryEntry.workerHost. A reservation has NO running entry, so the stall
   // reconciler structurally cannot touch it.
   const issue = issueFixture("issue-bp-reserving-stall", "MT-BP-RESERVING-STALL");
@@ -2880,7 +2961,7 @@ test("box pool: a reload that disables the pool resumes dispatch via the local p
   assert.equal(boxPool.reconcileCalls.length, 1);
   assert.equal(boxPool.reconcileCalls[0]?.enabled, false);
   // Dispatch resumed via the local path: no lease was acquired against the disabled
-  // pool, and the runner ran with the local workerHost (null), not the sentinel.
+  // pool, and the runner ran with the local workerHost (null), never a reservation.
   assert.equal(boxPool.acquireCalls.length, 0);
   assert.equal(runnerWorkerHost, null);
   // The run completed (not blocked as worker_host_capacity).

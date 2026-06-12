@@ -234,6 +234,20 @@ export interface BoxPool {
    * never block the teardown it precedes. Multiple callbacks may be registered.
    */
   onMachineRecycling(cb: (boxId: string) => void): void;
+  /**
+   * OPTIONAL additive hook: registers a callback the pool fires whenever it wakes
+   * its FIFO waiters AND capacity is actually leasable (`canAcquire()` is checked
+   * AFTER the waiters were woken, so a waiter that consumed the freed box
+   * suppresses the notification). Fires on every capacity-freeing event - a lease
+   * settle returning a box to warm, a reconcile/grow landing a warm box, a reaper
+   * top-up. The runtime registers a poll nudge here so an issue skipped on
+   * `worker_host_capacity` re-dispatches within one scheduler turn of a box
+   * landing warm instead of waiting out the poll interval. Callbacks must be
+   * cheap; the pool swallows callback errors so a misbehaving listener can never
+   * break the settle path that fired it. Optional so structural fakes/legacy
+   * pools without the hook stay valid (registration is then skipped).
+   */
+  onCapacityAvailable?(cb: () => void): void;
   hydrate(): Promise<void>;
   drain(opts: { deadlineMs: number; signal?: AbortSignal }): Promise<void>;
   snapshot(): BoxPoolSnapshot;

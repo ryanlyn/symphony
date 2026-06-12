@@ -61,6 +61,7 @@ export type {
   RuntimeEvent,
   RuntimeEventType,
   RuntimePollStatus,
+  RuntimeReservingEntry,
   RuntimeRetryEntry,
   RuntimeRunHistoryEntry,
   RuntimeRunLastEvent,
@@ -285,10 +286,10 @@ export class SymphonyRuntime {
       input.client ?? input.clientFactory?.(input.workflow.settings) ?? missingRuntimeClient();
     this.clock = input.clock ?? systemClock;
     // Prefer the pre-built coordinator; otherwise wrap a bare boxPool in a
-    // null-endpoint passthrough so `acquireRunSlot`/`capacityProbe`/`reconcile`/
-    // `drain` drive a uniform surface (default slotsPerMachine=1 + mcpEndpoint=null
-    // make this a 1:1 passthrough over the pool). Built once: a reload reconciles
-    // it in place, never reconstructs it.
+    // null-endpoint passthrough so `acquireRunSlot`/`governs`/`canAcquire`/
+    // `reconcile`/`drain` drive a uniform surface (default slotsPerMachine=1 +
+    // mcpEndpoint=null make this a 1:1 passthrough over the pool). Built once: a
+    // reload reconciles it in place, never reconstructs it.
     this.coordinator =
       input.coordinator ?? wrapBoxPoolInCoordinator(input.boxPool, input.workflow.settings);
     const coordinator = this.coordinator;
@@ -298,14 +299,21 @@ export class SymphonyRuntime {
         input.workflow.settings,
         this.clock,
         undefined,
-        // The probe is installed for the orchestrator's lifetime whenever a coordinator exists,
-        // but a reload can disable the underlying pool (draining it to zero) without tearing the
-        // probe down. `governs` tracks whether the live pool still governs capacity so a disabled
-        // pool falls through to static/local execution instead of permanently blocking dispatch as
-        // worker_host_capacity. The coordinator builds its probe ONCE (stable identity across
-        // reconcile) and re-reads live pool state each call.
-        coordinator?.capacityProbe(),
+        // The coordinator IS the orchestrator's capacity authority (it satisfies
+        // the CapacityProbe shape directly). It is installed for the orchestrator's
+        // lifetime whenever it exists, but a reload can disable the underlying pool
+        // (draining it to zero) without tearing the authority down. `governs`
+        // tracks whether the live pool still governs capacity so a disabled pool
+        // falls through to static/local execution instead of permanently blocking
+        // dispatch as worker_host_capacity. The coordinator is a reload-surviving
+        // singleton (stable identity across reconcile) re-reading live pool state
+        // on each call.
+        coordinator,
       );
+    // Poll nudge: when the pool frees capacity (a box lands warm after the FIFO
+    // waiters had first claim), re-poll promptly so a capacity-skipped issue
+    // re-dispatches without waiting out polling.intervalMs.
+    coordinator?.onCapacityAvailable(() => this.nudgePollForFreedCapacity());
     this.runner = input.runner ?? runAgentAttempt;
     this.validateDispatch = input.validateDispatch ?? validateDispatchConfig;
     this.retryScheduler = new RetryScheduler(this.clock);
@@ -343,6 +351,9 @@ export class SymphonyRuntime {
           this.activeRuns.get(slotKey(entry.issue.id, entry.slotIndex))?.runId,
         ),
       ),
+      // In-acquire slots, surfaced honestly (host-less) instead of appearing in
+      // `running` with a placeholder host.
+      reserving: orchestration.reserving.map((entry) => ({ ...entry })),
       retrying: orchestration.retrying.map(runtimeRetryEntry),
       blocked: orchestration.blocked.map((entry) => ({ ...entry })),
       usageTotals: orchestration.usageTotals,
@@ -424,6 +435,27 @@ export class SymphonyRuntime {
       if (!pending) return;
       nextOptions = pending;
     }
+  }
+
+  /**
+   * Requests a prompt re-poll after the box pool freed capacity. The pool fires the
+   * hook synchronously inside its settle/reconcile paths (under a per-box mutex), so
+   * the nudge is deferred a microtask to never re-enter them on the same stack. A
+   * poll already in progress gets a FORCED follow-up poll queued (merged via the
+   * pendingPollOptions machinery) because the freed capacity may post-date that
+   * poll's eligibility pass.
+   */
+  private nudgePollForFreedCapacity(): void {
+    queueMicrotask(() => {
+      if (this.stopped) return;
+      if (this.pollInProgress) {
+        this.queuePendingPoll({}, true);
+        return;
+      }
+      this.pollOnce().catch(() => {
+        // Intentionally ignored: pollOnceUnlocked already recorded poll_error.
+      });
+    });
   }
 
   private queuePendingPoll(options: PollOptions = {}, force = false): void {
@@ -509,10 +541,13 @@ export class SymphonyRuntime {
     const handle = new ActiveRunHandle(key, runId, this.activeRuns);
     this.activeRuns.set(key, handle);
     // On the static/local path the run starts immediately. On the pool-governed
-    // path run_started moves AFTER bindReservation (inside runReservedClaim): a
-    // capacity-refused dispatch never emits a phantom run_started.
+    // path run_reserving marks dispatch intent and run_started moves AFTER
+    // bindReservation (inside runReservedClaim): a capacity-refused dispatch
+    // never emits a phantom run_started.
     if (claim.kind === "running") {
       this.addEvent("run_started", `${refreshed.identifier} slot=${slotIndex}`);
+    } else {
+      this.addEvent("run_reserving", `${refreshed.identifier} slot=${slotIndex}`);
     }
     this.input.onIssueDispatched?.(refreshed);
 
@@ -851,13 +886,13 @@ export class SymphonyRuntime {
     for (const entry of snapshot.running)
       tracked.set(entry.issue.id, {
         identifier: entry.issue.identifier,
-        workerHost: cleanupWorkerHost(entry.workerHost),
+        workerHost: entry.workerHost,
         workspacePath: entry.workspacePath,
       });
     for (const entry of snapshot.retrying)
       tracked.set(entry.issueId, {
         identifier: entry.identifier,
-        workerHost: cleanupWorkerHost(entry.workerHost),
+        workerHost: entry.workerHost,
         workspacePath: entry.workspacePath,
       });
     if (tracked.size === 0) return;
@@ -1309,16 +1344,6 @@ function missingRuntimeClient(): RuntimeTrackerClient {
 }
 
 /**
- * Normalizes a worker host for workspace/resume-state cleanup. During the claim->acquire window a
- * box-pool slot carries the `pending://<id>/<slot>` sentinel rather than a real address; the cleanup
- * sink treats any truthy workerHost as a remote box and would SSH to the bogus sentinel host (a
- * wasted, always-failing round-trip). Mapping the sentinel to `null` makes cleanup stay local.
- */
-function cleanupWorkerHost(workerHost: string | null | undefined): string | null | undefined {
-  return workerHost?.startsWith("pending://") ? null : workerHost;
-}
-
-/**
  * Builds a disabled-equivalent of the prior box-pool settings so a reload that REMOVES the
  * `worker.box_pool` block (next === undefined) can still reconcile the live pool to a drain
  * rather than leaking it. Preserves `drainDeadlineMs` from the prior settings so the drain
@@ -1340,8 +1365,8 @@ function disabledBoxPoolSettings(prev: BoxPoolSettings | undefined): BoxPoolSett
  * stays byte-identical at the runtime boundary. STEP 1's null manager mints nothing
  * (`perRunEndpoint=false`, every `RunSlot.mcpEndpoint=null`), so this is a 1:1 passthrough over
  * the pool: `acquireRunSlot` delegates to `pool.acquire`, settle delegates straight to the
- * `BoxLease`, and `reconcile`/`drain`/`capacityProbe` forward verbatim. Returns `undefined` when
- * no pool is supplied (the static/local path).
+ * `BoxLease`, and `reconcile`/`drain`/`governs`/`canAcquire` forward verbatim. Returns
+ * `undefined` when no pool is supplied (the static/local path).
  *
  * `settings` only needs to satisfy the coordinator's constructor; in STEP 1 the coordinator does
  * not read it past construction (the pool owns live settings), so the live `worker.boxPool`

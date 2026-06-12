@@ -104,12 +104,6 @@ const runningEntryFixture: RunningEntry = {
   retryAttempt: null,
 };
 
-// RunningEntry.affinityHost is optional: a running entry without it stays valid.
-const runningEntryWithAffinity: RunningEntry = {
-  ...runningEntryFixture,
-  affinityHost: "user@host-a:22",
-};
-
 // The driver selector is an open string: which kinds are supported is decided by
 // the box-driver registry at the composition root, not by the domain type.
 const customDriverKind: BoxDriverKind = "acme-cloud";
@@ -186,7 +180,8 @@ test("WorkerSettings.boxPool is optional and additive", () => {
   assert.equal(workerWithPool.boxPool?.driver, "fake");
 });
 
-test("RunningEntry.affinityHost is optional", () => {
-  assert.equal(runningEntryFixture.affinityHost, undefined);
-  assert.equal(runningEntryWithAffinity.affinityHost, "user@host-a:22");
+test("RunningEntry.workerHost is optional and concrete-or-null", () => {
+  assert.equal(runningEntryFixture.workerHost, undefined);
+  const withHost: RunningEntry = { ...runningEntryFixture, workerHost: "user@host-a:22" };
+  assert.equal(withHost.workerHost, "user@host-a:22");
 });

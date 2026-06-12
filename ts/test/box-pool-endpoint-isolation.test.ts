@@ -124,7 +124,7 @@ const mcpServerPort = await freeLocalPort();
 // The concrete per-run McpEndpointManager: the trivial host-routing adapter over
 // the REAL acquireAgentMcpEndpointForRun (whole-lease acquire) - the same routing
 // createPerRunEndpointManager performs. An ssh-addressable host opens the real
-// per-run endpoint; a falsy / `pending://` host mints nothing (acp keeps its own).
+// per-run endpoint; an empty (local) host mints nothing (acp keeps its own).
 // ---------------------------------------------------------------------------
 
 type AcquireForRun = (
@@ -134,7 +134,7 @@ type AcquireForRun = (
 ) => Promise<AgentMcpEndpointLease>;
 
 function isLocalWorkerHost(workerHost: string): boolean {
-  return workerHost.length === 0 || workerHost.startsWith("pending://");
+  return workerHost.length === 0;
 }
 
 function perRunManager(acquireForRun: AcquireForRun): McpEndpointManager {
@@ -530,9 +530,9 @@ test("force-drain closes EVERY surviving registry endpoint (no leaked ssh -N chi
 test("local-host path: the coordinator mints NO endpoint (acp keeps acquiring AND releasing its own), byte-for-byte", async () => {
   const processes: FakeProcess[] = [];
   mockStartReverseTunnel.mockImplementation(() => makeFakeProcess(processes));
-  // The machine resolves to a local/pending host: the concrete manager returns
+  // The machine resolves to a local (empty) host: the concrete manager returns
   // null for it (acp owns its own endpoint exactly as in the single-tenant path).
-  const pool = makeFakeMachinePool({ hostFor: () => "pending://issue/0" });
+  const pool = makeFakeMachinePool({ hostFor: () => "" });
   let acquireCalled = 0;
   const coordinator = makeCoordinator(pool, async (...args) => {
     acquireCalled += 1;

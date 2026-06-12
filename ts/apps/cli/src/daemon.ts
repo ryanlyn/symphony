@@ -146,8 +146,8 @@ export function buildBoxPool(
  * `@symphony/mcp`, keeping `@symphony/worker-box-pool` and
  * `@symphony/dispatch-coordinator` free of any mcp/tunnel runtime dependency
  * (invariant #8). At the default `slotsPerMachine=1` this opens exactly ONE endpoint
- * per run (just coordinator-owned), and the manager returns `null` for a
- * `null`/`pending://` worker host so the local path keeps using acp's own endpoint -
+ * per run (just coordinator-owned), and the manager returns `null` for an empty
+ * (local) worker host so the local path keeps using acp's own endpoint -
  * byte-identical to the single-tenant path. `buildBoxPool` stays for the box-pool
  * wiring / e2e tests and for any caller that still wants a bare pool.
  */
@@ -163,7 +163,7 @@ export function buildDispatchCoordinator(
     pool,
     // The concrete manager OWNS each run's whole endpoint lease; it calls the
     // injected `acquireAgentMcpEndpointForRun` (signature-compatible) for an
-    // ssh-addressable host and returns null for a null/`pending://` host so the
+    // ssh-addressable host and returns null for an empty (local) host so the
     // local path keeps using acp's own endpoint.
     mcpEndpointManager: createPerRunEndpointManager({
       acquireForRun: acquireAgentMcpEndpointForRun,

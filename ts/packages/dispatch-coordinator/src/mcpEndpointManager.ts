@@ -39,21 +39,20 @@ export interface CreatePerRunEndpointManagerDeps {
 
 /**
  * A `workerHost` is LOCAL (no per-run endpoint needed; acp keeps acquiring AND
- * releasing its own endpoint exactly as today) when it is falsy OR carries the
- * `pending://` sentinel a not-yet-bound box-pool slot uses. Every other value is
- * a real ssh-addressable host the per-run endpoint is opened against. This mirrors
- * the runtime's `cleanupWorkerHost` sentinel handling and acp's truthy-host =>
- * remote rule, so the single-slot / local path stays byte-identical.
+ * releasing its own endpoint exactly as today) when it is empty. Every other
+ * value is a real ssh-addressable host the per-run endpoint is opened against.
+ * This mirrors acp's truthy-host => remote rule, so the single-slot / local path
+ * stays byte-identical.
  */
 function isLocalWorkerHost(workerHost: string): boolean {
-  return workerHost.length === 0 || workerHost.startsWith("pending://");
+  return workerHost.length === 0;
 }
 
 /**
  * Constructs the CONCRETE per-run {@link McpEndpointManager} (`perRunEndpoint =
  * true`, the capability the STEP 3 startup gate consumes). For an ssh-addressable
  * `workerHost` it opens the WHOLE per-run endpoint lease via the injected
- * `acquireForRun`; for a local/`pending://` host it returns `null` (acp keeps its
+ * `acquireForRun`; for a local (empty) host it returns `null` (acp keeps its
  * own endpoint, the byte-identical local path). `release(lease)` closes the lease
  * (revoking the token, dropping the local-server ref, and closing the per-run
  * tunnel together) and is a safe no-op for the `null` local lease.

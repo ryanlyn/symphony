@@ -10,11 +10,12 @@
 //     classification are unchanged); a `no_capacity` result is returned with the
 //     SAME typed reason; a THROWN pool fault PROPAGATES verbatim so the runtime's
 //     catch emits box_pool_acquire_error.
-//   - capacityProbe() is built ONCE (stable identity across reconcile) and
-//     re-reads live pool state each call, so an orchestrator that captured the
-//     probe in its ctor is never stranded by a reload.
-//   - isEnabled/reconcile/drain/hydrate delegate verbatim; snapshot is the pool
-//     snapshot extended with a `slots` view derived from the live registry.
+//   - the coordinator itself is the orchestrator's capacity authority: governs()/
+//     canAcquire() re-read live pool state each call, and the coordinator is a
+//     reload-surviving singleton, so an orchestrator that captured it in its ctor
+//     is never stranded by a reconcile.
+//   - reconcile/drain/hydrate delegate verbatim; snapshot is the pool snapshot
+//     extended with a `slots` view derived from the live registry.
 //
 // The coordinator owns the authoritative per-slot registry (minted-but-unsettled
 // slots) used for collision detection, recycle-driven fail-fast, the tunnel
@@ -100,14 +101,14 @@ function runKeyFor(issueId: string, slotIndex: number): string {
 
 /**
  * A `workerHost` is LOCAL (no per-run tunnel is minted; acp keeps its own
- * endpoint) when it is falsy OR carries the `pending://` sentinel a not-yet-bound
- * box-pool slot uses. Mirrors {@link createPerRunEndpointManager}'s host routing so
+ * endpoint) when it is empty. A pool lease's `workerHost` is otherwise always a
+ * real ssh address. Mirrors {@link createPerRunEndpointManager}'s host routing so
  * the tunnel-exhaustion ceiling counts ONLY real remote tunnels: a local slot
  * consumes no `ssh -N` child, so it must never be gated by (nor count against) the
  * ceiling.
  */
 function isLocalWorkerHost(workerHost: string): boolean {
-  return workerHost.length === 0 || workerHost.startsWith("pending://");
+  return workerHost.length === 0;
 }
 
 /**
@@ -159,23 +160,31 @@ export type DispatchCoordinatorSnapshot = BoxPoolSnapshot & {
 
 /**
  * The lifetime-installed capacity gate the orchestrator delegates worker-host
- * decisions to. Identical shape to the orchestrator's `CapacityProbe`; built once
- * by the coordinator so its identity is stable across reconcile.
+ * decisions to. Identical shape to the orchestrator's `CapacityProbe`; the
+ * coordinator itself satisfies it (a reload-surviving singleton, so the
+ * orchestrator's captured reference is stable across reconcile).
  */
 export interface CapacityProbe {
+  /** Whether the live pool currently governs worker-host capacity (`pool.isEnabled()`). */
   governs(): boolean;
+  /** Whether a run slot could be acquired right now (`pool.canAcquire()`). */
   canAcquire(): boolean;
 }
 
 /**
- * The runtime-facing coordinator over the machine {@link BoxPool}. STEP 1 is a
- * 1:1 passthrough; later steps add per-run MCP endpoints, co-residence, and a
- * provider hot-swap, all behind this same surface.
+ * The runtime-facing coordinator over the machine {@link BoxPool}. It is also
+ * the orchestrator's capacity authority ({@link CapacityProbe}): `governs()` /
+ * `canAcquire()` re-read live pool state on each call.
  */
-export interface DispatchCoordinator {
+export interface DispatchCoordinator extends CapacityProbe {
   acquireRunSlot(req: AcquireRunSlotRequest): Promise<AcquireRunSlotResult>;
-  capacityProbe(): CapacityProbe | undefined;
-  isEnabled(): boolean;
+  /**
+   * Registers a callback fired when the pool frees (or grows) leasable capacity,
+   * forwarded to {@link BoxPool.onCapacityAvailable} when the pool provides the
+   * hook (a no-op otherwise). The runtime uses it to nudge its poll so a
+   * capacity-skipped issue re-dispatches without waiting out the poll interval.
+   */
+  onCapacityAvailable(cb: () => void): void;
   readonly capabilities: { readonly perRunEndpoint: boolean };
   reconcile(next: BoxPoolSettings): void;
   drain(opts: { deadlineMs: number; signal?: AbortSignal }): Promise<void>;
@@ -385,13 +394,6 @@ export function createDispatchCoordinator(
     });
   }
 
-  // Built ONCE so the orchestrator can capture it in its ctor and never strand a
-  // stale reference across a reconcile. Each call re-reads live pool state.
-  const probe: CapacityProbe = {
-    governs: () => pool.isEnabled(),
-    canAcquire: () => pool.canAcquire(),
-  };
-
   const capabilities = { perRunEndpoint: mcpEndpointManager.perRunEndpoint } as const;
 
   return {
@@ -447,7 +449,7 @@ export function createDispatchCoordinator(
       // acquireRunSlot. We check this AFTER lease-bind + the collision guard but
       // BEFORE the open so a budget-exhausted slot never mints (then has to tear
       // down) a tunnel. The ceiling counts ONLY live remote tunnels and applies
-      // ONLY when this open would actually mint one - a local/`pending://` host
+      // ONLY when this open would actually mint one - a local (empty) host
       // (and the null passthrough, which mints nothing) consumes no `ssh -N` child,
       // so it is neither gated by nor counted against the budget. The just-bound
       // BoxLease is settled HEALTHY (the box is fine; only the tunnel budget is
@@ -572,12 +574,23 @@ export function createDispatchCoordinator(
       return { status: "bound", slot };
     },
 
-    capacityProbe(): CapacityProbe | undefined {
-      return probe;
+    // The coordinator IS the orchestrator's capacity authority: both methods
+    // re-read live pool state on every call (never a cached snapshot), so a
+    // reconcile that disables the pool is observed immediately.
+    governs(): boolean {
+      return pool.isEnabled();
     },
 
-    isEnabled(): boolean {
-      return pool.isEnabled();
+    canAcquire(): boolean {
+      return pool.canAcquire();
+    },
+
+    onCapacityAvailable(cb: () => void): void {
+      // Forward to the pool's additive hook when present. Registration is
+      // DEFENSIVE like onMachineRecycling above: an older/partial pool injected
+      // via the bare-boxPool passthrough may predate the hook, in which case the
+      // runtime simply keeps its interval-only polling.
+      pool.onCapacityAvailable?.(cb);
     },
 
     reconcile(next: BoxPoolSettings): void {

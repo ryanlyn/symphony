@@ -225,13 +225,13 @@ test("real per-run manager: threading the box-pool-only settings WOULD fail at o
   assert.equal((thrown as Error).message, "remote_acp_mcp_requires_server_port");
 });
 
-test("real per-run manager: a local/pending host mints nothing even with full Settings (acp keeps its own endpoint)", async () => {
+test("real per-run manager: a local (empty) host mints nothing even with full Settings (acp keeps its own endpoint)", async () => {
   const calls: AcquireCall[] = [];
   const manager = createPerRunEndpointManager({ acquireForRun: makeStubAcquireForRun(calls) });
 
   const lease = await manager.open({
     settings: fullSettingsWithServerPort(),
-    workerHost: "pending://issue/0",
+    workerHost: "",
     runKey: "issue/0",
   });
 

@@ -536,6 +536,66 @@ test("acquire leased when warm box free (release returns it to WARM_IDLE)", asyn
   await pool.drain({ deadlineMs: 1_000 });
 });
 
+test("onCapacityAvailable fires when a release returns a box to warm; never while leased or draining", async () => {
+  const { clock } = controllableClock(0);
+  const pool = createBoxPool(poolSettings({ max: 1, warm: 0 }), {
+    clock,
+    drivers,
+    logEvent: () => undefined,
+  });
+  let fired = 0;
+  pool.onCapacityAvailable?.(() => {
+    fired += 1;
+  });
+
+  const first = await pool.acquire(acquireReq());
+  assert.equal(first.status, "leased");
+  if (first.status !== "leased") return;
+  // The single box is leased and the pool cannot grow: no capacity announcement.
+  assert.equal(fired, 0);
+
+  // The release returns the box to WARM_IDLE: capacity is announced exactly once.
+  await first.lease.release("healthy");
+  assert.equal(fired, 1);
+
+  // A draining (capacity-less) pool never announces, even though its teardown
+  // paths run the same waiter wake-up that fired above.
+  const beforeDrain = fired;
+  await pool.drain({ deadlineMs: 1_000 });
+  assert.equal(fired, beforeDrain);
+});
+
+test("onCapacityAvailable is suppressed when a FIFO waiter consumed the freed box", async () => {
+  const { clock } = controllableClock(0);
+  const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 10_000 }), {
+    clock,
+    drivers,
+    logEvent: () => undefined,
+  });
+  let fired = 0;
+  pool.onCapacityAvailable?.(() => {
+    fired += 1;
+  });
+
+  const first = await pool.acquire(acquireReq());
+  assert.equal(first.status, "leased");
+  if (first.status !== "leased") return;
+
+  // A second acquire parks on the FIFO waiter queue (no capacity, cannot grow).
+  const blocked = pool.acquire(acquireReq({ issueId: "issue-2" }));
+  await first.lease.release("healthy");
+  const second = await blocked;
+  assert.equal(second.status, "leased");
+  // The waiter had first claim and consumed the freed box, leaving canAcquire()
+  // false, so no capacity announcement reached the listener.
+  assert.equal(fired, 0);
+
+  if (second.status === "leased") await second.lease.release("healthy");
+  // With no waiter left, the final release announces the warm box.
+  assert.equal(fired, 1);
+  await pool.drain({ deadlineMs: 1_000 });
+});
+
 test("acquire blocks to acquireTimeoutMs then no_capacity:acquire_timeout", async () => {
   const { clock } = controllableClock(0);
   const pool = createBoxPool(poolSettings({ max: 1, warm: 0, acquireTimeoutMs: 30 }), {

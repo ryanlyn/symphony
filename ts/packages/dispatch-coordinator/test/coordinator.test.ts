@@ -10,11 +10,11 @@
 //     is preserved verbatim.
 //   - a thrown pool fault PROPAGATES (rethrown verbatim) so the runtime's catch
 //     emits box_pool_acquire_error.
-//   - capacityProbe() returns the hand-built {governs,canAcquire} shape and is
-//     built ONCE (stable identity across reconcile) so an orchestrator that
-//     captured the probe in its ctor never strands a stale reference.
-//   - isEnabled/reconcile/drain/hydrate/snapshot delegate to the pool (snapshot
-//     extended with an empty slots array).
+//   - the coordinator itself is the orchestrator's capacity authority:
+//     governs()/canAcquire() re-read live pool state per call, and the singleton
+//     survives reconcile so a captured reference never strands.
+//   - reconcile/drain/hydrate/snapshot delegate to the pool (snapshot extended
+//     with an empty slots array).
 //
 // Tests import the COMPILED barrel (../src/index.js) because the suite runs
 // against tsc --build output (composite project, tests excluded from the build).
@@ -444,10 +444,11 @@ test("a thrown pool fault leaves the slot registry empty (no orphan RunSlot)", a
 });
 
 // ---------------------------------------------------------------------------
-// capacityProbe: shape + stable identity across reconcile
+// capacity authority: the coordinator itself satisfies the orchestrator's
+// CapacityProbe shape (governs/canAcquire), re-reading live pool state per call
 // ---------------------------------------------------------------------------
 
-test("capacityProbe() returns the {governs,canAcquire} shape delegating to the live pool", () => {
+test("governs()/canAcquire() delegate to the live pool (isEnabled/canAcquire)", () => {
   let enabled = true;
   let acquirable = true;
   const pool = makeFakeBoxPool({
@@ -456,66 +457,58 @@ test("capacityProbe() returns the {governs,canAcquire} shape delegating to the l
   });
   const coordinator = makeCoordinator(pool);
 
-  const probe = coordinator.capacityProbe();
-  assert.ok(probe);
-  if (!probe) return;
-  assert.equal(typeof probe.governs, "function");
-  assert.equal(typeof probe.canAcquire, "function");
-
   // governs() reads pool.isEnabled() live; canAcquire() reads pool.canAcquire() live.
-  assert.equal(probe.governs(), true);
-  assert.equal(probe.canAcquire(), true);
+  assert.equal(coordinator.governs(), true);
+  assert.equal(coordinator.canAcquire(), true);
   enabled = false;
   acquirable = false;
-  assert.equal(probe.governs(), false);
-  assert.equal(probe.canAcquire(), false);
+  assert.equal(coordinator.governs(), false);
+  assert.equal(coordinator.canAcquire(), false);
 });
 
-test("capacityProbe() has STABLE identity across calls and across reconcile (built once)", () => {
+test("governs() re-reads live pool state after reconcile (the captured authority is never stranded)", () => {
+  let enabled = true;
+  const pool = makeFakeBoxPool({ isEnabled: () => enabled });
+  const coordinator = makeCoordinator(pool);
+
+  // The orchestrator captures the coordinator ONCE in its ctor; the coordinator is
+  // a reload-surviving singleton, so the same reference reflects post-reconcile
+  // pool state.
+  assert.equal(coordinator.governs(), true);
+
+  coordinator.reconcile(settingsStub("next"));
+  enabled = false;
+  assert.equal(coordinator.governs(), false);
+});
+
+test("onCapacityAvailable(cb) forwards to pool.onCapacityAvailable when the pool provides the hook", () => {
+  const callbacks: Array<() => void> = [];
+  const pool = makeFakeBoxPool();
+  pool.onCapacityAvailable = (cb: () => void): void => {
+    callbacks.push(cb);
+  };
+  const coordinator = makeCoordinator(pool);
+
+  let fired = 0;
+  coordinator.onCapacityAvailable(() => {
+    fired += 1;
+  });
+  assert.equal(callbacks.length, 1);
+  callbacks[0]?.();
+  assert.equal(fired, 1);
+});
+
+test("onCapacityAvailable(cb) is a safe no-op for a pool without the hook (legacy passthrough)", () => {
   const pool = makeFakeBoxPool();
   const coordinator = makeCoordinator(pool);
-
-  const first = coordinator.capacityProbe();
-  const second = coordinator.capacityProbe();
-  // Same reference between calls (an orchestrator captures it once in its ctor).
-  assert.equal(first, second);
-
-  coordinator.reconcile(settingsStub("next"));
-  const afterReconcile = coordinator.capacityProbe();
-  // reconcile must NOT strand the captured probe: still the same reference, and it
-  // re-reads live pool state (the pool object is unchanged here).
-  assert.equal(afterReconcile, first);
-});
-
-test("capacityProbe() re-reads live pool state after reconcile (not a stale snapshot)", () => {
-  let enabled = true;
-  const pool = makeFakeBoxPool({ isEnabled: () => enabled });
-  const coordinator = makeCoordinator(pool);
-
-  const probe = coordinator.capacityProbe();
-  assert.ok(probe);
-  if (!probe) return;
-  assert.equal(probe.governs(), true);
-
-  coordinator.reconcile(settingsStub("next"));
-  enabled = false;
-  // The same probe reflects the new live pool state.
-  assert.equal(probe.governs(), false);
+  // makeFakeBoxPool models the older/partial pool surface (no onCapacityAvailable),
+  // so registration must not throw and the runtime keeps interval-only polling.
+  coordinator.onCapacityAvailable(() => {});
 });
 
 // ---------------------------------------------------------------------------
-// isEnabled / reconcile / drain / hydrate delegation
+// reconcile / drain / hydrate delegation
 // ---------------------------------------------------------------------------
-
-test("isEnabled() delegates to pool.isEnabled()", () => {
-  let enabled = true;
-  const pool = makeFakeBoxPool({ isEnabled: () => enabled });
-  const coordinator = makeCoordinator(pool);
-
-  assert.equal(coordinator.isEnabled(), true);
-  enabled = false;
-  assert.equal(coordinator.isEnabled(), false);
-});
 
 test("reconcile(next) delegates to pool.reconcile(next) with the SAME settings reference", () => {
   const pool = makeFakeBoxPool();
@@ -1124,27 +1117,6 @@ test("createPerRunEndpointManager returns null for a local (falsy) workerHost (a
   >[0]["settings"];
 
   const lease = await manager.open({ settings, workerHost: "", runKey: "0" });
-  assert.equal(lease, null);
-  assert.equal(acquireCalled, false);
-});
-
-test("createPerRunEndpointManager returns null for a pending:// sentinel workerHost (local cleanup path)", async () => {
-  let acquireCalled = false;
-  const manager = createPerRunEndpointManager({
-    acquireForRun: async () => {
-      acquireCalled = true;
-      return makeFakeEndpoint("a");
-    },
-  });
-  const settings = settingsStub("s") as unknown as Parameters<
-    McpEndpointManager["open"]
-  >[0]["settings"];
-
-  const lease = await manager.open({
-    settings,
-    workerHost: "pending://issue-1/0",
-    runKey: "0",
-  });
   assert.equal(lease, null);
   assert.equal(acquireCalled, false);
 });

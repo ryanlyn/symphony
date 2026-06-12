@@ -832,7 +832,6 @@ test("orchestrator static sshHosts path unchanged when no capacity probe is pres
   const firstEntry = claimEntry(orchestrator, first);
   const secondEntry = claimEntry(orchestrator, second);
   assert.equal(firstEntry?.workerHost, "worker-a:2200");
-  assert.equal(firstEntry?.affinityHost, undefined);
   assert.equal(secondEntry?.workerHost, "worker-b:2200");
   assert.equal(claimEntry(orchestrator, first), null);
 });
@@ -1340,6 +1339,5 @@ test("orchestrator claim does NOT reserve when probe is present but not governin
   const entry = claimEntry(orchestrator, issue);
   assert.ok(entry);
   assert.equal(entry?.workerHost, null);
-  assert.equal(entry?.affinityHost, undefined);
   assert.equal(orchestrator.state.reserved.size, 0);
 });

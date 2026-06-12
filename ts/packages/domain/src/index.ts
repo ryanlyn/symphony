@@ -719,14 +719,8 @@ export interface RunningEntry {
   ensembleSize: number;
   /** Backend selected for this run (resolved against per-state setting overrides at claim time). */
   agentKind: AgentKind;
-  /** SSH host the agent runs on; `null` for local execution. */
+  /** SSH host the agent runs on; `null` for local execution. Always concrete or null. */
   workerHost?: string | null | undefined;
-  /**
-   * Preferred box affinity carried across a box-pool claim. Holds the prior run's `workerHost`
-   * (from a retry) so sticky re-acquire survives the `pending://` sentinel the box-pool bypass
-   * writes into {@link RunningEntry.workerHost} at claim time. Unset when no pool is configured.
-   */
-  affinityHost?: string | null | undefined;
   /** Absolute workspace path on the worker; set once the executor emits `workspace_prepared`. */
   workspacePath?: string | null | undefined;
   /** Provider session id reported by the executor (Codex/Claude side). */

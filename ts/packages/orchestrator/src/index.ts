@@ -148,8 +148,9 @@ function retrySlotIndex(retry: RetryEntry): number {
  * the pool (it drains to zero) without the probe being torn down. {@link CapacityProbe.governs}
  * reports whether the live pool currently governs capacity: only while it does are worker-host
  * decisions delegated to {@link CapacityProbe.canAcquire} and the static `sshHosts` selection
- * bypassed (deferring the real address to a later {@link Orchestrator.setWorkerHost}). Once it no
- * longer governs (a disabled pool), both paths fall through to the normal static/local logic so a
+ * bypassed (claim then holds the slot as a host-less reservation until
+ * {@link Orchestrator.bindReservation} supplies the concrete bound host). Once it no longer
+ * governs (a disabled pool), both paths fall through to the normal static/local logic so a
  * reload that turns the pool off cannot permanently block dispatch as `worker_host_capacity`.
  */
 export interface CapacityProbe {
@@ -411,28 +412,6 @@ export class Orchestrator {
     for (const [key, record] of [...this.state.reserved.entries()]) {
       if (nowMs >= record.expiresAtMonotonicMs) this.cancelReservationRecord(key, record);
     }
-  }
-
-  /**
-   * Overwrites the `pending://` sentinel on a running slot with the real worker host resolved by the
-   * box pool. No-op when the slot is no longer running (e.g. it was abandoned or finished).
-   */
-  setWorkerHost(issueId: string, slotIndex: number, host: string): void {
-    const entry = this.state.running.get(slotKey(issueId, slotIndex));
-    if (!entry) return;
-    entry.workerHost = host;
-  }
-
-  /**
-   * Drops the running + claimed records for a slot without recording any retry or backoff, leaving
-   * the slot immediately re-claimable on the next tick. Used when a box-pool acquire reports no
-   * capacity so the slot is re-evaluated via {@link CapacityProbe.canAcquire}; the inverse of
-   * {@link Orchestrator.claim} and distinct from {@link Orchestrator.finish}, which schedules backoff.
-   */
-  abandonClaim(issueId: string, slotIndex: number): void {
-    const key = slotKey(issueId, slotIndex);
-    this.state.running.delete(key);
-    this.state.claimed.delete(key);
   }
 
   private selectWorkerHost(preferredHost?: string | null): string | null | undefined {
