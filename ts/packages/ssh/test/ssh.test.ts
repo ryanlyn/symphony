@@ -134,17 +134,16 @@ printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
 # A TERM-ignoring child that holds the pipes open. Plain sh: spawning node
 # here can outlast the ssh timeout on a loaded machine, killing the script
 # before it records CHILD and flaking the test.
-sh -c 'trap "" TERM; while :; do sleep 1; done' &
-child="$!"
-printf 'CHILD:%s\\n' "$child" >> ${shellEscape(trace)}
-wait "$child"
+trace_file=${shellEscape(trace)}
+sh -c 'printf "CHILD:%s\\n" "$$" >> "$1"; trap "" TERM; while :; do sleep 1; done' sh "$trace_file" &
+wait "$!"
 `,
   );
 
   const started = performance.now();
   await assert.rejects(
-    () => runSsh("localhost", "printf ok", { timeoutMs: 1000 }),
-    /ssh_timeout: localhost 1000/,
+    () => runSsh("localhost", "printf ok", { timeoutMs: 2500 }),
+    /ssh_timeout: localhost 2500/,
   );
   const elapsedMs = performance.now() - started;
 
@@ -152,7 +151,7 @@ wait "$child"
   // would take the full waitForProcessExit horizon) rather than asserting
   // scheduler precision: the margin must absorb event-loop and process-spawn
   // delay on a loaded machine (parallel check tasks, CI) without flaking.
-  if (elapsedMs >= 3_000) throw new Error(`timeout returned after ${Math.round(elapsedMs)}ms`);
+  if (elapsedMs >= 5_500) throw new Error(`timeout returned after ${Math.round(elapsedMs)}ms`);
 
   const traceText = await fs.readFile(trace, "utf8");
   const childMatch = /^CHILD:(\d+)$/m.exec(traceText);
@@ -248,9 +247,9 @@ esac
   );
 
   await waitForRemoteTcpPort("localhost:2222", 46_000, {
-    timeoutMs: 2_000,
+    timeoutMs: 10_000,
     intervalMs: 100,
-    attemptTimeoutMs: 1_000,
+    attemptTimeoutMs: 5_000,
   });
 
   const traceText = await fs.readFile(trace, "utf8");

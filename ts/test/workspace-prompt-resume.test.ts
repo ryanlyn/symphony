@@ -43,6 +43,8 @@ const executorAdapters = {
   },
 };
 
+const remoteFixtureSshTimeoutMs = 15_000;
+
 function resumeKey(workspace: string, workerHost?: string | null): string {
   return `${workerHost ?? "local"}\0${workspace}`;
 }
@@ -246,7 +248,7 @@ test("remote workspace creation and removal use SSH hooks and validate remote pa
   const marker = path.join(root, "remote-before-remove.log");
   const settings = parseConfig({
     workspace: { root: "~/workspaces" },
-    worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+    worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: remoteFixtureSshTimeoutMs },
     hooks: {
       after_create: "echo remote-after > after_create.log",
       before_remove: `echo remote-before > ${shellEscape(marker)}`,
@@ -292,7 +294,7 @@ test("remote workspace cwd validation accepts a missing path inside the workspac
     await fs.mkdir(workspaceRoot, { recursive: true });
     const settings = parseConfig({
       workspace: { root: "~/workspaces" },
-      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: remoteFixtureSshTimeoutMs },
     });
 
     const result = await validateWorkspaceCwd(settings, workspace, "worker-01:2200");
@@ -319,7 +321,7 @@ test("remote workspace cwd validation reports symlink escapes through missing ta
     await fs.symlink(outside, link);
     const settings = parseConfig({
       workspace: { root: "~/workspaces" },
-      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+      worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: remoteFixtureSshTimeoutMs },
     });
 
     await assert.rejects(
@@ -601,7 +603,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
   const settings = parseConfig({
     server: { port: 0 },
     workspace: { root: "~/workspaces" },
-    worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: 5_000 },
+    worker: { ssh_hosts: ["worker-01:2200"], ssh_timeout_ms: remoteFixtureSshTimeoutMs },
     hooks: {
       after_create: `echo after_create >> ${shellEscape(hookLog)}`,
       before_run: `echo before_run >> ${shellEscape(hookLog)}`,
