@@ -86,6 +86,9 @@
       "path": "./packages/worker-host-pool"
     },
     {
+      "path": "./packages/worker-sdk"
+    },
+    {
       "path": "./packages/workflow"
     },
     {
