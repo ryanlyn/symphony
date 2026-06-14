@@ -360,9 +360,56 @@ test("linear tool pack routes calls through the package tools", async () => {
     {
       settings: linearSettings(),
       fetchImpl: fetchSequence(jsonResponse({ data: { viewer: { id: "viewer-1" } } })),
+      env: {},
     },
   );
   assert.equal(result.success, true);
+});
+
+test("linear_graphql resolves pack credentials from tool_options and env fallbacks", async () => {
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  const recordingFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      authorization: new Headers(init?.headers).get("authorization"),
+    });
+    return jsonResponse({ data: {} });
+  }) as typeof fetch;
+
+  // The pack's own tool_options.linear slice wins over the dispatch tracker credential,
+  // resolving whole-value $VAR references against the execution environment.
+  const packSettings = parseConfig(
+    {
+      tracker: { kind: "linear", api_key: "tracker-token", project_slug: "mono" },
+      tool_options: {
+        linear: { api_key: "$PACK_LINEAR_KEY", endpoint: "https://linear.example/graphql" },
+      },
+    },
+    {},
+  );
+  const packResult = await executeLinearTool(
+    "linear_graphql",
+    { query: "query { viewer { id } }" },
+    packSettings,
+    recordingFetch,
+    { PACK_LINEAR_KEY: "pack-token" },
+  );
+  assert.equal(packResult.success, true);
+  assert.deepEqual(requests[0], {
+    url: "https://linear.example/graphql",
+    authorization: "pack-token",
+  });
+
+  // Without pack options or a linear dispatch credential, LINEAR_API_KEY fills in.
+  const envResult = await executeLinearTool(
+    "linear_graphql",
+    { query: "query { viewer { id } }" },
+    parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {}),
+    recordingFetch,
+    { LINEAR_API_KEY: "env-token" },
+  );
+  assert.equal(envResult.success, true);
+  assert.equal(requests[1]?.authorization, "env-token");
 });
 
 test("linear_graphql tool sends variables through unchanged", async () => {

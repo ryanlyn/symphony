@@ -54,7 +54,7 @@ test("local tool pack routes calls through the board tools", async () => {
   const created = await localToolProvider.executeTool(
     "local_create_issue",
     { title: "Via pack", status: "Todo" },
-    { settings, fetchImpl: fetch },
+    { settings, fetchImpl: fetch, env: {} },
   );
   assert.equal(created.success, true);
   await access(path.join(dir, "BOARD-1.md"));

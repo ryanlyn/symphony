@@ -50,7 +50,7 @@ function packFor(
 }
 
 function execute(pack: ToolProvider, settings: Settings, name: string, input: unknown) {
-  return pack.executeTool(name, input, { settings, fetchImpl: fetch });
+  return pack.executeTool(name, input, { settings, fetchImpl: fetch, env: {} });
 }
 
 test("tracker pack advertises no tools when the provider exposes no tool ops", () => {

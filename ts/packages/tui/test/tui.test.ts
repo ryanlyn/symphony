@@ -410,6 +410,7 @@ function dashboardScenarios(): Array<{
         runtimeSeconds: 0,
         throughputTps: 0,
         dashboardUrl: "http://127.0.0.1:4000",
+        projectUrl: "https://linear.app/project/mono/issues",
       },
     },
     {

@@ -1,6 +1,9 @@
 import { test } from "vitest";
 import { issueMcpToken, revokeMcpToken, validMcpToken } from "@symphony/cli";
+import { parseConfig } from "@symphony/config";
 import { assert } from "@symphony/test-utils";
+
+import { mcpAuthScopeForSettings } from "@symphony/mcp";
 
 test("issueMcpToken — returns a unique, non-empty cryptographically strong string", () => {
   const tokens: string[] = [];
@@ -57,6 +60,35 @@ test("revokeMcpToken — revoking a token causes validMcpToken to return false",
     // Ensure cleanup even if assertion before revoke fails
     revokeMcpToken(token);
   }
+});
+
+test("mcpAuthScopeForSettings — tool options change the server identity, key order does not", () => {
+  const scope = (raw: Record<string, unknown>): string =>
+    mcpAuthScopeForSettings(parseConfig(raw), "127.0.0.1", 4040);
+
+  const base = { tracker: { kind: "memory" } };
+  const withOptions = {
+    ...base,
+    tool_options: { linear: { api_key: "linear-token", endpoint: "https://linear.example" } },
+  };
+
+  // Mounted pack behavior depends on tool options, so the identity must too.
+  assert.notEqual(scope(base), scope(withOptions));
+  assert.notEqual(
+    scope(withOptions),
+    scope({ ...base, tool_options: { linear: { api_key: "other-token" } } }),
+  );
+
+  // Equivalent configs hash identically regardless of pack or key order.
+  const reordered = {
+    ...base,
+    tool_options: { linear: { endpoint: "https://linear.example", api_key: "linear-token" } },
+  };
+  assert.equal(scope(withOptions), scope(reordered));
+  assert.equal(
+    scope({ ...base, tool_options: { local: { path: "/tmp/b" }, linear: { api_key: "k" } } }),
+    scope({ ...base, tool_options: { linear: { api_key: "k" }, local: { path: "/tmp/b" } } }),
+  );
 });
 
 test("revokeMcpToken — calling revoke twice or with invalid inputs is a safe no-op", () => {

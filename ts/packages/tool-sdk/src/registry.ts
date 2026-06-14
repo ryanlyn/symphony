@@ -1,7 +1,7 @@
 import { errorMessage } from "@symphony/domain";
 import type { Settings } from "@symphony/domain";
 
-import type { ToolProvider, ToolResult, ToolSpec } from "./provider.js";
+import type { ToolContext, ToolProvider, ToolResult, ToolSpec } from "./provider.js";
 import { toolFailure, unsupportedToolFailure } from "./result.js";
 
 /**
@@ -85,7 +85,7 @@ export async function executeMountedTool(
   packs: readonly ToolProvider[],
   name: string,
   input: unknown,
-  context: { settings: Settings; fetchImpl: typeof fetch },
+  context: ToolContext,
 ): Promise<ToolResult> {
   for (const pack of packs) {
     if (pack.toolSpecs(context.settings).some((spec) => spec.name === name)) {

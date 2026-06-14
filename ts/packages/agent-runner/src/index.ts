@@ -234,6 +234,9 @@ class RunController {
           await persistResumeState(input.adapters, session, runtime, issue, workspace, workerHost);
         }
 
+        // Known seam leak: turn-continuation is decided from ACP event vocabulary here
+        // instead of an executor-owned hook. Generalize onto the session contract (a
+        // provider-supplied "has more work" classifier) when a second executor lands.
         if (
           turnCount > 1 &&
           runtime.agents[runtime.agent.kind]?.executor === "acp" &&
