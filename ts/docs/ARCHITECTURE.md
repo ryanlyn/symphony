@@ -72,52 +72,10 @@ Provider-specific settings never appear as named fields on `TrackerSettings`. Th
 the provider package's typed accessor (e.g. `linearTrackerOptions(settings)`,
 `jiraTrackerOptions(settings)`). Core code must not read `options` keys directly.
 
-The canonical workflow shape uses `tracker.kind` to select a named tracker bundle. The
-selected bundle's `provider` then chooses the registered `TrackerProvider`:
-
-```yaml
-tracker:
-  kind: dispatch
-trackers:
-  dispatch:
-    provider: linear
-    api_key: "$LINEAR_API_KEY"
-    project_slug: ENG
-```
-
-This keeps dispatch selection separate from provider selection, so a workflow can keep
-multiple tracker bundles side by side:
-
-```yaml
-tracker:
-  kind: dispatch
-trackers:
-  dispatch:
-    provider: linear
-    api_key: "$LINEAR_API_KEY"
-    project_slug: ENG
-  triage:
-    provider: jira
-    base_url: https://example.atlassian.net
-    email: bot@example.com
-    api_key: "$JIRA_API_KEY"
-    project_keys: [ENG]
-```
-
-The older flat form still parses as compatibility input when there is no `trackers` map:
-
-```yaml
-tracker:
-  kind: linear
-  api_key: "$LINEAR_API_KEY"
-  project_slug: ENG
-```
-
-Unknown selected provider values parse leniently (options pass through unvalidated) and
-are rejected by `validateDispatchConfig` with the list of registered kinds. This keeps
-config parsing usable in tests and tools that don't register providers, while the CLI
-still fails fast at startup. Named bundles use `provider` to select the registered tracker
-implementation.
+Workflow config names the selected tracker bundle with `tracker.kind`; the selected
+`trackers.<name>.provider` chooses the registered tracker implementation. The legacy flat
+`tracker.kind: <provider>` form remains parseable when no `trackers` map is present. See
+the workspace README for user-facing YAML examples.
 
 ## The tool extension point
 
@@ -140,38 +98,8 @@ mount time. A pack that throws surfaces as a failed `ToolResult` (JSON-RPC `isEr
 never as a transport-level error.
 
 A mounted pack can carry its own settings via the top-level `tools:` map, keyed by pack
-name and validated by the pack's optional `validateOptions` hook. Unknown pack names and
-unknown keys fail at startup. For example, the local tracker can configure its local tool
-pack like this:
-
-```yaml
-tracker:
-  kind: board
-trackers:
-  board:
-    provider: local
-    path: .symphony/local
-tools:
-  local:
-    path: .symphony/local
-```
-
-Explicit cross-mounts are allowed when the workflow asks for them:
-
-```yaml
-tracker:
-  kind: dispatch
-trackers:
-  dispatch:
-    provider: jira
-    base_url: https://example.atlassian.net
-    email: bot@example.com
-    api_key: "$JIRA_API_KEY"
-    project_keys: [ENG]
-tools:
-  linear:
-    api_key: "$LINEAR_API_KEY"
-```
+name and validated by the pack's optional `validateOptions` hook. Explicit cross-mounts
+are allowed when the workflow asks for them.
 
 The `tracker` pack (`createTrackerToolProvider` in `@symphony/tracker-sdk`) implements the
 five provider-neutral `tracker_*` tools purely against `TrackerToolOps`, so any tracker
