@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { execaSync } from "execa";
 import { z } from "zod";
 import type {
@@ -88,7 +90,11 @@ export function parseConfig(
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
-  settings.agent = parseAgentSettings(settings.agent, parsed.agent ?? {});
+  settings.agent = parseAgentSettings(
+    settings.agent,
+    parsed.agent ?? {},
+    parseSkillSources(parsed.agent?.skills, env, defaults.configDir),
+  );
   settings.agents = parseAgents(
     parsed.agents ?? {},
     legacyAgentRecordOverrides(parsed.codex ?? {}, parsed.claude ?? {}),
@@ -326,6 +332,27 @@ function expandLocalPath(value: string, env: NodeJS.ProcessEnv): string {
   return expanded;
 }
 
+function parseSkillSources(
+  skills: string[] | undefined,
+  env: NodeJS.ProcessEnv,
+  configDir: string | undefined,
+): string[] {
+  const baseDir = configDir ?? process.cwd();
+  const seen = new Set<string>();
+  const resolved: string[] = [];
+  for (const source of skills ?? []) {
+    const expanded = expandLocalPath(source, env);
+    if (!nonEmptyString(expanded)) throw new Error("agent.skills must not contain blank paths");
+    const absolute = path.isAbsolute(expanded)
+      ? path.normalize(expanded)
+      : path.resolve(baseDir, expanded);
+    if (seen.has(absolute)) continue;
+    seen.add(absolute);
+    resolved.push(absolute);
+  }
+  return resolved;
+}
+
 function resolveWorkspaceRootExpression(
   value: string | undefined,
   fallback: string,
@@ -370,7 +397,11 @@ function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings 
   };
 }
 
-function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
+function parseAgentSettings(
+  defaults: AgentSettings,
+  agentRaw: AgentRaw,
+  skills: string[],
+): AgentSettings {
   const kind = agentRaw.kind ?? defaults.kind;
 
   return {
@@ -379,6 +410,7 @@ function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentS
     maxTurns: agentRaw.maxTurns ?? defaults.maxTurns,
     maxRetryBackoffMs: agentRaw.maxRetryBackoffMs ?? defaults.maxRetryBackoffMs,
     ensembleSize: agentRaw.ensembleSize ?? defaults.ensembleSize,
+    skills: agentRaw.skills ? skills : defaults.skills,
   };
 }
 
@@ -787,10 +819,10 @@ function cloneSettings(settings: Settings): Settings {
     ...settings,
     tracker: cloneTracker(settings.tracker),
     polling: { ...settings.polling },
-    workspace: { ...settings.workspace },
     worker: { ...settings.worker, sshHosts: [...settings.worker.sshHosts] },
+    workspace: { ...settings.workspace },
     hooks: { ...settings.hooks },
-    agent: { ...settings.agent },
+    agent: { ...settings.agent, skills: [...settings.agent.skills] },
     agents: cloneAgentRecords(settings.agents),
     ...(settings.toolOptions !== undefined && {
       toolOptions: structuredClone(settings.toolOptions),

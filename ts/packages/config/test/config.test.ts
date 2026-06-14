@@ -416,6 +416,62 @@ test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde path
   assert.equal(settings.workspace.rootExpression, "~/override");
 });
 
+test("agent skills resolve, expand, and dedupe", () => {
+  const configDir = path.join(os.tmpdir(), "symphony-config-skills");
+  const settings = parseConfig(
+    {
+      agent: {
+        skills: [
+          "./.codex/skills/symphony-linear",
+          "./.codex/skills/symphony-linear",
+          "~/shared-skill",
+          "$SKILL_SOURCE",
+        ],
+      },
+    },
+    { HOME: "/home/tester", SKILL_SOURCE: "/opt/skill-source" },
+    { configDir },
+  );
+
+  assert.deepEqual(settings.agent.skills, [
+    path.join(configDir, ".codex", "skills", "symphony-linear"),
+    "/home/tester/shared-skill",
+    "/opt/skill-source",
+  ]);
+});
+
+test("agent skills default to empty and reject per-state overrides", () => {
+  assert.deepEqual(parseConfig({}).agent.skills, []);
+  assert.throws(
+    () => parseConfig({ statusOverrides: { "In Progress": { agent: { skills: ["./x"] } } } }),
+    /skills/,
+  );
+});
+
+test("loadWorkflow resolves agent skills relative to the workflow file", async () => {
+  const root = await tempDir("symphony-workflow-skills");
+  const workflowDir = path.join(root, "workflows");
+  await fs.mkdir(workflowDir);
+  const workflowPath = path.join(workflowDir, "WORKFLOW.md");
+  await fs.writeFile(
+    workflowPath,
+    `---
+agent:
+  skills:
+    - ../.codex/skills/symphony-land
+---
+
+Do work.
+`,
+  );
+
+  const workflow = await loadWorkflow(workflowPath);
+
+  assert.deepEqual(workflow.settings.agent.skills, [
+    path.join(root, ".codex", "skills", "symphony-land"),
+  ]);
+});
+
 test("workspace defaults to per-agent isolation", () => {
   assert.equal(parseConfig({}).workspace.isolation, "per-agent");
 });

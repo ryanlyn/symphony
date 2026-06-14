@@ -1,8 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createReadStream } from "node:fs";
+import os from "node:os";
+import { pipeline } from "node:stream/promises";
 
 import { Liquid } from "liquidjs";
-import { runSsh, shellEscape } from "@symphony/ssh";
+import { runSsh, shellEscape, startSshProcess } from "@symphony/ssh";
 import {
   errorMessage,
   type HookExecutionMessage,
@@ -79,6 +83,20 @@ export interface WorkspaceCreateOptions {
   workerHost?: string | null | undefined;
   abortSignal?: AbortSignal | undefined;
   onHookEvent?: ((event: HookExecutionMessage) => void) | undefined;
+  /**
+   * Skill directories to overlay into the prepared workspace, with the executor-chosen
+   * destination. Assembled by the composition root (configured `agent.skills` unioned with
+   * mounted tool packs' bundled skills); omitted means no overlay runs.
+   */
+  skillOverlay?: WorkspaceSkillOverlay | undefined;
+}
+
+/** Resolved skill overlay: absolute source directories and the workspace-relative destination. */
+export interface WorkspaceSkillOverlay {
+  /** Absolute skill directories; each is copied whole to `<destDir>/<basename>`. */
+  sources: string[];
+  /** Workspace-relative destination, e.g. `.codex/skills` or `.claude/skills`. */
+  destDir: string;
 }
 
 export interface WorkspaceRunHookOptions {
@@ -90,6 +108,17 @@ export interface WorkspaceRunHookOptions {
 
 export interface WorkspaceHookEventOptions {
   onHookEvent?: ((event: HookExecutionMessage) => void) | undefined;
+}
+
+interface WorkspaceSkillSourcePlan {
+  /** Absolute source directory. */
+  source: string;
+  /** Skill directory name placed under the destination (the source basename). */
+  target: string;
+  /** Directory to run `tar` from for the remote transfer (the source's parent). */
+  archiveCwd: string;
+  /** Entry archived and extracted into the destination (equals {@link target}). */
+  archiveEntry: string;
 }
 
 export function safeIdentifier(identifier: unknown): string {
@@ -132,7 +161,10 @@ export async function createWorkspaceForIssue(
 
   // Shared workspaces run no lifecycle hooks (config rejects them); canonicalRoot is already
   // realpath'd and symlink-checked above, so creation is done.
-  if (sharedWorkspaceRoot(settings)) return canonicalRoot;
+  if (sharedWorkspaceRoot(settings)) {
+    await applyWorkspaceSkillOverlay(settings, canonicalRoot, null, options);
+    return canonicalRoot;
+  }
 
   const target = workspacePath(canonicalRoot, identifier, slotIndex, ensembleSize);
   const created = await ensureDirectoryWithinRoot(canonicalRoot, target);
@@ -154,7 +186,51 @@ export async function createWorkspaceForIssue(
     );
   }
 
+  await applyWorkspaceSkillOverlay(settings, canonicalTarget, null, options);
+
   return canonicalTarget;
+}
+
+/** Run the configured skill overlay for a prepared workspace, sourcing the SSH timeout from settings. */
+async function applyWorkspaceSkillOverlay(
+  settings: Settings,
+  workspace: string,
+  workerHost: string | null,
+  options: WorkspaceCreateOptions,
+): Promise<void> {
+  if (!options.skillOverlay) return;
+  await syncWorkspaceSkills(workspace, options.skillOverlay, workerHost, {
+    abortSignal: options.abortSignal,
+    timeoutMs: settings.worker.sshTimeoutMs,
+  });
+}
+
+export async function syncWorkspaceSkills(
+  workspace: string,
+  overlay: WorkspaceSkillOverlay,
+  workerHost?: string | null,
+  options: { abortSignal?: AbortSignal | undefined; timeoutMs?: number | undefined } = {},
+): Promise<void> {
+  if (overlay.sources.length === 0) return;
+  if (options.abortSignal?.aborted) throw new Error("workspace_skill_sync_canceled");
+  const plans = await workspaceSkillSourcePlans(overlay.sources);
+  const destSegments = skillDestinationSegments(overlay.destDir);
+  if (workerHost) {
+    await syncRemoteWorkspaceSkills(workerHost, workspace, plans, destSegments, {
+      abortSignal: options.abortSignal,
+      timeoutMs: options.timeoutMs,
+    });
+    return;
+  }
+  await syncLocalWorkspaceSkills(workspace, plans, destSegments);
+}
+
+/** Split an executor-provided destination (e.g. `.codex/skills`) into safe path segments. */
+function skillDestinationSegments(destDir: string): string[] {
+  const segments = destDir.split(/[\\/]+/).filter((segment) => segment !== "");
+  if (segments.length === 0 || segments.some((segment) => segment === "." || segment === ".."))
+    throw new Error(`workspace_skill_destination_invalid: ${destDir}`);
+  return segments;
 }
 
 export async function removeWorkspace(
@@ -570,6 +646,301 @@ async function ensureDirectoryWithinRoot(canonicalRoot: string, target: string):
   return created;
 }
 
+async function workspaceSkillSourcePlans(sources: string[]): Promise<WorkspaceSkillSourcePlan[]> {
+  const plans: WorkspaceSkillSourcePlan[] = [];
+  for (const source of sources) {
+    let stat;
+    try {
+      stat = await fs.lstat(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`workspace_skill_source_missing: ${source}`, { cause: error });
+      }
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`workspace_skill_source_symlink: ${source}`);
+    }
+    // A skill is a directory; its whole tree ships into `<destDir>/<basename>`.
+    if (!stat.isDirectory()) {
+      throw new Error(`workspace_skill_source_unsupported: ${source}`);
+    }
+
+    const normalized = path.resolve(source);
+    await rejectSourceTreeSymlinks(normalized);
+    const target = path.basename(normalized);
+    if (target === "" || target === "." || target === "..")
+      throw new Error(`workspace_skill_source_invalid: ${source}`);
+    plans.push({
+      source: normalized,
+      target,
+      archiveCwd: path.dirname(normalized),
+      archiveEntry: target,
+    });
+  }
+  return plans;
+}
+
+async function rejectSourceTreeSymlinks(directory: string): Promise<void> {
+  for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`workspace_skill_source_symlink: ${entryPath}`);
+    if (entry.isDirectory()) await rejectSourceTreeSymlinks(entryPath);
+  }
+}
+
+async function syncLocalWorkspaceSkills(
+  workspace: string,
+  plans: WorkspaceSkillSourcePlan[],
+  destSegments: string[],
+): Promise<void> {
+  const skillsRoot = path.join(workspace, ...destSegments);
+  await ensureDirectoryPathWithoutSymlinks(workspace, skillsRoot);
+  for (const plan of plans) {
+    const target = path.join(skillsRoot, plan.target);
+    await rejectExistingSymlink(target);
+    if (await sameRealPath(plan.source, target)) continue;
+    await fs.rm(target, { recursive: true, force: true });
+    await fs.cp(plan.source, target, {
+      dereference: true,
+      force: true,
+      recursive: true,
+    });
+  }
+}
+
+async function syncRemoteWorkspaceSkills(
+  workerHost: string,
+  workspace: string,
+  plans: WorkspaceSkillSourcePlan[],
+  destSegments: string[],
+  options: { abortSignal?: AbortSignal | undefined; timeoutMs?: number | undefined },
+): Promise<void> {
+  const skillsRoot = path.posix.join(workspace, ...destSegments);
+  for (const plan of plans) {
+    await syncRemoteWorkspaceSkill(workerHost, skillsRoot, plan, options);
+  }
+}
+
+async function syncRemoteWorkspaceSkill(
+  workerHost: string,
+  skillsRoot: string,
+  plan: WorkspaceSkillSourcePlan,
+  options: { abortSignal?: AbortSignal | undefined; timeoutMs?: number | undefined },
+): Promise<void> {
+  if (options.abortSignal?.aborted) throw new Error("workspace_skill_sync_canceled");
+  if (
+    options.timeoutMs === undefined ||
+    !Number.isInteger(options.timeoutMs) ||
+    options.timeoutMs <= 0
+  )
+    throw new Error(`invalid_ssh_timeout: ${options.timeoutMs}`);
+  const timeoutMs = options.timeoutMs;
+  const skillsParent = path.posix.dirname(skillsRoot);
+  const targetGuard = `
+target=${shellEscape(path.posix.join(skillsRoot, plan.target))}
+if [ -L "$target" ]; then
+  printf '%s\\n' "unsafe symlink in workspace path: $target" >&2
+  exit 1
+fi
+rm -rf "$target"`;
+  const command = [
+    "set -eu",
+    `skills_parent=${shellEscape(skillsParent)}`,
+    `skills_root=${shellEscape(skillsRoot)}`,
+    'if [ -L "$skills_parent" ] || [ -L "$skills_root" ]; then',
+    "  printf '%s\\n' \"unsafe symlink in workspace path: $skills_root\" >&2",
+    "  exit 1",
+    "fi",
+    'mkdir -p "$skills_parent"',
+    'if [ -L "$skills_parent" ] || [ ! -d "$skills_parent" ]; then',
+    "  printf '%s\\n' \"unsafe workspace skill path: $skills_parent\" >&2",
+    "  exit 1",
+    "fi",
+    'mkdir -p "$skills_root"',
+    'if [ -L "$skills_root" ] || [ ! -d "$skills_root" ]; then',
+    "  printf '%s\\n' \"unsafe workspace skill path: $skills_root\" >&2",
+    "  exit 1",
+    "fi",
+    targetGuard,
+    `tar -C ${shellEscape(skillsRoot)} -xf -`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const archiveDir = await fs.mkdtemp(path.join(os.tmpdir(), "symphony-skill-archive-"));
+  const archivePath = path.join(archiveDir, "skill.tar");
+
+  let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+  let terminationRequested = false;
+  let abortHandler: (() => void) | undefined;
+
+  const clearTimers = (): void => {
+    if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+    if (!terminationRequested && forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+    if (abortHandler) options.abortSignal?.removeEventListener("abort", abortHandler);
+  };
+
+  try {
+    const archiveResult = await execa(
+      "tar",
+      ["-C", plan.archiveCwd, "-cf", archivePath, "--", plan.archiveEntry],
+      {
+        ...(options.abortSignal ? { cancelSignal: options.abortSignal } : {}),
+        reject: false,
+        stdin: "ignore",
+      },
+    );
+    if (options.abortSignal?.aborted) throw new Error("workspace_skill_sync_canceled");
+    if (archiveResult.exitCode !== 0) {
+      throw new Error(
+        `workspace_skill_archive_failed: ${plan.source} ${archiveResult.exitCode} ${archiveResult.stderr}`.trim(),
+      );
+    }
+
+    const remote = startSshProcess(workerHost, command);
+    const remoteStdout = collectStreamText(remote.stdout);
+    const remoteStderr = collectStreamText(remote.stderr);
+    const remoteExit = waitForProcessExit(remote);
+    const forceKill = (): void => {
+      forceKillTimer ??= setTimeout(() => {
+        remote.kill("SIGKILL");
+      }, hookForceKillDelayMs);
+    };
+    const terminate = (error: Error, reject: (reason: Error) => void): void => {
+      terminationRequested = true;
+      remote.kill("SIGTERM");
+      forceKill();
+      reject(error);
+    };
+    const pipeResult = pipeline(createReadStream(archivePath), remote.stdin).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const syncResult = Promise.all([remoteExit, remoteStdout, remoteStderr, pipeResult]);
+    void syncResult.then(
+      () => {
+        if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      },
+      () => {
+        if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+      },
+    );
+
+    const races: Array<Promise<unknown>> = [syncResult];
+    races.push(
+      new Promise<never>((_resolve, reject) => {
+        timeoutTimer = setTimeout(() => {
+          terminate(
+            new Error(`workspace_skill_remote_sync_timeout: ${workerHost} ${timeoutMs}`),
+            reject,
+          );
+        }, timeoutMs);
+      }),
+    );
+    if (options.abortSignal) {
+      races.push(
+        new Promise<never>((_resolve, reject) => {
+          abortHandler = () => terminate(new Error("workspace_skill_sync_canceled"), reject);
+          options.abortSignal?.addEventListener("abort", abortHandler, { once: true });
+        }),
+      );
+    }
+
+    const [remoteResult, remoteOutput, remoteError, pipeError] = (await Promise.race(races).finally(
+      clearTimers,
+    )) as Awaited<typeof syncResult>;
+    if (options.abortSignal?.aborted) throw new Error("workspace_skill_sync_canceled");
+    if (remoteResult.exitCode !== 0) {
+      const output = `${remoteOutput}${remoteOutput && remoteError ? "\n" : ""}${remoteError}`;
+      throw new Error(
+        `workspace_skill_remote_sync_failed: ${workerHost} ${remoteResult.exitCode} ${output}`.trim(),
+      );
+    }
+    if (pipeError) {
+      throw new Error(
+        `workspace_skill_remote_sync_failed: ${workerHost} ${errorMessage(pipeError)}`,
+      );
+    }
+  } finally {
+    clearTimers();
+    await fs.rm(archiveDir, { recursive: true, force: true });
+  }
+}
+
+async function ensureDirectoryPathWithoutSymlinks(root: string, target: string): Promise<void> {
+  ensureInsideRoot(target, root);
+  const relative = path.relative(root, target);
+  let current = root;
+  const segments = relative.split(path.sep).filter((segment) => segment !== "");
+  for (const segment of segments) {
+    current = path.join(current, segment);
+    while (true) {
+      try {
+        await fs.mkdir(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+
+      let stat;
+      try {
+        stat = await fs.lstat(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+
+      if (stat.isSymbolicLink()) throw new Error(`unsafe symlink in workspace path: ${current}`);
+      if (!stat.isDirectory())
+        throw new Error(`workspace path segment is not a directory: ${current}`);
+      break;
+    }
+  }
+}
+
+async function rejectExistingSymlink(filePath: string): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.lstat(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (stat.isSymbolicLink()) throw new Error(`unsafe symlink in workspace path: ${filePath}`);
+}
+
+async function sameRealPath(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftReal, rightReal] = await Promise.all([fs.realpath(left), fs.realpath(right)]);
+    return leftReal === rightReal;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function collectStreamText(stream: NodeJS.ReadableStream | null): Promise<string> {
+  if (!stream) return "";
+  let output = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    output += chunk;
+  });
+  await new Promise<void>((resolve, reject) => {
+    stream.on("end", resolve);
+    stream.on("error", reject);
+  });
+  return output.trim();
+}
+
+async function waitForProcessExit(
+  subprocess: ChildProcessWithoutNullStreams,
+): Promise<{ exitCode: number | null }> {
+  return new Promise((resolve) => {
+    subprocess.on("close", (exitCode) => resolve({ exitCode }));
+  });
+}
+
 async function createRemoteWorkspaceForIssue(
   settings: Settings,
   issue: Issue | string,
@@ -623,6 +994,8 @@ async function createRemoteWorkspaceForIssue(
       { issue: typeof issue === "string" ? undefined : issue },
     );
   }
+
+  await applyWorkspaceSkillOverlay(settings, canonicalWorkspace, workerHost, options);
 
   return canonicalWorkspace;
 }

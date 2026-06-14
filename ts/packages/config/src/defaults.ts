@@ -6,6 +6,7 @@ import { joinPath } from "./leaf-utils.js";
 
 export interface DefaultSettingsOptions {
   tmpdir?: string | undefined;
+  configDir?: string | undefined;
 }
 
 /** Model id Claude sessions are pinned to unless overridden via `claude.model` or a provider config. */
@@ -40,6 +41,7 @@ export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings 
       maxTurns: 20,
       maxRetryBackoffMs: 300_000,
       ensembleSize: 1,
+      skills: [],
     },
     agents: defaultAgentRecords(),
     observability: {
