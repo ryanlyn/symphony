@@ -1,4 +1,4 @@
-name: cli-release
+name: release
 
 # Builds the self-contained CLI release tree, packs it into an npm tarball, and attaches it to a
 # GitHub release so it can be run with `npx <release-asset-url>`. Tag-driven; a manual run produces
@@ -6,7 +6,7 @@ name: cli-release
 on:
   push:
     tags:
-      - "cli-v*"
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -65,7 +65,7 @@ jobs:
             tag="${GITHUB_REF_NAME}"
             prerelease=""
           else
-            tag="cli-v${{ steps.pack.outputs.version }}-${GITHUB_SHA::7}"
+            tag="v${{ steps.pack.outputs.version }}-${GITHUB_SHA::7}"
             prerelease="--prerelease"
           fi
           notes="Install with: npx https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$asset")"
