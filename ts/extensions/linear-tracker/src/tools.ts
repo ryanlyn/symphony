@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { errorMessage, isRecord, type Settings } from "@symphony/domain";
 import {
   toolFailure,
@@ -8,7 +11,19 @@ import {
   type ToolSpec,
 } from "@symphony/tool-sdk";
 
-import { linearEndpoint } from "./options.js";
+import { linearToolPackOptions, validateLinearToolOptions } from "./options.js";
+
+/**
+ * The `symphony-linear` skill ships inside this extension (`skills/symphony-linear`, a sibling
+ * of `src`/`dist`) so mounting the Linear pack also overlays the doc that teaches the agent to
+ * call `linear_graphql`. Resolved from this module so it works from both `src` and `dist`.
+ */
+const symphonyLinearSkillDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "skills",
+  "symphony-linear",
+);
 
 const LINEAR_MAX_RETRIES = 4;
 const MAX_ERROR_BODY_LOG_BYTES = 1000;
@@ -27,7 +42,7 @@ export function linearToolSpecs(): ToolSpec[] {
   return [
     {
       name: "linear_graphql",
-      description: "Run a Linear GraphQL operation using Symphony tracker credentials.",
+      description: "Run a Linear GraphQL operation using Symphony's configured Linear credentials.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -61,7 +76,8 @@ export async function executeLinearTool(
   if (!normalizedInput.ok) {
     return toolFailure(normalizedInput.error);
   }
-  if (!settings.tracker.apiKey)
+  const { apiKey, endpoint } = linearToolPackOptions(settings);
+  if (!apiKey)
     return toolFailure(
       "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`.",
     );
@@ -77,7 +93,7 @@ export async function executeLinearTool(
     const logger = defaultLinearToolLogger;
     const response = await fetchWithRateLimitRetry(
       fetchImpl,
-      settings,
+      { apiKey, endpoint },
       normalizedInput.query,
       normalizedInput.variables ?? {},
       logger,
@@ -113,9 +129,11 @@ export async function executeLinearTool(
   }
 }
 
-/** The Linear tool pack: raw GraphQL access using Symphony tracker credentials. */
+/** The Linear tool pack: raw GraphQL access using the pack's own Linear credentials. */
 export const linearToolProvider: ToolProvider = {
   name: "linear",
+  skills: [symphonyLinearSkillDir],
+  validateOptions: validateLinearToolOptions,
   toolSpecs: () => linearToolSpecs(),
   executeTool: async (name, input, context) =>
     executeLinearTool(name, input, context.settings, context.fetchImpl),
@@ -148,18 +166,18 @@ function normalizeLinearGraphqlInput(
 
 async function fetchWithRateLimitRetry(
   fetchImpl: typeof fetch,
-  settings: Settings,
+  auth: { apiKey: string; endpoint: string },
   query: string,
   variables: Record<string, unknown>,
   logger: LinearToolLogger,
 ): Promise<Response> {
   for (let retryCount = 0; ; retryCount += 1) {
-    const response = await fetchImpl(linearEndpoint(settings), {
+    const response = await fetchImpl(auth.endpoint, {
       method: "POST",
       signal: AbortSignal.timeout(30_000),
       headers: {
         "content-type": "application/json",
-        authorization: settings.tracker.apiKey ?? "",
+        authorization: auth.apiKey,
       },
       body: JSON.stringify({ query, variables }),
     });

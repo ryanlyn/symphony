@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  AGENT_USAGE_ACCOUNTING_VALUES,
   CONCURRENCY_MAX,
   ENSEMBLE_SIZE_MAX,
   MAX_TURNS_MAX,
@@ -83,33 +82,35 @@ const coercedBoolean = z.union([
 ]);
 
 const optionalHookScript = z.string().nullable().optional();
+const skillSourceListSchema = z.array(z.string().min(1));
 
-const usageAccountingSchema = z.enum(AGENT_USAGE_ACCOUNTING_VALUES);
-
-// The executor selector is open-ended; whether it is supported is decided by the agent
-// executor registry at dispatch validation, not by the schema.
+// Shared keys are validated here; any other key in an agents.<kind> record is
+// executor-specific and is passed through (`catchall`) to the registered agent executor
+// provider's option parser. The executor selector is open-ended; whether it is supported is
+// decided by the agent executor registry at dispatch validation, not by the schema.
 export const agentRecordSchema = z
   .object({
     executor: z.string().min(1).optional(),
-    bridgeCommand: z.string().optional(),
-    command: z.string().optional(),
-    usageAccounting: usageAccountingSchema.optional(),
-    providerConfig: z.record(z.string(), z.unknown()).optional(),
     // TODO: Remove per-agent timeout fields after configs use shared agents-level timeout defaults.
     turnTimeoutMs: coercedTimeoutMs.optional(),
     stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
-    strictMcpConfig: coercedBoolean.optional(),
   })
-  .strict();
+  .catchall(z.unknown());
 
 /** Per-state agent record override: like an agent record, minus the executor selector. */
-export const agentRecordOverrideSchema = agentRecordSchema.omit({ executor: true }).strict();
+export const agentRecordOverrideSchema = z
+  .object({
+    turnTimeoutMs: coercedTimeoutMs.optional(),
+    stallTimeoutMs: coercedNonNegativeTimeoutMs.optional(),
+  })
+  .catchall(z.unknown());
 
-// Common keys are validated here; any other key in the tracker section is provider-specific
-// and is passed through (`catchall`) to the registered tracker provider's option parser.
-const trackerRawSchema = z
+// Common keys are validated after the tracker provider has been selected. This schema is
+// used for the legacy `tracker.kind` form and canonical `trackers.<name>` records.
+export const trackerRecordSchema = z
   .object({
     kind: z.string().optional(),
+    provider: z.string().optional(),
     endpoint: z.string().optional(),
     apiKey: z.string().optional(),
     assignee: z.string().optional(),
@@ -125,6 +126,8 @@ const trackerRawSchema = z
       .optional(),
   })
   .catchall(z.unknown());
+const trackerRawSchema = z.record(z.string(), z.unknown());
+const trackersRawSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
 
 const pollingRawSchema = z.object({ intervalMs: coercedIntervalMs.optional() }).strict();
 const workspaceRawSchema = z
@@ -156,6 +159,7 @@ const agentRawSchema = z
     maxTurns: coercedMaxTurns.optional(),
     maxRetryBackoffMs: coercedTimeoutMs.optional(),
     ensembleSize: coercedEnsembleSize.optional(),
+    skills: skillSourceListSchema.optional(),
   })
   .strict();
 const codexRawSchema = z
@@ -192,7 +196,11 @@ const serverRawSchema = z
   .strict();
 const loggingRawSchema = z.object({ logFile: z.string().optional() }).strict();
 const agentsRawSchema = z.record(z.string(), z.unknown());
-const partialAgentRawSchema = agentRawSchema.partial().strict();
+const toolsRawSchema = z.record(z.string(), z.record(z.string(), z.unknown()));
+// Skills are resolved once from the base `agent` config; per-state overrides may not retarget
+// them, so they are omitted from the partial override schema (an explicit `skills` key in a
+// status override is rejected by `.strict()`).
+const partialAgentRawSchema = agentRawSchema.omit({ skills: true }).partial().strict();
 const partialCodexRawSchema = codexRawSchema.partial().strict();
 const partialClaudeRawSchema = claudeRawSchema.partial().strict();
 const statusOverrideRawSchema = z
@@ -220,7 +228,8 @@ export const workflowConfigSchema = z.preprocess(
       observability: observabilityRawSchema.optional(),
       server: serverRawSchema.optional(),
       logging: loggingRawSchema.optional(),
-      tools: z.array(z.string()).optional(),
+      trackers: trackersRawSchema.optional(),
+      tools: toolsRawSchema.optional(),
       statusOverrides: z.record(z.string(), statusOverrideRawSchema).optional(),
     })
     .passthrough(),
@@ -228,10 +237,13 @@ export const workflowConfigSchema = z.preprocess(
 
 export type WorkflowConfigRaw = z.infer<typeof workflowConfigSchema>;
 export type TrackerRaw = z.infer<typeof trackerRawSchema>;
-export type DispatchRaw = NonNullable<TrackerRaw["dispatch"]>;
+export type TrackersRaw = z.infer<typeof trackersRawSchema>;
+export type TrackerRecordRaw = z.infer<typeof trackerRecordSchema>;
+export type DispatchRaw = NonNullable<TrackerRecordRaw["dispatch"]>;
 export type HooksRaw = z.infer<typeof hooksRawSchema>;
 export type AgentRaw = z.infer<typeof agentRawSchema>;
 export type AgentsRaw = z.infer<typeof agentsRawSchema>;
+export type ToolsRaw = z.infer<typeof toolsRawSchema>;
 export type CodexRaw = z.infer<typeof codexRawSchema>;
 export type ClaudeRaw = z.infer<typeof claudeRawSchema>;
 export type StatusOverridesRaw = NonNullable<WorkflowConfigRaw["statusOverrides"]>;

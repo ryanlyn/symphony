@@ -302,7 +302,6 @@ function snapshotFixture(): RuntimeSnapshot {
         ensembleSize: 1,
         agentKind: "codex",
         sessionId: "session-1",
-        resumeId: "resume-1",
         executorPid: "123",
         turnCount: 1,
         startedAt: "2026-05-05T00:00:00.000Z",
@@ -410,6 +409,7 @@ function dashboardScenarios(): Array<{
         runtimeSeconds: 0,
         throughputTps: 0,
         dashboardUrl: "http://127.0.0.1:4000",
+        projectUrl: "https://linear.app/project/mono/issues",
       },
     },
     {
@@ -504,7 +504,6 @@ function runningFixture(
     ensembleSize: 1,
     agentKind,
     sessionId: "thread-1234567890",
-    resumeId: "thread-1234567890",
     executorPid,
     turnCount,
     startedAt: new Date(new Date(now).getTime() - ageSeconds * 1000).toISOString(),

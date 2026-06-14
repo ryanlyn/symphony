@@ -75,7 +75,7 @@ test("executeMountedTool routes to the declaring pack and reports unknown tools"
     packs,
     "linear_graphql",
     {},
-    { settings, fetchImpl: fetch },
+    { settings, fetchImpl: fetch, env: {} },
   );
   assert.equal(routed.success, true);
   assert.deepEqual(routed.result, { pack: "linear", tool: "linear_graphql", value: undefined });
@@ -84,7 +84,7 @@ test("executeMountedTool routes to the declaring pack and reports unknown tools"
     packs,
     "local_query",
     {},
-    { settings, fetchImpl: fetch },
+    { settings, fetchImpl: fetch, env: {} },
   );
   assert.equal(unknown.success, false);
   assert.match(unknown.error ?? "", /Unsupported tool: "local_query"/);
@@ -98,7 +98,7 @@ test("a throwing pack surfaces as a failed result, not a transport error", async
     [exploding],
     "boom_tool",
     {},
-    { settings, fetchImpl: fetch },
+    { settings, fetchImpl: fetch, env: {} },
   );
   assert.equal(result.success, false);
   assert.match(result.error ?? "", /pack exploded/);

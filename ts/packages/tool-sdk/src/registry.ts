@@ -1,13 +1,13 @@
 import { errorMessage } from "@symphony/domain";
 import type { Settings } from "@symphony/domain";
 
-import type { ToolProvider, ToolResult, ToolSpec } from "./provider.js";
+import type { ToolContext, ToolProvider, ToolResult, ToolSpec } from "./provider.js";
 import { toolFailure, unsupportedToolFailure } from "./result.js";
 
 /**
  * Lookup table of {@link ToolProvider}s keyed by pack name. The MCP server resolves the
- * configured `tools:` list through a registry instead of hardcoding tool surfaces, so the
- * set of mountable packs is decided by whoever composes the application.
+ * active tracker's mounted packs through a registry instead of hardcoding tool surfaces, so
+ * the set of mountable packs is decided by whoever composes the application.
  */
 export class ToolRegistry {
   private readonly providers = new Map<string, ToolProvider>();
@@ -85,7 +85,7 @@ export async function executeMountedTool(
   packs: readonly ToolProvider[],
   name: string,
   input: unknown,
-  context: { settings: Settings; fetchImpl: typeof fetch },
+  context: ToolContext,
 ): Promise<ToolResult> {
   for (const pack of packs) {
     if (pack.toolSpecs(context.settings).some((spec) => spec.name === name)) {

@@ -2,7 +2,7 @@
 
 Symphony turns tracker issues into agent runs. It polls for eligible work, prepares a workspace,
 renders the workflow prompt with issue context, starts Codex or Claude, and records the run so
-operators can inspect state, retries, cost, logs, and resume metadata.
+operators can inspect state, retries, cost, and logs.
 
 This workspace owns the TypeScript CLI, runtime packages, tracker adapters, terminal dashboard,
 local observability server, trace viewer packages, and tests.
@@ -95,7 +95,10 @@ matter is the agent session prompt, rendered as Liquid with issue context variab
 ---
 tracker:
   kind: linear
-  project_slug: "your-project-slug"
+trackers:
+  linear:
+    provider: linear
+    project_slug: "your-project-slug"
 workspace:
   root: ~/code/workspaces
 hooks:
@@ -118,26 +121,33 @@ Set `LINEAR_API_KEY` in your environment before running a Linear workflow.
 ---
 tracker:
   kind: linear # linear, jira, jira-mcp, local, or memory
-  api_key: $LINEAR_API_KEY # defaults to $LINEAR_API_KEY when unset
-  endpoint: "https://api.linear.app/graphql"
-  project_slug: "my-project" # right-click a Linear project and copy the URL slug
-  assignee: $LINEAR_ASSIGNEE # optional; filters issues by assignee
-  active_states:
-    - Todo # default: ["Todo", "In Progress"]
-    - In Progress
-    - Agent Review
-    - Merging
-    - Rework
-  terminal_states:
-    - Closed # default: ["Closed", "Cancelled", "Canceled",
-    - Cancelled #           "Duplicate", "Done"]
-    - Canceled
-    - Duplicate
-    - Done
-  dispatch:
-    accept_unrouted: true # accept issues without a route label; default: true
-    only_routes: null # null accepts any route, [] accepts none
-    route_label_prefix: "Symphony:" # route labels look like "Symphony:backend"
+trackers:
+  linear:
+    provider: linear
+    api_key: $LINEAR_API_KEY # defaults to $LINEAR_API_KEY when unset
+    endpoint: "https://api.linear.app/graphql"
+    project_slug: "my-project" # right-click a Linear project and copy the URL slug
+    assignee: $LINEAR_ASSIGNEE # optional; filters issues by assignee
+    active_states:
+      - Todo # default: ["Todo", "In Progress"]
+      - In Progress
+      - Agent Review
+      - Merging
+      - Rework
+    terminal_states:
+      - Closed # default: ["Closed", "Cancelled", "Canceled",
+      - Cancelled #           "Duplicate", "Done"]
+      - Canceled
+      - Duplicate
+      - Done
+    dispatch:
+      accept_unrouted: true # accept issues without a route label; default: true
+      only_routes: null # null accepts any route, [] accepts none
+      route_label_prefix: "Symphony:" # route labels look like "Symphony:backend"
+
+tools:
+  local:
+    path: .symphony/local # explicit extra pack config; not needed for Linear-owned tools
 
 polling:
   interval_ms: 30000 # default: 30000
@@ -158,6 +168,8 @@ agent:
   max_turns: 20 # default: 20
   max_retry_backoff_ms: 300000 # default: 300000
   ensemble_size: 1 # default: 1
+  skills: # skill directories overlaid into each workspace before the agent starts
+    - ./.codex/skills/symphony-land # one entry per skill directory
 
 agents:
   turn_timeout_ms: 3600000 # default: 3600000
@@ -214,18 +226,22 @@ server:
   host: 127.0.0.1 # default: 127.0.0.1
 
 logging:
-  log_file: ./log/symphony.log # default: ./log/symphony.log
+  log_file: ./log/symphony.log # default: ~/.symphony/log/symphony.log
 ---
 ```
 
 Notes:
 
-- `tracker.kind` is always required. `tracker.project_slug`, `tracker.project_slugs`, or
-  `tracker.project_labels` is required for Linear workflows.
-- `tracker.api_key` falls back to `LINEAR_API_KEY`; `tracker.assignee` falls back to
-  `LINEAR_ASSIGNEE`.
-- `tracker.api_key` and `tracker.assignee` can use `op://` references when the 1Password CLI is
-  installed.
+- `tracker.kind` is always required. When `trackers` is present it selects a named bundle, and
+  `trackers.<name>.provider` selects the tracker implementation.
+- The older flat `tracker.kind: linear` shape is still accepted when no `trackers` map is present.
+- `trackers.linear.project_slug`, `trackers.linear.project_slugs`, or
+  `trackers.linear.project_labels` is required for Linear workflows.
+- `trackers.linear.api_key` falls back to `LINEAR_API_KEY`; `trackers.linear.assignee` falls back
+  to `LINEAR_ASSIGNEE`.
+- Shared tracker secrets can use `op://` references when the 1Password CLI is installed.
+- `tools.<pack>` mounts or configures extra tool packs. Tracker-owned tools are implicit, so a
+  Linear tracker does not need a matching `tools.linear` entry.
 - `workspace.root` supports `~` and whole-value `$VAR` expansion. `SYMPHONY_WORKSPACE_ROOT`
   overrides `workspace.root` at runtime.
 - `SYMPHONY_SSH_CONFIG` points SSH worker commands at a custom OpenSSH config file.
@@ -241,7 +257,7 @@ Notes:
 Prerequisites:
 
 1. Create a personal API token in Linear Settings, Security & access, Personal API keys.
-2. Export it as `LINEAR_API_KEY`, or set `tracker.api_key: $LINEAR_API_KEY`.
+2. Export it as `LINEAR_API_KEY`, or set `trackers.linear.api_key: $LINEAR_API_KEY`.
 3. Find the project slug by right-clicking a Linear project and copying its URL. The slug is in the
    path.
 4. The example workflows use non-standard states such as `Agent Review`, `Rework`, `Human Review`,
@@ -253,25 +269,28 @@ Route labels let multiple Symphony instances share one Linear project. With the 
 
 ## Trackers
 
-A tracker is the source of issues Symphony works on. It is selected by `tracker.kind` in the
-workflow front matter. Every tracker exposes the same read surface to the runtime (poll for
-candidate issues, refresh in-flight issues by id) and a set of agent tools. Those tools are now
-read+write symmetric across kinds, mirroring `linear_graphql` (which both reads and writes): each
-tracker gives the agent at least one write tool and one read tool. The tools differ per kind; their
-descriptions are self-documenting and surface to the agent via the MCP `tools/list` call.
+A tracker is the source of issues Symphony works on. `tracker.kind` selects a named bundle under
+`trackers`, and the selected bundle's `provider` selects the implementation. Every tracker exposes
+the same read surface to the runtime (poll for candidate issues, refresh in-flight issues by id)
+and a set of agent tools. Those tools are read+write symmetric across kinds, mirroring
+`linear_graphql` (which both reads and writes): each tracker gives the agent at least one write tool
+and one read tool. The tools differ per kind; their descriptions are self-documenting and surface
+to the agent via the MCP `tools/list` call.
 
 Supported kinds:
 
-- `linear` - issues live in a Linear project. Read access uses `tracker.api_key` (resolved from
-  `LINEAR_API_KEY`) and project selection uses `tracker.project_slug`, `tracker.project_slugs`, or
-  `tracker.project_labels`. Agents can use provider-neutral `tracker_*` tools or the legacy
+- `linear` - issues live in a Linear project. Read access uses `trackers.linear.api_key` (resolved
+  from `LINEAR_API_KEY`) and project selection uses `trackers.linear.project_slug`,
+  `trackers.linear.project_slugs`, or `trackers.linear.project_labels`. Agents can use
+  provider-neutral `tracker_*` tools or the legacy
   `linear_graphql` tool.
 - `jira` - issues live in Jira Cloud and are accessed directly over Jira REST. Configure
-  `tracker.base_url`, `tracker.email`, `tracker.api_key`, and either `tracker.project_keys` or
-  `tracker.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_KEY` are used as fallbacks.
+  `trackers.jira.base_url`, `trackers.jira.email`, `trackers.jira.api_key`, and either
+  `trackers.jira.project_keys` or `trackers.jira.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and
+  `JIRA_API_KEY` are used as fallbacks.
 - `jira-mcp` - issues live in Jira, but Symphony reaches them through an external MCP server.
-  Configure `tracker.mcp.url` and either `tracker.project_keys` or `tracker.jql`. Tool names can be
-  overridden under `tracker.mcp.tools`.
+  Configure `trackers.jira-mcp.mcp.url` and either `trackers.jira-mcp.project_keys` or
+  `trackers.jira-mcp.jql`. Tool names can be overridden under `trackers.jira-mcp.mcp.tools`.
 - `local` - issues live as Markdown files on disk. No external service required.
 - `slack` - an @-mention of the bot (in a channel message or a thread reply) is an issue, the
   thread carries the status (`@bot !` commands and bot `status:` replies), and a thread reply is
@@ -288,34 +307,41 @@ All non-memory providers expose the provider-neutral agent tools:
 
 Provider-specific tools are compatibility escape hatches, not the preferred workflow contract.
 
-All kinds share the dispatch routing block under `tracker.dispatch`:
+All kinds share the dispatch routing block under the selected tracker bundle:
 
 ```yaml
 tracker:
-  dispatch:
-    accept_unrouted: true # process issues that carry no matching route label (default)
-    only_routes: null # or a list of route names this instance handles
-    route_label_prefix: "Symphony:" # the label prefix that names a route
+  kind: linear
+trackers:
+  linear:
+    provider: linear
+    dispatch:
+      accept_unrouted: true # process issues that carry no matching route label (default)
+      only_routes: null # or a list of route names this instance handles
+      route_label_prefix: "Symphony:" # the label prefix that names a route
 ```
 
 ### Jira tracker
 
 For both `jira` and `jira-mcp`, Symphony only picks up issues that are assigned to the configured
-user (`tracker.assignee`, defaulting to the authenticated user via `assignee = currentUser()`) and
-labeled `agent`. This holds even when `tracker.jql` widens the scope, so issues must be explicitly
-delegated before Symphony will dispatch them.
+user (`trackers.jira.assignee` or `trackers.jira-mcp.assignee`, defaulting to the authenticated
+user via `assignee = currentUser()`) and labeled `agent`. This holds even when the configured JQL
+widens the scope, so issues must be explicitly delegated before Symphony will dispatch them.
 
 Direct Jira REST configuration:
 
 ```yaml
 tracker:
   kind: jira
-  base_url: https://example.atlassian.net
-  email: $JIRA_EMAIL
-  api_key: $JIRA_API_KEY
-  project_keys: ["ENG"]
-  # Optional provider-native scope. When present, Symphony combines it with active_states.
-  # jql: 'project = ENG AND labels in ("symphony")'
+trackers:
+  jira:
+    provider: jira
+    base_url: https://example.atlassian.net
+    email: $JIRA_EMAIL
+    api_key: $JIRA_API_KEY
+    project_keys: ["ENG"]
+    # Optional provider-native scope. When present, Symphony combines it with active_states.
+    # jql: 'project = ENG AND labels in ("symphony")'
 ```
 
 Jira via an external MCP server:
@@ -323,17 +349,20 @@ Jira via an external MCP server:
 ```yaml
 tracker:
   kind: jira-mcp
-  base_url: https://example.atlassian.net # optional; used for issue URLs when MCP payloads omit them
-  project_keys: ["ENG"]
-  mcp:
-    url: http://127.0.0.1:5123/mcp
-    token: $JIRA_MCP_TOKEN
-    tools:
-      search: atlassian_search_jira
-      read_issue: atlassian_get_jira_issue
-      update_status: atlassian_transition_jira_issue
-      comment: atlassian_add_jira_comment
-      create_issue: atlassian_create_jira_issue
+trackers:
+  jira-mcp:
+    provider: jira-mcp
+    base_url: https://example.atlassian.net # optional; used for issue URLs when MCP payloads omit them
+    project_keys: ["ENG"]
+    mcp:
+      url: http://127.0.0.1:5123/mcp
+      token: $JIRA_MCP_TOKEN
+      tools:
+        search: atlassian_search_jira
+        read_issue: atlassian_get_jira_issue
+        update_status: atlassian_transition_jira_issue
+        comment: atlassian_add_jira_comment
+        create_issue: atlassian_create_jira_issue
 ```
 
 ### Local tracker (filesystem board)
@@ -346,14 +375,17 @@ Configure it with `kind: local` and a board `path` (default `.symphony/local`):
 ```yaml
 tracker:
   kind: local
-  path: .symphony/local
-  id_prefix: "BOARD-" # optional, default "BOARD-"
-  active_states:
-    - Todo
-    - In Progress
-  terminal_states:
-    - Done
-    - Cancelled
+trackers:
+  local:
+    provider: local
+    path: .symphony/local
+    id_prefix: "BOARD-" # optional, default "BOARD-"
+    active_states:
+      - Todo
+      - In Progress
+    terminal_states:
+      - Done
+      - Cancelled
 ```
 
 Both `path` and `id_prefix` are local-specific and always defaulted, so a local workflow is valid
@@ -418,11 +450,12 @@ sample `BOARD-<n>.md` files through the same `BoardStore` the running tracker us
 npx tsx sandbox/seed-local.ts                    # seeds ./.symphony/local
 npx tsx sandbox/seed-local.ts /tmp/demo-board    # seeds an explicit directory
 npx tsx sandbox/seed-local.ts .symphony/local 2  # seeds only the first 2 issues
-npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX-  # seeds XXX-1..XXX-3 (match tracker.id_prefix)
+npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX-  # seeds XXX-1..XXX-3 (match trackers.local.id_prefix)
 ```
 
-Point `tracker.path` at the directory you seeded and run Symphony as usual. If you set a custom
-`id_prefix`, pass the same prefix to the seeder so the seeded ids match what the tracker expects.
+Point `trackers.local.path` at the directory you seeded and run Symphony as usual. If you set a
+custom `id_prefix`, pass the same prefix to the seeder so the seeded ids match what the tracker
+expects.
 
 ### Slack tracker (mention + thread commands)
 
@@ -457,43 +490,47 @@ Set up a Slack app:
    transient limits on top of that.
 
 3. Install the app to the workspace and copy the **Bot User OAuth Token** (starts with `xoxb-`).
-   Export it as `SLACK_BOT_TOKEN`; Symphony resolves it into `tracker.api_key`.
+   Export it as `SLACK_BOT_TOKEN`; Symphony resolves it into `trackers.slack.api_key`.
 4. Find the app's **bot user id** (the `U...` id, shown on the app's "App Home" / via
-   `auth.test`). Export it as `SLACK_BOT_USER_ID` and reference it as `tracker.bot_user_id`.
+   `auth.test`). Export it as `SLACK_BOT_USER_ID` and reference it as
+   `trackers.slack.bot_user_id`.
 5. Invite the bot to each channel you want it to watch (`/invite @your-bot`). A bot only sees
    `*:history` for channels it has joined.
 6. Collect the **channel IDs** (`C...`, from the channel's "About" panel) for those channels and
-   list them under `tracker.channels`.
+   list them under `trackers.slack.channels`.
 
 Configure it with `kind: slack`:
 
 ```yaml
 tracker:
   kind: slack
-  channels:
-    - C0123456789
-  bot_user_id: $SLACK_BOT_USER_ID
-  emoji_states:
-    eyes: In Progress
-    white_check_mark: Done
-    x: Cancelled
-  active_states:
-    - Todo
-    - In Progress
-  terminal_states:
-    - Done
-    - Cancelled
+trackers:
+  slack:
+    provider: slack
+    channels:
+      - C0123456789
+    bot_user_id: $SLACK_BOT_USER_ID
+    emoji_states:
+      eyes: In Progress
+      white_check_mark: Done
+      x: Cancelled
+    active_states:
+      - Todo
+      - In Progress
+    terminal_states:
+      - Done
+      - Cancelled
 ```
 
-`SLACK_BOT_TOKEN` (the bot token), a non-empty `channels` list, and `tracker.bot_user_id`
+`SLACK_BOT_TOKEN` (the bot token), a non-empty `channels` list, and `trackers.slack.bot_user_id`
 (`SLACK_BOT_USER_ID`) are all **required**. The bot user id scopes issue creation to the bot's own
 mentions: only messages that mention that exact user become issues, and only that leading mention
 is stripped from the title. It is required so that ordinary human-to-human `<@U...>` mentions in a
 watched channel never spawn agents or expose their text to workers. If it is unset or resolves
 empty, config validation fails and the production transport fails closed (it scans nothing).
-Channel entries resolve `$VAR` references the same way `bot_user_id` does. `tracker.assignee` is
-rejected for `kind: slack`: messages carry no assignee, so an assignee-partitioned deployment
-would otherwise silently dispatch everything everywhere.
+Channel entries resolve `$VAR` references the same way `bot_user_id` does.
+`trackers.slack.assignee` is rejected for `kind: slack`: messages carry no assignee, so an
+assignee-partitioned deployment would otherwise silently dispatch everything everywhere.
 
 The issue identifier is the message reference in `<channel>:<ts>` form (for example
 `C0123456789:1717000000.000100`); that is the `issueId` passed to the write tools. Issues also
@@ -585,16 +622,23 @@ Workspace tests render representative Liquid constructs: conditionals, null fall
 The `.codex/skills/` directory in this repo contains orchestration skills referenced by the example
 workflow files:
 
-- `symphony-linear` interacts with Linear comments, state transitions, and queries.
 - `symphony-commit` produces clean, logical commits.
 - `symphony-push` pushes branches and creates or updates PRs.
 - `symphony-pull` merges the latest `origin/main` into a working branch.
 - `symphony-land` monitors and merges approved PRs.
 - `symphony-debug` investigates stuck runs and execution failures.
 
-Copy the skills into the target repo's `.codex/skills/` directory when your workflow references
-them. The `symphony-linear` skill uses the injected `linear_graphql` tool for Codex or the
-`/mcp` endpoint for Claude.
+Symphony overlays skills into each prepared workspace before the agent starts, copying each
+configured directory whole into the agent's skills directory - `.codex/skills/` for Codex,
+`.claude/skills/` for Claude (the active executor chooses). Skills come from two places:
+
+- **`agent.skills`** - a list of skill directories you maintain. Each entry is one skill directory
+  (e.g. `./.codex/skills/symphony-land`) and is copied to `<skills>/<directory-name>`. Relative
+  paths resolve from the workflow file directory.
+- **Tool packs** - a mounted tool pack can bundle the skill that documents it, so the skill ships
+  automatically when the tool is in use. The Linear pack bundles `symphony-linear` (raw Linear
+  access via the injected `linear_graphql` tool for Codex or the `/mcp` endpoint for Claude), so
+  enabling Linear tools overlays that skill without listing it under `agent.skills`.
 
 ## Observability
 
@@ -654,14 +698,13 @@ Live tests are opt-in and launch real CLIs or services in isolated workspaces.
 
 ```sh
 pnpm test:live:codex
-pnpm test:live:codex-resume
 pnpm test:live:linear-codex
 pnpm test:live:claude
 pnpm test:live:ssh
 pnpm test:live:linear-sandbox
 ```
 
-`pnpm test:live` runs the Codex, Codex resume, Linear plus Codex, and Claude live tests.
+`pnpm test:live` runs the Codex, Linear plus Codex, and Claude live tests.
 
 Environment knobs:
 

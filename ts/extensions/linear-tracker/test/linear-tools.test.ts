@@ -360,9 +360,59 @@ test("linear tool pack routes calls through the package tools", async () => {
     {
       settings: linearSettings(),
       fetchImpl: fetchSequence(jsonResponse({ data: { viewer: { id: "viewer-1" } } })),
+      env: {},
     },
   );
   assert.equal(result.success, true);
+});
+
+test("linear_graphql resolves pack credentials from tools map at parse time", async () => {
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  const recordingFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({
+      url: String(input),
+      authorization: new Headers(init?.headers).get("authorization"),
+    });
+    return jsonResponse({ data: {} });
+  }) as typeof fetch;
+
+  // The pack's own tools.linear slice wins over the dispatch tracker credential;
+  // whole-value $VAR references resolve against the parse-time environment, so the
+  // effective credential is fixed in the parsed settings (and in the MCP scope hash).
+  const packSettings = parseConfig(
+    {
+      tracker: { kind: "dispatch" },
+      trackers: {
+        dispatch: { provider: "linear", api_key: "tracker-token", project_slug: "mono" },
+      },
+      tools: {
+        linear: { api_key: "$PACK_LINEAR_KEY", endpoint: "https://linear.example/graphql" },
+      },
+    },
+    { PACK_LINEAR_KEY: "pack-token" },
+  );
+  const packResult = await executeLinearTool(
+    "linear_graphql",
+    { query: "query { viewer { id } }" },
+    packSettings,
+    recordingFetch,
+  );
+  assert.equal(packResult.success, true);
+  assert.deepEqual(requests[0], {
+    url: "https://linear.example/graphql",
+    authorization: "pack-token",
+  });
+
+  // Without pack options on a non-linear dispatch tracker there is no credential at all:
+  // the dispatch tracker's token must never be sent to Linear.
+  const foreignResult = await executeLinearTool(
+    "linear_graphql",
+    { query: "query { viewer { id } }" },
+    parseConfig({ tracker: { kind: "memory", api_key: "foreign-token" } }, {}),
+    recordingFetch,
+  );
+  assert.equal(foreignResult.success, false);
+  assert.equal(requests.length, 1);
 });
 
 test("linear_graphql tool sends variables through unchanged", async () => {
@@ -386,7 +436,10 @@ test("linear_graphql tool sends variables through unchanged", async () => {
 
 function linearSettings() {
   return parseConfig(
-    { tracker: { kind: "linear", api_key: "linear-token", project_slug: "mono" } },
+    {
+      tracker: { kind: "dispatch" },
+      trackers: { dispatch: { provider: "linear", api_key: "linear-token", project_slug: "mono" } },
+    },
     {},
   );
 }

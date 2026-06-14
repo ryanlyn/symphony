@@ -7,12 +7,25 @@ import {
   Executor,
   acquireAgentMcpEndpoint,
   hostAgentBinaryEnv,
-  parseConfig,
+  parseConfig as parseConfigWith,
   resolveBridgeCommand,
   shellEscape,
 } from "@symphony/cli";
 import type { AgentUpdate } from "@symphony/cli";
+import { AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { workerHostPool } from "@symphony/worker-host-pool";
 import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
+
+import { acpExecutorProvider } from "@symphony/acp";
+
+// Private executor registry so agent records parse through the ACP provider's option
+// vocabulary without touching the process-wide default registry.
+const executors = new AgentExecutorRegistry();
+executors.register(acpExecutorProvider);
+
+function parseConfig(raw: Record<string, unknown>): ReturnType<typeof parseConfigWith> {
+  return parseConfigWith(raw, {}, {}, undefined, executors);
+}
 
 let nextAcpServerPort = 45_000 + (process.pid % 1_000);
 
@@ -48,7 +61,6 @@ test("ACP executor starts a session, translates updates, approves permissions, a
   const secondTurnUpdates = await executor.runTurn(session, "hello again", sampleIssue);
   await session.stop();
 
-  assert.equal(session.resumeId, "acp-new");
   assert.ok(turnUpdates.some((update) => update.type === "turn_completed"));
   assert.equal(
     turnUpdates.find((update) => update.type === "turn_completed")?.sessionUpdate?.kind,
@@ -226,7 +238,6 @@ test("ACP executor ignores session updates for a different active session", asyn
   }
 
   assert.equal(session.sessionId, "acp-new");
-  assert.equal(session.resumeId, "acp-new");
   assert.ok(
     updates.some(
       (update) => update.type === "session_notification" && update.message.sessionId === "acp-new",
@@ -243,75 +254,9 @@ test("ACP executor ignores session updates for a different active session", asyn
     (update) => update.type === "malformed" && String(update.message).includes("wrong-session"),
   );
   assert.equal(mismatch?.sessionId, "acp-new");
-  assert.equal(mismatch?.resumeId, "acp-new");
   const traceEvents = await readTrace(trace);
   const closeSession = traceEvents.find((event) => event.method === "closeSession");
   assert.equal(closeSession?.params?.sessionId, "acp-new");
-});
-
-test("ACP executor prefers session/resume when the agent advertises resume support", async () => {
-  const root = await tempDir("symphony-ts-acp-resume");
-  const fake = await writeFakeBridge(root);
-  const trace = path.join(root, "trace.jsonl");
-  const settings = acpSettings(root, fake, trace, "resume");
-  const executor = new Executor("claude");
-  const session = await executor.startSession({
-    workspace: root,
-    settings,
-    issue: sampleIssue,
-    resumeId: "acp-existing",
-  });
-  await session.stop();
-
-  assert.equal(session.resumeId, "acp-existing");
-  const traceEvents = await readTrace(trace);
-  assert.ok(traceEvents.some((event) => event.method === "resumeSession"));
-  assert.equal(
-    traceEvents.some((event) => event.method === "loadSession"),
-    false,
-  );
-  assert.equal(
-    traceEvents.some((event) => event.method === "newSession"),
-    false,
-  );
-});
-
-test("ACP executor falls back to session/load and suppresses replayed updates", async () => {
-  const root = await tempDir("symphony-ts-acp-load");
-  const fake = await writeFakeBridge(root);
-  const trace = path.join(root, "trace.jsonl");
-  const settings = acpSettings(root, fake, trace, "load");
-  const updates: AgentUpdate[] = [];
-  const executor = new Executor("claude");
-  const session = await executor.startSession({
-    workspace: root,
-    settings,
-    issue: sampleIssue,
-    resumeId: "acp-loadable",
-    onUpdate: (update) => updates.push(update),
-  });
-  await session.stop();
-
-  assert.equal(session.resumeId, "acp-loadable");
-  const traceEvents = await readTrace(trace);
-  assert.ok(traceEvents.some((event) => event.method === "loadSession"));
-  assert.equal(
-    traceEvents.some((event) => event.method === "resumeSession"),
-    false,
-  );
-  assert.equal(
-    traceEvents.some((event) => event.method === "newSession"),
-    false,
-  );
-  assert.ok(updates.some((update) => update.type === "session_replay_suppressed"));
-  assert.equal(
-    updates.some(
-      (update) =>
-        update.type === "session_notification" &&
-        JSON.stringify(update.message).includes("replayed history"),
-    ),
-    false,
-  );
 });
 
 test("ACP executor times out stalled bridge turns and emits a typed failure", async () => {
@@ -459,9 +404,9 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
       server: { host: "127.0.0.1", port: await reserveTcpPort() },
       worker: { ssh_timeout_ms: 5_000 },
     });
-    const first = await acquireAgentMcpEndpoint(settings, "worker-acp");
+    const first = await acquireAgentMcpEndpoint(settings, "worker-acp", workerHostPool);
     leases.push(first);
-    const second = await acquireAgentMcpEndpoint(settings, "worker-acp");
+    const second = await acquireAgentMcpEndpoint(settings, "worker-acp", workerHostPool);
     leases.push(second);
 
     assert.equal(first.url, "http://127.0.0.1:46000/mcp");
@@ -472,7 +417,7 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
 
     await first.release();
     leases.splice(leases.indexOf(first), 1);
-    const third = await acquireAgentMcpEndpoint(settings, "worker-acp");
+    const third = await acquireAgentMcpEndpoint(settings, "worker-acp", workerHostPool);
     leases.push(third);
     assert.equal(tunnelTraceCount(await fs.readFile(trace, "utf8")), 1);
 
@@ -480,7 +425,7 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
     leases.splice(leases.indexOf(second), 1);
     await third.release();
     leases.splice(leases.indexOf(third), 1);
-    const fourth = await acquireAgentMcpEndpoint(settings, "worker-acp");
+    const fourth = await acquireAgentMcpEndpoint(settings, "worker-acp", workerHostPool);
     leases.push(fourth);
     await waitForTunnelTrace(trace, 2);
   } finally {
@@ -554,31 +499,12 @@ test("provider config rides session/new _meta as codex config overrides", async 
   await assert.rejects(() => fs.access(path.join(root, ".codex", "config.toml")));
 });
 
-test("provider config _meta also rides session/resume", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-resume");
-  const fake = await writeFakeBridge(root);
-  const trace = path.join(root, "trace.jsonl");
-  const providerConfig = { permissions: { defaultMode: "dontAsk" } };
-  const settings = acpSettings(root, fake, trace, "resume", 5_000, { providerConfig });
-  const executor = new Executor("claude");
-  const session = await executor.startSession({
-    workspace: root,
-    settings,
-    issue: sampleIssue,
-    resumeId: "acp-existing",
-  });
-  await session.stop();
-
-  const resume = (await readTrace(trace)).find((event) => event.method === "resumeSession");
-  assert.deepEqual(resume?.params?._meta?.["symphony/settings"], providerConfig);
-});
-
 test("session requests omit _meta when providerConfig is absent", async () => {
   const root = await tempDir("symphony-ts-acp-provider-none");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "new", 5_000, { agentKind: "codex" });
-  delete (settings.agents.codex as Record<string, unknown>).providerConfig;
+  delete settings.agents.codex!.options.providerConfig;
   const executor = new Executor("codex");
   const session = await executor.startSession({
     workspace: root,
@@ -678,9 +604,7 @@ class FakeAgent {
 
   async initialize(params) {
     record({ method: "initialize", params });
-    const agentCapabilities = mode === "load"
-      ? { loadSession: true, sessionCapabilities: { close: {} } }
-      : { loadSession: true, sessionCapabilities: { resume: {}, close: {} } };
+    const agentCapabilities = { sessionCapabilities: { close: {} } };
     return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities };
   }
 
@@ -691,23 +615,6 @@ class FakeAgent {
   async newSession(params) {
     record({ method: "newSession", params });
     return { sessionId: "acp-new" };
-  }
-
-  async resumeSession(params) {
-    record({ method: "resumeSession", params });
-    return {};
-  }
-
-  async loadSession(params) {
-    record({ method: "loadSession", params });
-    await this.connection.sessionUpdate({
-      sessionId: params.sessionId,
-      update: {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: "replayed history" }
-      }
-    });
-    return {};
   }
 
   async prompt(params) {

@@ -1,21 +1,22 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import { test } from "vitest";
 import { parseConfig, validateDispatchConfig } from "@symphony/config";
 import type { Issue, Settings } from "@symphony/domain";
 import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
-import { executeTool, toolSpecs } from "@symphony/mcp";
+import { executeTool, mountedSkillSources, toolSpecs } from "@symphony/mcp";
 import { registerJiraTrackers } from "@symphony/jira-tracker";
-import { registerLinearTracker } from "@symphony/linear-tracker";
+import { linearTrackerProvider, registerLinearTracker } from "@symphony/linear-tracker";
 import { registerLocalTracker } from "@symphony/local-tracker";
 import { ToolRegistry, type ToolProvider } from "@symphony/tool-sdk";
 import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
 import { assert, tempDir } from "@symphony/test-utils";
 
 /**
- * Mixed tool mounts are a user-facing contract: one tracker drives dispatch while the
- * `tools:` config list mounts any combination of packs on the MCP endpoint - e.g.
- * `tools: [tracker, linear, local]` on a Jira-dispatch deployment. Everything here runs
- * against private registries holding the jira, linear, and local extensions plus the
- * neutral tracker pack.
+ * Tool mounting has tracker-aligned defaults: every workflow gets the neutral tracker pack,
+ * and a dispatch tracker gets the default packs declared by its provider. A workflow can
+ * still explicitly mount additional registered packs with its `tools:` map.
  */
 
 // Stand-in for the composition root's executor registration; the default agent records
@@ -26,6 +27,22 @@ const stubExecutorProvider: AgentExecutorProvider = {
     throw new Error("not under test");
   },
 };
+
+const TRACKER_TOOL_NAMES = [
+  "tracker_read_issue",
+  "tracker_query",
+  "tracker_update_status",
+  "tracker_comment",
+  "tracker_create_issue",
+];
+
+const LOCAL_TOOL_NAMES = [
+  "local_update_status",
+  "local_comment",
+  "local_create_issue",
+  "local_read_issue",
+  "local_query",
+];
 
 function executorRegistry(): AgentExecutorRegistry {
   const registry = new AgentExecutorRegistry();
@@ -43,54 +60,92 @@ function builtinRegistries(): { trackers: TrackerRegistry; tools: ToolRegistry }
   return { trackers, tools };
 }
 
-function parseJiraWithPacks(packs: string[], trackers: TrackerRegistry): Settings {
-  return parseConfig(
-    {
-      tracker: {
-        kind: "jira",
+function parseWorkflow(trackers: TrackerRegistry, raw: Record<string, unknown>): Settings {
+  return parseConfig(raw, {}, {}, trackers);
+}
+
+function parseJira(trackers: TrackerRegistry, extraConfig: Record<string, unknown> = {}): Settings {
+  return parseWorkflow(trackers, {
+    tracker: { kind: "dispatch" },
+    trackers: {
+      dispatch: {
+        provider: "jira",
         base_url: "https://example.atlassian.net",
         email: "bot@example.com",
         api_key: "jira-token",
         project_keys: ["ENG"],
         active_states: ["To Do"],
       },
-      tools: packs,
     },
-    {},
-    {},
-    trackers,
-  );
+    ...extraConfig,
+  });
 }
 
-test("a jira-dispatch workflow mounts the tracker, linear, and local packs side by side", async () => {
+function parseLinear(
+  trackers: TrackerRegistry,
+  extraConfig: Record<string, unknown> = {},
+): Settings {
+  return parseWorkflow(trackers, {
+    tracker: { kind: "dispatch" },
+    trackers: {
+      dispatch: { provider: "linear", api_key: "dispatch-linear-token", project_slug: "mono" },
+    },
+    ...extraConfig,
+  });
+}
+
+function specNames(settings: Settings, tools: ToolRegistry, trackers: TrackerRegistry): string[] {
+  return toolSpecs(settings, tools, trackers).map((spec) => spec.name);
+}
+
+test("mounting the linear pack contributes its bundled symphony-linear skill", async () => {
   const { trackers, tools } = builtinRegistries();
-  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers);
+  const settings = parseJira(trackers, { tools: { linear: { api_key: "linear-token" } } });
+
+  const skills = mountedSkillSources(settings, tools, trackers);
+  const linearSkill = skills.find((dir) => path.basename(dir) === "symphony-linear");
+  assert.ok(linearSkill, "linear pack should bundle the symphony-linear skill");
+  assert.equal((await fs.stat(path.join(linearSkill, "SKILL.md"))).isFile(), true);
+});
+
+test("a workflow without the linear pack contributes no bundled skills", () => {
+  const { trackers, tools } = builtinRegistries();
+  const settings = parseJira(trackers);
+  assert.deepEqual(mountedSkillSources(settings, tools, trackers), []);
+});
+
+test("a jira-dispatch workflow mounts only the neutral tracker pack", () => {
+  const { trackers, tools } = builtinRegistries();
+  const settings = parseJira(trackers);
   validateDispatchConfig(settings, trackers, executorRegistry(), tools);
 
   assert.equal(settings.tracker.kind, "jira");
-  assert.deepEqual(settings.tools, ["tracker", "linear", "local"]);
+  assert.deepEqual(specNames(settings, tools, trackers), TRACKER_TOOL_NAMES);
+});
 
-  const names = toolSpecs(settings, tools).map((spec) => spec.name);
-  assert.deepEqual(names, [
-    "tracker_read_issue",
-    "tracker_query",
-    "tracker_update_status",
-    "tracker_comment",
-    "tracker_create_issue",
+test("explicit tools map can mount packs outside the dispatch tracker", () => {
+  const { trackers, tools } = builtinRegistries();
+  const settings = parseJira(trackers, {
+    tools: { linear: { api_key: "linear-token" }, local: { path: "/tmp/board" } },
+  });
+  validateDispatchConfig(settings, trackers, executorRegistry(), tools);
+
+  assert.deepEqual(specNames(settings, tools, trackers), [
+    ...TRACKER_TOOL_NAMES,
     "linear_graphql",
-    "local_update_status",
-    "local_comment",
-    "local_create_issue",
-    "local_read_issue",
-    "local_query",
+    ...LOCAL_TOOL_NAMES,
   ]);
 });
 
-test("a linear tool call routes to the linear pack and uses its transport", async () => {
+test("a linear-dispatch workflow mounts tracker tools and linear_graphql", async () => {
   const { trackers, tools } = builtinRegistries();
-  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers);
+  const settings = parseLinear(trackers, {
+    tools: { linear: { api_key: "pack-linear-token" } },
+  });
+  validateDispatchConfig(settings, trackers, executorRegistry(), tools);
 
-  // Stub transport: the assertion is the routing and the result envelope, not a live call.
+  assert.deepEqual(specNames(settings, tools, trackers), [...TRACKER_TOOL_NAMES, "linear_graphql"]);
+
   const calls: Array<{ url: string; authorization: string | null }> = [];
   const fakeFetch: typeof fetch = async (input, init) => {
     calls.push({
@@ -114,22 +169,138 @@ test("a linear tool call routes to the linear pack and uses its transport", asyn
   assert.deepEqual(result, { success: true, result: { data: { viewer: { id: "user-1" } } } });
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, "https://api.linear.app/graphql");
-  // The pack runs on the workflow's shared tracker credential.
-  assert.equal(calls[0]?.authorization, "jira-token");
+  assert.equal(calls[0]?.authorization, "pack-linear-token");
 });
 
-test("local pack tools round-trip a real board directory while jira drives dispatch", async () => {
+test("linear_graphql falls back to tracker auth only when Linear drives dispatch", async () => {
   const { trackers, tools } = builtinRegistries();
-  const settings = parseJiraWithPacks(["tracker", "linear", "local"], trackers);
+  const settings = parseLinear(trackers);
+  validateDispatchConfig(settings, trackers, executorRegistry(), tools);
+
+  const authorizations: Array<string | null> = [];
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    authorizations.push(new Headers(init?.headers).get("authorization"));
+    return new Response(JSON.stringify({ data: { viewer: { id: "user-1" } } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  const result = await executeTool(
+    "linear_graphql",
+    { query: "query Me { viewer { id } }" },
+    settings,
+    fakeFetch,
+    tools,
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(authorizations, ["dispatch-linear-token"]);
+});
+
+test("a linear tool call on a foreign dispatch tracker is unsupported, not borrowed", async () => {
+  const { trackers, tools } = builtinRegistries();
+  const settings = parseJira(trackers);
+
+  const calls: string[] = [];
+  const fakeFetch: typeof fetch = async () => {
+    calls.push("called");
+    return new Response("{}", { status: 200 });
+  };
+
+  const result = await executeTool(
+    "linear_graphql",
+    { query: "query Me { viewer { id } }" },
+    settings,
+    fakeFetch,
+    tools,
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /Unsupported tool: "linear_graphql"/);
+  assert.equal(calls.length, 0);
+});
+
+test("an explicitly mounted linear pack on a foreign tracker uses only pack auth", async () => {
+  const { trackers, tools } = builtinRegistries();
+  const missingAuth = parseJira(trackers, { tools: { linear: {} } });
+  validateDispatchConfig(missingAuth, trackers, executorRegistry(), tools);
+
+  const callsWithoutAuth: string[] = [];
+  const noAuthResult = await executeTool(
+    "linear_graphql",
+    { query: "query Me { viewer { id } }" },
+    missingAuth,
+    async () => {
+      callsWithoutAuth.push("called");
+      return new Response("{}", { status: 200 });
+    },
+    tools,
+    trackers,
+  );
+  assert.equal(noAuthResult.success, false);
+  assert.match(noAuthResult.error ?? "", /missing Linear auth/);
+  assert.equal(callsWithoutAuth.length, 0);
+
+  const withAuth = parseJira(trackers, { tools: { linear: { api_key: "pack-token" } } });
+  validateDispatchConfig(withAuth, trackers, executorRegistry(), tools);
+  const authorizations: Array<string | null> = [];
+  const ok = await executeTool(
+    "linear_graphql",
+    { query: "query Me { viewer { id } }" },
+    withAuth,
+    async (_input, init) => {
+      authorizations.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ data: { viewer: { id: "user-1" } } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+    tools,
+    trackers,
+  );
+  assert.equal(ok.success, true);
+  assert.deepEqual(authorizations, ["pack-token"]);
+});
+
+test("the linear pack rejects unknown option keys and wrong types", () => {
+  const { trackers, tools } = builtinRegistries();
+
+  const unknownKey = parseLinear(trackers, {
+    tools: { linear: { surprise: true } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(unknownKey, trackers, executorRegistry(), tools),
+    /tools\.linear\.surprise is not supported \(known keys: apiKey, api_key, endpoint\)/,
+  );
+
+  const wrongType = parseLinear(trackers, {
+    tools: { linear: { api_key: 5 } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(wrongType, trackers, executorRegistry(), tools),
+    /tools\.linear\.api_key must be a string/,
+  );
+});
+
+test("local dispatch mounts tracker tools and local board tools", async () => {
+  const { trackers, tools } = builtinRegistries();
   const boardDir = await tempDir("symphony-ts-tool-pack-mix-board");
-  // The local pack reads its board location from `tracker.path`, which a jira-dispatch
-  // config cannot carry (jira rejects unknown tracker options); point it at a temp board
-  // the way a local-dispatch deployment would.
-  settings.tracker.options = { ...settings.tracker.options, path: boardDir };
+  const settings = parseWorkflow(trackers, {
+    tracker: { kind: "dispatch" },
+    trackers: { dispatch: { provider: "local" } },
+    tools: { local: { path: boardDir } },
+  });
+  validateDispatchConfig(settings, trackers, executorRegistry(), tools);
+
+  assert.deepEqual(specNames(settings, tools, trackers), [
+    ...TRACKER_TOOL_NAMES,
+    ...LOCAL_TOOL_NAMES,
+  ]);
 
   const created = await executeTool(
     "local_create_issue",
-    { title: "Sweep the board", body: "Mixed-mount round trip." },
+    { title: "Sweep the board", body: "Tracker-aligned round trip." },
     settings,
     fetch,
     tools,
@@ -152,34 +323,26 @@ test("local pack tools round-trip a real board directory while jira drives dispa
   assert.equal(readIssue.id, issue.id);
   assert.equal(readIssue.status, "In Progress");
   assert.equal(readIssue.title, "Sweep the board");
-
-  // Dispatch config is untouched by the tool round trip.
-  assert.equal(settings.tracker.kind, "jira");
 });
 
-test("an unknown pack name fails dispatch validation with the known pack list", () => {
-  const { trackers, tools } = builtinRegistries();
-  const settings = parseJiraWithPacks(["tracker", "gitlab"], trackers);
-  assert.throws(
-    () => validateDispatchConfig(settings, trackers, executorRegistry(), tools),
-    /unsupported tool pack: gitlab \(known tool packs: linear, local, tracker\)/,
-  );
-});
+test("a tracker-aligned tool-name collision fails loudly at mount time", () => {
+  const trackers = new TrackerRegistry();
+  trackers.register(linearTrackerProvider);
+  const tools = new ToolRegistry();
+  tools.register(createTrackerToolProvider(trackers));
 
-test("a cross-pack tool-name collision fails loudly at mount time", () => {
-  const { trackers, tools } = builtinRegistries();
   const collidingPack: ToolProvider = {
-    name: "collider",
+    name: "linear",
     toolSpecs: () => [
-      { name: "linear_graphql", description: "Shadows the linear pack.", inputSchema: {} },
+      { name: "tracker_read_issue", description: "Shadows the tracker pack.", inputSchema: {} },
     ],
     executeTool: async () => ({ success: true }),
   };
   tools.register(collidingPack);
 
-  const settings = parseJiraWithPacks(["linear", "collider"], trackers);
+  const settings = parseLinear(trackers);
   assert.throws(
-    () => toolSpecs(settings, tools),
-    /tool name collision: linear_graphql is declared by both the "linear" and "collider" packs/,
+    () => toolSpecs(settings, tools, trackers),
+    /tool name collision: tracker_read_issue is declared by both the "tracker" and "linear" packs/,
   );
 });

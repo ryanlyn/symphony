@@ -70,10 +70,6 @@ export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refu
  */
 export type AgentKind = string;
 
-export const AGENT_USAGE_ACCOUNTING_VALUES = ["per-turn", "cumulative"] as const;
-
-export type AgentUsageAccounting = (typeof AGENT_USAGE_ACCOUNTING_VALUES)[number];
-
 /**
  * Identifies a tracker backend by name (e.g. `"linear"`, `"local"`, `"memory"`).
  * Open-ended: the set of supported kinds is whatever the composition root registered
@@ -211,8 +207,8 @@ export interface DispatchSettings {
 /**
  * Connection and filtering rules for the issue tracker that feeds work into this instance.
  *
- * Only fields every backend shares live here. Provider-specific keys of the `tracker:`
- * config section (e.g. Linear's `project_slug`, the local board's `path`) are normalized
+ * Only fields every backend shares live here. Provider-specific keys from the selected
+ * tracker bundle (e.g. Linear's `project_slug`, the local board's `path`) are normalized
  * and validated by the registered tracker provider and carried opaquely in {@link options}.
  */
 export interface TrackerSettings {
@@ -274,31 +270,37 @@ export interface AgentSettings {
    * Overridden per-issue by an `ensemble:<n>` label.
    */
   ensembleSize: number;
+  /**
+   * Local skill directories overlaid into each prepared workspace before the agent process
+   * starts. Entries are absolute paths resolved from workflow configuration; the active
+   * executor decides the in-workspace destination (e.g. `.codex/skills` or `.claude/skills`).
+   * Mounted tool packs contribute their bundled skills on top of this list at dispatch time.
+   */
+  skills: string[];
 }
 
 /**
  * Per-kind agent record: how to run sessions for one entry of {@link Settings.agents}.
  *
  * `executor` selects the runtime driver by name and is open-ended - the supported set is
- * whatever the composition root registered in its agent executor registry. The remaining
- * fields are interpreted by that executor; today's built-in `"acp"` executor drives an
- * external bridge subprocess (e.g. Claude Code) over stdio using the ACP JSON-RPC schema.
+ * whatever the composition root registered in its agent executor registry. Only fields every
+ * executor shares live here; executor-specific keys of an `agents.<kind>` config record
+ * (e.g. the ACP executor's `bridge_command`) are normalized and validated by the registered
+ * executor provider and carried opaquely in {@link options}.
  */
 export interface AgentConfig {
   /** Runtime driver selector (e.g. `"acp"`), resolved through the agent executor registry. */
   executor: string;
-  /** Shell command launched per session (run via `bash -lc` in the workspace, or over SSH on remote workers). Also determines the provider config format: `claude-agent-acp` → `.claude/settings.local.json`, `codex-acp` → `.codex/config.toml`. */
-  bridgeCommand: string;
-  /** Shape of `PromptResponse.usage` emitted by this ACP bridge. Symphony always converts it to cumulative per-run totals before handing it to the orchestrator. */
-  usageAccounting: AgentUsageAccounting;
-  /** Free-form provider configuration written to the workspace before launching the bridge. The file path and format are derived from {@link bridgeCommand}. */
-  providerConfig?: Record<string, unknown> | undefined;
-  /** Hard limit (ms) on a single ACP turn before it is force-cancelled. */
+  /** Hard limit (ms) on a single agent turn before it is force-cancelled. */
   turnTimeoutMs: number;
   /** Inactivity window (ms) after which a session with no agent events is treated as stalled and aborted. `<= 0` disables stall detection. */
   stallTimeoutMs: number;
-  /** When true, launch the bridge with only the MCP servers Symphony injected (no user-side MCP config). */
-  strictMcpConfig?: boolean | undefined;
+  /**
+   * Executor-specific settings, normalized and validated by the executor provider registered
+   * for {@link executor}. Read through the executor package's typed accessor (e.g.
+   * `acpAgentOptions(config)`), never by key from core code.
+   */
+  options: Record<string, unknown>;
 }
 
 /**
@@ -411,11 +413,12 @@ export interface Settings {
    */
   agents: Record<string, AgentConfig>;
   /**
-   * Tool packs mounted on the MCP endpoint, by pack name. When unset, the composition root
-   * mounts the provider-neutral `tracker` pack plus the dispatch tracker's own pack. Several
-   * packs can be mounted while a single tracker drives dispatch.
+   * Per-pack options from the workflow's `tools:` map, keyed by pack name. Runtime always
+   * mounts the provider-neutral `tracker` pack, mounts the dispatch tracker's declared
+   * default packs, and mounts any additional packs named here. Each configured pack validates
+   * its own option bag.
    */
-  tools?: string[] | undefined;
+  toolOptions?: Record<string, Record<string, unknown>> | undefined;
   observability: ObservabilitySettings;
   server: ServerSettings;
   logging: LoggingSettings;
@@ -594,8 +597,6 @@ export interface RunningEntry {
   workspacePath?: string | null | undefined;
   /** Provider session id reported by the executor (Codex/Claude side). */
   sessionId?: string | null | undefined;
-  /** Token used to resume this session on subsequent runs; persisted to the workspace resume state file. */
-  resumeId?: string | null | undefined;
   /** OS process id of the agent child process, as a string; `null` if not yet spawned or unavailable. */
   executorPid?: string | null | undefined;
   /** Number of completed turns; incremented on each `turn_completed` update. */
@@ -624,7 +625,6 @@ export interface AgentUpdateBase {
   sessionUpdate?: unknown;
   workspacePath?: string | null | undefined;
   sessionId?: string | null | undefined;
-  resumeId?: string | null | undefined;
   executorPid?: string | null | undefined;
   timestamp?: Date | undefined;
   message?: unknown;
@@ -644,7 +644,6 @@ export interface AgentSessionNotificationUpdate extends AgentUpdateBase {
 export type StringMessageUpdateType =
   | "stderr"
   | "process_exit"
-  | "resume_state_warning"
   | "session_started"
   | "workspace_prepared"
   | "rate_limit"
@@ -676,11 +675,6 @@ export interface HookExecutionMessage {
 export interface HookExecutionUpdate extends AgentUpdateBase {
   type: "hook_execution";
   message: HookExecutionMessage;
-}
-
-export interface SessionReplaySuppressedUpdate extends AgentUpdateBase {
-  type: "session_replay_suppressed";
-  message: { replayedUpdateCount: number };
 }
 
 export interface TurnStartedUpdate extends AgentUpdateBase {
@@ -727,7 +721,6 @@ export type AgentUpdate =
   | AgentSessionNotificationUpdate
   | StringMessageUpdate
   | HookExecutionUpdate
-  | SessionReplaySuppressedUpdate
   | TurnStartedUpdate
   | TurnCompletedUpdate
   | TurnCancelledUpdate
@@ -755,8 +748,6 @@ export const AGENT_UPDATE_TYPES = [
   "stderr",
   "malformed",
   "process_exit",
-  "resume_state_warning",
-  "session_replay_suppressed",
   "fs_write",
   "hook_execution",
   "session_notification",
@@ -804,8 +795,6 @@ export interface AgentSession {
   agentKind: AgentKind;
   /** Provider session id; populated once the executor receives it from the backend. */
   sessionId?: string | null | undefined;
-  /** Token persisted to the workspace so a later run can resume this session. */
-  resumeId?: string | null | undefined;
   /** OS pid of the agent child as a string; `null` if not applicable. */
   executorPid?: string | null | undefined;
   /** Closes the session and tears down the underlying process; must be safe to call from a `finally` block. */
@@ -820,14 +809,13 @@ export interface AgentExecutor {
   kind: AgentKind;
   /**
    * Spawns the agent process and prepares it for the first turn.
-   * `resumeId` reuses a prior session when present; `onUpdate` receives every event as it arrives.
+   * `onUpdate` receives every event as it arrives.
    */
   startSession(input: {
     workspace: string;
     workerHost?: string | null | undefined;
     issue?: Issue;
     settings: Settings;
-    resumeId?: string | null;
     onUpdate?: (update: AgentUpdate) => void;
   }): Promise<AgentSession>;
   /** Sends one prompt to the session and resolves with the updates produced during that turn. */

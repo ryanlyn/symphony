@@ -12,7 +12,7 @@ import {
   workflowFilePath,
 } from "@symphony/cli";
 import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
 import type { Settings } from "@symphony/domain";
 import { jiraTrackerOptions, registerJiraTrackers } from "@symphony/jira-tracker";
 import { registerLinearTracker } from "@symphony/linear-tracker";
@@ -41,7 +41,7 @@ function parseConfig(
   env: NodeJS.ProcessEnv = {},
   defaults: DefaultSettingsOptions = {},
 ): Settings {
-  return parseConfigWith(raw, env, defaults, trackers);
+  return parseConfigWith(raw, env, defaults, trackers, executors);
 }
 
 function validateDispatchConfig(settings: Settings, tools?: ToolRegistry): void {
@@ -52,22 +52,28 @@ test("config resolves env-backed Linear token and assignee", () => {
   const settings = parseConfig(
     {
       tracker: {
-        api_key: "$LINEAR_API_KEY",
-        project_slug: "mono",
-        assignee: "$LINEAR_ASSIGNEE",
+        kind: "dispatch",
+      },
+      trackers: {
+        dispatch: {
+          provider: "linear",
+          api_key: "$LINEAR_API_KEY",
+          project_slug: "mono",
+          assignee: "$LINEAR_ASSIGNEE",
+        },
       },
     },
     { LINEAR_API_KEY: "linear-token", LINEAR_ASSIGNEE: "worker@example.com" },
   );
 
+  assert.equal(settings.tracker.kind, "linear");
   assert.equal(settings.tracker.apiKey, "linear-token");
   assert.equal(settings.tracker.assignee, "worker@example.com");
   assert.equal(settings.agent.kind, "codex");
   assert.equal(settings.agent.maxTurns, 20);
   assert.equal(settings.agent.ensembleSize, 1);
   assert.equal(settings.agents.codex?.executor, "acp");
-  const codexAgent = settings.agents.codex as any;
-  assert.equal(codexAgent.bridgeCommand, "codex-acp");
+  assert.equal(settings.agents.codex?.options.bridgeCommand, "codex-acp");
   assert.equal(settings.agents.claude?.executor, "acp");
 });
 
@@ -76,12 +82,29 @@ test("partial codex agent override preserves bridgeCommand codex-acp", () => {
     agents: { codex: { stall_timeout_ms: 60000 } },
   });
 
-  const codexAgent = settings.agents.codex as any;
+  const codexAgent = settings.agents.codex!;
   assert.equal(codexAgent.executor, "acp");
-  assert.equal(codexAgent.bridgeCommand, "codex-acp");
-  assert.equal(codexAgent.usageAccounting, "per-turn");
+  assert.equal(codexAgent.options.bridgeCommand, "codex-acp");
+  assert.equal(codexAgent.options.usageAccounting, "per-turn");
   assert.equal(codexAgent.stallTimeoutMs, 60000);
-  assert.equal(codexAgent.providerConfig, undefined);
+  assert.equal(codexAgent.options.providerConfig, undefined);
+});
+
+test("config honors logging.log_file with alias and home expansion", () => {
+  const direct = parseConfig({ logging: { log_file: "/var/log/sym/symphony.log" } });
+  assert.equal(direct.logging.logFile, "/var/log/sym/symphony.log");
+
+  const camel = parseConfig({ logging: { logFile: "/var/log/sym/camel.log" } });
+  assert.equal(camel.logging.logFile, "/var/log/sym/camel.log");
+
+  const expanded = parseConfig(
+    { logging: { log_file: "~/logs/symphony.log" } },
+    { HOME: "/home/agent" },
+  );
+  assert.equal(expanded.logging.logFile, "/home/agent/logs/symphony.log");
+
+  const fallback = parseConfig({});
+  assert.match(fallback.logging.logFile, /\.symphony\/log\/symphony\.log$/);
 });
 
 test("config resolves op:// references via 1Password CLI", async () => {
@@ -187,8 +210,13 @@ test("jira tracker config resolves canonical env fallbacks", () => {
   const settings = parseConfig(
     {
       tracker: {
-        kind: "jira",
-        project_keys: ["ENG"],
+        kind: "dispatch",
+      },
+      trackers: {
+        dispatch: {
+          provider: "jira",
+          project_keys: ["ENG"],
+        },
       },
     },
     {
@@ -208,15 +236,27 @@ test("jira tracker config resolves canonical env fallbacks", () => {
 
 test("jira tracker options reject wrong types with tracker.<key> messages", () => {
   assert.throws(
-    () => parseConfig({ tracker: { kind: "jira", base_url: 5 } }),
+    () =>
+      parseConfig({
+        tracker: { kind: "dispatch" },
+        trackers: { dispatch: { provider: "jira", base_url: 5 } },
+      }),
     /tracker.baseUrl must be a string/,
   );
   assert.throws(
-    () => parseConfig({ tracker: { kind: "jira", project_keys: "ENG" } }),
+    () =>
+      parseConfig({
+        tracker: { kind: "dispatch" },
+        trackers: { dispatch: { provider: "jira", project_keys: "ENG" } },
+      }),
     /tracker.projectKeys must be a list of strings/,
   );
   assert.throws(
-    () => parseConfig({ tracker: { kind: "jira", issue_type: "Task", surprise: true } }),
+    () =>
+      parseConfig({
+        tracker: { kind: "dispatch" },
+        trackers: { dispatch: { provider: "jira", issue_type: "Task", surprise: true } },
+      }),
     /unsupported tracker option\(s\) for kind "jira": surprise/,
   );
 });
@@ -225,15 +265,20 @@ test("jira-mcp tracker config parses MCP settings and tool aliases", () => {
   const settings = parseConfig(
     {
       tracker: {
-        kind: "jira-mcp",
-        project_keys: ["ENG"],
-        mcp: {
-          url: "http://127.0.0.1:5123/mcp",
-          token: "$MCP_TOKEN",
-          tools: {
-            read_issue: "jira_get",
-            update_status: "jira_transition",
-            create_issue: "jira_create",
+        kind: "dispatch",
+      },
+      trackers: {
+        dispatch: {
+          provider: "jira-mcp",
+          project_keys: ["ENG"],
+          mcp: {
+            url: "http://127.0.0.1:5123/mcp",
+            token: "$MCP_TOKEN",
+            tools: {
+              read_issue: "jira_get",
+              update_status: "jira_transition",
+              create_issue: "jira_create",
+            },
           },
         },
       },
@@ -254,7 +299,7 @@ test("config defaults and validation match expected defaults", () => {
   const settings = parseConfig({}, {});
 
   assert.equal(settings.tracker.kind, undefined);
-  assert.deepEqual(settings.agents.claude.providerConfig, {
+  assert.deepEqual(settings.agents.claude.options.providerConfig, {
     model: "claude-opus-4-6[1m]",
     permissions: { defaultMode: "dontAsk" },
   });
@@ -262,10 +307,60 @@ test("config defaults and validation match expected defaults", () => {
   assert.throws(() => validateDispatchConfig(settings), /tracker.kind is required/);
 });
 
+test("tracker.kind selects a named trackers bundle with its own provider", () => {
+  const settings = parseConfig({
+    tracker: { kind: "primary" },
+    trackers: {
+      primary: {
+        provider: "local",
+        path: "/tmp/board",
+        id_prefix: "BOARD-",
+        active_states: ["Ready"],
+        dispatch: { only_routes: ["docs"] },
+      },
+    },
+  });
+
+  assert.equal(settings.tracker.kind, "local");
+  assert.deepEqual(settings.tracker.options, { path: "/tmp/board", idPrefix: "BOARD-" });
+  assert.deepEqual(settings.tracker.activeStates, ["Ready"]);
+  assert.deepEqual(settings.tracker.dispatch.onlyRoutes, ["docs"]);
+
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "primary" }, trackers: { primary: {} } }),
+    /trackers\.primary\.provider is required/,
+  );
+  assert.throws(
+    () => parseConfig({ tracker: { kind: "primary" }, trackers: { dispatch: {} } }),
+    /trackers\.primary is required by tracker\.kind/,
+  );
+  assert.throws(
+    () =>
+      parseConfig({
+        tracker: { kind: "primary" },
+        trackers: { primary: { provider: "linear", active_states: "Todo" } },
+      }),
+    /trackers\.primary\.active_states must be a list of strings/,
+  );
+});
+
+test("unselected trackers bundles can coexist without being validated", () => {
+  const settings = parseConfig({
+    tracker: { kind: "primary", id_prefix: "LEGACY-" },
+    trackers: {
+      primary: { provider: "local", path: "/tmp/board", id_prefix: "BOARD-" },
+      linear: { active_states: "not a list", surprise: true },
+    },
+  });
+
+  assert.equal(settings.tracker.kind, "local");
+  assert.deepEqual(settings.tracker.options, { path: "/tmp/board", idPrefix: "BOARD-" });
+});
+
 test("claude.model overrides the pinned model in the provider config", () => {
   const settings = parseConfig({ claude: { model: "claude-haiku-4-5" } });
 
-  assert.deepEqual(settings.agents.claude?.providerConfig, {
+  assert.deepEqual(settings.agents.claude?.options.providerConfig, {
     model: "claude-haiku-4-5",
     permissions: { defaultMode: "dontAsk" },
   });
@@ -279,7 +374,7 @@ test("claude provider_config without a model key picks up claude.model", () => {
     },
   });
 
-  assert.deepEqual(settings.agents.claude.providerConfig, {
+  assert.deepEqual(settings.agents.claude.options.providerConfig, {
     model: "claude-haiku-4-5",
     permissions: { defaultMode: "acceptEdits" },
   });
@@ -290,7 +385,7 @@ test("explicit claude provider_config model wins over claude.model", () => {
     claude: { provider_config: { model: "claude-sonnet-4-6" } },
   });
 
-  assert.deepEqual(settings.agents.claude.providerConfig, { model: "claude-sonnet-4-6" });
+  assert.deepEqual(settings.agents.claude.options.providerConfig, { model: "claude-sonnet-4-6" });
 });
 
 test("status override of claude.model re-pins the provider config", () => {
@@ -301,7 +396,7 @@ test("status override of claude.model re-pins the provider config", () => {
   });
 
   const effective = settingsForIssueState(settings, "In Review");
-  assert.deepEqual(effective.agents.claude?.providerConfig, {
+  assert.deepEqual(effective.agents.claude?.options.providerConfig, {
     model: "claude-haiku-4-5",
     permissions: { defaultMode: "dontAsk" },
   });
@@ -319,6 +414,62 @@ test("workspace root honors SYMPHONY_WORKSPACE_ROOT and expands local tilde path
 
   assert.equal(settings.workspace.root, path.join(os.homedir(), "override"));
   assert.equal(settings.workspace.rootExpression, "~/override");
+});
+
+test("agent skills resolve, expand, and dedupe", () => {
+  const configDir = path.join(os.tmpdir(), "symphony-config-skills");
+  const settings = parseConfig(
+    {
+      agent: {
+        skills: [
+          "./.codex/skills/symphony-linear",
+          "./.codex/skills/symphony-linear",
+          "~/shared-skill",
+          "$SKILL_SOURCE",
+        ],
+      },
+    },
+    { HOME: "/home/tester", SKILL_SOURCE: "/opt/skill-source" },
+    { configDir },
+  );
+
+  assert.deepEqual(settings.agent.skills, [
+    path.join(configDir, ".codex", "skills", "symphony-linear"),
+    "/home/tester/shared-skill",
+    "/opt/skill-source",
+  ]);
+});
+
+test("agent skills default to empty and reject per-state overrides", () => {
+  assert.deepEqual(parseConfig({}).agent.skills, []);
+  assert.throws(
+    () => parseConfig({ statusOverrides: { "In Progress": { agent: { skills: ["./x"] } } } }),
+    /skills/,
+  );
+});
+
+test("loadWorkflow resolves agent skills relative to the workflow file", async () => {
+  const root = await tempDir("symphony-workflow-skills");
+  const workflowDir = path.join(root, "workflows");
+  await fs.mkdir(workflowDir);
+  const workflowPath = path.join(workflowDir, "WORKFLOW.md");
+  await fs.writeFile(
+    workflowPath,
+    `---
+agent:
+  skills:
+    - ../.codex/skills/symphony-land
+---
+
+Do work.
+`,
+  );
+
+  const workflow = await loadWorkflow(workflowPath);
+
+  assert.deepEqual(workflow.settings.agent.skills, [
+    path.join(root, ".codex", "skills", "symphony-land"),
+  ]);
 });
 
 test("workspace defaults to per-agent isolation", () => {
@@ -509,25 +660,47 @@ test("agents map overrides known runtime settings via ACP records", () => {
     },
   });
 
-  assert.equal(settings.agents.codex.bridgeCommand, "codex-custom");
+  assert.equal(settings.agents.codex.options.bridgeCommand, "codex-custom");
   assert.equal(settings.agents.codex.turnTimeoutMs, 120_000);
   assert.equal(settings.agents.codex.stallTimeoutMs, 42_000);
-  assert.equal(settings.agents.codex.bridgeCommand, "codex-custom");
-  assert.equal(settings.agents.codex.turnTimeoutMs, 120_000);
-  assert.equal(settings.agents.codex.stallTimeoutMs, 42_000);
-  assert.equal(settings.agents.claude.bridgeCommand, "claude-agent-acp");
-  assert.deepEqual(settings.agents.claude.providerConfig, {
+  assert.equal(settings.agents.claude.options.bridgeCommand, "claude-agent-acp");
+  assert.deepEqual(settings.agents.claude.options.providerConfig, {
     permissions: { defaultMode: "acceptEdits" },
   });
   assert.deepEqual(settings.agents.pi, {
     executor: "acp",
-    bridgeCommand: "pi-acp",
-    providerConfig: { safe_mode: true },
-    usageAccounting: "cumulative",
     turnTimeoutMs: 3_600_000,
     stallTimeoutMs: 300_000,
-    strictMcpConfig: true,
+    options: {
+      bridgeCommand: "pi-acp",
+      providerConfig: { safe_mode: true },
+      usageAccounting: "cumulative",
+      strictMcpConfig: true,
+    },
   });
+});
+
+test("agents map accepts flat executor options and legacy command aliases", () => {
+  const settings = parseConfig({
+    agents: {
+      codex: { command: "custom-codex" },
+      claude: {
+        bridge_command: "custom-claude",
+        provider_config: { model: "claude-haiku-4-5" },
+      },
+      pi: {
+        command: "legacy-pi",
+        usage_accounting: "cumulative",
+      },
+    },
+  });
+
+  assert.equal(settings.agents.codex.options.bridgeCommand, "custom-codex");
+  assert.equal(settings.agents.codex.options.providerConfig, undefined);
+  assert.equal(settings.agents.claude.options.bridgeCommand, "custom-claude");
+  assert.deepEqual(settings.agents.claude.options.providerConfig, { model: "claude-haiku-4-5" });
+  assert.equal(settings.agents.pi.options.bridgeCommand, "legacy-pi");
+  assert.equal(settings.agents.pi.options.usageAccounting, "cumulative");
 });
 
 test("custom ACP agents default to cumulative usage unless using a known per-turn bridge", () => {
@@ -539,15 +712,55 @@ test("custom ACP agents default to cumulative usage unless using a known per-tur
     },
   });
 
-  assert.equal(settings.agents.pi.usageAccounting, "cumulative");
-  assert.equal(settings.agents.pi.providerConfig, undefined);
-  assert.equal(settings.agents.codex_alias.usageAccounting, "per-turn");
-  assert.equal(settings.agents.codex_alias.providerConfig, undefined);
-  assert.equal(settings.agents.claude_alias.usageAccounting, "per-turn");
-  assert.deepEqual(settings.agents.claude_alias.providerConfig, {
+  assert.equal(settings.agents.pi.options.usageAccounting, "cumulative");
+  assert.equal(settings.agents.pi.options.providerConfig, undefined);
+  assert.equal(settings.agents.codex_alias.options.usageAccounting, "per-turn");
+  assert.equal(settings.agents.codex_alias.options.providerConfig, undefined);
+  assert.equal(settings.agents.claude_alias.options.usageAccounting, "per-turn");
+  assert.deepEqual(settings.agents.claude_alias.options.providerConfig, {
     model: "claude-opus-4-6[1m]",
     permissions: { defaultMode: "dontAsk" },
   });
+});
+
+test("records selecting a non-default executor do not inherit ACP option defaults", () => {
+  const received: Array<Record<string, unknown>> = [];
+  const otherProvider: AgentExecutorProvider = {
+    executor: "other",
+    parseOptions: (options) => {
+      received.push(structuredClone(options));
+      const unknown = Object.keys(options).filter((key) => key !== "workerCount");
+      if (unknown.length > 0) {
+        throw new Error(
+          `unsupported agent option(s) for the other executor: ${unknown.join(", ")}`,
+        );
+      }
+      return { ...options };
+    },
+    createExecutor: () => {
+      throw new Error("not under test");
+    },
+  };
+  const privateExecutors = new AgentExecutorRegistry();
+  privateExecutors.register(acpExecutorProvider);
+  privateExecutors.register(otherProvider);
+
+  const settings = parseConfigWith(
+    { agents: { pi: { executor: "other", turn_timeout_ms: 120_000 } } },
+    {},
+    {},
+    trackers,
+    privateExecutors,
+  );
+
+  // The ACP-flavored defaults (bridgeCommand, providerConfig, ...) never reach the foreign
+  // executor's parser; only the record's own keys do.
+  assert.deepEqual(received, [{}]);
+  assert.deepEqual(settings.agents.pi?.options, {});
+  assert.equal(settings.agents.pi?.executor, "other");
+  // Shared timeouts still inherit and parse normally.
+  assert.equal(settings.agents.pi?.turnTimeoutMs, 120_000);
+  assert.equal(settings.agents.pi?.stallTimeoutMs, 300_000);
 });
 
 test("agents map accepts shared timeout defaults with legacy per-agent overrides", () => {
@@ -613,18 +826,96 @@ test("dispatch validation requires configured agents for active and override sta
   );
 });
 
-test("top-level tools selects tool packs and is validated against the registry", () => {
-  assert.equal(parseConfig({ tracker: { kind: "memory" } }).tools, undefined);
+test("top-level tools map parses per-pack option bags and deep-copies them", () => {
+  const rawToolOptions = { local: { path: "/tmp/pack-board", id_prefix: "PACK-" } };
+  const settings = parseConfig({
+    tracker: { kind: "local" },
+    tools: rawToolOptions,
+  });
 
-  const settings = parseConfig({ tracker: { kind: "memory" }, tools: ["tracker", "local"] });
-  assert.deepEqual(settings.tools, ["tracker", "local"]);
-
+  assert.deepEqual(settings.toolOptions, {
+    local: { path: "/tmp/pack-board", id_prefix: "PACK-" },
+  });
   validateDispatchConfig(settings, tools);
 
-  const unknown = parseConfig({ tracker: { kind: "memory" }, tools: ["surprise"] });
+  // The parsed settings own a copy; later mutation of the raw config must not leak in.
+  rawToolOptions.local.path = "/tmp/elsewhere";
+  assert.equal(settings.toolOptions?.local?.path, "/tmp/pack-board");
+
+  assert.equal(parseConfig({ tracker: { kind: "memory" } }).toolOptions, undefined);
+});
+
+test("tools secret references resolve at parse time; unresolvable refs are omitted", () => {
+  const settings = parseConfig(
+    {
+      tracker: { kind: "dispatch" },
+      trackers: { dispatch: { provider: "linear", project_slug: "mono" } },
+      tools: { linear: { api_key: "$PACK_KEY", endpoint: "https://linear.example" } },
+    },
+    { PACK_KEY: "resolved-token" },
+  );
+  assert.equal(settings.toolOptions?.["linear"]?.api_key, "resolved-token");
+
+  const unresolved = parseConfig(
+    {
+      tracker: { kind: "dispatch" },
+      trackers: { dispatch: { provider: "linear", project_slug: "mono" } },
+      tools: { linear: { api_key: "$PACK_KEY", endpoint: "https://linear.example" } },
+    },
+    {},
+  );
+  assert.equal("api_key" in (unresolved.toolOptions?.["linear"] ?? {}), false);
+  assert.equal(unresolved.toolOptions?.["linear"]?.endpoint, "https://linear.example");
+});
+
+test("tools map can explicitly mount a pack outside the dispatch tracker", () => {
+  const settings = parseConfig({
+    tracker: { kind: "memory" },
+    tools: { local: { path: "/tmp/board" } },
+  });
+  validateDispatchConfig(settings, tools);
+  assert.deepEqual(settings.toolOptions, { local: { path: "/tmp/board" } });
+});
+
+test("tool options for an unknown pack fail with the known pack list", () => {
+  const settings = parseConfig({
+    tracker: { kind: "local" },
+    tools: { gitlab: {} },
+  });
   assert.throws(
-    () => validateDispatchConfig(unknown, tools),
-    /unsupported tool pack: surprise \(known tool packs: linear, local, tracker\)/,
+    () => validateDispatchConfig(settings, tools),
+    /unsupported tool pack: gitlab \(known tool packs: linear, local, tracker\)/,
+  );
+});
+
+test("tools options for a pack without a validator are rejected rather than silently ignored", () => {
+  const settings = parseConfig({
+    tracker: { kind: "memory" },
+    tools: { tracker: { surprise: true } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(settings, tools),
+    /tools\.tracker is not supported by the "tracker" pack/,
+  );
+});
+
+test("the local pack rejects unknown tools keys and wrong types", () => {
+  const unknownKey = parseConfig({
+    tracker: { kind: "local" },
+    tools: { local: { surprise: true } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(unknownKey, tools),
+    /tools\.local\.surprise is not supported \(known keys: path, idPrefix, id_prefix\)/,
+  );
+
+  const wrongType = parseConfig({
+    tracker: { kind: "local" },
+    tools: { local: { path: 5 } },
+  });
+  assert.throws(
+    () => validateDispatchConfig(wrongType, tools),
+    /tools\.local\.path must be a string/,
   );
 });
 
@@ -639,7 +930,7 @@ test("undocumented top-level compatibility keys are ignored", () => {
 
   assert.equal(settings.tracker.kind, undefined);
   assert.equal(settings.agent.maxTurns, 20);
-  assert.equal(settings.agents.codex.bridgeCommand, "codex-acp");
+  assert.equal(settings.agents.codex.options.bridgeCommand, "codex-acp");
   assert.notEqual(settings.workspace.root, "/tmp/legacy-root");
   assert.equal(settings.hooks.beforeRun, null);
 });
@@ -676,6 +967,24 @@ test("status overrides normalize state names and merge backend timeout settings"
   assert.equal(effective.agent.kind, "claude");
   assert.equal(effective.agent.maxTurns, 5);
   assert.equal(effective.agents.codex.turnTimeoutMs, 120_000);
+});
+
+test("per-state agent overrides store provider-normalized option values", () => {
+  const settings = parseConfig({
+    status_overrides: {
+      Todo: { agents: { claude: { strict_mcp_config: "false" } } },
+    },
+  });
+
+  // The provider coerces the YAML-friendly string to a boolean; the stored overlay must
+  // carry the coerced value, not the raw fragment.
+  const effective = settingsForIssueState(settings, "todo");
+  assert.equal(effective.agents.claude?.options.strictMcpConfig, false);
+  // Unrelated states keep the base record untouched.
+  assert.equal(
+    settingsForIssueState(settings, "done").agents.claude?.options.strictMcpConfig,
+    true,
+  );
 });
 
 test("status overrides rederive agents timeout records from overridden backend blocks", () => {
@@ -802,10 +1111,8 @@ test("config reports useful errors for list fields and agent executors", () => {
   );
 });
 
-test("config ignores custom logging.log_file and uses default path", () => {
-  const settings = parseConfig({
-    logging: { log_file: "tmp/custom/symphony.log" },
-  });
+test("config falls back to the default log path when logging.log_file is unset", () => {
+  const settings = parseConfig({});
 
   assert.equal(settings.logging.logFile, path.join(os.homedir(), ".symphony/log/symphony.log"));
 });
@@ -840,7 +1147,7 @@ test("copied workflow examples load independently in the TypeScript port", async
     const workflow = await loadWorkflow(
       path.join(root, "ts", name),
       { LINEAR_API_KEY: "test-token", LINEAR_ASSIGNEE: "worker@example.com" },
-      { trackers },
+      { trackers, executors },
     );
     assert.equal(workflow.settings.tracker.dispatch.acceptUnrouted, true);
     assert.equal(workflow.settings.tracker.dispatch.routeLabelPrefix, "Symphony:");
@@ -859,7 +1166,7 @@ test("workflow path defaults match SYMPHONY_WORKFLOW then cwd WORKFLOW.md", asyn
   const workflow = await loadWorkflow(
     undefined,
     { SYMPHONY_WORKFLOW: workflowPath, LINEAR_API_KEY: "test-token" },
-    { trackers },
+    { trackers, executors },
   );
   assert.equal(workflow.path, workflowPath);
   assert.deepEqual(workflow.config, {});

@@ -19,9 +19,14 @@ import {
   type Usage,
   type WriteTextFileRequest,
 } from "@agentclientprotocol/sdk";
-import { acquireAgentMcpEndpoint, type AgentMcpEndpointLease } from "@symphony/mcp";
+import {
+  acquireAgentMcpEndpoint,
+  type AgentMcpEndpointLease,
+  type RemoteMcpTunnelTransport,
+} from "@symphony/mcp";
 import { actionForStopReason } from "@symphony/policies/stopReason";
 import { shellEscape, startSshProcess } from "@symphony/ssh";
+import { workerHostPool } from "@symphony/worker-host-pool";
 import { validateWorkspaceCwd } from "@symphony/workspace";
 import { execa } from "execa";
 import {
@@ -40,6 +45,23 @@ import {
 import type { AgentExecutorProvider } from "@symphony/agent-sdk";
 
 import { stopChild, withTimeout } from "./childProcess.js";
+import {
+  acpAgentOptions,
+  isClaudeCompatibleBridgeCommand,
+  parseAcpAgentOptions,
+  type AcpAgentOptions,
+} from "./options.js";
+
+export {
+  acpAgentOptions,
+  AGENT_USAGE_ACCOUNTING_VALUES,
+  isClaudeCompatibleBridgeCommand,
+  type AcpAgentOptions,
+  type AgentUsageAccounting,
+} from "./options.js";
+
+/** The SSH worker-host pool provisions the reverse tunnels behind remote MCP endpoints. */
+const mcpTunnelTransport: RemoteMcpTunnelTransport = workerHostPool;
 
 interface Session extends AgentSession {
   connection: ClientSideConnection;
@@ -47,12 +69,11 @@ interface Session extends AgentSession {
   settings: Settings;
   workspace: string;
   agentConfig: AgentConfig;
+  acpOptions: AcpAgentOptions;
   init: InitializeResponse;
   mcpEndpoint: AgentMcpEndpointLease;
   workerHost?: string | null | undefined;
   onUpdate?: ((update: AgentUpdate) => void) | undefined;
-  loadingReplay: boolean;
-  replayedUpdateCount: number;
   usageTotals: UsageTotals;
   sawCallUsageThisTurn: boolean;
   turnStartTotals: UsageTotals;
@@ -65,10 +86,26 @@ interface Session extends AgentSession {
  * The ACP executor: drives an external bridge subprocess (e.g. `codex-acp`,
  * `claude-agent-acp`) over the Agent Client Protocol, locally or via SSH.
  */
+/** Fold the legacy `command` spelling into `bridgeCommand`; the canonical key wins. */
+function normalizeLegacyCommand(options: Record<string, unknown>): Record<string, unknown> {
+  if (!("command" in options)) return options;
+  const { command, ...rest } = options;
+  return { bridgeCommand: rest.bridgeCommand ?? command, ...rest };
+}
+
 export const acpExecutorProvider: AgentExecutorProvider = {
   executor: "acp",
+  // `command` is the legacy spelling of `bridge_command`; it is listed first so the
+  // canonical key wins when a record configures both.
+  configAliases: {
+    bridge_command: "bridgeCommand",
+    usage_accounting: "usageAccounting",
+    provider_config: "providerConfig",
+    strict_mcp_config: "strictMcpConfig",
+  },
+  parseOptions: (options) => parseAcpAgentOptions(normalizeLegacyCommand(options)),
   validateAgent(kind, config) {
-    if (!config.bridgeCommand.trim()) {
+    if (!acpAgentOptions(config).bridgeCommand.trim()) {
       throw new Error(
         kind === "claude"
           ? "claude.command is required"
@@ -77,6 +114,12 @@ export const acpExecutorProvider: AgentExecutorProvider = {
     }
   },
   createExecutor: (kind) => new Executor(kind),
+  skillsDir(kind, config) {
+    // Claude reads skills from `.claude/skills`; Codex and other bridges from `.codex/skills`.
+    const isClaudeBridge =
+      kind === "claude" || isClaudeCompatibleBridgeCommand(acpAgentOptions(config).bridgeCommand);
+    return isClaudeBridge ? ".claude/skills" : ".codex/skills";
+  },
 };
 
 export class Executor implements AgentExecutor {
@@ -90,7 +133,6 @@ export class Executor implements AgentExecutor {
     workspace: string;
     issue?: Issue;
     settings: Settings;
-    resumeId?: string | null;
     workerHost?: string | null;
     onUpdate?: (update: AgentUpdate) => void;
   }): Promise<Session> {
@@ -101,12 +143,17 @@ export class Executor implements AgentExecutor {
     );
     const agentKind = input.settings.agent.kind;
     const agentConfig = resolveAgentConfig(input.settings, agentKind);
+    const acpOptions = acpAgentOptions(agentConfig);
     let mcpEndpoint: AgentMcpEndpointLease | null = null;
     let child: ChildProcessWithoutNullStreams | null = null;
     let session: Session | null = null;
     try {
-      mcpEndpoint = await acquireAgentMcpEndpoint(input.settings, input.workerHost ?? null);
-      child = startBridgeProcess(agentConfig, workspace, input.workerHost ?? null);
+      mcpEndpoint = await acquireAgentMcpEndpoint(
+        input.settings,
+        input.workerHost ?? null,
+        mcpTunnelTransport,
+      );
+      child = startBridgeProcess(acpOptions.bridgeCommand, workspace, input.workerHost ?? null);
       const client = acpClient({
         workspace,
         workerHost: input.workerHost ?? null,
@@ -132,15 +179,13 @@ export class Executor implements AgentExecutor {
         settings: input.settings,
         workspace,
         agentConfig,
+        acpOptions,
         init,
         mcpEndpoint,
         workerHost: input.workerHost ?? null,
-        sessionId: input.resumeId ?? null,
-        resumeId: input.resumeId ?? null,
+        sessionId: null,
         executorPid,
         onUpdate: input.onUpdate,
-        loadingReplay: false,
-        replayedUpdateCount: 0,
         usageTotals: emptyUsageTotals(),
         sawCallUsageThisTurn: false,
         turnStartTotals: emptyUsageTotals(),
@@ -152,16 +197,12 @@ export class Executor implements AgentExecutor {
       session = nextSession;
       wireProcessEvents(session);
 
-      const sessionId = await openSession(session, input.resumeId ?? null, [
-        mcpEndpoint.acpServer(),
-      ]);
+      const sessionId = await openSession(session, [mcpEndpoint.acpServer()]);
       session.sessionId = sessionId;
-      session.resumeId = sessionId;
       this.emit(session, {
         type: "session_started",
         message: `session started (${sessionId})`,
         sessionId,
-        resumeId: sessionId,
         executorPid,
         timestamp: new Date(),
       });
@@ -232,7 +273,6 @@ export class Executor implements AgentExecutor {
       this.emit(session, {
         type: "turn_started",
         sessionId,
-        resumeId: session.resumeId,
         message: { prompt: [{ type: "text", text: prompt }] },
         timestamp: new Date(),
       });
@@ -255,7 +295,6 @@ export class Executor implements AgentExecutor {
           const base = {
             sessionUpdate: acpProtocolUpdate(session, terminalType, { response }),
             sessionId: session.sessionId,
-            resumeId: session.resumeId,
             executorPid: session.executorPid,
             message: { response },
             timestamp: new Date(),
@@ -278,7 +317,6 @@ export class Executor implements AgentExecutor {
           this.emit(session, {
             type: "turn_failed",
             sessionId,
-            resumeId: session.resumeId,
             message,
             timestamp: new Date(),
           });
@@ -319,7 +357,6 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
       type: "malformed",
       sessionUpdate: acpProtocolUpdate(session, "malformed", notification),
       sessionId: session.sessionId,
-      resumeId: session.resumeId,
       executorPid: session.executorPid,
       message: `acp_session_update_mismatch: active session ${session.sessionId}, notification session ${notification.sessionId}`,
       timestamp: new Date(),
@@ -328,17 +365,11 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
   }
   if (session.pendingTurn) session.pendingTurn.allowSessionIdRotation = false;
   session.sessionId = notification.sessionId;
-  session.resumeId = notification.sessionId;
-  if (session.loadingReplay) {
-    session.replayedUpdateCount += 1;
-    return;
-  }
   const usage = consumeCallUsage(session, notification);
   session.onUpdate?.({
     type: "session_notification",
     sessionUpdate: acpProtocolUpdate(session, "session_notification", notification),
     sessionId: session.sessionId,
-    resumeId: session.resumeId,
     executorPid: session.executorPid,
     message: notification,
     timestamp: new Date(),
@@ -373,9 +404,9 @@ function consumeCallUsage(
   const total = parseUsageBucket(meta["symphony/totalUsage"]);
   if (total) {
     // The bridge also reports its own cumulative counter; use it as a floor
-    // so missed bucket notifications cannot under-count the session.
-    // The baseline captures spend that predates this session (resumed
-    // threads), measured before the first observed call.
+    // so missed bucket notifications cannot under-count the session. The
+    // baseline captures any spend already on the counter before the first
+    // observed call.
     session.callUsageBaseline ??= subtractUsage(total, call);
     maxUsageTotals(session, subtractUsage(total, session.callUsageBaseline));
   }
@@ -396,7 +427,7 @@ function finalizeTurnUsage(
 ): UsageTokenUpdate | undefined {
   if (!reported) return session.sawCallUsageThisTurn ? usageSnapshot(session) : undefined;
   const reportedCumulative =
-    session.agentConfig.usageAccounting === "cumulative"
+    session.acpOptions.usageAccounting === "cumulative"
       ? reported
       : addUsage(session.turnStartTotals, reported);
   maxUsageTotals(session, reportedCumulative);
@@ -480,7 +511,6 @@ function handlePermissionRequest(
     emit({
       type: "approval_auto_approved",
       sessionId: request.sessionId,
-      resumeId: session?.resumeId,
       executorPid: session?.executorPid,
       message: { request, selected },
       timestamp: new Date(),
@@ -490,7 +520,6 @@ function handlePermissionRequest(
   emit({
     type: "approval_required",
     sessionId: request.sessionId,
-    resumeId: session?.resumeId,
     executorPid: session?.executorPid,
     message: { request, selected },
     timestamp: new Date(),
@@ -576,70 +605,8 @@ class ClientAdapter {
   }
 }
 
-async function openSession(
-  session: Session,
-  resumeId: string | null,
-  mcpServers: McpServer[],
-): Promise<string> {
+async function openSession(session: Session, mcpServers: McpServer[]): Promise<string> {
   const meta = providerConfigMeta(session);
-  if (resumeId && supportsResume(session.init)) {
-    try {
-      await withTimeout(
-        session.connection.resumeSession({
-          sessionId: resumeId,
-          cwd: session.workspace,
-          mcpServers,
-          ...(meta && { _meta: meta }),
-        }),
-        30_000,
-        "acp resume timed out",
-      );
-      return resumeId;
-    } catch (error) {
-      session.onUpdate?.({
-        type: "resume_state_warning",
-        workspacePath: session.workspace,
-        message: `acp_resume_failed: ${errorMessage(error)}`,
-        timestamp: new Date(),
-      });
-    }
-  }
-
-  if (resumeId && session.init.agentCapabilities?.loadSession) {
-    try {
-      session.loadingReplay = true;
-      await withTimeout(
-        session.connection.loadSession({
-          sessionId: resumeId,
-          cwd: session.workspace,
-          mcpServers,
-          ...(meta && { _meta: meta }),
-        }),
-        30_000,
-        "acp load timed out",
-      );
-      session.loadingReplay = false;
-      if (session.replayedUpdateCount > 0) {
-        session.onUpdate?.({
-          type: "session_replay_suppressed",
-          sessionId: resumeId,
-          resumeId,
-          message: { replayedUpdateCount: session.replayedUpdateCount },
-          timestamp: new Date(),
-        });
-      }
-      return resumeId;
-    } catch (error) {
-      session.loadingReplay = false;
-      session.onUpdate?.({
-        type: "resume_state_warning",
-        workspacePath: session.workspace,
-        message: `acp_load_failed: ${errorMessage(error)}`,
-        timestamp: new Date(),
-      });
-    }
-  }
-
   const created = await withTimeout(
     session.connection.newSession({
       cwd: session.workspace,
@@ -660,11 +627,11 @@ async function openSession(
  * ts/vendor/README.md). Bridges that don't know the keys ignore them.
  */
 function providerConfigMeta(session: Session): Record<string, unknown> | undefined {
-  const providerConfig = session.agentConfig.providerConfig;
+  const providerConfig = session.acpOptions.providerConfig;
   if (!providerConfig) return undefined;
   const isClaudeBridge =
     session.agentKind === "claude" ||
-    /(^|\s|\/)claude-agent-acp(\s|$)/.test(session.agentConfig.bridgeCommand);
+    isClaudeCompatibleBridgeCommand(session.acpOptions.bridgeCommand);
   return { [isClaudeBridge ? "symphony/settings" : "symphony/config"]: providerConfig };
 }
 
@@ -744,11 +711,11 @@ export function hostAgentBinaryEnv(
 }
 
 function startBridgeProcess(
-  agentConfig: AgentConfig,
+  bridgeCommand: string,
   workspace: string,
   workerHost: string | null,
 ): ChildProcessWithoutNullStreams {
-  const command = `exec ${resolveBridgeCommand(agentConfig.bridgeCommand, workerHost)}`;
+  const command = `exec ${resolveBridgeCommand(bridgeCommand, workerHost)}`;
   if (workerHost) {
     // Remote bridges resolve their own binaries on the worker host.
     return startSshProcess(workerHost, `cd ${shellEscape(workspace)} && ${command}`);
@@ -850,10 +817,6 @@ function resolveAgentConfig(settings: Settings, kind: AgentKind): AgentConfig {
   if (!agent) throw new Error(`agents.${kind} is required`);
   if (agent.executor !== "acp") throw new Error(`agents.${kind}.executor must be acp`);
   return agent;
-}
-
-function supportsResume(init: InitializeResponse): boolean {
-  return Boolean(init.agentCapabilities?.sessionCapabilities?.resume);
 }
 
 function supportsClose(init: InitializeResponse): boolean {

@@ -14,7 +14,7 @@ never from above.
 ```
 apps/cli, apps/traceviz                       composition roots / binaries
 ─────────────────────────────────────────────────────────────────────────
-extensions/{linear,local,memory,jira}-tracker extensions (tracker providers
+extensions/{linear,local,memory,jira,slack}-tracker extensions (tracker providers
                                               and their tool packs)
 ─────────────────────────────────────────────────────────────────────────
 @symphony/config, workflow, runtime,          engine (provider-agnostic)
@@ -38,9 +38,10 @@ mcp, server, tui, presenter, projections, …
   defines the `AgentExecutorProvider` contract and `AgentExecutorRegistry` for runtime
   drivers behind `agents.<kind>.executor`.
 - **extensions** implement those contracts. Each tracker package owns everything about its
-  backend: its slice of the `tracker:` config section (aliases, validation, env fallbacks,
-  defaults), the runtime client, its tool pack and `TrackerToolOps`, operator URLs, and
-  its own registration (`registerLinearTracker(...)` etc.) - there is no central bundle.
+  backend: its slice of the selected `trackers.<name>:` config bag (aliases, validation,
+  env fallbacks, defaults), the runtime client, its default tool packs and
+  `TrackerToolOps`, operator URLs, and its own registration
+  (`registerLinearTracker(...)` etc.) - there is no central bundle.
 - **engine** packages never import a provider or pack. They resolve `tracker.kind` through
   a `TrackerRegistry` and tool packs through a `ToolRegistry` (the process-wide defaults
   unless one is injected).
@@ -55,7 +56,7 @@ a tracker backend:
 
 | Hook | Called by | Purpose |
 | --- | --- | --- |
-| `kind` | registry | `tracker.kind` selector |
+| `kind` | registry | provider selector, matched by `trackers.<name>.provider` or legacy `tracker.kind` |
 | `configAliases` | config | snake_case aliases for provider keys |
 | `envFallbacks` | config | env vars backing shared fields, keyed by field name |
 | `defaultEndpoint` | config | endpoint when `tracker.endpoint` unset |
@@ -63,6 +64,7 @@ a tracker backend:
 | `validateDispatch` | CLI startup | reject undispatchable settings early |
 | `createClient` | runtime | the `RuntimeTrackerClient` that feeds dispatch |
 | `createToolOps` | neutral tool pack | normalized issue operations behind `tracker_*` tools |
+| `defaultToolPacks` | MCP mount | provider-specific packs mounted by default for this tracker |
 | `projectUrl` | TUI/dashboard | operator-facing project link |
 
 Provider-specific settings never appear as named fields on `TrackerSettings`. They live in
@@ -70,34 +72,40 @@ Provider-specific settings never appear as named fields on `TrackerSettings`. Th
 the provider package's typed accessor (e.g. `linearTrackerOptions(settings)`,
 `jiraTrackerOptions(settings)`). Core code must not read `options` keys directly.
 
-Unknown `tracker.kind` values parse leniently (options pass through unvalidated) and are
-rejected by `validateDispatchConfig` with the list of registered kinds. This keeps config
-parsing usable in tests and tools that don't register providers, while the CLI still fails
-fast at startup.
+Workflow config names the selected tracker bundle with `tracker.kind`; the selected
+`trackers.<name>.provider` chooses the registered tracker implementation. The legacy flat
+`tracker.kind: <provider>` form remains parseable when no `trackers` map is present. See
+the workspace README for user-facing YAML examples.
 
 ## The tool extension point
 
 Agent-facing MCP tools are a separate axis from dispatch. `ToolProvider` (in
 `@symphony/tool-sdk`) is a named pack of tools: `toolSpecs(settings)` advertises them and
-`executeTool` runs one. Packs are registered in a `ToolRegistry` and mounted per workflow:
+`executeTool` runs one. Packs are registered in a `ToolRegistry` and mounted from the active
+tracker plus explicit workflow requests:
 
-- The optional top-level `tools:` config list names the packs to mount (validated at
-  startup against the registry; unknown names fail with the registered set).
-- When `tools:` is omitted, the endpoint mounts the provider-neutral `tracker` pack plus
-  the dispatch tracker's own pack when it ships one.
-- Several packs can serve one endpoint while a single tracker drives dispatch - e.g.
-  `tools: [tracker, linear, local]` exposes Linear and local-board tools on a Jira-dispatch
-  workflow.
+- The endpoint mounts the provider-neutral `tracker` pack when it is registered.
+- The endpoint also mounts the packs returned by the dispatch tracker's
+  `defaultToolPacks` hook. These tracker-owned packs are implicit: a Linear tracker mounts
+  Linear tools without requiring a `tools.linear` entry.
+- The endpoint mounts any additional packs named in the workflow's `tools:` map.
+- A workflow does not mount unrelated registered packs by accident. For example, a Jira
+  workflow does not mount Linear or local-board tools unless the workflow explicitly asks
+  for those packs.
 
 A mount is one flat tool namespace: name collisions across mounted packs fail loudly at
 mount time. A pack that throws surfaces as a failed `ToolResult` (JSON-RPC `isError`),
 never as a transport-level error.
 
+A mounted pack can carry its own settings via the top-level `tools:` map, keyed by pack
+name and validated by the pack's optional `validateOptions` hook. Explicit cross-mounts
+are allowed when the workflow asks for them.
+
 The `tracker` pack (`createTrackerToolProvider` in `@symphony/tracker-sdk`) implements the
-five provider-neutral `tracker_*` tools purely against `TrackerToolOps`, so any tracker whose provider implements
-`createToolOps` gets read/query/status/comment/create tools without writing a pack.
-Provider-specific packs (`linear`, `local`) live in their tracker packages and carry the
-tools only that backend can offer.
+five provider-neutral `tracker_*` tools purely against `TrackerToolOps`, so any tracker
+whose provider implements `createToolOps` gets read/query/status/comment/create tools
+without writing a pack. Provider-specific packs (`linear`, `local`, `slack`) live in their
+tracker packages and carry the tools only that backend can offer.
 
 ### Adding a tracker backend
 
@@ -130,15 +138,21 @@ Agents extend along two independent axes:
   `PartialRuntimeSettings.agents`.
 - **Executors** are how an agent record actually runs. `AgentExecutorProvider` (in
   `@symphony/agent-sdk`) is the contract: an `executor` selector (matched against
-  `agents.<kind>.executor`), `validateAgent` for startup validation of records that select
-  it, and `createExecutor` producing the `AgentExecutor` the agent-runner drives. The
-  built-in `"acp"` executor lives in `@symphony/acp`; the CLI registers it at startup.
+  `agents.<kind>.executor`), `configAliases` and `parseOptions` for the executor's slice of
+  an `agents.<kind>` config record, `validateAgent` for startup validation of records that
+  select it, and `createExecutor` producing the `AgentExecutor` the agent-runner drives.
+  The built-in `"acp"` executor lives in `@symphony/acp`; the CLI registers it at startup.
   `validateDispatchConfig` rejects records whose executor selector is unregistered, listing
   the known selectors.
 
-The `AgentConfig` record shape is currently ACP-flavored (`bridgeCommand`,
-`usageAccounting`, ...). Generalizing it into an executor-owned options bag - mirroring
-`TrackerSettings.options` - is the designated next step if a second executor lands.
+`AgentConfig` mirrors `TrackerSettings`: only the fields every executor shares live on the
+record (`executor`, the turn/stall timeouts), and everything else sits in an executor-owned
+`options` bag, validated at parse time by the provider's `parseOptions` and read through
+the executor package's typed accessor (the ACP keys - `bridge_command`, `usage_accounting`,
+`provider_config`, `strict_mcp_config` - via `acpAgentOptions(config)`). Core code must not
+read `options` keys directly. Records selecting an unregistered executor parse leniently
+(options pass through unvalidated) and are rejected at startup, exactly like unknown
+`tracker.kind` values.
 
 ## Composition and the default registries
 

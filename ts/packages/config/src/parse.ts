@@ -1,17 +1,22 @@
+import path from "node:path";
+
 import { execaSync } from "execa";
 import { z } from "zod";
 import type {
   AgentConfig,
   AgentKind,
   AgentSettings,
-  AgentUsageAccounting,
   HooksSettings,
   PartialRuntimeSettings,
   Settings,
   TrackerSettings,
 } from "@symphony/domain";
-import { isRecord as isPlainRecord, normalizeHttpBindHost } from "@symphony/domain";
-import { defaultAgentExecutorRegistry, type AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { errorMessage, isRecord as isPlainRecord, normalizeHttpBindHost } from "@symphony/domain";
+import {
+  defaultAgentExecutorRegistry,
+  type AgentExecutorProvider,
+  type AgentExecutorRegistry,
+} from "@symphony/agent-sdk";
 import type { ToolRegistry } from "@symphony/tool-sdk";
 import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
 
@@ -34,6 +39,10 @@ import {
   type DispatchRaw,
   type HooksRaw,
   type StatusOverridesRaw,
+  trackerRecordSchema,
+  type TrackerRecordRaw,
+  type TrackersRaw,
+  type ToolsRaw,
   type TrackerRaw,
   type WorkflowConfigRaw,
 } from "./schemas.js";
@@ -43,13 +52,20 @@ export function parseConfig(
   env: NodeJS.ProcessEnv = {},
   defaults: DefaultSettingsOptions = {},
   registry: TrackerRegistry = defaultTrackerRegistry,
+  executors: AgentExecutorRegistry = defaultAgentExecutorRegistry,
 ): Settings {
   const settings = defaultSettings(defaults);
   const parsed = parseWorkflowConfig(raw);
 
   const trackerRaw = parsed.tracker ?? {};
-  settings.tracker = parseTracker(settings.tracker, trackerRaw, env, registry);
-  if (parsed.tools !== undefined) settings.tools = [...parsed.tools];
+  settings.tracker = parseTracker(
+    settings.tracker,
+    trackerRaw,
+    parsed.trackers ?? {},
+    env,
+    registry,
+  );
+  settings.toolOptions = parseToolOptions(parsed.tools, env);
 
   const pollingRaw = parsed.polling ?? {};
   settings.polling.intervalMs = pollingRaw.intervalMs ?? settings.polling.intervalMs;
@@ -74,10 +90,16 @@ export function parseConfig(
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
-  settings.agent = parseAgentSettings(settings.agent, parsed.agent ?? {});
+  settings.agent = parseAgentSettings(
+    settings.agent,
+    parsed.agent ?? {},
+    parseSkillSources(parsed.agent?.skills, env, defaults.configDir),
+  );
   settings.agents = parseAgents(
     parsed.agents ?? {},
     legacyAgentRecordOverrides(parsed.codex ?? {}, parsed.claude ?? {}),
+    executors,
+    env,
   );
 
   const observabilityRaw = parsed.observability ?? {};
@@ -93,7 +115,17 @@ export function parseConfig(
   if (serverRaw.traceDir !== undefined) settings.server.traceDir = serverRaw.traceDir;
   if (serverRaw.staticDir !== undefined) settings.server.staticDir = serverRaw.staticDir;
 
-  settings.statusOverrides = parseStatusOverrides(parsed.statusOverrides ?? {}, settings.agents);
+  const loggingRaw = parsed.logging ?? {};
+  if (loggingRaw.logFile !== undefined) {
+    settings.logging.logFile = expandLocalPath(loggingRaw.logFile, env);
+  }
+
+  settings.statusOverrides = parseStatusOverrides(
+    parsed.statusOverrides ?? {},
+    settings.agents,
+    executors,
+    env,
+  );
   return settings;
 }
 
@@ -107,7 +139,7 @@ export function settingsForIssueState(settings: Settings, state: string): Settin
     for (const [kind, fragment] of Object.entries(override.agents)) {
       const base = merged.agents[kind];
       if (!base) continue;
-      merged.agents[kind] = { ...base, ...fragment };
+      merged.agents[kind] = mergeAgentFragment(base, fragment);
     }
   }
   return merged;
@@ -122,8 +154,17 @@ export function validateDispatchConfig(
   const provider = trackers.require(settings.tracker.kind);
   provider.validateDispatch?.(settings);
 
-  if (tools && settings.tools !== undefined) {
-    for (const name of settings.tools) tools.require(name);
+  if (tools && settings.toolOptions !== undefined) {
+    for (const [pack, options] of Object.entries(settings.toolOptions)) {
+      const provider = tools.require(pack);
+      if (provider.validateOptions === undefined) {
+        if (Object.keys(options).length > 0) {
+          throw new Error(`tools.${pack} is not supported by the "${pack}" pack`);
+        }
+        continue;
+      }
+      provider.validateOptions(options);
+    }
   }
 
   const requiredBackends = new Set<AgentKind>([settings.agent.kind]);
@@ -153,9 +194,22 @@ export function normalizeRouteName(value: unknown): string {
   return String(value).trim().toLowerCase();
 }
 
-/** Keys of the tracker config section owned by the core; everything else belongs to the provider. */
+/** Shared tracker aliases; provider-specific aliases are declared by each tracker provider. */
+const TRACKER_COMMON_ALIASES = {
+  api_key: "apiKey",
+  active_states: "activeStates",
+  terminal_states: "terminalStates",
+};
+const TRACKER_DISPATCH_ALIASES = {
+  accept_unrouted: "acceptUnrouted",
+  only_routes: "onlyRoutes",
+  route_label_prefix: "routeLabelPrefix",
+};
+
+/** Keys of a selected tracker config record owned by the core; everything else belongs to the provider. */
 const TRACKER_COMMON_KEYS = new Set([
   "kind",
+  "provider",
   "endpoint",
   "apiKey",
   "assignee",
@@ -167,24 +221,33 @@ const TRACKER_COMMON_KEYS = new Set([
 function parseTracker(
   defaults: TrackerSettings,
   trackerRaw: TrackerRaw,
+  trackersRaw: TrackersRaw,
   env: NodeJS.ProcessEnv,
   registry: TrackerRegistry,
 ): TrackerSettings {
-  const kind = trackerKindValue(trackerRaw.kind) ?? defaults.kind;
+  assertTrackerBundleNames(trackersRaw);
+
+  const selectorRecord = parseTrackerRecord(trackerRaw, "tracker");
+  const selectedBundleName = trackerKindValue(selectorRecord.kind) ?? defaults.kind;
+  const trackerRecord =
+    selectedBundleName === undefined
+      ? legacyTrackerRecord(selectorRecord, selectedBundleName, trackersRaw)
+      : trackerRecordForSelection(selectorRecord, selectedBundleName, trackersRaw);
+  const kind = trackerRecord.kind;
   // Unregistered kinds parse generically (options pass through unvalidated) and are
   // rejected with the full list of known kinds by validateDispatchConfig.
   const provider = registry.get(kind);
 
-  const apiKey = resolveConfiguredSecret(trackerRaw.apiKey, env, provider?.envFallbacks?.apiKey);
+  const apiKey = resolveConfiguredSecret(trackerRecord.apiKey, env, provider?.envFallbacks?.apiKey);
   const assignee = resolveConfiguredSecret(
-    trackerRaw.assignee,
+    trackerRecord.assignee,
     env,
     provider?.envFallbacks?.assignee,
   );
-  const endpoint = trackerRaw.endpoint ?? provider?.defaultEndpoint ?? defaults.endpoint;
+  const endpoint = trackerRecord.endpoint ?? provider?.defaultEndpoint ?? defaults.endpoint;
 
   const providerRaw: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(trackerRaw)) {
+  for (const [key, value] of Object.entries(trackerRecord)) {
     if (!TRACKER_COMMON_KEYS.has(key)) providerRaw[key] = value;
   }
   const aliased = normalizeAliases(providerRaw, { ...(provider?.configAliases ?? {}) });
@@ -201,11 +264,64 @@ function parseTracker(
     endpoint,
     apiKey,
     assignee,
-    activeStates: trackerRaw.activeStates ?? defaults.activeStates,
-    terminalStates: trackerRaw.terminalStates ?? defaults.terminalStates,
-    dispatch: parseDispatch(defaults.dispatch, trackerRaw.dispatch ?? {}),
+    activeStates: trackerRecord.activeStates ?? defaults.activeStates,
+    terminalStates: trackerRecord.terminalStates ?? defaults.terminalStates,
+    dispatch: parseDispatch(defaults.dispatch, trackerRecord.dispatch ?? {}),
     options,
   };
+}
+
+function legacyTrackerRecord(
+  selectorRecord: TrackerRecordRaw,
+  selectedBundleName: string | undefined,
+  trackersRaw: TrackersRaw,
+): TrackerRecordRaw {
+  if (selectedBundleName !== undefined && Object.keys(trackersRaw).length > 0) {
+    throw new Error(`trackers.${selectedBundleName} is required by tracker.kind`);
+  }
+  return { ...selectorRecord, kind: selectedBundleName };
+}
+
+function trackerRecordForSelection(
+  selectorRecord: TrackerRecordRaw,
+  selectedBundleName: string,
+  trackersRaw: TrackersRaw,
+): TrackerRecordRaw {
+  const selectedBundleRaw = trackersRaw[selectedBundleName];
+  return selectedBundleRaw === undefined
+    ? legacyTrackerRecord(selectorRecord, selectedBundleName, trackersRaw)
+    : bundledTrackerRecord(selectorRecord, selectedBundleRaw, selectedBundleName);
+}
+
+function bundledTrackerRecord(
+  selectorRecord: TrackerRecordRaw,
+  selectedBundleRaw: Record<string, unknown>,
+  selectedBundleName: string,
+): TrackerRecordRaw {
+  const selectedBundle = parseTrackerRecord(selectedBundleRaw, `trackers.${selectedBundleName}`);
+  const provider = trackerKindValue(selectedBundle.provider);
+  if (provider === undefined) {
+    throw new Error(`trackers.${selectedBundleName}.provider is required`);
+  }
+  const { kind: _selectorKind, provider: _selectorProvider, ...selectorOptions } = selectorRecord;
+  const { kind: _bundleKind, provider: _bundleProvider, ...bundleOptions } = selectedBundle;
+  return { ...selectorOptions, ...bundleOptions, kind: provider };
+}
+
+function assertTrackerBundleNames(trackersRaw: TrackersRaw): void {
+  for (const name of Object.keys(trackersRaw)) {
+    if (!name.trim()) throw new Error("trackers names must not be blank");
+  }
+}
+
+function parseTrackerRecord(raw: Record<string, unknown>, label: string): TrackerRecordRaw {
+  const normalized = normalizeAliases(raw, TRACKER_COMMON_ALIASES);
+  if (isPlainRecord(normalized.dispatch)) {
+    normalized.dispatch = normalizeAliases(normalized.dispatch, TRACKER_DISPATCH_ALIASES);
+  }
+  const result = trackerRecordSchema.safeParse(normalized);
+  if (result.success) return result.data;
+  throw new Error(configErrorMessage(result.error, label));
 }
 
 function expandLocalPath(value: string, env: NodeJS.ProcessEnv): string {
@@ -214,6 +330,27 @@ function expandLocalPath(value: string, env: NodeJS.ProcessEnv): string {
   if (home && expanded === "~") return home;
   if (home && expanded.startsWith("~/")) return joinPath(home, expanded.slice(2));
   return expanded;
+}
+
+function parseSkillSources(
+  skills: string[] | undefined,
+  env: NodeJS.ProcessEnv,
+  configDir: string | undefined,
+): string[] {
+  const baseDir = configDir ?? process.cwd();
+  const seen = new Set<string>();
+  const resolved: string[] = [];
+  for (const source of skills ?? []) {
+    const expanded = expandLocalPath(source, env);
+    if (!nonEmptyString(expanded)) throw new Error("agent.skills must not contain blank paths");
+    const absolute = path.isAbsolute(expanded)
+      ? path.normalize(expanded)
+      : path.resolve(baseDir, expanded);
+    if (seen.has(absolute)) continue;
+    seen.add(absolute);
+    resolved.push(absolute);
+  }
+  return resolved;
 }
 
 function resolveWorkspaceRootExpression(
@@ -260,7 +397,11 @@ function parseHooks(defaults: HooksSettings, hooksRaw: HooksRaw): HooksSettings 
   };
 }
 
-function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentSettings {
+function parseAgentSettings(
+  defaults: AgentSettings,
+  agentRaw: AgentRaw,
+  skills: string[],
+): AgentSettings {
   const kind = agentRaw.kind ?? defaults.kind;
 
   return {
@@ -269,6 +410,7 @@ function parseAgentSettings(defaults: AgentSettings, agentRaw: AgentRaw): AgentS
     maxTurns: agentRaw.maxTurns ?? defaults.maxTurns,
     maxRetryBackoffMs: agentRaw.maxRetryBackoffMs ?? defaults.maxRetryBackoffMs,
     ensembleSize: agentRaw.ensembleSize ?? defaults.ensembleSize,
+    skills: agentRaw.skills ? skills : defaults.skills,
   };
 }
 
@@ -289,14 +431,20 @@ function legacyAgentRecordOverrides(
   return overrides;
 }
 
-/** Translate legacy backend-section keys (`command`, ...) into agent-record fields. */
+/**
+ * Translate legacy backend-section keys into an agent-record fragment: shared keys stay
+ * top-level, ACP keys (`command`, ...) become entries of the record's options bag.
+ */
 function agentRecordFragment(raw: Partial<CodexRaw & ClaudeRaw>): Partial<AgentConfig> {
-  return {
+  const options: Record<string, unknown> = {
     ...(raw.command !== undefined ? { bridgeCommand: raw.command } : {}),
-    ...(raw.turnTimeoutMs !== undefined ? { turnTimeoutMs: raw.turnTimeoutMs } : {}),
-    ...(raw.stallTimeoutMs !== undefined ? { stallTimeoutMs: raw.stallTimeoutMs } : {}),
     ...(raw.strictMcpConfig !== undefined ? { strictMcpConfig: raw.strictMcpConfig } : {}),
     ...(raw.providerConfig !== undefined ? { providerConfig: raw.providerConfig } : {}),
+  };
+  return {
+    ...(raw.turnTimeoutMs !== undefined ? { turnTimeoutMs: raw.turnTimeoutMs } : {}),
+    ...(raw.stallTimeoutMs !== undefined ? { stallTimeoutMs: raw.stallTimeoutMs } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   };
 }
 
@@ -308,23 +456,47 @@ function agentRecordFragment(raw: Partial<CodexRaw & ClaudeRaw>): Partial<AgentC
 function claudeRecordFragment(base: AgentConfig, raw: ClaudeRaw): Partial<AgentConfig> {
   const fragment = agentRecordFragment(raw);
   if (raw.model === undefined && raw.providerConfig === undefined) return fragment;
-  const baseModel = base.providerConfig?.model;
-  const model = raw.model ?? baseModel;
-  fragment.providerConfig = raw.providerConfig
+  const baseProviderConfig = isPlainRecord(base.options.providerConfig)
+    ? base.options.providerConfig
+    : undefined;
+  const model = raw.model ?? baseProviderConfig?.model;
+  const providerConfig = raw.providerConfig
     ? { ...(model !== undefined ? { model } : {}), ...raw.providerConfig }
-    : { ...base.providerConfig, ...(model !== undefined ? { model } : {}) };
+    : { ...baseProviderConfig, ...(model !== undefined ? { model } : {}) };
+  fragment.options = { ...fragment.options, providerConfig };
   return fragment;
+}
+
+/** Layer a sparse record fragment over a full record, merging the options bags per key. */
+function mergeAgentFragment(base: AgentConfig, fragment: Partial<AgentConfig>): AgentConfig {
+  return { ...base, ...fragment, options: { ...base.options, ...fragment.options } };
+}
+
+/** Like {@link mergeAgentFragment} for two sparse fragments; the second fragment wins. */
+function mergeAgentFragments(
+  first: Partial<AgentConfig>,
+  second: Partial<AgentConfig> | undefined,
+): Partial<AgentConfig> {
+  if (!second) return first;
+  const options = { ...first.options, ...second.options };
+  return {
+    ...first,
+    ...second,
+    ...(Object.keys(options).length > 0 ? { options } : {}),
+  };
 }
 
 function parseAgents(
   raw: AgentsRaw,
   legacyOverrides: Record<string, Partial<AgentConfig>>,
+  executors: AgentExecutorRegistry,
+  env: NodeJS.ProcessEnv,
 ): Record<string, AgentConfig> {
   const { timeoutDefaults, records } = parseAgentsRaw(raw);
   const base = defaultAgentRecords();
   for (const [kind, fragment] of Object.entries(legacyOverrides)) {
     const record = base[kind];
-    if (record) base[kind] = { ...record, ...fragment };
+    if (record) base[kind] = mergeAgentFragment(record, fragment);
   }
   // TODO: Remove legacy top-level codex/claude timeout fallbacks after configs use shared agents-level timeout defaults.
   const baseAgents = withAgentTimeoutDefaults(base, timeoutDefaults);
@@ -335,8 +507,7 @@ function parseAgents(
     if (!normalized) throw new Error("agents names must not be blank");
     const recordRaw = asRecord(value, `agents.${normalized}`);
     const parsed = parseAgentRecordSchema(recordRaw, `agents.${normalized}`);
-    const defaults = baseAgents[normalized] ?? customAgentDefaultsForBridge(parsed, claudeDefaults);
-    agents[normalized] = parseAgent(normalized, parsed, defaults);
+    agents[normalized] = parseAgent(normalized, parsed, baseAgents, claudeDefaults, executors, env);
   }
   return agents;
 }
@@ -381,16 +552,27 @@ function withAgentTimeoutDefaults(
   );
 }
 
+/**
+ * Default record backing a custom agent kind: the claude record minus its provider config,
+ * which only carries over when the configured bridge command is claude-compatible.
+ */
 function customAgentDefaultsForBridge(
-  raw: AgentRecordRaw,
+  aliasedOptions: Record<string, unknown>,
   claudeDefaults: AgentConfig,
 ): AgentConfig {
-  const bridgeCommand = raw.bridgeCommand ?? raw.command ?? claudeDefaults.bridgeCommand;
+  const configured = aliasedOptions.bridgeCommand;
+  const bridgeCommand =
+    typeof configured === "string" ? configured : String(claudeDefaults.options.bridgeCommand);
+  const isClaudeCompatible = /(^|\s|\/)claude-agent-acp(\s|$)/.test(bridgeCommand);
+  // No usageAccounting default: custom kinds infer it from their effective bridge command.
+  const { usageAccounting: _usageAccounting, ...claudeOptions } = claudeDefaults.options;
   return {
     ...claudeDefaults,
-    providerConfig: isClaudeCompatibleBridgeCommand(bridgeCommand)
-      ? claudeDefaults.providerConfig
-      : undefined,
+    options: isClaudeCompatible
+      ? claudeOptions
+      : Object.fromEntries(
+          Object.entries(claudeOptions).filter(([key]) => key !== "providerConfig"),
+        ),
   };
 }
 
@@ -400,32 +582,62 @@ function parseAgentRecordSchema(raw: Record<string, unknown>, label: string) {
   throw new Error(configErrorMessage(result.error, label));
 }
 
-function parseAgent(kind: AgentKind, raw: AgentRecordRaw, defaults: AgentConfig): AgentConfig {
-  const bridgeCommand = raw.bridgeCommand ?? raw.command ?? defaults.bridgeCommand;
+/** Keys of an agents.<kind> record owned by the core; everything else belongs to the executor. */
+const AGENT_COMMON_KEYS = new Set(["executor", "turnTimeoutMs", "stallTimeoutMs"]);
+
+function parseAgent(
+  kind: AgentKind,
+  raw: AgentRecordRaw,
+  baseAgents: Record<string, AgentConfig>,
+  claudeDefaults: AgentConfig,
+  executors: AgentExecutorRegistry,
+  env: NodeJS.ProcessEnv,
+): AgentConfig {
+  const executor = raw.executor ?? baseAgents[kind]?.executor ?? claudeDefaults.executor;
+  // Unregistered executors parse generically (options pass through unvalidated) and are
+  // rejected with the full list of known executors by validateDispatchConfig.
+  const provider = executors.get(executor);
+
+  const aliased = agentOptionsRaw(raw, provider, `agents.${kind}`);
+  const defaults = baseAgents[kind] ?? customAgentDefaultsForBridge(aliased, claudeDefaults);
+  // Option bags belong to one executor: a record selecting a different executor than its
+  // defaults (including the ACP-flavored custom-kind fallback) starts from an empty bag.
+  // Shared timeouts still inherit below.
+  const inheritedOptions = executor === defaults.executor ? defaults.options : {};
+  const merged = { ...inheritedOptions, ...aliased };
+  const options = parseAgentOptions(provider, merged, env, `agents.${kind}`);
+
   return {
-    executor: raw.executor ?? defaults.executor,
-    bridgeCommand,
-    usageAccounting: raw.usageAccounting ?? inferUsageAccounting(kind, bridgeCommand),
-    providerConfig: raw.providerConfig ?? defaults.providerConfig,
+    executor,
     turnTimeoutMs: raw.turnTimeoutMs ?? defaults.turnTimeoutMs,
     stallTimeoutMs: raw.stallTimeoutMs ?? defaults.stallTimeoutMs,
-    strictMcpConfig: raw.strictMcpConfig ?? defaults.strictMcpConfig ?? true,
+    options,
   };
 }
 
-function inferUsageAccounting(kind: AgentKind, bridgeCommand: string): AgentUsageAccounting {
-  if (kind === "codex" || kind === "claude") return "per-turn";
-  if (/(^|\s|\/)(codex-acp|claude-agent-acp)(\s|$)/.test(bridgeCommand)) return "per-turn";
-  return "cumulative";
-}
-
-function isClaudeCompatibleBridgeCommand(bridgeCommand: string): boolean {
-  return /(^|\s|\/)claude-agent-acp(\s|$)/.test(bridgeCommand);
+/** Run the executor provider's option parser, labelling errors with the record's config path. */
+function parseAgentOptions(
+  provider: AgentExecutorProvider | undefined,
+  options: Record<string, unknown>,
+  env: NodeJS.ProcessEnv,
+  label: string,
+): Record<string, unknown> {
+  if (!provider?.parseOptions) return options;
+  try {
+    return provider.parseOptions(options, {
+      env,
+      resolveSecret: (value, fallbackEnvVar) => resolveConfiguredSecret(value, env, fallbackEnvVar),
+    });
+  } catch (error) {
+    throw new Error(`${label}: ${errorMessage(error)}`, { cause: error });
+  }
 }
 
 function parseStatusOverrides(
   raw: StatusOverridesRaw,
   baseAgents: Record<string, AgentConfig>,
+  executors: AgentExecutorRegistry,
+  env: NodeJS.ProcessEnv,
 ): Map<string, PartialRuntimeSettings> {
   const overrides = new Map<string, PartialRuntimeSettings>();
 
@@ -435,7 +647,7 @@ function parseStatusOverrides(
 
     const next: PartialRuntimeSettings = {};
     if (value.agent !== undefined) next.agent = parsePartialAgent(value.agent);
-    const agents = parseStatusOverrideAgents(normalizedState, value, baseAgents);
+    const agents = parseStatusOverrideAgents(normalizedState, value, baseAgents, executors, env);
     if (Object.keys(agents).length > 0) next.agents = agents;
     overrides.set(normalizedState, next);
   }
@@ -461,40 +673,145 @@ function parseStatusOverrideAgents(
   state: string,
   value: StatusOverridesRaw[string],
   baseAgents: Record<string, AgentConfig>,
+  executors: AgentExecutorRegistry,
+  env: NodeJS.ProcessEnv,
 ): Record<string, Partial<AgentConfig>> {
   const agents: Record<string, Partial<AgentConfig>> = {};
   for (const [kind, recordRaw] of Object.entries(value.agents ?? {})) {
     const normalizedKind = kind.trim();
     if (!normalizedKind) throw new Error("status_overrides agents names must not be blank");
+    const label = `status_overrides.${state}.agents.${normalizedKind}`;
     const result = agentRecordOverrideSchema.safeParse(recordRaw);
-    if (!result.success) {
-      throw new Error(
-        configErrorMessage(result.error, `status_overrides.${state}.agents.${normalizedKind}`),
-      );
-    }
-    agents[normalizedKind] = agentRecordOverrideFragment(result.data);
+    if (!result.success) throw new Error(configErrorMessage(result.error, label));
+    agents[normalizedKind] = agentRecordOverrideFragment(
+      result.data,
+      label,
+      baseAgents[normalizedKind],
+      executors,
+      env,
+    );
   }
   if (value.codex !== undefined) {
-    agents.codex = { ...agentRecordFragment(value.codex), ...agents.codex };
+    agents.codex = mergeAgentFragments(agentRecordFragment(value.codex), agents.codex);
   }
   if (value.claude !== undefined) {
     const fragment = agentRecordFragment(value.claude);
     // A model override re-pins the provider config unless the override supplies its own.
     const base = baseAgents.claude;
     if (value.claude.model !== undefined && value.claude.providerConfig === undefined && base) {
-      fragment.providerConfig = { ...base.providerConfig, model: value.claude.model };
+      const baseProviderConfig = isPlainRecord(base.options.providerConfig)
+        ? base.options.providerConfig
+        : undefined;
+      fragment.options = {
+        ...fragment.options,
+        providerConfig: { ...baseProviderConfig, model: value.claude.model },
+      };
     }
-    agents.claude = { ...fragment, ...agents.claude };
+    agents.claude = mergeAgentFragments(fragment, agents.claude);
   }
   return agents;
 }
 
-function agentRecordOverrideFragment(raw: AgentRecordOverrideRaw): Partial<AgentConfig> {
+/**
+ * Build a sparse fragment from an explicit per-state agent record: shared keys stay
+ * top-level, the remaining keys are aliased by the base record's executor provider and kept
+ * as a sparse options overlay. The overlay is the diff of the provider-parsed merge against
+ * the base options, so coercions and derived keys land normalized while base defaults never
+ * leak into the fragment.
+ */
+function agentRecordOverrideFragment(
+  raw: AgentRecordOverrideRaw,
+  label: string,
+  base: AgentConfig | undefined,
+  executors: AgentExecutorRegistry,
+  env: NodeJS.ProcessEnv,
+): Partial<AgentConfig> {
+  // Per-state overrides cannot switch executors; reject the key explicitly.
+  if ("executor" in raw) {
+    throw new Error(`${label} contains unsupported keys: executor`);
+  }
+  const provider = executors.get(base?.executor);
+  const aliased = agentOptionsRaw(raw, provider, label);
+  const options =
+    base && Object.keys(aliased).length > 0
+      ? sparseOptionsOverlay(
+          parseAgentOptions(provider, { ...base.options, ...aliased }, env, label),
+          base.options,
+        )
+      : aliased;
   return {
-    ...agentRecordFragment(raw),
-    ...(raw.bridgeCommand !== undefined ? { bridgeCommand: raw.bridgeCommand } : {}),
-    ...(raw.usageAccounting !== undefined ? { usageAccounting: raw.usageAccounting } : {}),
+    ...(raw.turnTimeoutMs !== undefined ? { turnTimeoutMs: raw.turnTimeoutMs } : {}),
+    ...(raw.stallTimeoutMs !== undefined ? { stallTimeoutMs: raw.stallTimeoutMs } : {}),
+    ...(Object.keys(options).length > 0 ? { options } : {}),
   };
+}
+
+function agentOptionsRaw(
+  raw: Record<string, unknown>,
+  provider: AgentExecutorProvider | undefined,
+  _label: string,
+): Record<string, unknown> {
+  const flat = Object.fromEntries(
+    Object.entries(raw).filter(([key]) => !AGENT_COMMON_KEYS.has(key)),
+  );
+  const aliases = { ...(provider?.configAliases ?? {}) };
+  return normalizeLegacyAgentCommand(normalizeAliases(flat, aliases));
+}
+
+/** Fold the legacy `command` spelling into `bridgeCommand`; an explicit canonical key wins. */
+function normalizeLegacyAgentCommand(options: Record<string, unknown>): Record<string, unknown> {
+  if (!("command" in options)) return options;
+  const { command, ...rest } = options;
+  return { bridgeCommand: rest.bridgeCommand ?? command, ...rest };
+}
+
+/** Keys of a parsed options bag whose values differ from the base record's options. */
+function sparseOptionsOverlay(
+  parsed: Record<string, unknown>,
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  const overlay: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!sameOptionValue(value, base[key])) overlay[key] = value;
+  }
+  return overlay;
+}
+
+function sameOptionValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function parseToolOptions(
+  tools: ToolsRaw | undefined,
+  env: NodeJS.ProcessEnv,
+): Record<string, Record<string, unknown>> | undefined {
+  if (tools === undefined) return undefined;
+  if (Object.keys(tools).length === 0) return undefined;
+  return resolveToolOptionReferences(tools, env);
+}
+
+/**
+ * Copy per-pack tool options, resolving whole-value `$VAR` and `op://` references in
+ * top-level string values at parse time - like shared tracker credentials - so the
+ * effective values are what execution uses and what the MCP server identity hashes.
+ */
+function resolveToolOptionReferences(
+  toolOptions: Record<string, Record<string, unknown>>,
+  env: NodeJS.ProcessEnv,
+): Record<string, Record<string, unknown>> {
+  const resolved: Record<string, Record<string, unknown>> = {};
+  for (const [pack, options] of Object.entries(toolOptions)) {
+    resolved[pack] = Object.fromEntries(
+      Object.entries(structuredClone(options)).flatMap(([key, value]) => {
+        if (typeof value !== "string") return [[key, value]];
+        const secret = resolveConfiguredSecret(value, env);
+        return secret === undefined ? [] : [[key, secret]];
+      }),
+    );
+  }
+  return resolved;
 }
 
 function cloneSettings(settings: Settings): Settings {
@@ -502,11 +819,14 @@ function cloneSettings(settings: Settings): Settings {
     ...settings,
     tracker: cloneTracker(settings.tracker),
     polling: { ...settings.polling },
-    workspace: { ...settings.workspace },
     worker: { ...settings.worker, sshHosts: [...settings.worker.sshHosts] },
+    workspace: { ...settings.workspace },
     hooks: { ...settings.hooks },
-    agent: { ...settings.agent },
+    agent: { ...settings.agent, skills: [...settings.agent.skills] },
     agents: cloneAgentRecords(settings.agents),
+    ...(settings.toolOptions !== undefined && {
+      toolOptions: structuredClone(settings.toolOptions),
+    }),
     observability: { ...settings.observability },
     server: { ...settings.server },
     logging: { ...settings.logging },
@@ -531,10 +851,7 @@ function cloneTracker(tracker: TrackerSettings): TrackerSettings {
 function cloneAgentRecords(records: Record<string, AgentConfig>): Record<string, AgentConfig> {
   const cloned: Record<string, AgentConfig> = {};
   for (const [name, record] of Object.entries(records)) {
-    cloned[name] = {
-      ...record,
-      providerConfig: record.providerConfig ? structuredClone(record.providerConfig) : undefined,
-    };
+    cloned[name] = { ...record, options: structuredClone(record.options) };
   }
   return cloned;
 }

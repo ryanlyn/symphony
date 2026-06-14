@@ -132,8 +132,9 @@ export function formatDashboard(
     `${b("│ Runtime: ", ansi)}${s("35", formatMinutesSeconds(runtimeSeconds), ansi)}`,
     `${b("│ Tokens: ", ansi)}${s("33", `in ${formatInteger(snapshot.usageTotals.inputTokens)}`, ansi)}${s("90", " | ", ansi)}${s("33", `out ${formatInteger(snapshot.usageTotals.outputTokens)}`, ansi)}${s("90", " | ", ansi)}${s("33", `total ${formatInteger(snapshot.usageTotals.totalTokens)}`, ansi)}`,
     `${b("│ Rate Limits: ", ansi)}${formatTerminalRateLimits(snapshot.rateLimits, ansi)}`,
-    `${b("│ Project: ", ansi)}${styledCell("36", options.projectUrl ?? "https://linear.app/project/project/issues", ansi)}`,
   ];
+  if (options.projectUrl)
+    lines.push(`${b("│ Project: ", ansi)}${styledCell("36", options.projectUrl, ansi)}`);
   if (options.dashboardUrl)
     lines.push(
       `${b("│ Dashboard: ", ansi)}${s("36", normalizeDashboardUrl(terminalCell(options.dashboardUrl)), ansi)}`,
@@ -186,7 +187,7 @@ function formatRunningRow(
   const stage = runningStage(run);
   const ageTurn = `${formatMinutesSeconds(secondsBetween(now, run.startedAt))} / ${run.turnCount}`;
   const event = terminalEvent(run);
-  const session = shortSession(terminalCell(run.sessionId ?? run.resumeId ?? "n/a"));
+  const session = shortSession(terminalCell(run.sessionId ?? "n/a"));
   const color = rowColor(run.lastEvent);
   const ageWidth = ansi ? 12 : 13;
   const tokenWidth = ansi ? 10 : 9;

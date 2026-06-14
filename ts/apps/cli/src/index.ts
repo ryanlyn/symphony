@@ -1,4 +1,5 @@
 export { main, parseCliArgs, projectUrlForSettings } from "./main.js";
+export { parseDoctorArgs, renderDoctorReport, runDoctorCommand, runDoctorMain } from "./doctor.js";
 export { createTrackerClient, runAgentAttempt, runtimeAdapters } from "./daemon.js";
 export {
   defaultSettings,
@@ -30,11 +31,6 @@ export {
 } from "@symphony/workspace";
 export { shellEscape, runSsh } from "@symphony/ssh";
 export {
-  createResumeStateStore,
-  readResumeState,
-  resumeStateMatches,
-} from "@symphony/resume-state";
-export {
   executeTool,
   issueMcpToken,
   revokeMcpToken,
@@ -54,12 +50,7 @@ export type {
   SymphonyRuntimeOptions,
 } from "@symphony/runtime";
 export { statePayload, issuePayload, runsPayload } from "@symphony/presenter";
-export {
-  retryBackoffMs,
-  actionForStopReason,
-  mergeMonotonicUsage,
-  resumeIdentityMatches,
-} from "@symphony/policies";
+export { retryBackoffMs, actionForStopReason, mergeMonotonicUsage } from "@symphony/policies";
 export {
   slotKey,
   routeNames,

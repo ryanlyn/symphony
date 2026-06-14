@@ -14,12 +14,42 @@ export interface AgentExecutorProvider {
   /** Executor selector matched against `agents.<kind>.executor`. */
   readonly executor: string;
   /**
+   * snake_case → camelCase alias map for this executor's keys in an `agents.<kind>` config
+   * record (e.g. `{ bridge_command: "bridgeCommand" }`). Applied before {@link parseOptions}.
+   */
+  readonly configAliases?: Readonly<Record<string, string>> | undefined;
+  /**
+   * Validate and normalize the executor-specific keys of an `agents.<kind>` config record
+   * (aliases already applied). Called at config-parse time; throw with a message naming the
+   * offending option on invalid input. The returned record becomes the record's
+   * `AgentConfig.options`.
+   */
+  parseOptions?(
+    options: Record<string, unknown>,
+    context: {
+      env: NodeJS.ProcessEnv;
+      /**
+       * Config-layer secret resolution (`$VAR` and `op://` references, with an optional
+       * env-var fallback) for executor option values. Present when invoked by the config
+       * parser.
+       */
+      resolveSecret?: (value: string | undefined, fallbackEnvVar?: string) => string | undefined;
+    },
+  ): Record<string, unknown>;
+  /**
    * Throw when an agent record selecting this executor is not runnable (missing command,
    * invalid combination, ...). Called once at startup by `validateDispatchConfig`.
    */
   validateAgent?(kind: AgentKind, config: AgentConfig, settings: Settings): void;
   /** Build the executor that drives sessions for the given agent kind. */
   createExecutor(kind: AgentKind, settings: Settings): AgentExecutor | Promise<AgentExecutor>;
+  /**
+   * Workspace-relative directory this executor's agent reads skills from (e.g. `.codex/skills`
+   * for Codex, `.claude/skills` for Claude). The composition root overlays the resolved
+   * `agent.skills` (plus mounted tool packs' bundled skills) into this directory before launch.
+   * Defaults to `.codex/skills` when a provider does not implement it.
+   */
+  skillsDir?(kind: AgentKind, config: AgentConfig): string;
 }
 
 /** Lookup table of {@link AgentExecutorProvider}s keyed by their `executor` selector. */
