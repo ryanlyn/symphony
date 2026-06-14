@@ -107,6 +107,9 @@
       "path": "./extensions/docker-worker"
     },
     {
+      "path": "./extensions/e2b-worker"
+    },
+    {
       "path": "./extensions/jira-tracker"
     },
     {

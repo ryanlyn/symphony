@@ -41,6 +41,9 @@
       "path": "../../packages/domain"
     },
     {
+      "path": "../../extensions/e2b-worker"
+    },
+    {
       "path": "../../packages/humanize"
     },
     {

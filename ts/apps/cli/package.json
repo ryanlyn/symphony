@@ -29,6 +29,7 @@
     "@symphony/dispatch-coordinator": "workspace:*",
     "@symphony/docker-worker": "workspace:*",
     "@symphony/domain": "workspace:*",
+    "@symphony/e2b-worker": "workspace:*",
     "@symphony/humanize": "workspace:*",
     "@symphony/issue": "workspace:*",
     "@symphony/jira-tracker": "workspace:*",
