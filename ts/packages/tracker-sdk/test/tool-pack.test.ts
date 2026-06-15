@@ -137,13 +137,16 @@ test("tracker_read_issue, tracker_update_status, and tracker_create_issue return
     issue: issue({ state: "In Progress", stateType: "started" }),
   });
 
-  const created = await execute(pack, settings, "tracker_create_issue", { title: "New" });
+  const created = await execute(pack, settings, "tracker_create_issue", {
+    title: "New",
+    assignee: "owner-1",
+  });
   assert.deepEqual(created.result, { issue: issue({ title: "New" }) });
 
   assert.deepEqual(calls, [
     ["read", "STUB-1"],
     ["update", "STUB-1", "In Progress"],
-    ["create", { title: "New" }],
+    ["create", { title: "New", assignee: "owner-1" }],
   ]);
 });
 

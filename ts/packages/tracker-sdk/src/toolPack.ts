@@ -104,7 +104,8 @@ function trackerToolSpecs(): ToolSpec[] {
     },
     {
       name: "tracker_create_issue",
-      description: "Create an issue in the configured tracker. Args: title, body?, status?.",
+      description:
+        "Create an issue in the configured tracker. Args: title, body?, status?, assignee?.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -112,6 +113,7 @@ function trackerToolSpecs(): ToolSpec[] {
           title: { type: "string" },
           body: { type: "string" },
           status: { type: "string" },
+          assignee: { type: "string" },
         },
         required: ["title"],
       },
@@ -156,6 +158,7 @@ async function executeTrackerTool(
           title: requireStr(args, "title"),
           body: optStr(args.body),
           status: optStr(args.status),
+          assignee: optStr(args.assignee),
         };
         if (!ops?.createIssue) return unavailableFailure(settings);
         return toolSuccess({ issue: await ops.createIssue(create) });
