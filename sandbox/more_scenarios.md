@@ -10,7 +10,7 @@
 
 ### Failure 11: S-1171 (NEW)
 **Invariant Violated:** WHEN a non-unstarted issue has blockers added during execution, THE SYSTEM SHALL NOT abort the running worker (blockers only gate unstarted issues)  
-**Code Location:** `ts/packages/runtime/src/index.ts` — `reconcileTrackedIssues` (line ~570) calling `issueHasOpenBlockers` from `ts/packages/dispatch/src/index.ts` (line ~26)  
+**Code Location:** `packages/runtime/src/index.ts` — `reconcileTrackedIssues` (line ~570) calling `issueHasOpenBlockers` from `packages/dispatch/src/index.ts` (line ~26)  
 **Explanation:** The `reconcileTrackedIssues` method checks `!issueHasOpenBlockers(issue, settings)` to decide whether to keep a running worker alive. Due to the known `||` bug in `issueHasOpenBlockers` (`issue.stateType === "unstarted" || issue.state.trim().toLowerCase() === "todo"`), a running issue with `state="Todo"` and `stateType="started"` is incorrectly identified as blocked — causing the **already-running worker to be aborted**. This is a higher-severity manifestation of the dispatch-blocking bug (Failure 10/S-184): it doesn't just prevent dispatch, it **terminates active work**.  
 **Reproduction:**
 ```ts

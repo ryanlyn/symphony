@@ -5,7 +5,6 @@ tracker:
   active_states:
     - Todo
     - In Progress
-    - Agent Review
     - Merging
     - Rework
   terminal_states:
@@ -22,13 +21,15 @@ polling:
   interval_ms: 5000
 workspace:
   root: ~/dev/lorenz-workspaces
+worker:
+  ssh_timeout_ms: 60000
 hooks:
   after_create: |
     set -euo pipefail
     git clone --depth 1 https://github.com/ryanlyn/symphony .
     if command -v mise >/dev/null 2>&1; then
       mise trust
-      cd ts && mise trust && mise exec -- pnpm install --frozen-lockfile
+      mise exec -- pnpm install --frozen-lockfile
     fi
 agent:
   kind: codex
@@ -38,25 +39,22 @@ agents:
   turn_timeout_ms: 3600000
   stall_timeout_ms: 300000
   codex:
-    bridge_command: 'env CODEX_PATH="$(command -v codex)" codex-acp'
+    bridge_command: codex-acp
     provider_config:
       shell_environment_policy:
         inherit: all
-      model_reasoning_effort: xhigh
-      service_tier: flex
-      model: gpt-5.5
-  claude:
-    executor: acp
-    bridge_command: 'env CLAUDE_CODE_EXECUTABLE="$(command -v claude)" claude-agent-acp'
-    provider_config:
-      model: claude-opus-4-8[1m]
-      effortLevel: xhigh
-      permissions:
-        defaultMode: bypassPermissions
-    strict_mcp_config: true
+      model_reasoning_effort: high
+      model: gpt-5.4
+claude:
+  command: claude
+  strict_mcp_config: true
+  provider_config:
+    model: claude-opus-4-6
+    permissions:
+      defaultMode: dontAsk
 ---
 
-You are working on a Linear ticket `{{ issue.identifier }}`
+You are working on a tracker issue `{{ issue.identifier }}`
 
 {% if attempt %}
 Continuation context:
@@ -90,9 +88,9 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Prerequisite: Linear MCP or `linear_graphql` tool is available
+## Prerequisite: tracker tools are available
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+The agent should be able to talk to the configured tracker through `tracker_*` MCP tools. Linear-backed runs may also expose the legacy `linear_graphql` tool. If no tracker tools are present, stop and ask the user to configure the tracker MCP endpoint.
 
 ## Default posture
 
@@ -100,8 +98,8 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
-- Keep ticket metadata current (state, checklist, acceptance criteria, links).
-- Treat a single persistent Linear comment as the source of truth for progress.
+- Keep issue metadata current (state, checklist, acceptance criteria, links).
+- Treat a single persistent tracker comment as the source of truth for progress.
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
 - When meaningful out-of-scope improvements are discovered during execution,
@@ -118,7 +116,8 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 
 ## Related skills
 
-- `lorenz-linear`: interact with Linear.
+- Tracker MCP tools: use `tracker_*` tools for issue reads, comments, and status changes.
+- `lorenz-linear`: interact with Linear-specific fields when this workflow is Linear-backed.
 - `lorenz-commit`: produce clean, logical commits during implementation.
 - `simplify`: review changed code for reuse, quality, and efficiency before committing.
 - `lorenz-push`: keep remote branch current and publish updates.
@@ -129,11 +128,10 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 
 - `Backlog` -> out of scope for this workflow; do not modify.
 - `Todo` -> queued; immediately transition to `In Progress` before active work.
-  - Special case: if a PR is already attached and the issue is `Todo`, `In Progress`, or `Rework`, treat it as the feedback/rework (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Agent Review`).
+  - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
-- `Agent Review` -> autonomous mergeability review with a bias toward merging; escalate only for blockers or explicit decisions/risk.
-- `Human Review` -> exception-only path for ambiguous blockers, risk acceptance, or external blockers that cannot be resolved autonomously.
-- `Merging` -> approved; execute the `lorenz-land` skill flow (do not call `gh pr merge` directly).
+- `Human Review` -> PR is attached and validated; waiting on human approval.
+- `Merging` -> approved by human; execute the `lorenz-land` skill flow (do not call `gh pr merge` directly).
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
 
@@ -146,7 +144,6 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
      - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `In Progress` -> continue execution flow from current scratchpad comment.
-   - `Agent Review` -> run the autonomous review protocol.
    - `Human Review` -> wait and poll for decision/review updates.
    - `Merging` -> on entry, open and follow `.codex/skills/lorenz-land/SKILL.md`; do not call `gh pr merge` directly.
    - `Rework` -> run rework flow.
@@ -193,7 +190,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 
 ## PR feedback sweep protocol (required)
 
-When a ticket has an attached PR, run this protocol before moving to `Agent Review`:
+When a ticket has an attached PR, run this protocol before moving to `Human Review`:
 
 1. Identify the PR number from issue links/attachments.
 2. Gather feedback from all channels:
@@ -219,7 +216,7 @@ Use this only when completion is blocked by missing required tools or missing au
   - exact human action needed to unblock.
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
 
-## Step 2: Execution phase (Todo -> In Progress -> Agent Review)
+## Step 2: Execution phase (Todo -> In Progress -> Human Review)
 
 1.  Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff `pull` sync result is already recorded in the workpad before implementation continues.
 2.  If current issue state is `Todo`, move it to `In Progress`; otherwise leave the current state unchanged.
@@ -248,73 +245,40 @@ Use this only when completion is blocked by missing required tools or missing au
 7.  Before every `git commit`, run the `simplify` skill to review changed code for reuse, quality, and efficiency. Then invoke the `lorenz-commit` skill to commit and the `lorenz-push` skill to push.
 8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
     - Ensure the GitHub PR has label `lorenz` (add it if missing).
-9.  Update the workpad comment with final checklist status and validation notes.
+9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
+10. Update the workpad comment with final checklist status and validation notes.
     - Mark completed plan/acceptance/validation checklist items as checked.
     - Add final handoff notes (commit + validation summary) in the same workpad comment.
     - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
-10. Before moving to `Agent Review`, poll PR feedback and checks:
+11. Before moving to `Human Review`, poll PR feedback and checks:
     - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
     - Run the full PR feedback sweep protocol.
     - Confirm PR checks are passing (green) after the latest changes.
     - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-11. Only then move issue to `Agent Review`.
+12. Only then move issue to `Human Review`.
     - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
-12. For `Todo` tickets that already had a PR attached at kickoff:
+13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
-    - Then move to `Agent Review`.
+    - Then move to `Human Review`.
 
-## Step 3: Agent Review
-
-1. When the issue is in `Agent Review`, do not do new feature work. Review mergeability with a bias toward merging.
-2. Evaluate the change holistically across:
-   - correctness and ticket fit,
-   - whether it solves the right problem,
-   - sufficiency and validity of proof,
-   - unnecessary complexity or over-engineering,
-   - conflicting patterns or divergence from established repo conventions,
-   - uniformity and consistency with surrounding code/workflows,
-   - observability gaps, debugging blind spots, or poor failure surfacing,
-   - missing rollback/failure handling where the change clearly needs it,
-   - missing docs/tests/validation when they are necessary to trust the change.
-3. Use this severity rubric:
-   - `P0` -> catastrophic merge blocker, such as destructive behavior, data loss, credential/security exposure, or obviously repo-breaking behavior.
-   - `P1` -> serious merge blocker. Insufficient, invalid, or missing proof is always a `P1`. Other `P1`s include solving the wrong problem, high-confidence regressions, serious pattern conflicts or needless complexity that materially reduce trust, significant observability gaps, missing required validation, failing checks, or unresolved required feedback.
-   - `P2` -> anything that should not block merging.
-   - `P3` -> optional polish bucket if useful, but not required for the workflow to function.
-4. `Agent Review` does not own merge-queue readiness tasks such as rebasing onto latest `origin/main`, resolving merge conflicts, or completing the final land. `Merging` owns those tasks.
-5. If there are no unresolved `P0` or `P1` findings, required checks remain green on the reviewed head, and no hard-risk trigger is present, move the issue to `Merging`.
-6. If a blocker is actionable and can be fixed autonomously, move the issue to `Rework`.
-   - Add a concise blocker summary to the workpad that includes severity, root concern, and what must be different on the next attempt.
-7. If a blocker is non-actionable, ambiguous, or requires product/risk judgment, move the issue to `Human Review`.
-   - Add a concise escalation brief to the workpad that includes the blocker, why it cannot be resolved autonomously, and the exact decision or risk acceptance needed.
-8. Meaningful `P2` or `P3` findings should not block merge. When they merit future action, create a separate Backlog issue rather than expanding current scope.
-   - Include a clear title, description, and acceptance criteria, assign it to the current owner and the same project, link the current issue as `related`, and use `blockedBy` when the follow-up truly depends on the current issue.
-   - Apply appropriate labels for the finding and issue context, but do not block on taxonomy.
-9. Record in the workpad which non-blocking findings were converted into Backlog issues versus intentionally left as comments only.
-10. Take an adversarial approach when reviewing but all else being equal, bias toward merging
-
-## Step 4: Human Review
+## Step 3: Human Review and merge handling
 
 1. When the issue is in `Human Review`, do not code or change ticket content.
-2. `Human Review` is exception-only. It should be used for ambiguous blockers, explicit risk acceptance, or external blockers that cannot be resolved autonomously.
-3. Poll for updates as needed, including GitHub PR review comments from humans and bots.
-4. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-5. If approved, human moves the issue to `Merging`.
+2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
+3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
+4. If approved, human moves the issue to `Merging`.
+5. When the issue is in `Merging`, open and follow `.codex/skills/lorenz-land/SKILL.md`, then run the `lorenz-land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
+6. After merge is complete, move the issue to `Done`.
 
-## Step 5: Merging
-
-1. When the issue is in `Merging`, open and follow `.codex/skills/lorenz-land/SKILL.md`, then run the `lorenz-land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-2. After merge is complete, move the issue to `Done`.
-
-## Step 6: Rework handling
+## Step 4: Rework handling
 
 1. Treat `Rework` as a full approach reset, not incremental patching.
-2. Re-read the full issue body and all review feedback; explicitly identify what will be done differently this attempt.
+2. Re-read the full issue body and all human comments; explicitly identify what will be done differently this attempt.
 3. Close the existing PR tied to the issue.
 4. Remove the existing `## Codex Workpad` comment from the issue.
 5. Create a fresh branch from `origin/main`.
@@ -323,7 +287,7 @@ Use this only when completion is blocked by missing required tools or missing au
    - Create a new bootstrap `## Codex Workpad` comment.
    - Build a fresh plan/checklist and execute end-to-end.
 
-## Completion bar before Agent Review
+## Completion bar before Human Review
 
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
@@ -347,8 +311,7 @@ Use this only when completion is blocked by missing required tools or missing au
   title/description/acceptance criteria, current-owner and same-project assignment,
   a `related` link to the current issue, and `blockedBy` when the follow-up depends
   on the current issue.
-- Do not move to `Agent Review` unless the `Completion bar before Agent Review` is satisfied.
-- In `Agent Review`, do not do new feature work or attempt to merge yourself; review only.
+- Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
 - In `Human Review`, do not make changes; wait and poll.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
@@ -377,7 +340,7 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 - [ ] Criterion 1
 - [ ] Criterion 2
 
-### Validation and Proof of Work
+### Validation
 
 - [ ] targeted tests: `<command>`
 
@@ -388,8 +351,4 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 ### Confusions
 
 - <only include when something was confusing during execution>
-
-### Agent Reviews
-
-- <agent review notes with timestamps>
 ````

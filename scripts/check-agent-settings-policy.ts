@@ -15,7 +15,7 @@ export type AgentSettingsPolicyViolation = {
 };
 
 const scriptPath = fileURLToPath(import.meta.url);
-const repoRoot = path.resolve(path.dirname(scriptPath), "..", "..");
+const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 
 const settingsPathPatterns = [
   /^\.claude\/settings(?:\.local)?\.json$/,
