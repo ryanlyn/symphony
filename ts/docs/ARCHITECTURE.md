@@ -18,14 +18,14 @@ extensions/{linear,local,memory,jira,slack}-tracker  extensions (tracker provide
 extensions/{docker,fly,e2b,modal}-worker             their tool packs, and worker
 packages/static-worker                               drivers)
 ─────────────────────────────────────────────────────────────────────────
-@symphony/config, workflow, runtime,          engine (backend-agnostic)
+@lorenz/config, workflow, runtime,          engine (backend-agnostic)
 orchestrator, dispatch, agent-runner, acp,
 mcp, worker-pool, server, tui, …
 ─────────────────────────────────────────────────────────────────────────
-@symphony/tracker-sdk, tool-sdk, agent-sdk,   extension SDKs (contracts + registries)
+@lorenz/tracker-sdk, tool-sdk, agent-sdk,   extension SDKs (contracts + registries)
 worker-sdk
 ─────────────────────────────────────────────────────────────────────────
-@symphony/domain, issue, policies, …          pure types, constants, leaf logic
+@lorenz/domain, issue, policies, …          pure types, constants, leaf logic
 ```
 
 - **domain** holds pure types and leaf functions shared by everything. It carries no
@@ -55,7 +55,7 @@ worker-sdk
 
 ## The tracker extension point
 
-`TrackerProvider` (in `@symphony/tracker-sdk`) is the single contract between the core and
+`TrackerProvider` (in `@lorenz/tracker-sdk`) is the single contract between the core and
 a tracker backend:
 
 | Hook | Called by | Purpose |
@@ -84,7 +84,7 @@ the workspace README for user-facing YAML examples.
 ## The tool extension point
 
 Agent-facing MCP tools are a separate axis from dispatch. `ToolProvider` (in
-`@symphony/tool-sdk`) is a named pack of tools: `toolSpecs(settings)` advertises them and
+`@lorenz/tool-sdk`) is a named pack of tools: `toolSpecs(settings)` advertises them and
 `executeTool` runs one. Packs are registered in a `ToolRegistry` and mounted from the active
 tracker plus explicit workflow requests:
 
@@ -105,7 +105,7 @@ A mounted pack can carry its own settings via the top-level `tools:` map, keyed 
 name and validated by the pack's optional `validateOptions` hook. Explicit cross-mounts
 are allowed when the workflow asks for them.
 
-The `tracker` pack (`createTrackerToolProvider` in `@symphony/tracker-sdk`) implements the
+The `tracker` pack (`createTrackerToolProvider` in `@lorenz/tracker-sdk`) implements the
 five provider-neutral `tracker_*` tools purely against `TrackerToolOps`, so any tracker
 whose provider implements `createToolOps` gets read/query/status/comment/create tools
 without writing a pack. Provider-specific packs (`linear`, `local`, `slack`) live in their
@@ -113,9 +113,9 @@ tracker packages and carry the tools only that backend can offer.
 
 ### Adding a tracker backend
 
-1. Create `extensions/<name>-tracker` depending on `@symphony/domain` and
-   `@symphony/tracker-sdk` (plus `@symphony/issue` for `normalizeIssue`, and
-   `@symphony/tool-sdk` if it ships a tool pack).
+1. Create `extensions/<name>-tracker` depending on `@lorenz/domain` and
+   `@lorenz/tracker-sdk` (plus `@lorenz/issue` for `normalizeIssue`, and
+   `@lorenz/tool-sdk` if it ships a tool pack).
 2. Implement a `RuntimeTrackerClient` and export a `TrackerProvider` that wires config
    parsing, validation, the client, and `createToolOps` for the neutral tools.
 3. Export a `register<Name>Tracker(registries?)` function that registers the provider (and
@@ -141,11 +141,11 @@ Agents extend along two independent axes:
   records - they do not exist on `Settings` at runtime, and per-state overrides use
   `PartialRuntimeSettings.agents`.
 - **Executors** are how an agent record actually runs. `AgentExecutorProvider` (in
-  `@symphony/agent-sdk`) is the contract: an `executor` selector (matched against
+  `@lorenz/agent-sdk`) is the contract: an `executor` selector (matched against
   `agents.<kind>.executor`), `configAliases` and `parseOptions` for the executor's slice of
   an `agents.<kind>` config record, `validateAgent` for startup validation of records that
   select it, and `createExecutor` producing the `AgentExecutor` the agent-runner drives.
-  The built-in `"acp"` executor lives in `@symphony/acp`; the CLI registers it at startup.
+  The built-in `"acp"` executor lives in `@lorenz/acp`; the CLI registers it at startup.
   `validateDispatchConfig` rejects records whose executor selector is unregistered, listing
   the known selectors.
 
@@ -160,14 +160,14 @@ read `options` keys directly. Records selecting an unregistered executor parse l
 
 ## The worker driver extension point
 
-The warm worker pool (`@symphony/worker-pool`, an engine package) leases
+The warm worker pool (`@lorenz/worker-pool`, an engine package) leases
 SSH-addressable machines per run. The machines themselves come from a **worker driver**:
 the backend adapter that provisions, probes, destroys, and lists workers for one
 infrastructure (a cloud API, a container runtime, a fixed host list). "Driver" is
 deliberate - "provider" is reserved for tracker/executor providers and reads as a
 model/agent provider.
 
-`WorkerDriver` and `WorkerDriverFactory` (in `@symphony/worker-sdk`) are the contract:
+`WorkerDriver` and `WorkerDriverFactory` (in `@lorenz/worker-sdk`) are the contract:
 
 | Hook | Called by | Purpose |
 | --- | --- | --- |
@@ -181,20 +181,20 @@ model/agent provider.
 
 Drivers never see the pool's lifecycle state and never import engine packages: SSH
 access arrives through `DriverDeps.runSsh` (injected by the pool, which owns the real
-`@symphony/ssh` dependency), and options arrive verbatim from the selected
+`@lorenz/ssh` dependency), and options arrive verbatim from the selected
 top-level `workers.<name>` profile, excluding its `driver`. The pool owns leasing, reaping, spend caps, the
 write-ahead ledger, and crash recovery; every driver gets them for free.
 
-The `fake` driver ships inside `@symphony/worker-sdk` as the reference implementation and
+The `fake` driver ships inside `@lorenz/worker-sdk` as the reference implementation and
 the test double the engine suites lease against. The conformance kit
-(`@symphony/worker-sdk/conformance`, `runDriverConformanceSuite`) pins the contract every
+(`@lorenz/worker-sdk/conformance`, `runDriverConformanceSuite`) pins the contract every
 driver must satisfy: provision idempotency, destroy tolerance, list-as-truth,
 pool-owned label round-trip, and probe gating.
 
 ### Adding a worker driver
 
-1. Create `extensions/<name>-worker` depending on `@symphony/worker-sdk` (plus
-   `@symphony/domain` if it needs domain types).
+1. Create `extensions/<name>-worker` depending on `@lorenz/worker-sdk` (plus
+   `@lorenz/domain` if it needs domain types).
 2. Implement `WorkerDriver` and export a `WorkerDriverFactory` whose `create` validates
    the selected `workers.<name>` options and throws an actionable error when they are unusable.
 3. Export a `register<Name>WorkerDriver(registries?)` function that registers the factory
@@ -202,7 +202,7 @@ pool-owned label round-trip, and probe gating.
    needing an injected transport the binary does not ship (e.g. a cloud SDK client)
    registers a fail-loud factory by default and accepts the transport as a second
    argument for configured deployments.
-4. Run `runDriverConformanceSuite` from `@symphony/worker-sdk/conformance` in the
+4. Run `runDriverConformanceSuite` from `@lorenz/worker-sdk/conformance` in the
    extension's test suite.
 5. Add the package to the workspace plumbing (`pnpm install`, `pnpm tsconfig:refs --write`).
 
@@ -212,7 +212,7 @@ A driver can also ship **out of tree**, without forking the repo:
 `#exportName` suffix) that the daemon dynamic-imports at startup - and on a
 reload that changes the specifier - and registers into the worker-driver registry.
 The module exports `defineWorkerDriver({ kind, sdkVersion, create })` from
-`@symphony/worker-sdk`; the loader shape-checks it and rejects an `sdkVersion`
+`@lorenz/worker-sdk`; the loader shape-checks it and rejects an `sdkVersion`
 other than `WORKER_DRIVER_SDK_VERSION` before it can reach the pool. Trust: a
 dynamic import runs arbitrary code in the daemon process - the same trust
 boundary as workspace hooks, which already execute arbitrary shell from the

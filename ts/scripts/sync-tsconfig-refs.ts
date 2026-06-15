@@ -47,7 +47,7 @@ const projects = await readWorkspaceProjects();
 const packageDirsByName = new Map<string, string>();
 
 for (const project of projects) {
-  if (project.packageJson.name?.startsWith("@symphony/")) {
+  if (project.packageJson.name?.startsWith("@lorenz/")) {
     packageDirsByName.set(project.packageJson.name, project.dir);
   }
 }
@@ -123,7 +123,7 @@ function referencePathsFor(project: WorkspaceProject): string[] {
 
   for (const section of dependencySections) {
     for (const dependencyName of Object.keys(project.packageJson[section] ?? {})) {
-      if (!dependencyName.startsWith("@symphony/")) continue;
+      if (!dependencyName.startsWith("@lorenz/")) continue;
 
       const dependencyDir = packageDirsByName.get(dependencyName);
       if (!dependencyDir) {

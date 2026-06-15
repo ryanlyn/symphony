@@ -15,11 +15,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseConfig, Executor } from "@symphony/cli";
-import type { AgentUpdate, Settings } from "@symphony/cli";
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
-import { TraceEmitter } from "@symphony/traceviz-emitter";
+import { parseConfig, Executor } from "@lorenz/cli";
+import type { AgentUpdate, Settings } from "@lorenz/cli";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { TraceEmitter } from "@lorenz/traceviz-emitter";
 
 // Agent records parse their ACP option vocabulary through the process-default registry.
 if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {

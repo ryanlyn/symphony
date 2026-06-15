@@ -1,6 +1,6 @@
 import { beforeAll, test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import { assert } from "@symphony/test-utils";
+import { parseConfig } from "@lorenz/config";
+import { assert } from "@lorenz/test-utils";
 
 import { registerBuiltinBackends } from "../src/daemon.js";
 import { assertSlotsPerMachineGate } from "../src/main.js";
@@ -14,7 +14,7 @@ import {
   defaultWorkerDriverRegistry,
   FakeWorkerDriver,
   registerFakeWorkerDriver,
-} from "@symphony/cli";
+} from "@lorenz/cli";
 
 // buildWorkerPool resolves `worker.worker_pool.driver` through the process-default
 // worker-driver registry, so populate it the same way the CLI entrypoints do.

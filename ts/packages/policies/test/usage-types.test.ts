@@ -1,8 +1,8 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { mergeMonotonicUsage } from "@symphony/policies/usage";
-import type { UsageMergeInput } from "@symphony/policies/usage";
+import { mergeMonotonicUsage } from "@lorenz/policies/usage";
+import type { UsageMergeInput } from "@lorenz/policies/usage";
 
 const totals = (inputTokens = 0, outputTokens = 0, totalTokens = 0, secondsRunning = 0) => ({
   inputTokens,

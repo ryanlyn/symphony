@@ -60,7 +60,7 @@ const execFileAsync = promisify(execFile);
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(scriptPath), "..");
 const packageSearchRoots = ["apps", "packages", "extensions", "vendor"];
-const releaseEntrypoint = "bin/symphony-ts";
+const releaseEntrypoint = "bin/lorenz";
 const dashboardDist = "apps/symphony-dashboard/dist";
 const nativeDependencyNames = new Set(["better-sqlite3"]);
 
@@ -93,18 +93,16 @@ const vendoredRuntimeDependencyTargets = new Map(
   vendoredRuntimeDependencies.map((dependency) => [dependency.packageName, dependency.targetDir]),
 );
 
-export async function stageRelease(
-  options: StageReleaseOptions = {},
-): Promise<StagedRelease> {
+export async function stageRelease(options: StageReleaseOptions = {}): Promise<StagedRelease> {
   const workspaceRoot = path.resolve(options.workspaceRoot ?? defaultWorkspaceRoot);
   const allPackages = await readWorkspacePackages(workspaceRoot);
-  const cliPackage = allPackages.get("@symphony/cli");
+  const cliPackage = allPackages.get("@lorenz/cli");
   if (!cliPackage) {
-    throw new Error("Cannot stage CLI release: @symphony/cli package was not found.");
+    throw new Error("Cannot stage CLI release: @lorenz/cli package was not found.");
   }
 
   const version = options.version ?? cliPackage.packageJson.version ?? "0.0.0";
-  const releaseName = options.releaseName ?? `symphony-ts-v${version}`;
+  const releaseName = options.releaseName ?? `lorenz-v${version}`;
   const outputRoot = path.resolve(
     options.outputRoot ?? path.join(workspaceRoot, "dist", "release"),
   );
@@ -230,9 +228,9 @@ async function assertRequiredBuildOutputs(
       missing.push(path.posix.join(workspacePackage.relativeDir, "dist"));
     }
 
-    if (workspacePackage.name === "@symphony/cli") {
+    if (workspacePackage.name === "@lorenz/cli") {
       await requireFile(path.join(workspacePackage.absoluteDir, "dist", "bin", "cli.js"), missing);
-      await requireFile(path.join(workspacePackage.absoluteDir, "bin", "symphony-ts.js"), missing);
+      await requireFile(path.join(workspacePackage.absoluteDir, "bin", "lorenz.js"), missing);
     }
 
     if (workspacePackage.name === "@agentclientprotocol/claude-agent-acp") {
@@ -286,12 +284,12 @@ async function stageWorkspacePackage(
     path.join(targetDir, "dist"),
   );
 
-  if (workspacePackage.name === "@symphony/cli") {
+  if (workspacePackage.name === "@lorenz/cli") {
     await copyDirectory(
       path.join(workspacePackage.absoluteDir, "bin"),
       path.join(targetDir, "bin"),
     );
-    await makeExecutable(path.join(targetDir, "bin", "symphony-ts.js"));
+    await makeExecutable(path.join(targetDir, "bin", "lorenz.js"));
   }
 
   await writeJson(
@@ -459,19 +457,28 @@ async function writeRootPackageJson(
   );
 
   await writeJson(path.join(releaseDir, "package.json"), {
-    name: "symphony-ts-release",
+    name: "lorenz",
     version,
-    private: true,
+    description: "Lorenz is a control plane for dispatching and structuring order across dynamic agent systems.",
+    license: "Apache-2.0",
+    repository: {
+      type: "git",
+      url: "git+https://github.com/ryanlyn/symphony.git",
+    },
+    homepage: "https://github.com/ryanlyn/symphony#readme",
     type: "module",
     bin: {
-      "symphony-ts": `./${releaseEntrypoint}`,
+      lorenz: `./${releaseEntrypoint}`,
     },
     scripts: {
-      start: "node ./node_modules/@symphony/cli/dist/bin/cli.js",
+      start: "node ./node_modules/@lorenz/cli/dist/bin/cli.js",
     },
     dependencies,
     engines: {
       node: ">=24",
+    },
+    publishConfig: {
+      access: "public",
     },
   });
 }
@@ -483,15 +490,15 @@ async function writeEntrypoint(releaseDir: string): Promise<void> {
     entrypointPath,
     `#!/usr/bin/env node
 
-// Resolve @symphony/cli through Node's module resolution rather than a fixed relative path so the
+// Resolve @lorenz/cli through Node's module resolution rather than a fixed relative path so the
 // launcher works in both install layouts: the release directory used as the install root, and the
 // release hoisted under a parent node_modules (npx, npm install <tarball>, global install).
 try {
-  const cliUrl = new URL("./bin/cli.js", import.meta.resolve("@symphony/cli"));
+  const cliUrl = new URL("./bin/cli.js", import.meta.resolve("@lorenz/cli"));
   await import(cliUrl.href);
 } catch (error) {
   if (error && typeof error === "object" && "code" in error && error.code === "ERR_MODULE_NOT_FOUND") {
-    console.error("symphony-ts could not resolve @symphony/cli. Install the release dependencies with npm install --omit=dev.");
+    console.error("lorenz could not resolve @lorenz/cli. Install the release dependencies with npm install --omit=dev.");
     process.exitCode = 1;
   } else {
     throw error;

@@ -1,12 +1,12 @@
-import type { WorkerDriver } from "@symphony/worker-sdk";
-import type { WorkerDriverKind, WorkerPoolSettings } from "@symphony/domain";
+import type { WorkerDriver } from "@lorenz/worker-sdk";
+import type { WorkerDriverKind, WorkerPoolSettings } from "@lorenz/domain";
 
 /**
  * Pool-side types for the embedded warm worker pool. Every implementation file
  * imports from this module so concrete files (pool, lease, reaper, ledger) never
  * form import cycles. The DRIVER contract (WorkerDriver, WorkerDescriptor,
  * ProvisionRequest, WorkerHealth, TeardownReason, POOL_OWNED_LABEL, the registry)
- * lives in `@symphony/worker-sdk`; this module owns only the engine vocabulary the
+ * lives in `@lorenz/worker-sdk`; this module owns only the engine vocabulary the
  * pool itself adds on top: leases, inventory records, the ledger row shape, and
  * the pool surface.
  */

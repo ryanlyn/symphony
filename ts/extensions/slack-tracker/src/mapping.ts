@@ -1,5 +1,5 @@
-import type { Settings } from "@symphony/domain";
-import { defaultStateType } from "@symphony/issue";
+import type { Settings } from "@lorenz/domain";
+import { defaultStateType } from "@lorenz/issue";
 
 import { slackTrackerOptions } from "./options.js";
 

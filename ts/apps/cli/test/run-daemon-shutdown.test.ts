@@ -1,8 +1,8 @@
 import path from "node:path";
 
-import { parseConfig } from "@symphony/config";
+import { parseConfig } from "@lorenz/config";
 import { afterEach, beforeEach, test, vi } from "vitest";
-import { assert, tempDir } from "@symphony/test-utils";
+import { assert, tempDir } from "@lorenz/test-utils";
 
 import type * as daemonModule from "../src/daemon.js";
 
@@ -57,16 +57,16 @@ function promiseLatch(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve };
 }
 
-vi.mock("@symphony/workflow", () => ({
+vi.mock("@lorenz/workflow", () => ({
   loadWorkflow: mocks.loadWorkflow,
 }));
 
-vi.mock("@symphony/log-file", () => ({
+vi.mock("@lorenz/log-file", () => ({
   configureLogFile: mocks.configureLogFile,
   appendLogEvent: vi.fn(),
 }));
 
-vi.mock("@symphony/server", () => ({
+vi.mock("@lorenz/server", () => ({
   startObservabilityServer: mocks.startObservabilityServer,
   IssueStore: class {
     upsert() {}
@@ -79,11 +79,11 @@ vi.mock("ink", () => ({
   render: mocks.render,
 }));
 
-vi.mock("@symphony/runtime", () => ({
+vi.mock("@lorenz/runtime", () => ({
   SymphonyRuntime: FakeRuntime,
 }));
 
-vi.mock("@symphony/traceviz-emitter", () => ({
+vi.mock("@lorenz/traceviz-emitter", () => ({
   TraceEmitter: class {
     public readonly emit = vi.fn();
   },

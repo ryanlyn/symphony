@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/worker-sdk",
+  "name": "@lorenz/worker-sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "./conformance": "./dist/conformance.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*"
+    "@lorenz/domain": "workspace:*"
   },
   "devDependencies": {
     "vitest": "catalog:"

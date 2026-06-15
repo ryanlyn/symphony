@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { ENSEMBLE_SIZE_MAX, type Issue } from "@symphony/domain";
-import { assert, issueWith as baseIssue } from "@symphony/test-utils";
+import { ENSEMBLE_SIZE_MAX, type Issue } from "@lorenz/domain";
+import { assert, issueWith as baseIssue } from "@lorenz/test-utils";
 
-import { ensembleSize, normalizeIssue } from "@symphony/issue";
+import { ensembleSize, normalizeIssue } from "@lorenz/issue";
 
 // ---------------------------------------------------------------------------
 // Helpers

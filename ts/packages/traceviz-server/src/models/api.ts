@@ -31,7 +31,7 @@ export interface TicketTraceResponse {
 
 /**
  * Messages a trace client may send over the dashboard `/ws` connection.
- * Shared by the ws handler in @symphony/server and the dashboard client so
+ * Shared by the ws handler in @lorenz/server and the dashboard client so
  * the two sides cannot drift.
  */
 export type WsClientMessage =

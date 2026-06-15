@@ -1,4 +1,4 @@
-import { startReverseTunnel, waitForRemoteTcpPort } from "@symphony/ssh";
+import { startReverseTunnel, waitForRemoteTcpPort } from "@lorenz/ssh";
 
 export interface RemoteMcpTunnelLease {
   leaseId: string;

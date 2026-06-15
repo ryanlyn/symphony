@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/worker-pool",
+  "name": "@lorenz/worker-pool",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,11 +9,11 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/worker-sdk": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/ssh": "workspace:*"
+    "@lorenz/worker-sdk": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/ssh": "workspace:*"
   },
   "devDependencies": {
-    "@symphony/test-utils": "workspace:*"
+    "@lorenz/test-utils": "workspace:*"
   }
 }

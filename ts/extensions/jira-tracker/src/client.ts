@@ -6,8 +6,8 @@ import {
   type IssueStateType,
   type RuntimeTrackerClient,
   type Settings,
-} from "@symphony/domain";
-import { defaultStateType, normalizeIssue } from "@symphony/issue";
+} from "@lorenz/domain";
+import { defaultStateType, normalizeIssue } from "@lorenz/issue";
 
 import { jiraTrackerOptions, type JiraMcpToolMap } from "./options.js";
 

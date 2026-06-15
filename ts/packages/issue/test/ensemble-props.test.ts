@@ -1,9 +1,9 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { ensembleSize, isTerminalState } from "@symphony/cli";
-import { ENSEMBLE_SIZE_MAX } from "@symphony/domain";
-import type { Issue } from "@symphony/domain";
-import { assert, issueWith as baseIssue } from "@symphony/test-utils";
+import { ensembleSize, isTerminalState } from "@lorenz/cli";
+import { ENSEMBLE_SIZE_MAX } from "@lorenz/domain";
+import type { Issue } from "@lorenz/domain";
+import { assert, issueWith as baseIssue } from "@lorenz/test-utils";
 
 function issueWith(labels: string[]): Issue {
   return baseIssue({ title: "Test", priority: null, labels });

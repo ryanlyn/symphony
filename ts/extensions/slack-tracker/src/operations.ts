@@ -1,4 +1,4 @@
-import type { Settings } from "@symphony/domain";
+import type { Settings } from "@lorenz/domain";
 
 import { emojiForState, isBotMention, statusEmojiMap } from "./mapping.js";
 import { slackTrackerOptions } from "./options.js";

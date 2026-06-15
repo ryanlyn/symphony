@@ -1,8 +1,8 @@
 import { test } from "vitest";
-import { toolSpecs, trackerMcpServerName } from "@symphony/mcp";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+import { toolSpecs, trackerMcpServerName } from "@lorenz/mcp";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
 import { parseSlackConfig } from "./helpers.js";
 
@@ -10,7 +10,7 @@ import {
   InMemorySlackTransport,
   registerSlackTracker,
   slackToolOpsWith,
-} from "@symphony/slack-tracker";
+} from "@lorenz/slack-tracker";
 
 function settings() {
   return parseSlackConfig(

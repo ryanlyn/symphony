@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, test, vi } from "vitest";
-import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
+import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 
 import {
   main,
@@ -10,7 +10,7 @@ import {
   renderDoctorReport,
   runDoctorCommand,
   runDoctorMain,
-} from "@symphony/cli";
+} from "@lorenz/cli";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -39,7 +39,7 @@ test("doctor command parses workflow path and local options", () => {
 test("doctor command reports help and invalid arguments", () => {
   const help = parseDoctorArgs(["--help"]);
   assert.equal(help.status, "help");
-  assert.match(help.message, /Usage: symphony-ts doctor \[options\] \[workflowPath\]/);
+  assert.match(help.message, /Usage: lorenz doctor \[options\] \[workflowPath\]/);
   assert.match(help.message, /--no-dashboard/);
   assert.deepEqual(parseDoctorArgs(["one.md", "two.md"]), {
     status: "error",
@@ -120,7 +120,7 @@ test("doctor checks status override bridge commands for the active agent", async
 });
 
 test("doctor checks node bridge target files", async () => {
-  const root = await tempDir("symphony-ts-doctor-node-bridge");
+  const root = await tempDir("lorenz-doctor-node-bridge");
   const missingTarget = path.join(root, "missing-bridge.js");
   const fixture = await doctorFixture({
     withDashboard: true,
@@ -179,7 +179,7 @@ test("doctor warns when remote worker bridge commands are not checked", async ()
 });
 
 test("doctor verifies the underlying agent CLI is discoverable on PATH", async () => {
-  const binDir = path.join(await tempDir("symphony-ts-doctor-cli-found"), "bin");
+  const binDir = path.join(await tempDir("lorenz-doctor-cli-found"), "bin");
   await writeExecutable(path.join(binDir, "codex"), "#!/usr/bin/env bash\nexit 0\n");
   const fixture = await doctorFixture({ withDashboard: true, bridgeCommand: "codex-acp" });
 
@@ -193,7 +193,7 @@ test("doctor verifies the underlying agent CLI is discoverable on PATH", async (
 });
 
 test("doctor warns when the underlying agent CLI is missing", async () => {
-  const emptyBin = path.join(await tempDir("symphony-ts-doctor-cli-missing"), "bin");
+  const emptyBin = path.join(await tempDir("lorenz-doctor-cli-missing"), "bin");
   await fs.mkdir(emptyBin, { recursive: true });
   const fixture = await doctorFixture({ withDashboard: true, bridgeCommand: "claude-agent-acp" });
 
@@ -211,7 +211,7 @@ test("doctor warns when the underlying agent CLI is missing", async () => {
 });
 
 test("doctor honors CODEX_PATH when locating the codex CLI", async () => {
-  const root = await tempDir("symphony-ts-doctor-codex-path");
+  const root = await tempDir("lorenz-doctor-codex-path");
   const emptyBin = path.join(root, "empty-bin");
   await fs.mkdir(emptyBin, { recursive: true });
   const codexBinary = path.join(root, "tools", "codex-real");
@@ -228,7 +228,7 @@ test("doctor honors CODEX_PATH when locating the codex CLI", async () => {
 });
 
 test("doctor does not treat directories as executable bridge commands", async () => {
-  const root = await tempDir("symphony-ts-doctor-directory-bridge");
+  const root = await tempDir("lorenz-doctor-directory-bridge");
   const bridgeDirectory = path.join(root, "bridge-dir");
   await fs.mkdir(bridgeDirectory);
   const fixture = await doctorFixture({
@@ -268,7 +268,7 @@ test("doctor checks dashboard assets whenever the CLI dashboard would start", as
 });
 
 test("doctor warns when the log path crosses a non-directory ancestor", async () => {
-  const root = await tempDir("symphony-ts-doctor-log-path");
+  const root = await tempDir("lorenz-doctor-log-path");
   const fileAncestor = path.join(root, "not-a-directory");
   await fs.writeFile(fileAncestor, "not a directory\n");
   const fixture = await doctorFixture({
@@ -308,7 +308,7 @@ async function doctorFixture(options: {
   workerSshHosts?: string[];
   withDashboard: boolean;
 }): Promise<{ workflowPath: string }> {
-  const root = await tempDir("symphony-ts-doctor");
+  const root = await tempDir("lorenz-doctor");
   const workflowPath = path.join(root, "WORKFLOW.md");
   const boardDir = path.join(root, "board");
   const logFile = path.join(root, "log", "symphony.log");

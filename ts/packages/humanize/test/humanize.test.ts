@@ -1,11 +1,11 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import {
   humanizeAgentMessage,
   humanizeCodexMessage,
   humanizeClaudeMessage,
-} from "@symphony/humanize";
+} from "@lorenz/humanize";
 
 // --- humanizeAgentMessage ---
 

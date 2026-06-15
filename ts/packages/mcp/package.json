@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/mcp",
+  "name": "@lorenz/mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,19 +11,19 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "catalog:",
     "@hono/node-server": "catalog:",
-    "@symphony/domain": "workspace:*",
-    "@symphony/tool-sdk": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/tool-sdk": "workspace:*",
     "hono": "catalog:",
     "ts-pattern": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@symphony/config": "workspace:*",
-    "@symphony/jira-tracker": "workspace:*",
-    "@symphony/linear-tracker": "workspace:*",
-    "@symphony/local-tracker": "workspace:*",
-    "@symphony/memory-tracker": "workspace:*",
-    "@symphony/test-utils": "workspace:*",
-    "@symphony/tracker-sdk": "workspace:*"
+    "@lorenz/config": "workspace:*",
+    "@lorenz/jira-tracker": "workspace:*",
+    "@lorenz/linear-tracker": "workspace:*",
+    "@lorenz/local-tracker": "workspace:*",
+    "@lorenz/memory-tracker": "workspace:*",
+    "@lorenz/test-utils": "workspace:*",
+    "@lorenz/tracker-sdk": "workspace:*"
   }
 }

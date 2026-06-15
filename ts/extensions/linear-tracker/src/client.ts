@@ -1,6 +1,6 @@
 import { LinearGraphQLClient } from "@linear/sdk";
 export { LinearGraphQLClient } from "@linear/sdk";
-import { normalizeIssue } from "@symphony/issue";
+import { normalizeIssue } from "@lorenz/issue";
 import {
   errorMessage,
   isRecord,
@@ -8,7 +8,7 @@ import {
   type Issue,
   type IssueStateType,
   type Settings,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 import { linearEndpoint, linearTrackerOptions } from "./options.js";
 

@@ -22,24 +22,24 @@
 // Tests import the compiled package barrels (the suite runs against tsc --build).
 
 import { test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
+import { parseConfig } from "@lorenz/config";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
 import type {
   AcquireResult,
   WorkerLease,
   WorkerPool,
   WorkerPoolSnapshot,
   Settings,
-} from "@symphony/cli";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { assert } from "@lorenz/test-utils";
 
 import {
   createDispatchCoordinator,
   createPerRunEndpointManager,
 } from "../packages/dispatch-coordinator/dist/index.js";
 
-// The REAL coordinator + per-run endpoint manager. `@symphony/dispatch-coordinator`
+// The REAL coordinator + per-run endpoint manager. `@lorenz/dispatch-coordinator`
 // is a transitive dep (not declared at the workspace root), so it is imported via
 // its compiled barrel by relative path - the same tsc --build output the cli
 // re-export resolves to - to drive the genuine settings-threading code path.

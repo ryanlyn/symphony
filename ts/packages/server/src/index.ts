@@ -12,12 +12,12 @@ import {
   isRecord,
   normalizeHttpBindHost,
   type Settings,
-} from "@symphony/domain";
-import { createMcpAuthScope, mcpAuthScopeForSettings, mountMcp } from "@symphony/mcp";
-import type { ToolRegistry } from "@symphony/tool-sdk";
-import { issuePayload, runsPayload, statePayload, type PresenterParams } from "@symphony/presenter";
-import type { RuntimeSnapshot } from "@symphony/runtime-events";
-import type { TraceWatcher } from "@symphony/traceviz-server";
+} from "@lorenz/domain";
+import { createMcpAuthScope, mcpAuthScopeForSettings, mountMcp } from "@lorenz/mcp";
+import type { ToolRegistry } from "@lorenz/tool-sdk";
+import { issuePayload, runsPayload, statePayload, type PresenterParams } from "@lorenz/presenter";
+import type { RuntimeSnapshot } from "@lorenz/runtime-events";
+import type { TraceWatcher } from "@lorenz/traceviz-server";
 
 import { createTraceRoutes } from "./trace-routes.js";
 import { createWsHandler } from "./ws.js";
@@ -26,7 +26,7 @@ import { decodePathParam, invalidPathParameterError } from "./path-params.js";
 import type { RuntimeServerSource } from "./source.js";
 
 export { defaultIssueStorePath, IssueStore };
-export { startMcpServer } from "@symphony/mcp";
+export { startMcpServer } from "@lorenz/mcp";
 export type { IssueRecord } from "./issue-store.js";
 export type { RuntimeServerSource } from "./source.js";
 

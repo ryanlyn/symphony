@@ -5,9 +5,9 @@ import {
   settingsForIssueState,
   parseConfig,
   normalizeStateName,
-} from "@symphony/cli";
-import { MAX_TURNS_MAX } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { MAX_TURNS_MAX } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 // --- Helper arbitraries ---
 

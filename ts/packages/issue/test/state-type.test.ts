@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { defaultStateType } from "@symphony/issue";
+import { defaultStateType } from "@lorenz/issue";
 
 test("defaultStateType maps common workflow state names to categories", () => {
   assert.equal(defaultStateType("Todo"), "unstarted");

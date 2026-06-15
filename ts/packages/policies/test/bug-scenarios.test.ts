@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { retryBackoffMs } from "@symphony/policies";
+import { retryBackoffMs } from "@lorenz/policies";
 
 describe("Bug 2: No minimum delay floor — cap=0 produces zero delay", () => {
   test("retryBackoffMs(1, 0, 'failure') should be 0 (cap=0 forces zero)", () => {

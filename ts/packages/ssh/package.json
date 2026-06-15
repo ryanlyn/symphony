@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/ssh",
+  "name": "@lorenz/ssh",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,6 +13,6 @@
   },
   "dependencies": {
     "execa": "catalog:",
-    "@symphony/domain": "workspace:*"
+    "@lorenz/domain": "workspace:*"
   }
 }

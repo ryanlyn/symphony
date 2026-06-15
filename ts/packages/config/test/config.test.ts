@@ -10,19 +10,19 @@ import {
   settingsForIssueState,
   validateDispatchConfig as validateDispatchConfigWith,
   workflowFilePath,
-} from "@symphony/cli";
-import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
-import type { Settings } from "@symphony/domain";
-import { jiraTrackerOptions, registerJiraTrackers } from "@symphony/jira-tracker";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { registerMemoryTracker } from "@symphony/memory-tracker";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert, tempDir } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@lorenz/agent-sdk";
+import type { Settings } from "@lorenz/domain";
+import { jiraTrackerOptions, registerJiraTrackers } from "@lorenz/jira-tracker";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { registerMemoryTracker } from "@lorenz/memory-tracker";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert, tempDir } from "@lorenz/test-utils";
 
-import type { DefaultSettingsOptions } from "@symphony/config";
+import type { DefaultSettingsOptions } from "@lorenz/config";
 
 // Private registries keep these tests hermetic: the process-wide default registries belong
 // to the composition root and stay untouched here.
@@ -1156,7 +1156,7 @@ test("copied workflow examples load independently in the TypeScript port", async
 });
 
 test("workflow path defaults match SYMPHONY_WORKFLOW then cwd WORKFLOW.md", async () => {
-  const root = await tempDir("symphony-ts-workflow-env");
+  const root = await tempDir("lorenz-workflow-env");
   const workflowPath = path.join(root, "CUSTOM_WORKFLOW.md");
   await fs.writeFile(workflowPath, "plain prompt");
 

@@ -5,8 +5,8 @@ import {
   normalizeRouteName,
   defaultSettings,
   settingsForIssueState,
-} from "@symphony/cli";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { assert } from "@lorenz/test-utils";
 
 // --- normalizeStateName ---
 

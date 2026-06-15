@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { AgentUpdate } from "@symphony/domain";
+import type { AgentUpdate } from "@lorenz/domain";
 
 import { TraceEmitter } from "../src/index.js";
 

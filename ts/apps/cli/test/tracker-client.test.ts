@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { LocalTrackerClient } from "@symphony/local-tracker";
-import { SlackTrackerClient, slackTrackerOptions } from "@symphony/slack-tracker";
+import { LocalTrackerClient } from "@lorenz/local-tracker";
+import { SlackTrackerClient, slackTrackerOptions } from "@lorenz/slack-tracker";
 import { beforeAll, test } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { registerBuiltinBackends } from "../src/daemon.js";
 
@@ -16,7 +16,7 @@ import {
   memoryIssuesFromEnv,
   MemoryTrackerClient,
   parseConfig,
-} from "@symphony/cli";
+} from "@lorenz/cli";
 
 // createTrackerClient resolves the configured kind through the process-default tracker
 // registry, so populate it the same way the CLI entrypoints do.

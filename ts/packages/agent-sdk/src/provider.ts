@@ -1,4 +1,4 @@
-import type { AgentConfig, AgentExecutor, AgentKind, Settings } from "@symphony/domain";
+import type { AgentConfig, AgentExecutor, AgentKind, Settings } from "@lorenz/domain";
 
 /**
  * Everything Symphony needs to know about one way of running agents, bundled as a single

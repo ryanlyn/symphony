@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { normalizeIssue, ensembleSize, isTerminalState } from "@symphony/cli";
-import { ENSEMBLE_SIZE_MAX, type Issue } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { normalizeIssue, ensembleSize, isTerminalState } from "@lorenz/cli";
+import { ENSEMBLE_SIZE_MAX, type Issue } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 // --- normalizeIssue ---
 

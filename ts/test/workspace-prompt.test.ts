@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { AgentExecutorRegistry } from "@lorenz/agent-sdk";
 import {
   buildPrompt,
   continuationPrompt,
@@ -16,9 +16,9 @@ import {
   safeIdentifier,
   shellEscape,
   validateWorkspaceCwd,
-} from "@symphony/cli";
-import type { Settings } from "@symphony/cli";
-import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { Settings } from "@lorenz/cli";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@lorenz/test-utils";
 
 // Private executor registry standing in for the CLI composition root: attempts resolve
 // the ACP executor through an explicit adapter instead of the process-default registry,
@@ -77,7 +77,7 @@ test("continuation prompt matches the runner guidance", () => {
 });
 
 test("workspace path is safe, per-slot, and runs after_create in the slot directory", async () => {
-  const root = await tempDir("symphony-ts-workspace");
+  const root = await tempDir("lorenz-workspace");
   const settings = parseConfig({
     workspace: { root },
     hooks: { after_create: "pwd > created.cwd && echo created > marker.txt" },
@@ -98,13 +98,13 @@ test("workspace identifiers preserve safe identifier semantics", async () => {
   assert.equal(safeIdentifier(""), "");
   assert.equal(safeIdentifier(null), "");
 
-  const root = await tempDir("symphony-ts-workspace-empty-identifier");
+  const root = await tempDir("lorenz-workspace-empty-identifier");
   const settings = parseConfig({ workspace: { root } });
   await assert.rejects(() => createWorkspaceForIssue(settings, ""), /empty identifier/);
 });
 
 test("workspace cwd validation rejects control characters", async () => {
-  const root = await tempDir("symphony-ts-workspace-control-chars");
+  const root = await tempDir("lorenz-workspace-control-chars");
   const workspace = path.join(root, "MT-1");
   await fs.mkdir(workspace, { recursive: true });
   const settings = parseConfig({ workspace: { root } });
@@ -120,8 +120,8 @@ test("workspace cwd validation rejects control characters", async () => {
 });
 
 test("workspace creation rejects symlink roots and final symlink directories", async () => {
-  const root = await tempDir("symphony-ts-workspace-symlink-root");
-  const outside = await tempDir("symphony-ts-workspace-symlink-outside");
+  const root = await tempDir("lorenz-workspace-symlink-root");
+  const outside = await tempDir("lorenz-workspace-symlink-outside");
   const symlinkRoot = path.join(root, "workspace-link");
   await fs.symlink(outside, symlinkRoot);
   await assert.rejects(
@@ -129,8 +129,8 @@ test("workspace creation rejects symlink roots and final symlink directories", a
     /unsafe symlink/,
   );
 
-  const finalRoot = await tempDir("symphony-ts-workspace-final-symlink");
-  const finalOutside = await tempDir("symphony-ts-workspace-final-outside");
+  const finalRoot = await tempDir("lorenz-workspace-final-symlink");
+  const finalOutside = await tempDir("lorenz-workspace-final-outside");
   await fs.symlink(finalOutside, path.join(finalRoot, "MT-SYMFINAL"));
   await assert.rejects(
     () => createWorkspaceForIssue(parseConfig({ workspace: { root: finalRoot } }), "MT-SYMFINAL"),
@@ -139,7 +139,7 @@ test("workspace creation rejects symlink roots and final symlink directories", a
 });
 
 test("workspace removal runs before_remove best-effort hooks and refuses unsafe paths", async () => {
-  const root = await tempDir("symphony-ts-workspace-remove");
+  const root = await tempDir("lorenz-workspace-remove");
   const beforeRemoveMarker = path.join(root, "before-remove.log");
   const settings = parseConfig({
     workspace: { root },
@@ -175,7 +175,7 @@ test("workspace removal runs before_remove best-effort hooks and refuses unsafe 
   assert.deepEqual(await removeWorkspace(settings, path.join(root, "missing")), []);
 
   const symlinkPath = path.join(root, "MT-SYM");
-  const symlinkTarget = await tempDir("symphony-ts-symlink");
+  const symlinkTarget = await tempDir("lorenz-symlink");
   await fs.symlink(symlinkTarget, symlinkPath);
   await assert.rejects(
     () => removeWorkspace(settings, symlinkPath),
@@ -183,13 +183,13 @@ test("workspace removal runs before_remove best-effort hooks and refuses unsafe 
   );
   assert.equal(await fileExists(symlinkPath), true);
 
-  const outsideRoot = await tempDir("symphony-ts-workspace-outside");
+  const outsideRoot = await tempDir("lorenz-workspace-outside");
   await assert.rejects(() => removeWorkspace(settings, outsideRoot), /workspace outside root/);
   assert.equal(await fileExists(outsideRoot), true);
 });
 
 test("workspace issue cleanup removes issue directory and ignores missing or non-string identifiers", async () => {
-  const root = await tempDir("symphony-ts-workspace-cleanup");
+  const root = await tempDir("lorenz-workspace-cleanup");
   const settings = parseConfig({ workspace: { root } });
   const slot = await createWorkspaceForIssue(settings, "S 1", { slotIndex: 1, ensembleSize: 2 });
   const issueRoot = path.dirname(slot);
@@ -202,7 +202,7 @@ test("workspace issue cleanup removes issue directory and ignores missing or non
 });
 
 test("remote workspace creation and removal use SSH hooks and validate remote paths", async () => {
-  const root = await tempDir("symphony-ts-remote-workspace");
+  const root = await tempDir("lorenz-remote-workspace");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
 
@@ -245,7 +245,7 @@ test("remote workspace creation and removal use SSH hooks and validate remote pa
 });
 
 test("remote workspace cwd validation accepts a missing path inside the workspace root", async () => {
-  const root = await tempDir("symphony-ts-remote-missing-workspace");
+  const root = await tempDir("lorenz-remote-missing-workspace");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
 
@@ -270,7 +270,7 @@ test("remote workspace cwd validation accepts a missing path inside the workspac
 });
 
 test("remote workspace cwd validation reports symlink escapes through missing tail paths", async () => {
-  const root = await tempDir("symphony-ts-remote-symlink-escape");
+  const root = await tempDir("lorenz-remote-symlink-escape");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
 
@@ -279,7 +279,7 @@ test("remote workspace cwd validation reports symlink escapes through missing ta
 
   try {
     const workspaceRoot = path.join(canonicalRemoteHome, "workspaces");
-    const outside = await tempDir("symphony-ts-remote-outside");
+    const outside = await tempDir("lorenz-remote-outside");
     const link = path.join(workspaceRoot, "link-out");
     await fs.mkdir(workspaceRoot, { recursive: true });
     await fs.symlink(outside, link);
@@ -298,7 +298,7 @@ test("remote workspace cwd validation reports symlink escapes through missing ta
 });
 
 test("remote workspace creation forces the slot suffix for co-resident same-issue slots", async () => {
-  const root = await tempDir("symphony-ts-remote-coreside");
+  const root = await tempDir("lorenz-remote-coreside");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
 
@@ -340,7 +340,7 @@ test("remote workspace creation forces the slot suffix for co-resident same-issu
 });
 
 test("agent attempts run workspace hooks at lifecycle boundaries and tolerate after_run failures", async () => {
-  const root = await tempDir("symphony-ts-workspace-agent-hooks");
+  const root = await tempDir("lorenz-workspace-agent-hooks");
   const workspaceRoot = path.join(root, "workspaces");
   const fakeBridge = path.join(root, "fake-acp.mjs");
   const hookLog = path.join(root, "hooks.log");
@@ -406,7 +406,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 });
 
 test('workspace.isolation = "none" rejects every hook and co-locates agents in one folder', async () => {
-  const root = await tempDir("symphony-ts-shared-ws");
+  const root = await tempDir("lorenz-shared-ws");
 
   for (const hook of ["after_create", "before_run", "after_run", "before_remove"]) {
     assert.throws(
@@ -480,7 +480,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 });
 
 test("remote agent attempts run hooks over SSH", async () => {
-  const root = await tempDir("symphony-ts-remote-agent-hooks");
+  const root = await tempDir("lorenz-remote-agent-hooks");
   const trace = path.join(root, "ssh.trace");
   const remoteHome = path.join(root, "remote-home");
   const fakeBridge = path.join(root, "fake-acp.mjs");
@@ -564,7 +564,7 @@ new acp.AgentSideConnection((connection) => new FakeAgent(connection), stream);
 });
 
 test("agent attempts leave stall reconciliation to runtime", async () => {
-  const root = await tempDir("symphony-ts-stall-retry");
+  const root = await tempDir("lorenz-stall-retry");
   const workspaceRoot = path.join(root, "workspaces");
   const fakeBridge = path.join(root, "fake-stall-acp.mjs");
   const acpModule = new URL("../node_modules/@agentclientprotocol/sdk/dist/acp.js", import.meta.url)

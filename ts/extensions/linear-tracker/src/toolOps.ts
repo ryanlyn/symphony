@@ -1,10 +1,10 @@
-import { normalizeIssue } from "@symphony/issue";
-import { isRecord, type Issue, type Settings } from "@symphony/domain";
+import { normalizeIssue } from "@lorenz/issue";
+import { isRecord, type Issue, type Settings } from "@lorenz/domain";
 import type {
   TrackerCreateIssueInput,
   TrackerOpsContext,
   TrackerToolOps,
-} from "@symphony/tracker-sdk";
+} from "@lorenz/tracker-sdk";
 
 import { linearTrackerOptions } from "./options.js";
 import { executeLinearTool } from "./tools.js";

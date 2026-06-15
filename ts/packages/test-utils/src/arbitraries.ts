@@ -1,5 +1,5 @@
 import fc from "fast-check";
-import type { UsageTotals } from "@symphony/domain";
+import type { UsageTotals } from "@lorenz/domain";
 
 export const arbUsageTotals = (): fc.Arbitrary<UsageTotals> =>
   fc.record({

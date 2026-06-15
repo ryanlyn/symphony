@@ -1,4 +1,4 @@
-import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
+import type { Issue, RuntimeTrackerClient, Settings } from "@lorenz/domain";
 
 import { BoardStore } from "./boardStore.js";
 import { localBoardDir, localTrackerOptions } from "./options.js";

@@ -1,13 +1,13 @@
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 import { test } from "vitest";
 
-import { withDerivedMaxInFlight } from "@symphony/domain";
+import { withDerivedMaxInFlight } from "@lorenz/domain";
 import type {
   WorkerDriverKind,
   WorkerPoolSettings,
   RunningEntry,
   WorkerSettings,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 // A full WorkerPoolSettings literal: every required field plus the optional spend/driverOptions/cap.
 // `slotsPerMachine` is the single own field; `maxInFlight` is installed as a derived getter.

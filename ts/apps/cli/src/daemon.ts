@@ -1,51 +1,51 @@
 import os from "node:os";
 import path from "node:path";
 
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry, type AgentExecutorRegistry } from "@symphony/agent-sdk";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry, type AgentExecutorRegistry } from "@lorenz/agent-sdk";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
   type RunAgentAttemptInput,
   type RunResult,
-} from "@symphony/agent-runner";
+} from "@lorenz/agent-runner";
 import {
   defaultWorkerDriverRegistry,
   registerFakeWorkerDriver,
   type WorkerDriverRegistry,
-} from "@symphony/worker-sdk";
-import type { DefaultSettingsOptions } from "@symphony/config";
-import { registerDockerWorkerDriver } from "@symphony/docker-worker";
-import { systemClock, type RuntimeTrackerClient, type Settings } from "@symphony/domain";
-import { registerJiraTrackers } from "@symphony/jira-tracker";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { registerMemoryTracker } from "@symphony/memory-tracker";
-import { registerSlackTracker } from "@symphony/slack-tracker";
-import { registerStaticSshWorkerDriver } from "@symphony/static-worker";
-import { acquireAgentMcpEndpointForRun } from "@symphony/mcp";
-import { createWorkerPool, type WorkerPool } from "@symphony/worker-pool";
-import { workerHostPool } from "@symphony/worker-host-pool";
+} from "@lorenz/worker-sdk";
+import type { DefaultSettingsOptions } from "@lorenz/config";
+import { registerDockerWorkerDriver } from "@lorenz/docker-worker";
+import { systemClock, type RuntimeTrackerClient, type Settings } from "@lorenz/domain";
+import { registerJiraTrackers } from "@lorenz/jira-tracker";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { registerMemoryTracker } from "@lorenz/memory-tracker";
+import { registerSlackTracker } from "@lorenz/slack-tracker";
+import { registerStaticSshWorkerDriver } from "@lorenz/static-worker";
+import { acquireAgentMcpEndpointForRun } from "@lorenz/mcp";
+import { createWorkerPool, type WorkerPool } from "@lorenz/worker-pool";
+import { workerHostPool } from "@lorenz/worker-host-pool";
 import {
   createDispatchCoordinator,
   createPerRunEndpointManager,
   type DispatchCoordinator,
-} from "@symphony/dispatch-coordinator";
+} from "@lorenz/dispatch-coordinator";
 import {
   createWorkspaceForIssue,
   listIssueWorkspaceIdentifiers,
   removeIssueWorkspaces,
   runHook,
   type WorkspaceSkillOverlay,
-} from "@symphony/workspace";
-import { mountedSkillSources } from "@symphony/mcp";
-import { appendLogEvent } from "@symphony/log-file";
-import { defaultToolRegistry, type ToolRegistry } from "@symphony/tool-sdk";
+} from "@lorenz/workspace";
+import { mountedSkillSources } from "@lorenz/mcp";
+import { appendLogEvent } from "@lorenz/log-file";
+import { defaultToolRegistry, type ToolRegistry } from "@lorenz/tool-sdk";
 import {
   createTrackerToolProvider,
   defaultTrackerRegistry,
   type TrackerRegistry,
-} from "@symphony/tracker-sdk";
+} from "@lorenz/tracker-sdk";
 
 import { ensureWorkerDriverLoaded } from "./workerDriverLoader.js";
 
@@ -151,8 +151,8 @@ export async function buildWorkerPool(
  * here: it OWNS the whole per-run MCP endpoint lease (auth token + refcounted local
  * mcp server + reverse tunnel) via the injected `acquireAgentMcpEndpointForRun`. The
  * daemon is the right ownership boundary because it already depends on
- * `@symphony/mcp`, keeping `@symphony/worker-pool` and
- * `@symphony/dispatch-coordinator` free of any mcp/tunnel runtime dependency
+ * `@lorenz/mcp`, keeping `@lorenz/worker-pool` and
+ * `@lorenz/dispatch-coordinator` free of any mcp/tunnel runtime dependency
  * (invariant #8). At the default `slotsPerMachine=1` this opens exactly ONE endpoint
  * per run (just coordinator-owned), and the manager returns `null` for an empty
  * (local) worker host so the local path keeps using acp's own endpoint -
@@ -179,7 +179,7 @@ export async function buildDispatchCoordinator(
     // local path keeps using acp's own endpoint.
     mcpEndpointManager: createPerRunEndpointManager({
       // The composition root binds the concrete tunnel transport (the shared
-      // worker-host pool), keeping `@symphony/mcp` free of any worker-host-pool
+      // worker-host pool), keeping `@lorenz/mcp` free of any worker-host-pool
       // import (invariant #8) while the coordinator stays on the 3-arg acquirer.
       acquireForRun: async (runSettings, workerHost, runKey) =>
         acquireAgentMcpEndpointForRun(runSettings, workerHost, runKey, workerHostPool),

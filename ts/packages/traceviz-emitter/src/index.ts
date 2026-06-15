@@ -2,7 +2,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { AgentUpdate, TraceEvent } from "@symphony/domain";
+import type { AgentUpdate, TraceEvent } from "@lorenz/domain";
 
 export class TraceEmitter {
   private readonly traceDir: string;

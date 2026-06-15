@@ -1,6 +1,6 @@
-# Symphony TypeScript Workspace
+# Lorenz
 
-Symphony turns tracker issues into agent runs. It polls for eligible work, prepares a workspace,
+Lorenz turns tracker issues into agent runs. It polls for eligible work, prepares a workspace,
 renders the workflow prompt with issue context, starts Codex or Claude, and records the run so
 operators can inspect state, retries, cost, and logs.
 
@@ -38,11 +38,11 @@ pnpm start:once -- --dry-run --no-tui WORKFLOW.md
 pnpm runs -- --port 4000 --failed
 ```
 
-The built CLI is `symphony-ts`:
+The built CLI is `lorenz`:
 
 ```sh
-symphony-ts [--once] [--dry-run] [--no-tui] [--port <port>] [--logs-root <path>] [path-to-WORKFLOW.md]
-symphony-ts runs [--issue ID] [--failed] [--cost] [--retries] [--id RUN_ID] [--limit N] [--url URL | --port PORT] [--json]
+lorenz [--once] [--dry-run] [--no-tui] [--port <port>] [--logs-root <path>] [path-to-WORKFLOW.md]
+lorenz runs [--issue ID] [--failed] [--cost] [--retries] [--id RUN_ID] [--limit N] [--url URL | --port PORT] [--json]
 ```
 
 Optional flags:
@@ -272,7 +272,7 @@ Notes:
   fail-fast shell options in bootstrap hooks so clone and dependency setup failures stop workspace
   creation immediately.
 - `codex.command` runs through `bash -lc`, so shell expansion happens in the launched process.
-- If the Markdown body is blank, Symphony uses a default prompt with the issue identifier, title,
+- If the Markdown body is blank, Lorenz uses a default prompt with the issue identifier, title,
   and body.
 
 ## Linear
@@ -287,12 +287,12 @@ Prerequisites:
    and `Merging`. Add those states under Team Settings, Workflow, or adjust `active_states` and
    `terminal_states` to match your team.
 
-Route labels let multiple Symphony instances share one Linear project. With the default
+Route labels let multiple Lorenz instances share one Linear project. With the default
 `route_label_prefix`, labels such as `Symphony:backend` and `Symphony:frontend` become route names.
 
 ## Trackers
 
-A tracker is the source of issues Symphony works on. `tracker.kind` selects a named bundle under
+A tracker is the source of issues Lorenz works on. `tracker.kind` selects a named bundle under
 `trackers`, and the selected bundle's `provider` selects the implementation. Every tracker exposes
 the same read surface to the runtime (poll for candidate issues, refresh in-flight issues by id)
 and a set of agent tools. Those tools are read+write symmetric across kinds, mirroring
@@ -311,7 +311,7 @@ Supported kinds:
   `trackers.jira.base_url`, `trackers.jira.email`, `trackers.jira.api_key`, and either
   `trackers.jira.project_keys` or `trackers.jira.jql`. `JIRA_BASE_URL`, `JIRA_EMAIL`, and
   `JIRA_API_KEY` are used as fallbacks.
-- `jira-mcp` - issues live in Jira, but Symphony reaches them through an external MCP server.
+- `jira-mcp` - issues live in Jira, but Lorenz reaches them through an external MCP server.
   Configure `trackers.jira-mcp.mcp.url` and either `trackers.jira-mcp.project_keys` or
   `trackers.jira-mcp.jql`. Tool names can be overridden under `trackers.jira-mcp.mcp.tools`.
 - `local` - issues live as Markdown files on disk. No external service required.
@@ -346,10 +346,10 @@ trackers:
 
 ### Jira tracker
 
-For both `jira` and `jira-mcp`, Symphony only picks up issues that are assigned to the configured
+For both `jira` and `jira-mcp`, Lorenz only picks up issues that are assigned to the configured
 user (`trackers.jira.assignee` or `trackers.jira-mcp.assignee`, defaulting to the authenticated
 user via `assignee = currentUser()`) and labeled `agent`. This holds even when the configured JQL
-widens the scope, so issues must be explicitly delegated before Symphony will dispatch them.
+widens the scope, so issues must be explicitly delegated before Lorenz will dispatch them.
 Jira REST issues created through `tracker_create_issue` are assigned to that same owner by
 default. Jira MCP creation forwards a concrete configured or caller-provided `assignee` to the
 external MCP server.
@@ -366,7 +366,7 @@ trackers:
     email: $JIRA_EMAIL
     api_key: $JIRA_API_KEY
     project_keys: ["ENG"]
-    # Optional provider-native scope. When present, Symphony combines it with active_states.
+    # Optional provider-native scope. When present, Lorenz combines it with active_states.
     # jql: 'project = ENG AND labels in ("symphony")'
 ```
 
@@ -393,7 +393,7 @@ trackers:
 
 ### Local tracker (filesystem board)
 
-The local tracker runs Symphony against a directory of Markdown files, with no Linear API key or
+The local tracker runs Lorenz against a directory of Markdown files, with no Linear API key or
 workspace. See `WORKFLOW.local.md` for a complete example workflow.
 
 Configure it with `kind: local` and a board `path` (default `.symphony/local`):
@@ -465,7 +465,7 @@ Agent tools for `kind: local` (read and write, symmetric with `linear_graphql`):
   continuation turn.
 
 Concurrent writes (multiple agents or ensemble slots) to the same board file are serialized
-in-process so a status change and comments are never lost. This assumes a single Symphony daemon
+in-process so a status change and comments are never lost. This assumes a single Lorenz daemon
 owns the board; editing the `BOARD-<n>.md` files from another process at the same time is out of
 scope.
 
@@ -479,7 +479,7 @@ npx tsx sandbox/seed-local.ts .symphony/local 2  # seeds only the first 2 issues
 npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX-  # seeds XXX-1..XXX-3 (match trackers.local.id_prefix)
 ```
 
-Point `trackers.local.path` at the directory you seeded and run Symphony as usual. If you set a
+Point `trackers.local.path` at the directory you seeded and run Lorenz as usual. If you set a
 custom `id_prefix`, pass the same prefix to the seeder so the seeded ids match what the tracker
 expects.
 
@@ -504,9 +504,9 @@ Set up a Slack app:
    - `users:read` - resolve user ids to names for the `slack_user_info` tool (optional but
      recommended).
 
-   Symphony discovers issues by paging `conversations.history` and matching the bot's @-mention
+   Lorenz discovers issues by paging `conversations.history` and matching the bot's @-mention
    in message text, so it does not need `app_mentions:read`. Only add that scope if you separately
-   wire up the Events API / `app_mention` subscription, which Symphony does not use today.
+   wire up the Events API / `app_mention` subscription, which Lorenz does not use today.
 
    `conversations.history` is rate-limited (newer non-Marketplace apps can be throttled to roughly
    one request per minute), and each poll re-scans recent channel history. The shipped Slack
@@ -516,7 +516,7 @@ Set up a Slack app:
    transient limits on top of that.
 
 3. Install the app to the workspace and copy the **Bot User OAuth Token** (starts with `xoxb-`).
-   Export it as `SLACK_BOT_TOKEN`; Symphony resolves it into `trackers.slack.api_key`.
+   Export it as `SLACK_BOT_TOKEN`; Lorenz resolves it into `trackers.slack.api_key`.
 4. Find the app's **bot user id** (the `U...` id, shown on the app's "App Home" / via
    `auth.test`). Export it as `SLACK_BOT_USER_ID` and reference it as
    `trackers.slack.bot_user_id`.
@@ -654,7 +654,7 @@ workflow files:
 - `symphony-land` monitors and merges approved PRs.
 - `symphony-debug` investigates stuck runs and execution failures.
 
-Symphony overlays skills into each prepared workspace before the agent starts, copying each
+Lorenz overlays skills into each prepared workspace before the agent starts, copying each
 configured directory whole into the agent's skills directory - `.codex/skills/` for Codex,
 `.claude/skills/` for Claude (the active executor chooses). Skills come from two places:
 
@@ -693,7 +693,7 @@ Claude sessions use `/mcp` for injected dynamic tools when the runtime has start
 observability server. The server also starts automatically for Claude workflows so the ACP bridge
 can reach those tools.
 
-`symphony-ts runs` queries the same API for run history, cost summaries, retry summaries, and raw
+`lorenz runs` queries the same API for run history, cost summaries, retry summaries, and raw
 JSON output.
 
 ## Testing
@@ -753,7 +753,7 @@ Environment knobs:
 
 ```sh
 pnpm build
-pnpm --filter @symphony/cli pack --dry-run
+pnpm --filter @lorenz/cli pack --dry-run
 ```
 
 The CLI package includes the built binary. Workspace documentation, workflow fixtures, and test

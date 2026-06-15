@@ -8,10 +8,10 @@ import {
   retryBackoffMs,
   Orchestrator,
   slotKey,
-} from "@symphony/cli";
-import type { RuntimeProjectionInput, RuntimeRunHistoryEntry } from "@symphony/cli";
-import type { ClockPort } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { RuntimeProjectionInput, RuntimeRunHistoryEntry } from "@lorenz/cli";
+import type { ClockPort } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 test("deterministic policies pin retry, stop reason, and usage decisions", () => {
   assert.equal(retryBackoffMs(1, 60_000, "failure"), 10_000);

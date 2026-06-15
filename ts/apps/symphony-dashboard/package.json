@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/dashboard",
+  "name": "@lorenz/dashboard",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@symphony/presenter": "workspace:*",
-    "@symphony/traceviz-server": "workspace:*",
+    "@lorenz/presenter": "workspace:*",
+    "@lorenz/traceviz-server": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",

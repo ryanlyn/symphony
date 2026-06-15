@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/policies",
+  "name": "@lorenz/policies",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "./workerHost": "./dist/workerHost.js"
   },
   "dependencies": {
-    "@symphony/dispatch": "workspace:*",
-    "@symphony/domain": "workspace:*"
+    "@lorenz/dispatch": "workspace:*",
+    "@lorenz/domain": "workspace:*"
   }
 }

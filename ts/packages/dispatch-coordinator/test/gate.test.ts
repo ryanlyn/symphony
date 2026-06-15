@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { parseConfig } from "@lorenz/config";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 import { checkSlotsPerMachineGate } from "../src/gate.js";
 

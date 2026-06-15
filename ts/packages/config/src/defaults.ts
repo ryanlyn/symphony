@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 
-import type { AgentConfig, Settings } from "@symphony/domain";
+import type { AgentConfig, Settings } from "@lorenz/domain";
 
 import { joinPath } from "./leaf-utils.js";
 

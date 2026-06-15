@@ -2,11 +2,11 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, test } from "vitest";
 import { setupServer } from "msw/node";
-import { executeTool, LinearClient, parseConfig } from "@symphony/cli";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { assert, tempDir } from "@symphony/test-utils";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
+import { executeTool, LinearClient, parseConfig } from "@lorenz/cli";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { assert, tempDir } from "@lorenz/test-utils";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { createFakeLinearHandlers } from "./fake-linear-server.js";
 
@@ -46,7 +46,7 @@ describe("fake Linear MSW tests", () => {
   afterAll(() => server.close());
 
   test("viewer, project, create, poll, refresh, update, archive, and tool", async () => {
-    const workspace = await tempDir("symphony-ts-fake-linear");
+    const workspace = await tempDir("lorenz-fake-linear");
     const settings = parseConfig(
       {
         workspace: { root: path.dirname(workspace) },

@@ -3,17 +3,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import type { Settings } from "@symphony/domain";
-import { registerJiraTrackers } from "@symphony/jira-tracker";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { registerMemoryTracker } from "@symphony/memory-tracker";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+import { parseConfig } from "@lorenz/config";
+import type { Settings } from "@lorenz/domain";
+import { registerJiraTrackers } from "@lorenz/jira-tracker";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { registerMemoryTracker } from "@lorenz/memory-tracker";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
-import { executeTool, toolSpecs } from "@symphony/mcp";
+import { executeTool, toolSpecs } from "@lorenz/mcp";
 
 // Private registries holding the providers this contract exercises, so the mount contract
 // is exercised exactly as composed in production without mutating the process-default

@@ -9,19 +9,19 @@ import {
   parseConfig,
   revokeMcpToken,
   SymphonyRuntime,
-} from "@symphony/cli";
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
-import { normalizeIssue } from "@symphony/issue";
-import type { WorkflowDefinition } from "@symphony/domain";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { defaultToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, defaultTrackerRegistry } from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { normalizeIssue } from "@lorenz/issue";
+import type { WorkflowDefinition } from "@lorenz/domain";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { defaultToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, defaultTrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
-import { IssueStore, startObservabilityServer } from "@symphony/server";
-import { startMcpServer } from "@symphony/server";
+import { IssueStore, startObservabilityServer } from "@lorenz/server";
+import { startMcpServer } from "@lorenz/server";
 
 // The observability server resolves tool packs and tracker ops through the process-default
 // registries (it offers no injection point), so populate them the same way the CLI
@@ -451,7 +451,7 @@ test("observability MCP endpoint uses workflow settings reloaded by the runtime"
       settings: parseConfig({
         tracker: { kind: "local", path: boardDir },
         polling: { interval_ms: 5 },
-        workspace: { root: "/tmp/symphony-ts-http-test" },
+        workspace: { root: "/tmp/lorenz-http-test" },
       }),
     };
     await runtime.pollOnce({ dryRun: true });
@@ -489,7 +489,7 @@ function workflowFixture(): WorkflowDefinition {
       terminal_states: ["Done"],
     },
     polling: { interval_ms: 5 },
-    workspace: { root: "/tmp/symphony-ts-http-test" },
+    workspace: { root: "/tmp/lorenz-http-test" },
   });
   return {
     path: "/tmp/WORKFLOW.md",

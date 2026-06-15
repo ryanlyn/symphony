@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { buildPrompt } from "@symphony/cli";
-import { effectivePromptTemplate, defaultPromptTemplate } from "@symphony/cli";
-import type { Issue } from "@symphony/domain";
-import { assert, issueWith } from "@symphony/test-utils";
+import { buildPrompt } from "@lorenz/cli";
+import { effectivePromptTemplate, defaultPromptTemplate } from "@lorenz/cli";
+import type { Issue } from "@lorenz/domain";
+import { assert, issueWith } from "@lorenz/test-utils";
 
 // --- Helper arbitraries ---
 

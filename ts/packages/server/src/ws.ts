@@ -8,13 +8,13 @@
 
 import type { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
-import { statePayload, type OpsStatePayload } from "@symphony/presenter";
+import { statePayload, type OpsStatePayload } from "@lorenz/presenter";
 import type {
   DisplayEvent,
   TicketInfo,
   TraceWatcher,
   WsClientMessage,
-} from "@symphony/traceviz-server";
+} from "@lorenz/traceviz-server";
 import type { WSContext } from "hono/ws";
 
 import type { RuntimeServerSource } from "./source.js";

@@ -1,8 +1,8 @@
-import { settingsForIssueState } from "@symphony/config";
-import { issueIsActive } from "@symphony/dispatch";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import { ensembleSize } from "@symphony/issue";
-import { buildPrompt, continuationPrompt } from "@symphony/prompt";
+import { settingsForIssueState } from "@lorenz/config";
+import { issueIsActive } from "@lorenz/dispatch";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import { ensembleSize } from "@lorenz/issue";
+import { buildPrompt, continuationPrompt } from "@lorenz/prompt";
 import {
   errorMessage,
   type AgentExecutor,
@@ -12,7 +12,7 @@ import {
   type Issue,
   type Settings,
   type WorkflowDefinition,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 const workerSetupTimeoutGraceMs = 1_000;
 const workspaceCreateStage = "workspace.create_for_issue";

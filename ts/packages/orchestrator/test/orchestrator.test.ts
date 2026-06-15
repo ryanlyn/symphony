@@ -1,10 +1,10 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import { systemClock, type ClockPort, type Issue, type RunningEntry } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@lorenz/cli";
+import { systemClock, type ClockPort, type Issue, type RunningEntry } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { createState, type SlotReservation } from "@symphony/orchestrator";
+import { createState, type SlotReservation } from "@lorenz/orchestrator";
 
 function fakeClock(initial = new Date()) {
   let tick = initial.getTime();

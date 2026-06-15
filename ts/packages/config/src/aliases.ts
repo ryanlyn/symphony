@@ -1,4 +1,4 @@
-import { isRecord as isPlainRecord } from "@symphony/domain";
+import { isRecord as isPlainRecord } from "@lorenz/domain";
 
 // Common tracker keys only; provider-specific aliases (e.g. project_slug) are declared by
 // each tracker provider via `TrackerProvider.configAliases` and applied during parsing.

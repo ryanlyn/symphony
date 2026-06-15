@@ -1,5 +1,5 @@
-import type { Issue, Settings } from "@symphony/domain";
-import type { TrackerOpsContext, TrackerToolOps } from "@symphony/tracker-sdk";
+import type { Issue, Settings } from "@lorenz/domain";
+import type { TrackerOpsContext, TrackerToolOps } from "@lorenz/tracker-sdk";
 
 import { slackMessageToIssue, SlackTrackerClient, splitIssueId } from "./client.js";
 import { requireTrackedMessage, updateSlackStatus } from "./operations.js";

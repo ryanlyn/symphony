@@ -1,7 +1,7 @@
 import type * as NodeFs from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import type { TicketTraceResponse } from "@symphony/traceviz-server";
+import type { TicketTraceResponse } from "@lorenz/traceviz-server";
 import { describe, expect, it, vi } from "vitest";
 
 const serverMock = vi.hoisted(() => ({

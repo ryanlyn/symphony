@@ -1,5 +1,5 @@
-import type { TrackerProvider } from "@symphony/tracker-sdk";
-import { rejectUnknownOptions, stringOption } from "@symphony/tracker-sdk";
+import type { TrackerProvider } from "@lorenz/tracker-sdk";
+import { rejectUnknownOptions, stringOption } from "@lorenz/tracker-sdk";
 
 import { LocalTrackerClient } from "./client.js";
 import { DEFAULT_BOARD_DIR } from "./resolveBoardDir.js";

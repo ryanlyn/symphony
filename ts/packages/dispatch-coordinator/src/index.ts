@@ -1,8 +1,8 @@
-// @symphony/dispatch-coordinator
+// @lorenz/dispatch-coordinator
 //
-// Runtime-facing coordinator that wraps the proven @symphony/worker-pool
+// Runtime-facing coordinator that wraps the proven @lorenz/worker-pool
 // machine pool and an injected McpEndpointManager to mint per-run RunSlots.
-// Distinct from the pure-policy @symphony/dispatch package.
+// Distinct from the pure-policy @lorenz/dispatch package.
 //
 // STEP 1 surface: the DispatchCoordinator is a 1:1 passthrough over WorkerPool
 // (default slotsPerMachine=1 + the null McpEndpointManager make every RunSlot

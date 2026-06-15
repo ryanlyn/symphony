@@ -23,11 +23,11 @@ import {
   acquireAgentMcpEndpoint,
   type AgentMcpEndpointLease,
   type RemoteMcpTunnelTransport,
-} from "@symphony/mcp";
-import { actionForStopReason } from "@symphony/policies/stopReason";
-import { shellEscape, startSshProcess } from "@symphony/ssh";
-import { workerHostPool } from "@symphony/worker-host-pool";
-import { validateWorkspaceCwd } from "@symphony/workspace";
+} from "@lorenz/mcp";
+import { actionForStopReason } from "@lorenz/policies/stopReason";
+import { shellEscape, startSshProcess } from "@lorenz/ssh";
+import { workerHostPool } from "@lorenz/worker-host-pool";
+import { validateWorkspaceCwd } from "@lorenz/workspace";
 import { execa } from "execa";
 import {
   errorMessage,
@@ -41,8 +41,8 @@ import {
   type Settings,
   type UsageTokenUpdate,
   type UsageTotals,
-} from "@symphony/domain";
-import type { AgentExecutorProvider } from "@symphony/agent-sdk";
+} from "@lorenz/domain";
+import type { AgentExecutorProvider } from "@lorenz/agent-sdk";
 
 import { stopChild, withTimeout } from "./childProcess.js";
 import {

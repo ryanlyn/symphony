@@ -8,8 +8,8 @@ import {
   routedToThisWorker,
   shouldDispatchIssue,
   slotKey,
-} from "@symphony/cli";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { assert } from "@lorenz/test-utils";
 
 function makeIssue(overrides: Record<string, unknown> = {}) {
   return normalizeIssue({

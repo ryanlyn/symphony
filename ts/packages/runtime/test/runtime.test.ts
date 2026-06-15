@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { beforeAll, test, vi } from "vitest";
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
 import {
   createDispatchCoordinator,
   createWorkspaceForIssue,
@@ -15,12 +15,12 @@ import {
   removeIssueWorkspaces,
   runtimeAdapters,
   slotKey,
-} from "@symphony/cli";
-import { registerLinearTracker } from "@symphony/linear-tracker";
+} from "@lorenz/cli";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME_EVENTS,
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME_EVENTS,
-} from "@symphony/runtime-events";
+} from "@lorenz/runtime-events";
 import type {
   Issue,
   McpEndpointManager,
@@ -28,18 +28,18 @@ import type {
   Settings,
   SymphonyRuntimeOptions,
   WorkflowDefinition,
-} from "@symphony/cli";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import type { AcquireResult, WorkerLease, WorkerOutcome, WorkerPool } from "@symphony/worker-pool";
-import { assert, tempDir } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import type { AcquireResult, WorkerLease, WorkerOutcome, WorkerPool } from "@lorenz/worker-pool";
+import { assert, tempDir } from "@lorenz/test-utils";
 
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,
   RUNTIME_RUN_OUTCOMES as RUNTIME_RUN_OUTCOMES_FROM_RUNTIME,
   SymphonyRuntime,
-} from "@symphony/runtime";
-import type { RuntimeSnapshot } from "@symphony/runtime";
+} from "@lorenz/runtime";
+import type { RuntimeSnapshot } from "@lorenz/runtime";
 
 // The runtime validates dispatch config against the process-default registries, which the
 // CLI composition root populates before constructing a runtime. Mirror that wiring here (in
@@ -414,7 +414,7 @@ test("runtime aborts in-flight runs when reconciliation sees a terminal issue", 
 
 test("runtime aborts in-flight runs when reconciliation sees missing or unrouted issues", async () => {
   for (const mode of ["missing", "unrouted"] as const) {
-    const root = await tempDir(`symphony-ts-runtime-${mode}-inert`);
+    const root = await tempDir(`lorenz-runtime-${mode}-inert`);
     const issue = issueFixture(`issue-${mode}`, `MT-${mode.toUpperCase()}`);
     const settings =
       mode === "unrouted"
@@ -530,7 +530,7 @@ test("runtime keeps tracked work running when tracker refresh fails during recon
 
 test("runtime reconciles stalled runs from the orchestrator poll loop", async () => {
   const issue = issueFixture("issue-stalled", "MT-STALLED");
-  const root = await tempDir("symphony-ts-runtime-stall");
+  const root = await tempDir("lorenz-runtime-stall");
   const workflow = workflowFixture(root);
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const workspace = await createWorkspaceForIssue(workflow.settings, issue);
@@ -586,7 +586,7 @@ test("runtime reconciles stalled runs from the orchestrator poll loop", async ()
 
 test("runtime stall reconciliation uses agents-level stall timeout defaults", async () => {
   const issue = issueFixture("issue-agents-stall", "MT-AGENTS-STALL");
-  const root = await tempDir("symphony-ts-runtime-agents-stall");
+  const root = await tempDir("lorenz-runtime-agents-stall");
   const settings = parseConfig({
     tracker: {
       kind: "linear",
@@ -713,7 +713,7 @@ test("runtime does not record late success after stall reconciliation wins", asy
 
 test("runtime keeps a retry handle active when a stalled generation finishes late", async () => {
   const issue = issueFixture("issue-stale-finally", "MT-STALE-FINALLY");
-  const root = await tempDir("symphony-ts-runtime-stale-finally");
+  const root = await tempDir("lorenz-runtime-stale-finally");
   const workflow = workflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
@@ -943,7 +943,7 @@ test("runtime stop does not record an in-flight run as a failure", async () => {
 });
 
 test("runtime appends operational events to the configured log file", async () => {
-  const root = await tempDir("symphony-ts-runtime-event-log");
+  const root = await tempDir("lorenz-runtime-event-log");
   const workflow = workflowFixture(root);
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -966,7 +966,7 @@ test("runtime appends operational events to the configured log file", async () =
 });
 
 test("runtime reconciliation removes terminal retry workspaces before polling", async () => {
-  const root = await tempDir("symphony-ts-runtime-cleanup");
+  const root = await tempDir("lorenz-runtime-cleanup");
   const workflow = workflowFixture(root);
   const activeIssue = issueFixture("issue-cleanup", "MT-CLEANUP");
   const doneIssue: Issue = { ...activeIssue, state: "Done", stateType: "completed" };
@@ -1027,7 +1027,7 @@ test("runtime reconcile refreshes the running stage when the tracker state chang
 });
 
 test("runtime startup cleanup looks up only on-disk workspaces and removes terminal ones", async () => {
-  const root = await tempDir("symphony-ts-runtime-startup-cleanup");
+  const root = await tempDir("lorenz-runtime-startup-cleanup");
   const workflow = workflowFixture(root);
   const doneIssue: Issue = {
     ...issueFixture("issue-startup-done", "MT-STARTUP-DONE"),
@@ -1068,7 +1068,7 @@ test("runtime startup cleanup looks up only on-disk workspaces and removes termi
 });
 
 test("runtime startup cleanup skips the tracker entirely when no workspaces exist", async () => {
-  const root = await tempDir("symphony-ts-runtime-startup-cleanup-empty");
+  const root = await tempDir("lorenz-runtime-startup-cleanup-empty");
   let lookups = 0;
   const runtime = new SymphonyRuntime(
     runtimeOptions({
@@ -1352,7 +1352,7 @@ function makeFakeWorkerPool(
 }
 
 function workerPoolWorkflowFixture(
-  root = "/tmp/symphony-ts-runtime-workerpool",
+  root = "/tmp/lorenz-runtime-workerpool",
   overrides: Record<string, unknown> = {},
 ): WorkflowDefinition {
   const settings = parseConfig({
@@ -2075,7 +2075,7 @@ test("worker pool: freed capacity nudges the poll so a capacity-blocked issue re
   // polling.intervalMs (set far beyond the test budget here to prove it).
   const issue = issueFixture("issue-bp-nudge", "MT-BP-NUDGE");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
-  const workflow = workerPoolWorkflowFixture("/tmp/symphony-ts-runtime-workerpool-nudge");
+  const workflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-nudge");
   workflow.settings.polling.intervalMs = 60_000;
   let capacity = false;
   const lease = makeFakeLease({ workerHost: "fake://worker-nudge" });
@@ -2313,7 +2313,7 @@ test("worker pool: an ordinary agent failure keeps the worker healthy", async ()
 
 test("worker pool: a stall-finished run poisons the worker and keeps accounting correct", async () => {
   const issue = issueFixture("issue-bp-stall", "MT-BP-STALL");
-  const root = await tempDir("symphony-ts-runtime-workerpool-stall");
+  const root = await tempDir("lorenz-runtime-workerpool-stall");
   const workflow = workerPoolWorkflowFixture(root);
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
@@ -2382,7 +2382,7 @@ test("worker pool: a stall-aborted run that RESOLVES SUCCESSFULLY still poisons 
   // workerOutcome='poison' whenever handle.reason==='stalled', independent of whether
   // the runner resolved or rejected.
   const issue = issueFixture("issue-bp-stall-success", "MT-BP-STALL-SUCCESS");
-  const root = await tempDir("symphony-ts-runtime-workerpool-stall-success");
+  const root = await tempDir("lorenz-runtime-workerpool-stall-success");
   const workflow = workerPoolWorkflowFixture(root);
   workflow.settings.agents.codex.stallTimeoutMs = 50;
   const orchestrator = new Orchestrator(workflow.settings, undefined, undefined, {
@@ -2457,7 +2457,7 @@ test("worker pool: a stall-aborted run that RESOLVES SUCCESSFULLY still poisons 
 
 test("worker pool: a stale-generation late resolve is a lease no-op (leaseId guard)", async () => {
   const issue = issueFixture("issue-bp-stale-gen", "MT-BP-STALE-GEN");
-  const root = await tempDir("symphony-ts-runtime-workerpool-stale-gen");
+  const root = await tempDir("lorenz-runtime-workerpool-stale-gen");
   const workflow = workerPoolWorkflowFixture(root);
   workflow.settings.agent.maxRetryBackoffMs = 0;
   workflow.settings.agents.codex.stallTimeoutMs = 50;
@@ -2736,7 +2736,7 @@ test("worker pool: onUpdate triggers a lease heartbeat", async () => {
 test("worker pool: reconcile is called on workflow reload with the next worker-pool settings", async () => {
   const issue = issueFixture("issue-bp-reload", "MT-BP-RELOAD");
   const firstWorkflow = workerPoolWorkflowFixture();
-  const secondWorkflow = workerPoolWorkflowFixture("/tmp/symphony-ts-runtime-workerpool-2", {
+  const secondWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-2", {
     max: 3,
   });
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
@@ -2767,7 +2767,7 @@ test("worker pool: a reload that removes the worker_pool block drains the live p
   const issue = issueFixture("issue-bp-remove", "MT-BP-REMOVE");
   const firstWorkflow = workerPoolWorkflowFixture();
   // The reloaded workflow has NO worker.worker_pool block at all.
-  const secondWorkflow = workflowFixture("/tmp/symphony-ts-runtime-workerpool-removed");
+  const secondWorkflow = workflowFixture("/tmp/lorenz-runtime-workerpool-removed");
   assert.equal(secondWorkflow.settings.worker.workerPool, undefined);
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
   let reloads = 0;
@@ -2798,7 +2798,7 @@ test("worker pool: a reload that removes the worker_pool block drains the live p
 test("worker pool: a reload that disables the worker_pool block drains the live pool (no leak)", async () => {
   const issue = issueFixture("issue-bp-disable", "MT-BP-DISABLE");
   const firstWorkflow = workerPoolWorkflowFixture();
-  const secondWorkflow = workerPoolWorkflowFixture("/tmp/symphony-ts-runtime-workerpool-disabled", {
+  const secondWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-disabled", {
     enabled: false,
   });
   assert.equal(secondWorkflow.settings.worker.workerPool?.enabled, false);
@@ -2837,7 +2837,7 @@ test("worker pool: a reload that disables the pool resumes dispatch via the loca
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
   const firstWorkflow = workerPoolWorkflowFixture();
   const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-disabled-resume",
+    "/tmp/lorenz-runtime-workerpool-disabled-resume",
     { enabled: false },
   );
   let poolEnabled = true;
@@ -2901,18 +2901,12 @@ test("worker pool: a reload that re-enables the pool governs again and acquires 
   // acquired and the leased workerHost (not the local null) drives the run.
   const issue = issueFixture("issue-bp-reenable", "MT-BP-REENABLE");
   const doneIssue: Issue = { ...issue, state: "Done", stateType: "completed" };
-  const firstWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reenable-1",
-    {
-      enabled: false,
-    },
-  );
-  const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reenable-2",
-    {
-      enabled: true,
-    },
-  );
+  const firstWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-reenable-1", {
+    enabled: false,
+  });
+  const secondWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-reenable-2", {
+    enabled: true,
+  });
   let poolEnabled = false;
   const lease = makeFakeLease({ workerHost: "fake://worker-reenabled" });
   const workerPool = makeFakeWorkerPool({
@@ -3019,12 +3013,9 @@ test("worker pool: a reload to max_in_flight>1 without co_residence is rejected 
   const firstWorkflow = workerPoolWorkflowFixture();
   // The reloaded workflow raises max_in_flight to 2 but supplies NO co_residence
   // opt-in: the gate must reject it even though the coordinator IS capable.
-  const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reload-gate",
-    {
-      max_in_flight: 2,
-    },
-  );
+  const secondWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-reload-gate", {
+    max_in_flight: 2,
+  });
   assert.equal(secondWorkflow.settings.worker.workerPool?.slotsPerMachine, 2);
   assert.equal(secondWorkflow.settings.worker.workerPool?.coResidence, undefined);
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
@@ -3075,7 +3066,7 @@ test("worker pool: a reload to max_in_flight>1 without the per-run-endpoint capa
   const issue = issueFixture("issue-bp-reload-endpoint", "MT-BP-RELOAD-ENDPOINT");
   const firstWorkflow = workerPoolWorkflowFixture();
   const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reload-endpoint",
+    "/tmp/lorenz-runtime-workerpool-reload-endpoint",
     { max_in_flight: 2, co_residence: true },
   );
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
@@ -3114,13 +3105,10 @@ test("worker pool: a reload to max_in_flight>1 WITH co_residence + per-run-endpo
   // new slotsPerMachine>1 settings.
   const issue = issueFixture("issue-bp-reload-ok", "MT-BP-RELOAD-OK");
   const firstWorkflow = workerPoolWorkflowFixture();
-  const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reload-ok",
-    {
-      max_in_flight: 2,
-      co_residence: true,
-    },
-  );
+  const secondWorkflow = workerPoolWorkflowFixture("/tmp/lorenz-runtime-workerpool-reload-ok", {
+    max_in_flight: 2,
+    co_residence: true,
+  });
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
   const coordinator = createDispatchCoordinator({
     pool: workerPool,
@@ -3163,7 +3151,7 @@ test("worker pool: a default (slotsPerMachine=1) reload applies unchanged throug
   const issue = issueFixture("issue-bp-reload-default", "MT-BP-RELOAD-DEFAULT");
   const firstWorkflow = workerPoolWorkflowFixture();
   const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reload-default",
+    "/tmp/lorenz-runtime-workerpool-reload-default",
     {
       max: 3,
     },
@@ -3212,7 +3200,7 @@ test("worker pool: a reload whose reconcile throws keeps last-good settings AND 
   const firstWorkflow = workerPoolWorkflowFixture();
   assert.equal(firstWorkflow.settings.worker.workerPool?.max, 1);
   const secondWorkflow = workerPoolWorkflowFixture(
-    "/tmp/symphony-ts-runtime-workerpool-reload-reconcile",
+    "/tmp/lorenz-runtime-workerpool-reload-reconcile",
     { max: 3 },
   );
   assert.equal(secondWorkflow.settings.worker.workerPool?.max, 3);
@@ -3518,7 +3506,7 @@ test("runtime replays retry timer due while a poll is active", async () => {
   }
 });
 
-function workflowFixture(root = "/tmp/symphony-ts-runtime-test"): WorkflowDefinition {
+function workflowFixture(root = "/tmp/lorenz-runtime-test"): WorkflowDefinition {
   const settings = parseConfig({
     tracker: {
       kind: "linear",

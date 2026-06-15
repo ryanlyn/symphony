@@ -1,5 +1,5 @@
-import type { WorkerDescriptor, WorkerDriver } from "@symphony/worker-sdk";
-import type { WorkerPoolSettings } from "@symphony/domain";
+import type { WorkerDescriptor, WorkerDriver } from "@lorenz/worker-sdk";
+import type { WorkerPoolSettings } from "@lorenz/domain";
 
 import type { WorkerRecord, Mutex } from "./types.js";
 

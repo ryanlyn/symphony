@@ -1,5 +1,5 @@
 /**
- * Public API for @symphony/traceviz-server.
+ * Public API for @lorenz/traceviz-server.
  *
  * This package exposes trace-parsing utilities and the file-watching engine
  * as a pure library (no HTTP framework dependency).

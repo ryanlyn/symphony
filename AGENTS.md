@@ -19,6 +19,6 @@
 
 ## TraceViz UI debugging
 
-- Start the dashboard with `pnpm --filter @symphony/dashboard dev --host 0.0.0.0` from `ts/`, then drive `http://localhost:5173/#/trace/<issueId>` with Playwright.
+- Start the dashboard with `pnpm --filter @lorenz/dashboard dev --host 0.0.0.0` from `ts/`, then drive `http://localhost:5173/#/trace/<issueId>` with Playwright.
 - Mock the REST endpoints and inject a fake `WebSocket` with `page.addInitScript` to emit `events` and `events_append` messages.
 - For visual checks, use `recordVideo`, targeted screenshots, and `requestAnimationFrame` sampling of stable DOM markers.

@@ -8,10 +8,10 @@ import {
   type WorkerDriverRegistry,
   type DriverDeps,
   type TeardownReason,
-} from "@symphony/worker-sdk";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { runSsh } from "@symphony/ssh";
+} from "@lorenz/worker-sdk";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { runSsh } from "@lorenz/ssh";
 
 import { createLedger, type Ledger } from "./ledger.js";
 import { createLease } from "./lease.js";
@@ -54,7 +54,7 @@ export interface CreateWorkerPoolDeps {
  * Resolves the configured driver kind through the registry and constructs the
  * driver from the operator's `driverOptions`. The pool is the engine boundary
  * that owns the real ssh dependency: drivers only ever see the injected
- * {@link DriverDeps.runSsh}, never `@symphony/ssh` itself. Throws the registry's
+ * {@link DriverDeps.runSsh}, never `@lorenz/ssh` itself. Throws the registry's
  * `worker_pool_driver_unavailable` error for an unregistered kind (so the daemon
  * fails loud at startup), and surfaces the factory's own validation error for
  * unusable `driverOptions` at the same fail-loud construction point.

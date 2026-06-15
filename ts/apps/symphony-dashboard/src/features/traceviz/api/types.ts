@@ -7,11 +7,11 @@ export type {
   TurnFailedDisplayEvent as TurnFailedEvent,
   NotificationDisplayEvent as NotificationEvent,
   UnknownDisplayEvent as UnknownEvent,
-} from "@symphony/traceviz-server";
+} from "@lorenz/traceviz-server";
 
-export type { TicketInfo, TraceStats as Stats } from "@symphony/traceviz-server";
+export type { TicketInfo, TraceStats as Stats } from "@lorenz/traceviz-server";
 
-/** Mirrors IssueRecord from @symphony/server — kept local to avoid a Node.js dependency in the browser bundle. */
+/** Mirrors IssueRecord from @lorenz/server — kept local to avoid a Node.js dependency in the browser bundle. */
 export interface IssueRecord {
   issueId: string;
   issueIdentifier: string;

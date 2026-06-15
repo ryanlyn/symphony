@@ -1,6 +1,6 @@
-import type { Settings } from "@symphony/domain";
-import { isRecord } from "@symphony/domain";
-import { stringListOption, stringOption } from "@symphony/tracker-sdk";
+import type { Settings } from "@lorenz/domain";
+import { isRecord } from "@lorenz/domain";
+import { stringListOption, stringOption } from "@lorenz/tracker-sdk";
 
 /** Tool names exposed by the external MCP server for Symphony's tracker operations. */
 export interface JiraMcpToolMap {

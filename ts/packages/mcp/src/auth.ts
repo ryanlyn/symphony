@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { Settings } from "@symphony/domain";
+import type { Settings } from "@lorenz/domain";
 
 const defaultMcpAuthScope = "mcp:default";
 const activeTokens = new Map<string, string>();

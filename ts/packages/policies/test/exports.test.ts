@@ -1,5 +1,5 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import {
   actionForStopReason as rootActionForStopReason,
@@ -7,12 +7,12 @@ import {
   reconciliationStopReason as rootReconciliationStopReason,
   retryBackoffMs as rootRetryBackoffMs,
   selectLeastLoadedHost as rootSelectLeastLoadedHost,
-} from "@symphony/policies";
-import { retryBackoffMs } from "@symphony/policies/retry";
-import { actionForStopReason } from "@symphony/policies/stopReason";
-import { mergeMonotonicUsage } from "@symphony/policies/usage";
-import { reconciliationStopReason } from "@symphony/policies/reconciliation";
-import { selectLeastLoadedHost } from "@symphony/policies/workerHost";
+} from "@lorenz/policies";
+import { retryBackoffMs } from "@lorenz/policies/retry";
+import { actionForStopReason } from "@lorenz/policies/stopReason";
+import { mergeMonotonicUsage } from "@lorenz/policies/usage";
+import { reconciliationStopReason } from "@lorenz/policies/reconciliation";
+import { selectLeastLoadedHost } from "@lorenz/policies/workerHost";
 
 test("documented policy exports are available from root and subpaths", () => {
   assert.equal(rootRetryBackoffMs, retryBackoffMs);

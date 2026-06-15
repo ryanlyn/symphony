@@ -2,12 +2,12 @@ import EventEmitter from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { beforeEach, test, vi } from "vitest";
-import { startReverseTunnel, waitForRemoteTcpPort } from "@symphony/ssh";
-import { assert } from "@symphony/test-utils";
+import { startReverseTunnel, waitForRemoteTcpPort } from "@lorenz/ssh";
+import { assert } from "@lorenz/test-utils";
 
-import { WorkerHostPool } from "@symphony/worker-host-pool";
+import { WorkerHostPool } from "@lorenz/worker-host-pool";
 
-vi.mock("@symphony/ssh", () => ({
+vi.mock("@lorenz/ssh", () => ({
   startReverseTunnel: vi.fn(),
   waitForRemoteTcpPort: vi.fn(),
 }));

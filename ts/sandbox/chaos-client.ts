@@ -1,4 +1,4 @@
-import type { Issue, IssueStateType, RuntimeTrackerClient } from "@symphony/cli";
+import type { Issue, IssueStateType, RuntimeTrackerClient } from "@lorenz/cli";
 
 import { cloneIssue, sleep } from "./fixtures.js";
 

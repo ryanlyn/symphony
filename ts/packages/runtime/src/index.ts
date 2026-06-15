@@ -1,24 +1,19 @@
-import {
-  issueHasOpenBlockers,
-  issueIsActive,
-  routedToThisWorker,
-  slotKey,
-} from "@symphony/dispatch";
-import { reconciliationStopReason } from "@symphony/policies/reconciliation";
-import { isTerminalState } from "@symphony/issue";
-import { Orchestrator, type SlotReservation } from "@symphony/orchestrator";
-import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
-import { runAgentAttempt, type RunResult } from "@symphony/agent-runner";
-import { ProjectionActor } from "@symphony/projections";
-import { RetryScheduler } from "@symphony/retry-scheduler";
-import { workflowFileChanged, workflowStampsEqual } from "@symphony/workflow";
+import { issueHasOpenBlockers, issueIsActive, routedToThisWorker, slotKey } from "@lorenz/dispatch";
+import { reconciliationStopReason } from "@lorenz/policies/reconciliation";
+import { isTerminalState } from "@lorenz/issue";
+import { Orchestrator, type SlotReservation } from "@lorenz/orchestrator";
+import { settingsForIssueState, validateDispatchConfig } from "@lorenz/config";
+import { runAgentAttempt, type RunResult } from "@lorenz/agent-runner";
+import { ProjectionActor } from "@lorenz/projections";
+import { RetryScheduler } from "@lorenz/retry-scheduler";
+import { workflowFileChanged, workflowStampsEqual } from "@lorenz/workflow";
 import {
   durationMs,
   errorMessage,
   systemClock,
   withDerivedMaxInFlight,
   type ClockPort,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 import type {
   RuntimeAppStatus,
   RuntimeEventType,
@@ -28,7 +23,7 @@ import type {
   RuntimeRunOutcome,
   RuntimeRunningEntry,
   RuntimeSnapshot,
-} from "@symphony/runtime-events";
+} from "@lorenz/runtime-events";
 import type {
   AgentKind,
   AgentUpdate,
@@ -38,8 +33,8 @@ import type {
   RunningEntry,
   RuntimeTrackerClient,
   WorkflowDefinition,
-} from "@symphony/domain";
-import type { WorkerOutcome, WorkerPool } from "@symphony/worker-pool";
+} from "@lorenz/domain";
+import type { WorkerOutcome, WorkerPool } from "@lorenz/worker-pool";
 import {
   checkSlotsPerMachineGate,
   createDispatchCoordinator,
@@ -47,11 +42,11 @@ import {
   type AcquireRunSlotResult,
   type DispatchCoordinator,
   type RunSlot,
-} from "@symphony/dispatch-coordinator";
+} from "@lorenz/dispatch-coordinator";
 
 export type RuntimeRunner = (input: Parameters<typeof runAgentAttempt>[0]) => Promise<RunResult>;
 
-export { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@symphony/runtime-events";
+export { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@lorenz/runtime-events";
 export type {
   RuntimeAppStatus,
   RuntimeBlockedEntry,
@@ -65,11 +60,11 @@ export type {
   RuntimeRunningEntry,
   RuntimeRunOutcome,
   RuntimeSnapshot,
-} from "@symphony/runtime-events";
+} from "@lorenz/runtime-events";
 export {
   RUNTIME_RECONCILIATION_REASONS,
   type RuntimeReconciliationReason,
-} from "@symphony/policies/reconciliation";
+} from "@lorenz/policies/reconciliation";
 
 export interface SymphonyRuntimeOptions {
   workflow: WorkflowDefinition;

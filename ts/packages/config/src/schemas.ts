@@ -14,7 +14,7 @@ import {
   isValidPort,
   isValidRenderIntervalMs,
   isValidTimeoutMs,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 import { normalizeWorkflowConfig } from "./aliases.js";
 

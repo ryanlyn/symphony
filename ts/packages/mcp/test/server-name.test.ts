@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { trackerMcpServerName } from "@symphony/mcp";
+import { trackerMcpServerName } from "@lorenz/mcp";
 
 test("tracker MCP server name is derived per kind, defaulting to the neutral tracker name", () => {
   assert.equal(trackerMcpServerName("linear"), "symphony_linear");

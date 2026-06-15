@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/dispatch",
+  "name": "@lorenz/dispatch",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,8 +9,8 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/config": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/issue": "workspace:*"
+    "@lorenz/config": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/issue": "workspace:*"
   }
 }

@@ -1,8 +1,8 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { sortForDispatch } from "@symphony/cli";
-import type { Issue, Priority } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { sortForDispatch } from "@lorenz/cli";
+import type { Issue, Priority } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 /**
  * Helper: determines whether a priority value is considered "valid" by the sort.

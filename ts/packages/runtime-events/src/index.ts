@@ -1,5 +1,5 @@
-import { AGENT_UPDATE_TYPES } from "@symphony/domain";
-import type { AgentKind, AgentUpdateType, DispatchBlockEntry, UsageTotals } from "@symphony/domain";
+import { AGENT_UPDATE_TYPES } from "@lorenz/domain";
+import type { AgentKind, AgentUpdateType, DispatchBlockEntry, UsageTotals } from "@lorenz/domain";
 
 export type RuntimeAppStatus = "starting" | "idle" | "polling" | "running" | "stopping" | "error";
 export type RuntimePollStatus = "idle" | "checking" | "error";

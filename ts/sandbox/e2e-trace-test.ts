@@ -21,12 +21,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { LinearClient, parseConfig, loadWorkflow } from "@symphony/cli";
-import { SymphonyRuntime } from "@symphony/runtime";
-import { TraceEmitter } from "@symphony/traceviz-emitter";
-import { parseTraceLines } from "@symphony/traceviz-server";
-import { startObservabilityServer } from "@symphony/server";
-import { configureLogFile } from "@symphony/log-file";
+import { LinearClient, parseConfig, loadWorkflow } from "@lorenz/cli";
+import { SymphonyRuntime } from "@lorenz/runtime";
+import { TraceEmitter } from "@lorenz/traceviz-emitter";
+import { parseTraceLines } from "@lorenz/traceviz-server";
+import { startObservabilityServer } from "@lorenz/server";
+import { configureLogFile } from "@lorenz/log-file";
 import {
   registerBuiltinBackends,
   runtimeAdapters,

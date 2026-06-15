@@ -13,22 +13,22 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { beforeAll, test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import { systemClock, type Settings } from "@symphony/domain";
-import { assert, tempDir } from "@symphony/test-utils";
+import { parseConfig } from "@lorenz/config";
+import { systemClock, type Settings } from "@lorenz/domain";
+import { assert, tempDir } from "@lorenz/test-utils";
 import {
   WorkerDriverRegistry,
   registerFakeWorkerDriver,
   type WorkerDriverFactory,
   type DriverDeps,
-} from "@symphony/worker-sdk";
-import { createWorkerPool } from "@symphony/worker-pool";
-import { createDispatchCoordinator, nullEndpointManager } from "@symphony/dispatch-coordinator";
+} from "@lorenz/worker-sdk";
+import { createWorkerPool } from "@lorenz/worker-pool";
+import { createDispatchCoordinator, nullEndpointManager } from "@lorenz/dispatch-coordinator";
 
 import { registerBuiltinBackends } from "../src/daemon.js";
 import { ensureWorkerDriverLoaded, parseWorkerDriverRef } from "../src/workerDriverLoader.js";
 
-import { buildWorkerPool } from "@symphony/cli";
+import { buildWorkerPool } from "@lorenz/cli";
 
 // buildWorkerPool resolves through the process-default registry, populated the
 // same way the CLI entrypoints populate it.
@@ -37,10 +37,10 @@ beforeAll(() => {
 });
 
 // Fixture modules import defineWorkerDriver exactly like a third-party package
-// would. A temp-dir module cannot resolve the bare `@symphony/worker-sdk` name
+// would. A temp-dir module cannot resolve the bare `@lorenz/worker-sdk` name
 // (no node_modules above it), so the fixture imports the same built module by
 // file URL - byte-identical code, different resolution.
-const sdkHref = pathToFileURL(createRequire(import.meta.url).resolve("@symphony/worker-sdk")).href;
+const sdkHref = pathToFileURL(createRequire(import.meta.url).resolve("@lorenz/worker-sdk")).href;
 
 /**
  * Source of a self-contained driver module. The driver provisions synthetic

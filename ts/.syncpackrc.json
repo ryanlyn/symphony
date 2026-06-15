@@ -3,7 +3,7 @@
   "versionGroups": [
     {
       "label": "Workspace packages use workspace:* protocol",
-      "dependencies": ["@symphony/**"],
+      "dependencies": ["@lorenz/**"],
       "dependencyTypes": ["!local"],
       "pinVersion": "workspace:*"
     },

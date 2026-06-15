@@ -1,4 +1,4 @@
-import type { StopReason } from "@symphony/domain";
+import type { StopReason } from "@lorenz/domain";
 
 export type StopReasonAction = "continue" | "retry" | "cancel";
 

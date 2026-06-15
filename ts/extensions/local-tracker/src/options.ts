@@ -1,5 +1,5 @@
-import type { Settings } from "@symphony/domain";
-import { stringOption } from "@symphony/tracker-sdk";
+import type { Settings } from "@lorenz/domain";
+import { stringOption } from "@lorenz/tracker-sdk";
 
 import { resolveBoardDir } from "./resolveBoardDir.js";
 

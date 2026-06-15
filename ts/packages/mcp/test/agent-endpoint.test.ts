@@ -1,7 +1,7 @@
-import { parseConfig } from "@symphony/config";
-import type { Settings } from "@symphony/domain";
+import { parseConfig } from "@lorenz/config";
+import type { Settings } from "@lorenz/domain";
 import { afterEach, test, vi } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 const mockAcquireRemoteMcpTunnel = vi.fn();
 const mockReleaseRemoteMcpTunnel = vi.fn();

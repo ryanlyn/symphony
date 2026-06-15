@@ -1,5 +1,5 @@
-import { errorMessage } from "@symphony/domain";
-import type { Settings } from "@symphony/domain";
+import { errorMessage } from "@lorenz/domain";
+import type { Settings } from "@lorenz/domain";
 
 import type { ToolContext, ToolProvider, ToolResult, ToolSpec } from "./provider.js";
 import { toolFailure, unsupportedToolFailure } from "./result.js";

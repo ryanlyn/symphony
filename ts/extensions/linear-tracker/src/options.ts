@@ -1,5 +1,5 @@
-import type { Settings } from "@symphony/domain";
-import { stringListOption, stringOption } from "@symphony/tracker-sdk";
+import type { Settings } from "@lorenz/domain";
+import { stringListOption, stringOption } from "@lorenz/tracker-sdk";
 
 export const LINEAR_DEFAULT_ENDPOINT = "https://api.linear.app/graphql";
 

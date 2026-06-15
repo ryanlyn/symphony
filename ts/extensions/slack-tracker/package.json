@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/slack-tracker",
+  "name": "@lorenz/slack-tracker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*",
-    "@symphony/issue": "workspace:*",
-    "@symphony/tool-sdk": "workspace:*",
-    "@symphony/tracker-sdk": "workspace:*"
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/issue": "workspace:*",
+    "@lorenz/tool-sdk": "workspace:*",
+    "@lorenz/tracker-sdk": "workspace:*"
   }
 }

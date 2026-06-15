@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 
 import { test } from "vitest";
-import { buildPrompt } from "@symphony/cli";
-import type { Issue } from "@symphony/cli";
-import { assert } from "@symphony/test-utils";
+import { buildPrompt } from "@lorenz/cli";
+import type { Issue } from "@lorenz/cli";
+import { assert } from "@lorenz/test-utils";
 
 interface PromptParityFixture {
   name: string;

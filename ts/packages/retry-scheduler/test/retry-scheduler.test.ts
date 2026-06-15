@@ -1,9 +1,9 @@
 import { beforeEach, test } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { RetryScheduler } from "@symphony/retry-scheduler";
-import { RETRY_SCHEDULER_SYNC_DELAY_MS } from "@symphony/retry-scheduler";
+import { RetryScheduler } from "@lorenz/retry-scheduler";
+import { RETRY_SCHEDULER_SYNC_DELAY_MS } from "@lorenz/retry-scheduler";
 
 function fakeClock(): ClockPort & { tick: number; advance(ms: number): void } {
   let tick = 0;

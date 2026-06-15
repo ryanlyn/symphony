@@ -1,4 +1,4 @@
-import type { UsageTokenUpdate, UsageTotals } from "@symphony/domain";
+import type { UsageTokenUpdate, UsageTotals } from "@lorenz/domain";
 
 export interface UsageMergeInput {
   entryTotals: UsageTotals;

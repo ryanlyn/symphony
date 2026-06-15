@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { test, beforeEach, afterEach } from "vitest";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 import { createLedger } from "../src/ledger.js";
 import type { LedgerRow } from "../src/types.js";

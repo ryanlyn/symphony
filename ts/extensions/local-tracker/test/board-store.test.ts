@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { BoardStore } from "@symphony/local-tracker";
+import { BoardStore } from "@lorenz/local-tracker";
 
 async function tempBoard(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "board-"));

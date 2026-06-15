@@ -1,5 +1,5 @@
 // The DispatchCoordinator: STEP 1 is a 1:1 passthrough over the proven
-// @symphony/worker-pool WorkerPool.
+// @lorenz/worker-pool WorkerPool.
 //
 // With the default settings (slotsPerMachine=1) and the NULL McpEndpointManager
 // (perRunEndpoint=false, mcpEndpoint=null), every operation here is byte-identical
@@ -21,15 +21,15 @@
 // slots) used for collision detection, recycle-driven fail-fast, the tunnel
 // ceiling, and the snapshot.slots view.
 
-import type { WorkerPoolSettings, Settings } from "@symphony/domain";
+import type { WorkerPoolSettings, Settings } from "@lorenz/domain";
 import type {
   AcquireResult,
   WorkerLease,
   WorkerOutcome,
   WorkerPool,
   WorkerPoolSnapshot,
-} from "@symphony/worker-pool";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
+} from "@lorenz/worker-pool";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
 
 import type { AcquireRunSlotRequest, McpEndpointManager, RunSlot } from "./types.js";
 

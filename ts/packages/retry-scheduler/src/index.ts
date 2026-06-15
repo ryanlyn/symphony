@@ -1,5 +1,5 @@
-import type { RuntimeRetryEntry } from "@symphony/runtime-events";
-import { systemClock, type ClockPort, type TimerHandle } from "@symphony/domain";
+import type { RuntimeRetryEntry } from "@lorenz/runtime-events";
+import { systemClock, type ClockPort, type TimerHandle } from "@lorenz/domain";
 
 export const RETRY_SCHEDULER_SYNC_DELAY_MS = 5;
 

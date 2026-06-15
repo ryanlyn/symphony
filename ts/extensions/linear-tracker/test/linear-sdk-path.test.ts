@@ -1,10 +1,10 @@
 import { test, vi } from "vitest";
-import { parseConfig as parseWorkflowConfig } from "@symphony/cli";
+import { parseConfig as parseWorkflowConfig } from "@lorenz/cli";
 import type { LinearGraphQLClient } from "@linear/sdk";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
-import { LinearClient, linearTrackerProvider } from "@symphony/linear-tracker";
+import { LinearClient, linearTrackerProvider } from "@lorenz/linear-tracker";
 
 // Parse config against a private registry so the linear provider's aliases and option
 // validation apply without mutating the process-wide default registry.

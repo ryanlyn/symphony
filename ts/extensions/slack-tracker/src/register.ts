@@ -1,5 +1,5 @@
-import { defaultToolRegistry, type ToolRegistry } from "@symphony/tool-sdk";
-import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
+import { defaultToolRegistry, type ToolRegistry } from "@lorenz/tool-sdk";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { slackTrackerProvider } from "./provider.js";
 import { slackToolProvider } from "./tools.js";

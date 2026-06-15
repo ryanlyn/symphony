@@ -4,4 +4,4 @@ export type {
   RunningEntryPayload as OpsRunningEntry,
   RetryEntryPayload as OpsRetryEntry,
   BlockedEntryPayload as OpsBlockedEntry,
-} from "@symphony/presenter";
+} from "@lorenz/presenter";

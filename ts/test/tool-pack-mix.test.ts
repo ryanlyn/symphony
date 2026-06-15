@@ -2,16 +2,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test } from "vitest";
-import { parseConfig, validateDispatchConfig } from "@symphony/config";
-import type { Issue, Settings } from "@symphony/domain";
-import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
-import { executeTool, mountedSkillSources, toolSpecs } from "@symphony/mcp";
-import { registerJiraTrackers } from "@symphony/jira-tracker";
-import { linearTrackerProvider, registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { ToolRegistry, type ToolProvider } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert, tempDir } from "@symphony/test-utils";
+import { parseConfig, validateDispatchConfig } from "@lorenz/config";
+import type { Issue, Settings } from "@lorenz/domain";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@lorenz/agent-sdk";
+import { executeTool, mountedSkillSources, toolSpecs } from "@lorenz/mcp";
+import { registerJiraTrackers } from "@lorenz/jira-tracker";
+import { linearTrackerProvider, registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { ToolRegistry, type ToolProvider } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert, tempDir } from "@lorenz/test-utils";
 
 /**
  * Tool mounting has tracker-aligned defaults: every workflow gets the neutral tracker pack,
@@ -285,7 +285,7 @@ test("the linear pack rejects unknown option keys and wrong types", () => {
 
 test("local dispatch mounts tracker tools and local board tools", async () => {
   const { trackers, tools } = builtinRegistries();
-  const boardDir = await tempDir("symphony-ts-tool-pack-mix-board");
+  const boardDir = await tempDir("lorenz-tool-pack-mix-board");
   const settings = parseWorkflow(trackers, {
     tracker: { kind: "dispatch" },
     trackers: { dispatch: { provider: "local" } },

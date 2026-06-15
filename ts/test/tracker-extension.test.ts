@@ -1,18 +1,18 @@
 import { test } from "vitest";
-import { parseConfig, validateDispatchConfig } from "@symphony/config";
-import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
-import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
-import { executeTool, toolSpecs } from "@symphony/mcp";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider } from "@symphony/tracker-sdk";
+import { parseConfig, validateDispatchConfig } from "@lorenz/config";
+import type { Issue, RuntimeTrackerClient, Settings } from "@lorenz/domain";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@lorenz/agent-sdk";
+import { executeTool, toolSpecs } from "@lorenz/mcp";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider } from "@lorenz/tracker-sdk";
 import {
   TrackerRegistry,
   rejectUnknownOptions,
   stringOption,
   type TrackerProvider,
   type TrackerToolOps,
-} from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
 // Stand-in for the composition root's executor registration; the default agent records
 // select the "acp" executor, and this test only needs validation to pass.

@@ -1,7 +1,7 @@
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 import { test } from "vitest";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import { systemClock, withDerivedMaxInFlight } from "@symphony/domain";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { systemClock, withDerivedMaxInFlight } from "@lorenz/domain";
 
 // Everything under test is pulled from the public barrel so this file exercises
 // the package exactly as a downstream consumer (the runtime/CLI) would.
@@ -53,7 +53,7 @@ test("the barrel has NO import side effects: nothing is registered into the defa
 
 test("the barrel exposes exactly the pool engine surface plus the SDK re-exports (no conformance)", () => {
   // Pin the runtime (value) export list so a side-door export - including the
-  // SDK conformance kit, which must stay behind `@symphony/worker-sdk/conformance` -
+  // SDK conformance kit, which must stay behind `@lorenz/worker-sdk/conformance` -
   // cannot creep into the engine barrel unnoticed.
   assert.deepEqual(Object.keys(barrel).sort(), [
     "FakeWorkerDriver",

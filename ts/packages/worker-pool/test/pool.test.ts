@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 import { afterEach, beforeEach, test } from "vitest";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import { withDerivedMaxInFlight } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { WorkerDriverRegistry, FakeWorkerDriver, POOL_OWNED_LABEL } from "@symphony/worker-sdk";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { withDerivedMaxInFlight } from "@lorenz/domain";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { WorkerDriverRegistry, FakeWorkerDriver, POOL_OWNED_LABEL } from "@lorenz/worker-sdk";
 import type {
   WorkerDescriptor,
   WorkerDriver,
@@ -15,7 +15,7 @@ import type {
   DriverCapabilities,
   ProvisionRequest,
   TeardownReason,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";
 
 import { createWorkerPool } from "../src/pool.js";
 import type { WorkerLease, LedgerRow } from "../src/types.js";

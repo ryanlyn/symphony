@@ -6,11 +6,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { test, vi } from "vitest";
-import { parseConfig, runAgentAttempt, runSsh, shellEscape } from "@symphony/cli";
-import type { Issue, WorkflowDefinition } from "@symphony/cli";
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
-import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
+import { parseConfig, runAgentAttempt, runSsh, shellEscape } from "@lorenz/cli";
+import type { Issue, WorkflowDefinition } from "@lorenz/cli";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { assert, sampleIssue, tempDir } from "@lorenz/test-utils";
 
 // Attempts run through the CLI's default adapters, which resolve executors (and agent
 // option vocabularies at parse time) via the process-default registry.
@@ -70,7 +70,7 @@ async function setupLiveWorkers(): Promise<LiveWorkerSetupResult> {
     .split(",")
     .map((host) => host.trim())
     .filter(Boolean);
-  const runId = `symphony-ts-live-ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const runId = `lorenz-live-ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   if (configuredHosts.length > 0) {
     const workspaceRoot = `~/.${runId}/workspaces`;
     return {
@@ -102,7 +102,7 @@ async function setupLiveWorkers(): Promise<LiveWorkerSetupResult> {
   if (!(await fileExists(authJsonPath)))
     return { status: "skip", reason: `missing Codex auth json at ${authJsonPath}` };
 
-  const root = await tempDir("symphony-ts-live-docker-ssh");
+  const root = await tempDir("lorenz-live-docker-ssh");
   const sshRoot = path.join(root, "ssh");
   const keyPath = path.join(sshRoot, "id_ed25519");
   const configPath = path.join(sshRoot, "config");
@@ -184,7 +184,7 @@ async function setupNativeSshdWorker(runId: string): Promise<LiveWorkerSetup> {
   if (!(await fileExists("/usr/sbin/sshd"))) throw new Error("local sshd is unavailable");
   if (!(await commandExists("ssh-keygen"))) throw new Error("ssh-keygen is unavailable");
 
-  const root = await tempDir("symphony-ts-live-native-sshd");
+  const root = await tempDir("lorenz-live-native-sshd");
   const keyPath = path.join(root, "id_ed25519");
   const hostKeyPath = path.join(root, "ssh_host_ed25519_key");
   const configPath = path.join(root, "sshd_config");

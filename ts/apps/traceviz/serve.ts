@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { serve } from "@hono/node-server";
-import { parseTraceLines, extractTicketMetadata, computeStats } from "@symphony/traceviz-server";
+import { parseTraceLines, extractTicketMetadata, computeStats } from "@lorenz/traceviz-server";
 
 import { createTracevizApp } from "./app.js";
 
@@ -38,7 +38,7 @@ const identifier = metadata?.issueIdentifier ?? path.basename(resolved, ".jsonl"
 
 const dashboardDist = path.resolve(import.meta.dirname, "../symphony-dashboard/dist");
 if (!fs.existsSync(dashboardDist)) {
-  console.error(`Dashboard not built. Run: pnpm --filter @symphony/dashboard build`);
+  console.error(`Dashboard not built. Run: pnpm --filter @lorenz/dashboard build`);
   process.exit(1);
 }
 

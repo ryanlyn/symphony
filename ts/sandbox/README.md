@@ -13,7 +13,7 @@ npx tsx sandbox/seed-local.ts
 ```
 
 This writes a few sample issues (a couple in `Todo`, one in `In Progress`) into
-`.symphony/local/` via `@symphony/local-tracker`'s `BoardStore`, so the ids and on-disk
+`.symphony/local/` via `@lorenz/local-tracker`'s `BoardStore`, so the ids and on-disk
 format match what the running tracker expects.
 
 - Seed a different directory: `npx tsx sandbox/seed-local.ts /tmp/demo-board`

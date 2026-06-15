@@ -1,4 +1,4 @@
-import type { Settings } from "@symphony/domain";
+import type { Settings } from "@lorenz/domain";
 
 import type { TrackerProvider } from "./provider.js";
 

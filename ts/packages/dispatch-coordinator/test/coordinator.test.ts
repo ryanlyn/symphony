@@ -20,7 +20,7 @@
 // against tsc --build output (composite project, tests excluded from the build).
 
 import { test } from "vitest";
-import type { WorkerPoolSettings, Settings } from "@symphony/domain";
+import type { WorkerPoolSettings, Settings } from "@lorenz/domain";
 import type {
   AcquireRequest,
   AcquireResult,
@@ -28,9 +28,9 @@ import type {
   WorkerOutcome,
   WorkerPool,
   WorkerPoolSnapshot,
-} from "@symphony/worker-pool";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/worker-pool";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import { assert } from "@lorenz/test-utils";
 
 import {
   createDispatchCoordinator,

@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/orchestrator",
+  "name": "@lorenz/orchestrator",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,10 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/config": "workspace:*",
-    "@symphony/dispatch": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/issue": "workspace:*",
-    "@symphony/policies": "workspace:*"
+    "@lorenz/config": "workspace:*",
+    "@lorenz/dispatch": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/issue": "workspace:*",
+    "@lorenz/policies": "workspace:*"
   }
 }

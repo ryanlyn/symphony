@@ -1,12 +1,12 @@
-import type { Issue, Settings } from "@symphony/domain";
-import { isRecord } from "@symphony/domain";
-import type { TrackerContext, TrackerProvider, TrackerToolOps } from "@symphony/tracker-sdk";
+import type { Issue, Settings } from "@lorenz/domain";
+import { isRecord } from "@lorenz/domain";
+import type { TrackerContext, TrackerProvider, TrackerToolOps } from "@lorenz/tracker-sdk";
 import {
   rejectUnknownOptions,
   resolveEnvReference,
   stringListOption,
   stringOption,
-} from "@symphony/tracker-sdk";
+} from "@lorenz/tracker-sdk";
 
 import { JiraClient, JiraMcpClient } from "./client.js";
 import { jiraTrackerOptions, type JiraTrackerOptions } from "./options.js";

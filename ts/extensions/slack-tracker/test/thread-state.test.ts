@@ -1,5 +1,5 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { parseSlackConfig } from "./helpers.js";
 
@@ -8,7 +8,7 @@ import {
   stateFromThread,
   type SlackMessage,
   type SlackThreadReply,
-} from "@symphony/slack-tracker";
+} from "@lorenz/slack-tracker";
 
 function settings(overrides: Record<string, unknown> = {}) {
   return parseSlackConfig(

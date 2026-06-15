@@ -1,7 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { errorMessage, isRecord, type Settings } from "@symphony/domain";
+import { errorMessage, isRecord, type Settings } from "@lorenz/domain";
 import {
   toolFailure,
   toolSuccess,
@@ -9,7 +9,7 @@ import {
   type ToolProvider,
   type ToolResult,
   type ToolSpec,
-} from "@symphony/tool-sdk";
+} from "@lorenz/tool-sdk";
 
 import { linearToolPackOptions, validateLinearToolOptions } from "./options.js";
 

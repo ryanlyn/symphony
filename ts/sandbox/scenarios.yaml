@@ -64,7 +64,7 @@ failures:
       is treated as unstarted due to the ||. This means a started issue is incorrectly gated by blockers because its state name matches
       the hardcoded string "todo".
     reproduction: |
-      import { issueHasOpenBlockers } from "@symphony/dispatch";
+      import { issueHasOpenBlockers } from "@lorenz/dispatch";
       const issue = {
         ...validIssue,
         state: "Todo",

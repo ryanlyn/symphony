@@ -1,16 +1,16 @@
 import { test } from "vitest";
-import { AGENT_UPDATE_TYPES } from "@symphony/domain";
-import type { DispatchBlockEntry } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { AGENT_UPDATE_TYPES } from "@lorenz/domain";
+import type { DispatchBlockEntry } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@symphony/runtime-events";
+import { RUNTIME_EVENT_TYPES, RUNTIME_RUN_OUTCOMES } from "@lorenz/runtime-events";
 import type {
   RuntimeBlockedEntry,
   RuntimeEvent,
   RuntimeRetryEntry,
   RuntimeRunHistoryEntry,
   RuntimeSnapshot,
-} from "@symphony/runtime-events";
+} from "@lorenz/runtime-events";
 
 test("RUNTIME_EVENT_TYPES is a strict superset of AGENT_UPDATE_TYPES with no duplicates", () => {
   // Every AGENT_UPDATE_TYPE must appear in RUNTIME_EVENT_TYPES

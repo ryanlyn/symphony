@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { PORT_MAX } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { PORT_MAX } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { shellEscape, sshArgs, remoteShellCommand, parseSshTarget } from "@symphony/ssh";
+import { shellEscape, sshArgs, remoteShellCommand, parseSshTarget } from "@lorenz/ssh";
 
 // --- Helper arbitraries ---
 

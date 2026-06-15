@@ -57,7 +57,7 @@ description = "Install Playwright browsers for E2E tests"
 [tasks."e2e:trace"]
 run = """
 pnpm build && \
-pnpm --filter @symphony/dashboard build && \
+pnpm --filter @lorenz/dashboard build && \
 npx tsx sandbox/e2e-trace-test.ts
 """
 description = "Run end-to-end trace pipeline test (requires a real agent)"

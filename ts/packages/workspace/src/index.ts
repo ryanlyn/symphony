@@ -6,14 +6,14 @@ import os from "node:os";
 import { pipeline } from "node:stream/promises";
 
 import { Liquid } from "liquidjs";
-import { runSsh, shellEscape, startSshProcess } from "@symphony/ssh";
+import { runSsh, shellEscape, startSshProcess } from "@lorenz/ssh";
 import {
   errorMessage,
   type HookExecutionMessage,
   type HooksSettings,
   type Issue,
   type Settings,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 import { execa } from "execa";
 
 const remoteWorkspaceMarker = "__SYMPHONY_WORKSPACE__";

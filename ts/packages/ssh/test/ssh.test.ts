@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 // vitest.config.ts `sequence: { concurrent: false }`). The afterEach hook guarantees
 // env restoration even when assertions fail mid-test.
 import { afterEach, beforeEach, test } from "vitest";
-import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
+import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 
 import {
   parseSshTarget,
@@ -19,7 +19,7 @@ import {
   sshArgs,
   waitForRemoteTcpPort,
   writeRemoteFile,
-} from "@symphony/ssh";
+} from "@lorenz/ssh";
 
 let savedEnv: { PATH: string | undefined; SYMPHONY_SSH_CONFIG: string | undefined };
 
@@ -79,7 +79,7 @@ test("SSH args reject empty and option-like targets", () => {
 });
 
 test("SSH run honors SYMPHONY_SSH_CONFIG, stderr folding, missing ssh, and timeouts", async () => {
-  const root = await tempDir("symphony-ts-ssh");
+  const root = await tempDir("lorenz-ssh");
   const trace = path.join(root, "ssh.trace");
 
   await installFakeSsh(
@@ -102,7 +102,7 @@ exit 7
   assert.match(traceText, /-F \/tmp\/symphony-test-ssh-config -T -p 2222 -- localhost bash -lc/);
   assert.match(traceText, /echo ready/);
 
-  const emptyPath = await tempDir("symphony-ts-ssh-empty-path");
+  const emptyPath = await tempDir("lorenz-ssh-empty-path");
   process.env.PATH = emptyPath;
   await assert.rejects(() => runSsh("localhost", "printf ok"), /ssh_not_found/);
 
@@ -123,7 +123,7 @@ exit 0
 });
 
 test("SSH timeout rejects near the caller deadline when a child keeps pipes open", async () => {
-  const root = await tempDir("symphony-ts-ssh-timeout");
+  const root = await tempDir("lorenz-ssh-timeout");
   const trace = path.join(root, "ssh.trace");
 
   await installFakeSsh(
@@ -161,7 +161,7 @@ wait "$child"
 });
 
 test("SSH run reports signaled subprocesses as failures", async () => {
-  const root = await tempDir("symphony-ts-ssh-signaled");
+  const root = await tempDir("lorenz-ssh-signaled");
   const trace = path.join(root, "ssh.trace");
 
   await installFakeSsh(
@@ -188,7 +188,7 @@ kill -TERM $$
 });
 
 test("SSH writeRemoteFile rejects signaled subprocesses", async () => {
-  const root = await tempDir("symphony-ts-ssh-write-signaled");
+  const root = await tempDir("lorenz-ssh-write-signaled");
   const trace = path.join(root, "ssh.trace");
 
   await installFakeSsh(
@@ -207,7 +207,7 @@ kill -TERM $$
 });
 
 test("SSH writeRemoteFile preserves payload bytes and applies mode", async () => {
-  const root = await tempDir("symphony-ts-ssh-write");
+  const root = await tempDir("lorenz-ssh-write");
   const trace = path.join(root, "ssh.trace");
   const remotePath = path.join(root, "nested", "script.sh");
 
@@ -231,7 +231,7 @@ eval "$last_arg"
 });
 
 test("SSH waitForRemoteTcpPort probes the remote loopback port", async () => {
-  const root = await tempDir("symphony-ts-ssh-port-probe");
+  const root = await tempDir("lorenz-ssh-port-probe");
   const trace = path.join(root, "ssh.trace");
 
   await installFakeSsh(
@@ -259,7 +259,7 @@ esac
 });
 
 test("SSH writeRemoteFile rejects unsafe string modes without executing them", async () => {
-  const root = await tempDir("symphony-ts-ssh-unsafe-mode");
+  const root = await tempDir("lorenz-ssh-unsafe-mode");
   const trace = path.join(root, "ssh.trace");
   const marker = path.join(root, "marker");
   const remotePath = path.join(root, "script.sh");
@@ -288,7 +288,7 @@ eval "$last_arg"
 });
 
 test("SSH writeRemoteFile shell-quotes string modes and protects dash-leading paths", async () => {
-  const root = await tempDir("symphony-ts-ssh-string-mode");
+  const root = await tempDir("lorenz-ssh-string-mode");
   const trace = path.join(root, "ssh.trace");
   const remotePath = "-script.sh";
 

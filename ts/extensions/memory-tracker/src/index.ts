@@ -1,17 +1,17 @@
-import { normalizeIssue } from "@symphony/issue";
+import { normalizeIssue } from "@lorenz/issue";
 import {
   defaultTrackerRegistry,
   rejectUnknownOptions,
   type TrackerProvider,
   type TrackerRegistry,
-} from "@symphony/tracker-sdk";
+} from "@lorenz/tracker-sdk";
 import {
   ISSUE_STATE_TYPES,
   isRecord,
   type Issue,
   type IssueRef,
   type RuntimeTrackerClient,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 export class MemoryTrackerClient implements RuntimeTrackerClient {
   private readonly issues: Issue[];

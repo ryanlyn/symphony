@@ -1,8 +1,8 @@
 import { Liquid } from "liquidjs";
 import { test } from "vitest";
-import { buildPrompt, continuationPrompt } from "@symphony/cli";
-import type { Issue, ParsedPromptTemplate } from "@symphony/domain";
-import { assert, issueWith } from "@symphony/test-utils";
+import { buildPrompt, continuationPrompt } from "@lorenz/cli";
+import type { Issue, ParsedPromptTemplate } from "@lorenz/domain";
+import { assert, issueWith } from "@lorenz/test-utils";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return issueWith({

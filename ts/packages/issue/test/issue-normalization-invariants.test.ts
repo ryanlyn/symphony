@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { ISSUE_STATE_TYPES } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { ISSUE_STATE_TYPES } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { normalizeIssue } from "@symphony/issue";
+import { normalizeIssue } from "@lorenz/issue";
 
 // --- Helper arbitraries ---
 

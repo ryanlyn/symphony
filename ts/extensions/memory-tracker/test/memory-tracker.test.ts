@@ -1,9 +1,9 @@
 import { test } from "vitest";
-import type { Issue } from "@symphony/domain";
-import { ensembleSize } from "@symphony/issue";
-import { assert } from "@symphony/test-utils";
+import type { Issue } from "@lorenz/domain";
+import { ensembleSize } from "@lorenz/issue";
+import { assert } from "@lorenz/test-utils";
 
-import { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
+import { MemoryTrackerClient, memoryIssuesFromEnv } from "@lorenz/memory-tracker";
 
 function makeIssue(overrides: Partial<Issue> & { id: string; identifier: string }): Issue {
   return {

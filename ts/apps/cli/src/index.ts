@@ -15,16 +15,16 @@ export {
   validateDispatchConfig,
   normalizeStateName,
   normalizeRouteName,
-} from "@symphony/config";
+} from "@lorenz/config";
 export {
   defaultPromptTemplate,
   effectivePromptTemplate,
   loadWorkflow,
   parseWorkflowContent,
   workflowFilePath,
-} from "@symphony/workflow";
-export { normalizeIssue, ensembleSize, isTerminalState } from "@symphony/issue";
-export { buildPrompt, continuationPrompt } from "@symphony/prompt";
+} from "@lorenz/workflow";
+export { normalizeIssue, ensembleSize, isTerminalState } from "@lorenz/issue";
+export { buildPrompt, continuationPrompt } from "@lorenz/prompt";
 export {
   safeIdentifier,
   workspacePath,
@@ -35,29 +35,25 @@ export {
   removeIssueWorkspaces,
   ensureInsideRoot,
   validateWorkspaceCwd,
-} from "@symphony/workspace";
-export { shellEscape, runSsh } from "@symphony/ssh";
+} from "@lorenz/workspace";
+export { shellEscape, runSsh } from "@lorenz/ssh";
 export {
   executeTool,
   issueMcpToken,
   revokeMcpToken,
   validMcpToken,
   acquireAgentMcpEndpoint,
-} from "@symphony/mcp";
-export { LinearClient } from "@symphony/linear-tracker";
-export { JiraClient, JiraMcpClient } from "@symphony/jira-tracker";
-export { MemoryTrackerClient, memoryIssuesFromEnv } from "@symphony/memory-tracker";
-export { configureLogFile, appendLogEvent, defaultLogFile } from "@symphony/log-file";
-export { Orchestrator } from "@symphony/orchestrator";
-export type { RunResult } from "@symphony/agent-runner";
-export { SymphonyRuntime, RUNTIME_EVENT_TYPES } from "@symphony/runtime";
-export type {
-  RuntimeEvent,
-  RuntimeRunHistoryEntry,
-  SymphonyRuntimeOptions,
-} from "@symphony/runtime";
-export { statePayload, issuePayload, runsPayload } from "@symphony/presenter";
-export { retryBackoffMs, actionForStopReason, mergeMonotonicUsage } from "@symphony/policies";
+} from "@lorenz/mcp";
+export { LinearClient } from "@lorenz/linear-tracker";
+export { JiraClient, JiraMcpClient } from "@lorenz/jira-tracker";
+export { MemoryTrackerClient, memoryIssuesFromEnv } from "@lorenz/memory-tracker";
+export { configureLogFile, appendLogEvent, defaultLogFile } from "@lorenz/log-file";
+export { Orchestrator } from "@lorenz/orchestrator";
+export type { RunResult } from "@lorenz/agent-runner";
+export { SymphonyRuntime, RUNTIME_EVENT_TYPES } from "@lorenz/runtime";
+export type { RuntimeEvent, RuntimeRunHistoryEntry, SymphonyRuntimeOptions } from "@lorenz/runtime";
+export { statePayload, issuePayload, runsPayload } from "@lorenz/presenter";
+export { retryBackoffMs, actionForStopReason, mergeMonotonicUsage } from "@lorenz/policies";
 export {
   slotKey,
   routeNames,
@@ -69,24 +65,24 @@ export {
   shouldDispatchIssue,
   firstUnclaimedSlot,
   sortForDispatch,
-} from "@symphony/dispatch";
-export { ProjectionActor } from "@symphony/projections";
-export type { RuntimeProjectionInput } from "@symphony/projections";
-export { Executor, hostAgentBinaryEnv, resolveBridgeCommand } from "@symphony/acp";
-export { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES } from "@symphony/domain";
-export type * from "@symphony/domain";
-export { createWorkerPool } from "@symphony/worker-pool";
+} from "@lorenz/dispatch";
+export { ProjectionActor } from "@lorenz/projections";
+export type { RuntimeProjectionInput } from "@lorenz/projections";
+export { Executor, hostAgentBinaryEnv, resolveBridgeCommand } from "@lorenz/acp";
+export { AGENT_UPDATE_TYPES, ISSUE_STATE_TYPES } from "@lorenz/domain";
+export type * from "@lorenz/domain";
+export { createWorkerPool } from "@lorenz/worker-pool";
 export type {
   WorkerPool,
   WorkerLease,
   WorkerPoolSnapshot,
   AcquireResult,
-} from "@symphony/worker-pool";
+} from "@lorenz/worker-pool";
 export {
   WorkerDriverRegistry,
   defaultWorkerDriverRegistry,
   FakeWorkerDriver,
   registerFakeWorkerDriver,
-} from "@symphony/worker-sdk";
-export { createDispatchCoordinator } from "@symphony/dispatch-coordinator";
-export type { McpEndpointManager } from "@symphony/dispatch-coordinator";
+} from "@lorenz/worker-sdk";
+export { createDispatchCoordinator } from "@lorenz/dispatch-coordinator";
+export type { McpEndpointManager } from "@lorenz/dispatch-coordinator";

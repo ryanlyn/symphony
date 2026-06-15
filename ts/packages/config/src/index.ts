@@ -5,7 +5,7 @@ export {
   CONCURRENCY_MAX,
   MAX_TURNS_MAX,
   ENSEMBLE_SIZE_MAX,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 export { defaultSettings } from "./defaults.js";
 export type { DefaultSettingsOptions } from "./defaults.js";

@@ -1,8 +1,8 @@
 import path from "node:path";
 
-import { loadWorkflow } from "@symphony/workflow";
+import { loadWorkflow } from "@lorenz/workflow";
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { slackTrackers } from "./helpers.js";
 

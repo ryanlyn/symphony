@@ -1,6 +1,6 @@
-import { defaultSettings, parseConfig } from "@symphony/config";
-import { normalizeIssue } from "@symphony/issue";
-import type { Issue, Settings } from "@symphony/domain";
+import { defaultSettings, parseConfig } from "@lorenz/config";
+import { normalizeIssue } from "@lorenz/issue";
+import type { Issue, Settings } from "@lorenz/domain";
 
 /** Quickly create an Issue object with sensible defaults. */
 export function makeIssue(

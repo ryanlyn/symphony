@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { TrackerRegistry, type TrackerProvider } from "@symphony/tracker-sdk";
+import { TrackerRegistry, type TrackerProvider } from "@lorenz/tracker-sdk";
 
 function provider(kind: string): TrackerProvider {
   return {
