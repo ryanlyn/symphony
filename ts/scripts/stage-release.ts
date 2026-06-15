@@ -515,7 +515,6 @@ async function copyReleaseMetadata(workspaceRoot: string, releaseDir: string): P
     path.join(workspaceRoot, "..", "LICENSE"),
     path.join(releaseDir, "LICENSE"),
   );
-  await copyOptionalFile(path.join(workspaceRoot, "..", "NOTICE"), path.join(releaseDir, "NOTICE"));
 }
 
 function collectExternalDependencies(
