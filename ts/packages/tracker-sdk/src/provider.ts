@@ -20,6 +20,8 @@ export interface TrackerCreateIssueInput {
   title: string;
   body?: string | undefined;
   status?: string | undefined;
+  /** Tracker user identity to assign the created issue to when the backend supports assignment. */
+  assignee?: string | undefined;
 }
 
 /** Natively projected query payload returned by {@link TrackerToolOps.queryRows}. */

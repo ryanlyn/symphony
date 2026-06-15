@@ -186,6 +186,7 @@ async function createLinearIssue(
     team.states.nodes.find((candidate) => candidate.type === "unstarted") ??
     team.states.nodes[0];
   if (!state) throw new Error("linear project has no workflow states");
+  const assignee = input.assignee?.trim() || settings.tracker.assignee?.trim();
   const data = await linearData<{
     issueCreate: { success: boolean; issue: Record<string, unknown> | null };
   }>(
@@ -200,6 +201,7 @@ async function createLinearIssue(
         stateId: state.id,
         title: input.title,
         description: input.body ?? "",
+        ...(assignee ? { assigneeId: assignee } : {}),
       },
     },
     fetchImpl,

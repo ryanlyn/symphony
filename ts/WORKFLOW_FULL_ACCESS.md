@@ -71,6 +71,7 @@ Issue context:
 Identifier: {{ issue.identifier }}
 Title: {{ issue.title }}
 Current status: {{ issue.state }}
+Current owner: {{ issue.assignee_id }}
 Labels: {{ issue.labels }}
 URL: {{ issue.url }}
 
@@ -104,9 +105,9 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
 - When meaningful out-of-scope improvements are discovered during execution,
-  file a separate Linear issue instead of expanding scope. The follow-up issue
+  file a separate tracker issue instead of expanding scope. The follow-up issue
   must include a clear title, description, and acceptance criteria, be placed in
-  `Backlog`, be assigned to the same project as the current issue, link the
+  `Backlog`, be assigned to the current owner and the same project as the current issue, link the
   current issue as `related`, and use `blockedBy` when the follow-up depends on
   the current issue.
 - Move status only when the matching quality bar is met.
@@ -290,7 +291,7 @@ Use this only when completion is blocked by missing required tools or missing au
 7. If a blocker is non-actionable, ambiguous, or requires product/risk judgment, move the issue to `Human Review`.
    - Add a concise escalation brief to the workpad that includes the blocker, why it cannot be resolved autonomously, and the exact decision or risk acceptance needed.
 8. Meaningful `P2` or `P3` findings should not block merge. When they merit future action, create a separate Backlog issue rather than expanding current scope.
-   - Include a clear title, description, and acceptance criteria, assign it to the same project, link the current issue as `related`, and use `blockedBy` when the follow-up truly depends on the current issue.
+   - Include a clear title, description, and acceptance criteria, assign it to the current owner and the same project, link the current issue as `related`, and use `blockedBy` when the follow-up truly depends on the current issue.
    - Apply appropriate labels for the finding and issue context, but do not block on taxonomy.
 9. Record in the workpad which non-blocking findings were converted into Backlog issues versus intentionally left as comments only.
 10. Take an adversarial approach when reviewing but all else being equal, bias toward merging
@@ -341,9 +342,9 @@ Use this only when completion is blocked by missing required tools or missing au
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.
 - If out-of-scope improvements are found, create a separate Backlog issue rather
   than expanding current scope, and include a clear
-  title/description/acceptance criteria, same-project assignment, a `related`
-  link to the current issue, and `blockedBy` when the follow-up depends on the
-  current issue.
+  title/description/acceptance criteria, current-owner and same-project assignment,
+  a `related` link to the current issue, and `blockedBy` when the follow-up depends
+  on the current issue.
 - Do not move to `Agent Review` unless the `Completion bar before Agent Review` is satisfied.
 - In `Agent Review`, do not do new feature work or attempt to merge yourself; review only.
 - In `Human Review`, do not make changes; wait and poll.

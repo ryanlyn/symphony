@@ -89,6 +89,81 @@ test("Jira REST client updates status via the matching transition", async () => 
   assert.deepEqual(calls[1]?.body, { transition: { id: "31" } });
 });
 
+test("Jira REST client adds comments as Atlassian document format", async () => {
+  const calls: FetchCall[] = [];
+  const client = new JiraClient(jiraSettings(), {
+    fetchImpl: fetchSequence(calls, jsonResponse({ id: "comment-1" })),
+  });
+
+  await client.addComment("ENG-1", "First line\n\nSecond line");
+
+  assert.equal(calls[0]?.url, "https://example.atlassian.net/rest/api/3/issue/ENG-1/comment");
+  assert.deepEqual(calls[0]?.body, {
+    body: {
+      type: "doc",
+      version: 1,
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "First line" }] },
+        { type: "paragraph", content: [] },
+        { type: "paragraph", content: [{ type: "text", text: "Second line" }] },
+      ],
+    },
+  });
+});
+
+test("Jira REST client assigns created issues to the current user by default", async () => {
+  const calls: FetchCall[] = [];
+  const client = new JiraClient(jiraSettings(), {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({ accountId: "account-current" }),
+      jsonResponse({ id: "10001", key: "ENG-1" }),
+      jsonResponse(jiraIssue({ assigneeAccountId: "account-current" })),
+    ),
+  });
+
+  const issue = await client.createIssue({ title: "Follow-up", body: "details" });
+
+  assert.equal(issue.identifier, "ENG-1");
+  assert.equal(issue.assigneeId, "account-current");
+  assert.equal(calls[0]?.url, "https://example.atlassian.net/rest/api/3/myself");
+  assert.equal(calls[1]?.url, "https://example.atlassian.net/rest/api/3/issue");
+  const fields = (calls[1]?.body.fields ?? {}) as Record<string, unknown>;
+  assert.deepEqual(fields.assignee, { accountId: "account-current" });
+});
+
+test("Jira REST client assigns created issues to the configured assignee", async () => {
+  const calls: FetchCall[] = [];
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira",
+        base_url: "https://example.atlassian.net",
+        email: "bot@example.com",
+        api_key: "jira-token",
+        project_keys: ["ENG"],
+        assignee: "account-1",
+      },
+    },
+    {},
+    {},
+    trackers,
+  );
+  const client = new JiraClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({ id: "10001", key: "ENG-1" }),
+      jsonResponse(jiraIssue()),
+    ),
+  });
+
+  await client.createIssue({ title: "Follow-up" });
+
+  assert.equal(calls[0]?.url, "https://example.atlassian.net/rest/api/3/issue");
+  const fields = (calls[0]?.body.fields ?? {}) as Record<string, unknown>;
+  assert.deepEqual(fields.assignee, { accountId: "account-1" });
+});
+
 test("Jira MCP client calls configured external tools and normalizes returned issues", async () => {
   const calls: FetchCall[] = [];
   const settings = parseConfig(
@@ -146,6 +221,158 @@ test("Jira MCP client calls configured external tools and normalizes returned is
   });
 });
 
+test("Jira MCP client adds comments with issue_key and comment args", async () => {
+  const calls: FetchCall[] = [];
+  const settings = jiraMcpSettings();
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {
+          content: [{ type: "text", text: "Comment added. ID: 10000" }],
+        },
+      }),
+    ),
+  });
+
+  await client.addComment("ENG-1", "Looks good");
+
+  assert.deepEqual(calls[0]?.body.params, {
+    name: "jira_add_comment",
+    arguments: { issue_key: "ENG-1", comment: "Looks good" },
+  });
+});
+
+test("Jira MCP client retries comments with alternate args on tool payload errors", async () => {
+  const calls: FetchCall[] = [];
+  const settings = jiraMcpSettings();
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {
+          content: [{ type: "text", text: "Error: issue_key is not accepted" }],
+        },
+      }),
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "2",
+        result: {
+          content: [{ type: "text", text: "Comment added. ID: 10000" }],
+        },
+      }),
+    ),
+  });
+
+  await client.addComment("ENG-1", "Looks good");
+
+  assert.deepEqual(calls[0]?.body.params, {
+    name: "jira_add_comment",
+    arguments: { issue_key: "ENG-1", comment: "Looks good" },
+  });
+  assert.deepEqual(calls[1]?.body.params, {
+    name: "jira_add_comment",
+    arguments: { issueKey: "ENG-1", comment: "Looks good" },
+  });
+});
+
+test("Jira MCP client surfaces comment tool payload errors", async () => {
+  const settings = jiraMcpSettings();
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      [],
+      ...Array.from({ length: 6 }, (_, index) =>
+        jsonResponse({
+          jsonrpc: "2.0",
+          id: String(index + 1),
+          result: {
+            content: [{ type: "text", text: "Error: comment failed" }],
+          },
+        }),
+      ),
+    ),
+  });
+
+  await assert.rejects(
+    () => client.addComment("ENG-1", "Looks good"),
+    /jira-mcp add comment failed: Error: comment failed/,
+  );
+});
+
+test("Jira MCP client sends the configured assignee when creating issues", async () => {
+  const calls: FetchCall[] = [];
+  const settings = parseConfig(
+    {
+      tracker: {
+        kind: "jira-mcp",
+        base_url: "https://example.atlassian.net",
+        project_keys: ["ENG"],
+        assignee: "account-1",
+        mcp: {
+          url: "http://127.0.0.1:5123/mcp",
+          token: "mcp-token",
+        },
+      },
+    },
+    {},
+    {},
+    trackers,
+  );
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {
+          content: [{ type: "text", text: JSON.stringify({ issue: jiraIssue() }) }],
+        },
+      }),
+    ),
+  });
+
+  const issue = await client.createIssue({ title: "Follow-up", body: "details" });
+
+  assert.equal(issue.identifier, "ENG-1");
+  assert.deepEqual(calls[0]?.body.params, {
+    name: "jira_create_issue",
+    arguments: {
+      projectKey: "ENG",
+      issueType: "Task",
+      title: "Follow-up",
+      summary: "Follow-up",
+      body: "details",
+      description: "details",
+      assignee: "account-1",
+      assigneeId: "account-1",
+      assigneeAccountId: "account-1",
+    },
+  });
+});
+
+function jiraMcpSettings() {
+  return parseConfig(
+    {
+      tracker: {
+        kind: "jira-mcp",
+        base_url: "https://example.atlassian.net",
+        project_keys: ["ENG"],
+        mcp: {
+          url: "http://127.0.0.1:5123/mcp",
+          token: "mcp-token",
+        },
+      },
+    },
+    {},
+    {},
+    trackers,
+  );
+}
+
 function jiraSettings() {
   return parseConfig(
     {
@@ -164,7 +391,7 @@ function jiraSettings() {
 }
 
 function jiraIssue(
-  overrides: { statusName?: string; statusCategory?: string } = {},
+  overrides: { statusName?: string; statusCategory?: string; assigneeAccountId?: string } = {},
 ): Record<string, unknown> {
   return {
     id: "10001",
@@ -181,7 +408,7 @@ function jiraIssue(
         statusCategory: { key: overrides.statusCategory ?? "new" },
       },
       labels: ["Symphony:Backend"],
-      assignee: { accountId: "account-1" },
+      assignee: { accountId: overrides.assigneeAccountId ?? "account-1" },
       priority: { name: "High" },
       created: "2026-06-01T00:00:00.000+0000",
       updated: "2026-06-02T00:00:00.000+0000",

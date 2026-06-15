@@ -109,8 +109,10 @@ export class JiraClient implements RuntimeTrackerClient {
     title: string;
     body?: string | undefined;
     status?: string | undefined;
+    assignee?: string | undefined;
   }): Promise<Issue> {
     const projectKey = this.requiredProjectKey();
+    const assignee = await this.createIssueAssignee(input.assignee);
     const created = await this.request<Record<string, unknown>>("/rest/api/3/issue", {
       method: "POST",
       body: JSON.stringify({
@@ -121,6 +123,7 @@ export class JiraClient implements RuntimeTrackerClient {
           },
           summary: input.title,
           ...(input.body !== undefined ? { description: adfDocument(input.body) } : {}),
+          assignee,
         },
       }),
     });
@@ -166,6 +169,21 @@ export class JiraClient implements RuntimeTrackerClient {
     const baseUrl = jiraTrackerOptions(this.settings).baseUrl?.replace(/\/+$/, "");
     if (!baseUrl) throw new Error("tracker.base_url is required for jira tracker");
     return baseUrl;
+  }
+
+  private async createIssueAssignee(
+    inputAssignee: string | undefined,
+  ): Promise<Record<string, string>> {
+    const explicitAssignee = explicitCreateAssignee(inputAssignee, this.settings);
+    if (explicitAssignee) return { accountId: explicitAssignee };
+    const currentUser = await this.request<Record<string, unknown>>("/rest/api/3/myself", {
+      method: "GET",
+    });
+    const accountId = stringField(currentUser, "accountId");
+    if (accountId) return { accountId };
+    const name = stringField(currentUser, "name");
+    if (name) return { name };
+    throw new Error("jira current user returned no accountId");
   }
 
   private authHeader(): string {
@@ -258,19 +276,29 @@ export class JiraMcpClient implements RuntimeTrackerClient {
   }
 
   async addComment(issueIdOrKey: string, body: string): Promise<void> {
-    await this.callTool(this.toolName("comment"), {
-      ...issueRefArgs(issueIdOrKey),
-      body,
-      comment: body,
-    });
+    const tool = this.toolName("comment");
+    const failures: string[] = [];
+    for (const args of commentArgs(issueIdOrKey, body)) {
+      try {
+        const payload = await this.callTool(tool, args);
+        const payloadError = mcpToolPayloadError(payload);
+        if (!payloadError) return;
+        failures.push(payloadError);
+      } catch (error) {
+        failures.push(errorMessage(error));
+      }
+    }
+    throw new Error(`jira-mcp add comment failed: ${failures.join("; ")}`);
   }
 
   async createIssue(input: {
     title: string;
     body?: string | undefined;
     status?: string | undefined;
+    assignee?: string | undefined;
   }): Promise<Issue> {
     const options = jiraTrackerOptions(this.settings);
+    const assignee = createAssigneeValue(input.assignee, this.settings);
     const payload = await this.callTool(this.toolName("createIssue"), {
       projectKey: options.projectKeys?.[0],
       issueType: options.issueType ?? DEFAULT_JIRA_ISSUE_TYPE,
@@ -279,6 +307,9 @@ export class JiraMcpClient implements RuntimeTrackerClient {
       body: input.body,
       description: input.body,
       status: input.status,
+      assignee,
+      assigneeId: assignee,
+      assigneeAccountId: assignee,
     });
     const issue = firstIssueFromPayload(
       payload,
@@ -385,9 +416,35 @@ function assigneeFilterValue(settings: Settings): string | undefined {
   return assignee;
 }
 
+function explicitCreateAssignee(
+  inputAssignee: string | undefined,
+  settings: Settings,
+): string | null {
+  const assignee = inputAssignee?.trim() || settings.tracker.assignee?.trim();
+  if (!assignee || assignee.toLowerCase() === "me" || assignee.toLowerCase() === "currentuser()") {
+    return null;
+  }
+  return assignee;
+}
+
+function createAssigneeValue(inputAssignee: string | undefined, settings: Settings): string {
+  return explicitCreateAssignee(inputAssignee, settings) ?? "currentUser()";
+}
+
 function issueRefArgs(issueIdOrKey: string): Record<string, unknown> {
   // External MCP servers disagree on the parameter name, so send the common aliases.
   return { issueIdOrKey, issueId: issueIdOrKey, key: issueIdOrKey };
+}
+
+function commentArgs(issueIdOrKey: string, body: string): Array<Record<string, unknown>> {
+  return [
+    { issue_key: issueIdOrKey, comment: body },
+    { issueKey: issueIdOrKey, comment: body },
+    { issueIdOrKey, body },
+    { issueIdOrKey, comment: body },
+    { issueId: issueIdOrKey, body },
+    { key: issueIdOrKey, body },
+  ];
 }
 
 export function normalizeJiraIssue(
@@ -496,6 +553,25 @@ function mcpResultPayload(body: unknown): unknown {
     }
   }
   return result;
+}
+
+function mcpToolPayloadError(payload: unknown): string | null {
+  if (typeof payload === "string") {
+    const text = payload.trim();
+    if (/^(error|failed|failure)\b/i.test(text)) return text;
+    return null;
+  }
+  if (!isRecord(payload)) return null;
+  const success = payload.success;
+  if (success === false) {
+    return (
+      stringField(payload, "error") ?? stringField(payload, "message") ?? summarizeBody(payload)
+    );
+  }
+  if (typeof payload.error === "string") return payload.error;
+  if (isRecord(payload.error))
+    return stringField(payload.error, "message") ?? summarizeBody(payload.error);
+  return null;
 }
 
 function stateTypeFromJiraStatus(status: Record<string, unknown>): IssueStateType | null {
