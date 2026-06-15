@@ -17,7 +17,7 @@
       ],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
-      "cwd": "${workspaceFolder}/ts",
+      "cwd": "${workspaceFolder}",
       "skipFiles": [
         "<node_internals>/**"
       ]
@@ -40,7 +40,7 @@
       ],
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
-      "cwd": "${workspaceFolder}/ts",
+      "cwd": "${workspaceFolder}",
       "skipFiles": [
         "<node_internals>/**"
       ]

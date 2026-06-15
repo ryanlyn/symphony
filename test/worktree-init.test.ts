@@ -7,7 +7,7 @@ import { test } from "vitest";
 import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 
 const execFileAsync = promisify(execFile);
-const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..");
 
 test("worktree initializer prepares the TypeScript workspace", async () => {
   const checkout = await createCheckout();
@@ -15,14 +15,14 @@ test("worktree initializer prepares the TypeScript workspace", async () => {
 
   await runInitializer(checkout, binDir, logPath);
 
-  await fs.stat(path.join(checkout, "ts", "node_modules", ".modules.yaml"));
-  await fs.stat(path.join(checkout, "ts", "dist", ".built"));
+  await fs.stat(path.join(checkout, "node_modules", ".modules.yaml"));
+  await fs.stat(path.join(checkout, "dist", ".built"));
 
   const log = await fs.readFile(logPath, "utf8");
-  assert.match(log, commandPattern(checkout, "ts", "mise", "trust"));
-  assert.match(log, commandPattern(checkout, "ts", "mise", "install"));
-  assert.match(log, commandPattern(checkout, "ts", "pnpm", "install --frozen-lockfile"));
-  assert.match(log, commandPattern(checkout, "ts", "pnpm", "build"));
+  assert.match(log, commandPattern(checkout, "mise", "trust"));
+  assert.match(log, commandPattern(checkout, "mise", "install"));
+  assert.match(log, commandPattern(checkout, "pnpm", "install --frozen-lockfile"));
+  assert.match(log, commandPattern(checkout, "pnpm", "build"));
   assert.notMatch(log, /:make:/);
 });
 
@@ -35,7 +35,7 @@ async function createCheckout(): Promise<string> {
     path.join(checkout, ".codex", "worktree_init.sh"),
   );
   await fs.chmod(path.join(checkout, ".codex", "worktree_init.sh"), 0o755);
-  await fs.mkdir(path.join(checkout, "ts"), { recursive: true });
+  await fs.writeFile(path.join(checkout, "package.json"), "{}\n");
 
   return checkout;
 }
@@ -90,15 +90,8 @@ async function runInitializer(checkout: string, binDir: string, logPath: string)
   });
 }
 
-function commandPattern(
-  checkout: string,
-  packageDir: "ts",
-  command: "mise" | "pnpm",
-  args: string,
-): RegExp {
-  return new RegExp(
-    `${escapeRegExp(path.join(checkout, packageDir))}:${command}:${escapeRegExp(args)}`,
-  );
+function commandPattern(checkout: string, command: "mise" | "pnpm", args: string): RegExp {
+  return new RegExp(`${escapeRegExp(checkout)}:${command}:${escapeRegExp(args)}`);
 }
 
 function escapeRegExp(value: string): string {

@@ -1142,10 +1142,10 @@ test("status overrides reject legacy per-state map and unknown sections", () => 
 });
 
 test("copied workflow examples load independently in the TypeScript port", async () => {
-  const root = path.resolve("..");
+  const root = path.resolve(".");
   for (const name of ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"]) {
     const workflow = await loadWorkflow(
-      path.join(root, "ts", name),
+      path.join(root, name),
       { LINEAR_API_KEY: "test-token", LINEAR_ASSIGNEE: "worker@example.com" },
       { trackers, executors },
     );

@@ -61,7 +61,7 @@ function assertValidIdPrefix(prefix: string): void {
  * cycles on the same file (or id allocation in the same dir) serialize instead of interleaving
  * and losing an update. This is IN-PROCESS serialization only: it covers concurrent agents and
  * ensemble slots inside the single Lorenz daemon, but assumes no external process is editing
- * the board files concurrently (that is out of scope - see ts/README.md).
+ * the board files concurrently (that is out of scope - see README.md).
  */
 const pathLocks = new Map<string, Promise<unknown>>();
 

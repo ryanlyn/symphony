@@ -35,7 +35,7 @@ hooks:
     git clone --depth 1 https://github.com/ryanlyn/symphony .
     if command -v mise >/dev/null 2>&1; then
       mise trust
-      cd ts && mise trust && mise exec -- pnpm install --frozen-lockfile
+      mise exec -- pnpm install --frozen-lockfile
     fi
 agent:
   kind: codex

@@ -411,7 +411,7 @@ function handleSessionUpdate(session: Session, notification: SessionNotification
 
 /**
  * Patched bridges attach a per-model-call token bucket to usage_update
- * notifications under _meta["symphony/callUsage"] (see ts/vendor/README.md).
+ * notifications under _meta["symphony/callUsage"] (see vendor/README.md).
  * Buckets are deltas for exactly one call, so they accumulate additively
  * regardless of the agent's turn-level usage accounting mode. Returns the
  * running session totals when a new bucket was consumed.
@@ -656,7 +656,7 @@ async function openSession(session: Session, mcpServers: McpServer[]): Promise<s
  * written into the workspace. The vendored claude bridge consumes a
  * settings.json-shaped overlay under symphony/settings; the vendored codex
  * bridge consumes config.toml-shaped overrides under symphony/config (see
- * ts/vendor/README.md). Bridges that don't know the keys ignore them.
+ * vendor/README.md). Bridges that don't know the keys ignore them.
  */
 function providerConfigMeta(session: Session): Record<string, unknown> | undefined {
   const providerConfig = session.acpOptions.providerConfig;

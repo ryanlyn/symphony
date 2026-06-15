@@ -42,11 +42,11 @@ so they ride the protocol's sanctioned extension point:
 ## Refreshing from upstream
 
 1. Save the current patch set as a 3-way-applicable diff. `<pristine>` is the
-   commit that last vendored an unpatched dist (`git log ts/vendor` shows the
+   commit that last vendored an unpatched dist (`git log vendor` shows the
    chore(vendor) refresh commits):
 
    ```sh
-   git diff <pristine> HEAD -- ts/vendor/<name>/dist > /tmp/<name>.patch
+   git diff <pristine> HEAD -- vendor/<name>/dist > /tmp/<name>.patch
    ```
 
 2. `npm pack @agentclientprotocol/<name>@<version>` and extract `dist/`,
@@ -57,7 +57,7 @@ so they ride the protocol's sanctioned extension point:
    globally, so stage any newly added dist files with `git add -f`.
 3. Update `version` and `dependencies` in the vendored `package.json` from the
    published manifest (keep `private: true` and the trimmed shape).
-4. `git add ts/vendor` (the index must hold the new pristine dist), then
+4. `git add vendor` (the index must hold the new pristine dist), then
    `git apply -3 /tmp/<name>.patch` and resolve any conflicts; verify with
    `grep -c symphony-patch` and `node --check`.
 5. `pnpm install`, `pnpm build`, run the acp executor tests, and run the live

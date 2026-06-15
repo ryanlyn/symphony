@@ -5,7 +5,7 @@ import { test } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { assert } from "@lorenz/test-utils";
 
-const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..");
 
 type WorkflowStep = {
   name?: string;
@@ -33,7 +33,7 @@ test("make-all lockfile cache does not restore stale build outputs", async () =>
     .filter((step) => typeof step.uses === "string" && step.uses.includes("actions/cache"));
 
   const lockfileCachePaths = cacheSteps
-    .filter((step) => String(step.with?.key ?? "").includes("hashFiles('ts/pnpm-lock.yaml')"))
+    .filter((step) => String(step.with?.key ?? "").includes("hashFiles('pnpm-lock.yaml')"))
     .flatMap((step) => pathEntries(step.with?.path));
   const cacheKeys = cacheSteps.flatMap((step) => [
     String(step.with?.key ?? ""),
@@ -41,15 +41,14 @@ test("make-all lockfile cache does not restore stale build outputs", async () =>
   ]);
 
   assert.deepEqual(
-    lockfileCachePaths.filter((entry) => /^ts\/(?:apps|packages)\/\*\/dist$/.test(entry)),
+    lockfileCachePaths.filter((entry) => /^(?:apps|packages)\/\*\/dist$/.test(entry)),
     [],
   );
   assert.deepEqual(
     lockfileCachePaths.filter(
-      (entry) =>
-        entry === "ts/node_modules" || /^ts\/(?:apps|packages)\/\*\/node_modules$/.test(entry),
+      (entry) => entry === "node_modules" || /^(?:apps|packages)\/\*\/node_modules$/.test(entry),
     ),
-    ["ts/node_modules", "ts/apps/*/node_modules", "ts/packages/*/node_modules"],
+    ["node_modules", "apps/*/node_modules", "packages/*/node_modules"],
   );
   assert.deepEqual(
     cacheKeys.filter((entry) => entry.includes("ts-deps-build")),

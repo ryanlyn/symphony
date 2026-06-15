@@ -5,17 +5,14 @@ import path from "node:path";
 import { test } from "vitest";
 import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 
-const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const repoRoot = path.resolve(import.meta.dirname, "..");
 const linearWorkflowFiles = ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"];
 const workflowFiles = [...linearWorkflowFiles, "WORKFLOW.local.md"];
 
 test("packaged workflow files use TypeScript workspace bootstrap hooks", async () => {
   for (const filename of workflowFiles) {
-    const workflow = await fs.readFile(path.join(repoRoot, "ts", filename), "utf8");
-    assert.match(
-      workflow,
-      /mise trust\s+cd ts && mise trust && mise exec -- pnpm install --frozen-lockfile/,
-    );
+    const workflow = await fs.readFile(path.join(repoRoot, filename), "utf8");
+    assert.match(workflow, /mise trust\s+mise exec -- pnpm install --frozen-lockfile/);
     assert.notMatch(workflow, /cd elixir/);
     assert.notMatch(workflow, /mix deps\.get/);
     assert.notMatch(workflow, /workspace\.before_remove/);
@@ -24,7 +21,7 @@ test("packaged workflow files use TypeScript workspace bootstrap hooks", async (
 
 test("workspace bootstrap hooks fail when clone fails without mise", async () => {
   for (const filename of workflowFiles) {
-    const workflow = await fs.readFile(path.join(repoRoot, "ts", filename), "utf8");
+    const workflow = await fs.readFile(path.join(repoRoot, filename), "utf8");
     const hookBody = extractAfterCreateHook(workflow);
     const temp = await tempDir("lorenz-workflow-bootstrap");
 
@@ -50,7 +47,7 @@ test("workspace bootstrap hooks fail when clone fails without mise", async () =>
 });
 
 test("TS package docs describe the durable workspace contracts", async () => {
-  const readme = await fs.readFile(path.join(repoRoot, "ts", "README.md"), "utf8");
+  const readme = await fs.readFile(path.join(repoRoot, "README.md"), "utf8");
 
   for (const required of [
     "## Requirements",
@@ -88,7 +85,7 @@ test("TS package docs describe the durable workspace contracts", async () => {
 
 test("workspace build script includes the dashboard build", async () => {
   const packageJson = JSON.parse(
-    await fs.readFile(path.join(repoRoot, "ts", "package.json"), "utf8"),
+    await fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
   ) as {
     scripts?: Record<string, string>;
   };
@@ -98,7 +95,7 @@ test("workspace build script includes the dashboard build", async () => {
 
 test("workspace scripts avoid duplicate parity aliases", async () => {
   const packageJson = JSON.parse(
-    await fs.readFile(path.join(repoRoot, "ts", "package.json"), "utf8"),
+    await fs.readFile(path.join(repoRoot, "package.json"), "utf8"),
   ) as {
     scripts?: Record<string, string>;
   };
