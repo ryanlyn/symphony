@@ -298,7 +298,6 @@ export class JiraMcpClient implements RuntimeTrackerClient {
     assignee?: string | undefined;
   }): Promise<Issue> {
     const options = jiraTrackerOptions(this.settings);
-    const assignee = createAssigneeValue(input.assignee, this.settings);
     const payload = await this.callTool(this.toolName("createIssue"), {
       projectKey: options.projectKeys?.[0],
       issueType: options.issueType ?? DEFAULT_JIRA_ISSUE_TYPE,
@@ -307,9 +306,7 @@ export class JiraMcpClient implements RuntimeTrackerClient {
       body: input.body,
       description: input.body,
       status: input.status,
-      assignee,
-      assigneeId: assignee,
-      assigneeAccountId: assignee,
+      ...createAssigneeArgs(input.assignee, this.settings),
     });
     const issue = firstIssueFromPayload(
       payload,
@@ -427,8 +424,18 @@ function explicitCreateAssignee(
   return assignee;
 }
 
-function createAssigneeValue(inputAssignee: string | undefined, settings: Settings): string {
-  return explicitCreateAssignee(inputAssignee, settings) ?? "currentUser()";
+function createAssigneeArgs(
+  inputAssignee: string | undefined,
+  settings: Settings,
+): Record<string, string> {
+  const assignee = explicitCreateAssignee(inputAssignee, settings);
+  return assignee
+    ? {
+        assignee,
+        assigneeId: assignee,
+        assigneeAccountId: assignee,
+      }
+    : {};
 }
 
 function issueRefArgs(issueIdOrKey: string): Record<string, unknown> {
@@ -440,8 +447,12 @@ function commentArgs(issueIdOrKey: string, body: string): Array<Record<string, u
   return [
     { issue_key: issueIdOrKey, comment: body },
     { issueKey: issueIdOrKey, comment: body },
-    { issueIdOrKey, body },
     { issueIdOrKey, comment: body },
+    { issueId: issueIdOrKey, comment: body },
+    { key: issueIdOrKey, comment: body },
+    { issue_key: issueIdOrKey, body },
+    { issueKey: issueIdOrKey, body },
+    { issueIdOrKey, body },
     { issueId: issueIdOrKey, body },
     { key: issueIdOrKey, body },
   ];

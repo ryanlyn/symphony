@@ -280,12 +280,45 @@ test("Jira MCP client retries comments with alternate args on tool payload error
   });
 });
 
+test("Jira MCP client retries comments with issueId and comment args", async () => {
+  const calls: FetchCall[] = [];
+  const settings = jiraMcpSettings();
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      ...Array.from({ length: 3 }, (_, index) =>
+        jsonResponse({
+          jsonrpc: "2.0",
+          id: String(index + 1),
+          result: {
+            content: [{ type: "text", text: "Error: wrong argument shape" }],
+          },
+        }),
+      ),
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "4",
+        result: {
+          content: [{ type: "text", text: "Comment added. ID: 10000" }],
+        },
+      }),
+    ),
+  });
+
+  await client.addComment("ENG-1", "Looks good");
+
+  assert.deepEqual(calls[3]?.body.params, {
+    name: "jira_add_comment",
+    arguments: { issueId: "ENG-1", comment: "Looks good" },
+  });
+});
+
 test("Jira MCP client surfaces comment tool payload errors", async () => {
   const settings = jiraMcpSettings();
   const client = new JiraMcpClient(settings, {
     fetchImpl: fetchSequence(
       [],
-      ...Array.from({ length: 6 }, (_, index) =>
+      ...Array.from({ length: 10 }, (_, index) =>
         jsonResponse({
           jsonrpc: "2.0",
           id: String(index + 1),
@@ -301,6 +334,33 @@ test("Jira MCP client surfaces comment tool payload errors", async () => {
     () => client.addComment("ENG-1", "Looks good"),
     /jira-mcp add comment failed: Error: comment failed/,
   );
+});
+
+test("Jira MCP client omits assignee args when no concrete owner is configured", async () => {
+  const calls: FetchCall[] = [];
+  const settings = jiraMcpSettings();
+  const client = new JiraMcpClient(settings, {
+    fetchImpl: fetchSequence(
+      calls,
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: {
+          content: [{ type: "text", text: JSON.stringify({ issue: jiraIssue() }) }],
+        },
+      }),
+    ),
+  });
+
+  await client.createIssue({ title: "Follow-up", body: "details" });
+
+  const args = ((calls[0]?.body.params as Record<string, unknown>).arguments ?? {}) as Record<
+    string,
+    unknown
+  >;
+  assert.equal(args.assignee, undefined);
+  assert.equal(args.assigneeId, undefined);
+  assert.equal(args.assigneeAccountId, undefined);
 });
 
 test("Jira MCP client sends the configured assignee when creating issues", async () => {

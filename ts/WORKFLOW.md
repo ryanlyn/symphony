@@ -108,6 +108,8 @@ The agent should be able to talk to the configured tracker through `tracker_*` M
   `Backlog`, be assigned to the current owner and the same project as the current issue, link the
   current issue as `related`, and use `blockedBy` when the follow-up depends on
   the current issue.
+  When using `tracker_create_issue`, pass `assignee: {{ issue.assignee_id }}` when
+  `Current owner` is not null.
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.

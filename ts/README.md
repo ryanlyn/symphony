@@ -350,8 +350,9 @@ For both `jira` and `jira-mcp`, Symphony only picks up issues that are assigned 
 user (`trackers.jira.assignee` or `trackers.jira-mcp.assignee`, defaulting to the authenticated
 user via `assignee = currentUser()`) and labeled `agent`. This holds even when the configured JQL
 widens the scope, so issues must be explicitly delegated before Symphony will dispatch them.
-Jira issues created through `tracker_create_issue` are assigned to that same owner by default, and
-callers may pass `assignee` to override the owner for a specific follow-up.
+Jira REST issues created through `tracker_create_issue` are assigned to that same owner by
+default. Jira MCP creation forwards a concrete configured or caller-provided `assignee` to the
+external MCP server.
 
 Direct Jira REST configuration:
 
