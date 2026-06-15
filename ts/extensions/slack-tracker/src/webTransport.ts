@@ -1,4 +1,4 @@
-import { errorMessage, isRecord, type Settings } from "@symphony/domain";
+import { errorMessage, isRecord, type Settings } from "@lorenz/domain";
 
 import { isBotMention } from "./mapping.js";
 import { slackEndpoint, slackTrackerOptions } from "./options.js";

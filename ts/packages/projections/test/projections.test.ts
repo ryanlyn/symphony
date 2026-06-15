@@ -1,10 +1,10 @@
 import { test } from "vitest";
-import type { RuntimeEvent, RuntimeRunHistoryEntry } from "@symphony/runtime-events";
-import type { UsageTotals } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import type { RuntimeEvent, RuntimeRunHistoryEntry } from "@lorenz/runtime-events";
+import type { UsageTotals } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import type { RuntimeProjectionInput } from "@symphony/projections";
-import { ProjectionActor } from "@symphony/projections";
+import type { RuntimeProjectionInput } from "@lorenz/projections";
+import { ProjectionActor } from "@lorenz/projections";
 
 function makeUsageTotals(overrides: Partial<UsageTotals> = {}): UsageTotals {
   return {

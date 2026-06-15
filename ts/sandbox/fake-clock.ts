@@ -1,4 +1,4 @@
-import type { ClockPort, TimerHandle } from "@symphony/domain";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
 
 /**
  * A controllable {@link ClockPort} for sandbox scenarios.

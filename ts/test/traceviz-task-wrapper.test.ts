@@ -82,7 +82,7 @@ describe("traceviz mise task wrapper", () => {
     expect(result.stdout).not.toContain("MONO_408_INJECTION");
     expect(result.status).toBe(0);
     expect(readLoggedArgv(logPath)).toEqual([
-      ["--filter", "@symphony/dashboard", "build"],
+      ["--filter", "@lorenz/dashboard", "build"],
       ["traceviz", "--", tracePath],
     ]);
   });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { OpsStatePayload } from "@symphony/presenter";
-import type { TicketInfo, DisplayEvent, WsClientMessage } from "@symphony/traceviz-server";
+import type { OpsStatePayload } from "@lorenz/presenter";
+import type { TicketInfo, DisplayEvent, WsClientMessage } from "@lorenz/traceviz-server";
 
 /** Messages pushed by the server over the `/ws` connection. */
 export type WsMessage =

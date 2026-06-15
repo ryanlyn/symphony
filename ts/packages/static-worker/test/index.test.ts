@@ -1,13 +1,8 @@
 import { test } from "vitest";
-import { WorkerDriverRegistry } from "@symphony/worker-sdk";
-import type {
-  DriverDeps,
-  ProvisionRequest,
-  SshRunOptions,
-  SshRunResult,
-} from "@symphony/worker-sdk";
-import { runDriverConformanceSuite } from "@symphony/worker-sdk/conformance";
-import { assert } from "@symphony/test-utils";
+import { WorkerDriverRegistry } from "@lorenz/worker-sdk";
+import type { DriverDeps, ProvisionRequest, SshRunOptions, SshRunResult } from "@lorenz/worker-sdk";
+import { runDriverConformanceSuite } from "@lorenz/worker-sdk/conformance";
+import { assert } from "@lorenz/test-utils";
 
 import {
   StaticSshWorkerDriver,

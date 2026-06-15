@@ -1,4 +1,4 @@
-import type { Settings } from "@symphony/domain";
+import type { Settings } from "@lorenz/domain";
 
 /**
  * JSON-Schema-shaped declaration of one agent-facing tool, served to agent sessions over

@@ -4,12 +4,12 @@ import path from "node:path";
 
 import { afterEach, beforeEach, test } from "vitest";
 import fc from "fast-check";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import { withDerivedMaxInFlight } from "@symphony/domain";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
-import { WorkerDriverRegistry, FakeWorkerDriver, POOL_OWNED_LABEL } from "@symphony/worker-sdk";
-import type { WorkerDriver } from "@symphony/worker-sdk";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { withDerivedMaxInFlight } from "@lorenz/domain";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
+import { WorkerDriverRegistry, FakeWorkerDriver, POOL_OWNED_LABEL } from "@lorenz/worker-sdk";
+import type { WorkerDriver } from "@lorenz/worker-sdk";
 
 import { createWorkerPool } from "../src/pool.js";
 import { createMutex } from "../src/mutex.js";

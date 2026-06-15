@@ -1,5 +1,5 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { parseSlackConfig } from "./helpers.js";
 
@@ -10,7 +10,7 @@ import {
   stateFromReactions,
   statusEmojiMap,
   stripLeadingMention,
-} from "@symphony/slack-tracker";
+} from "@lorenz/slack-tracker";
 
 test("default emoji map yields Todo with no status reactions and maps the rest", () => {
   const map = DEFAULT_EMOJI_STATES;

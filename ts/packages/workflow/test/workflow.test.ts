@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test } from "vitest";
-import { assert, tempDir } from "@symphony/test-utils";
+import { assert, tempDir } from "@lorenz/test-utils";
 
 import {
   workflowFilePath,
@@ -10,7 +10,7 @@ import {
   parseWorkflowContent,
   effectivePromptTemplate,
   defaultPromptTemplate,
-} from "@symphony/workflow";
+} from "@lorenz/workflow";
 
 // --- workflowFilePath ---
 

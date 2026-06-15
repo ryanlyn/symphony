@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
+import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 import { afterEach, beforeEach, test } from "vitest";
 import {
   buildWorkerPool,
@@ -11,8 +11,8 @@ import {
   runAgentAttempt,
   runtimeAdapters,
   SymphonyRuntime,
-} from "@symphony/cli";
-import type { WorkerLease, WorkerPool, Settings, WorkflowDefinition } from "@symphony/cli";
+} from "@lorenz/cli";
+import type { WorkerLease, WorkerPool, Settings, WorkflowDefinition } from "@lorenz/cli";
 
 // The composition root decides which tracker/executor backends exist; the e2e
 // harness mirrors the CLI entrypoints and registers the built-ins once.
@@ -20,7 +20,7 @@ registerBuiltinBackends();
 
 // ---------------------------------------------------------------------------
 // Always-on end-to-end demo (T17): the REAL `runDaemon` wiring with a
-// `tracker.kind=memory` client and the REAL `@symphony/worker-pool`
+// `tracker.kind=memory` client and the REAL `@lorenz/worker-pool`
 // (driver=fake, max=1, warm=1). No fakes are injected into the runtime - the
 // pool, orchestrator, runner, and ACP executor are all the real production
 // code paths. The pool yields `fake://worker-<id>` as the workerHost; the runner
@@ -164,7 +164,7 @@ test("stop then drainWorkerPool destroys every worker (zero workers remain)", as
 async function setupHarness(
   options: { issues?: Record<string, unknown>[] } = {},
 ): Promise<Harness> {
-  const root = await tempDir("symphony-ts-worker-e2e");
+  const root = await tempDir("lorenz-worker-e2e");
   const remoteHome = await fs
     .mkdir(path.join(root, "remote-home"), { recursive: true })
     .then(() => path.join(root, "remote-home"));

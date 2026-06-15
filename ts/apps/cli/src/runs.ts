@@ -7,8 +7,8 @@ import {
   parsePositiveInteger,
   parseRequiredValue,
   type ParseResult,
-} from "@symphony/cli-kit";
-import { loadWorkflow } from "@symphony/workflow";
+} from "@lorenz/cli-kit";
+import { loadWorkflow } from "@lorenz/workflow";
 
 export interface RunsCommandOptions {
   issue: string | null;
@@ -35,7 +35,7 @@ export interface RunsCommanderOptions {
 }
 
 export type RunsParseResult = ParseResult<RunsCommandOptions>;
-export function createRunsCommand(name = "symphony-ts runs"): Command {
+export function createRunsCommand(name = "lorenz runs"): Command {
   return new Command(name)
     .description("Query Symphony run history from the observability API.")
     .allowExcessArguments(false)

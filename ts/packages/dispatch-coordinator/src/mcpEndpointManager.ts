@@ -6,21 +6,21 @@
 // so two co-resident runs on one machine never share a single host-keyed endpoint.
 //
 // Dependency direction (invariant #8): this package must stay free of any
-// `@symphony/mcp` / tunnel RUNTIME dependency, so the concrete acquire function
+// `@lorenz/mcp` / tunnel RUNTIME dependency, so the concrete acquire function
 // (`acquireAgentMcpEndpointForRun`) is INJECTED, not imported. The daemon wiring
-// (apps/cli/daemon.ts), which already depends on `@symphony/mcp`, threads the real
+// (apps/cli/daemon.ts), which already depends on `@lorenz/mcp`, threads the real
 // function in. The `AgentMcpEndpointLease` type is pulled in TYPE-ONLY (fully
-// erased by tsc), so no runtime edge to `@symphony/mcp` is formed here.
+// erased by tsc), so no runtime edge to `@lorenz/mcp` is formed here.
 
-import type { Settings } from "@symphony/domain";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
+import type { Settings } from "@lorenz/domain";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
 
 import type { McpEndpointManager } from "./types.js";
 
 /**
  * The injected per-run endpoint acquirer. Structurally matches
  * `acquireAgentMcpEndpointForRun(settings, workerHost, runKey)` from
- * `@symphony/mcp`, which issues the token, refcounts the local server, and opens
+ * `@lorenz/mcp`, which issues the token, refcounts the local server, and opens
  * the per-run tunnel via `workerHostPool.openForRun(...)`, returning ONE lease
  * whose `release()` revokes the token, drops the local-server ref, and calls
  * `closeForRun(...)` (all three sub-resources owned together).
@@ -33,7 +33,7 @@ export type AcquireAgentMcpEndpointForRun = (
 
 /** Constructor deps for {@link createPerRunEndpointManager}. */
 export interface CreatePerRunEndpointManagerDeps {
-  /** The injected `acquireAgentMcpEndpointForRun`-shaped function (from `@symphony/mcp`). */
+  /** The injected `acquireAgentMcpEndpointForRun`-shaped function (from `@lorenz/mcp`). */
   acquireForRun: AcquireAgentMcpEndpointForRun;
 }
 

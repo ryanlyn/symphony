@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@symphony/cli";
-import type { ClockPort, Issue, RunningEntry } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@lorenz/cli";
+import type { ClockPort, Issue, RunningEntry } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 /** Claims on the static/local path, asserting the union arm and unwrapping the entry. */
 function claimEntry(orchestrator: Orchestrator, issue: Issue): RunningEntry | null {

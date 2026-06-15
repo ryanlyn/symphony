@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/tui",
+  "name": "@lorenz/tui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,9 +9,9 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*",
-    "@symphony/humanize": "workspace:*",
-    "@symphony/runtime-events": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/humanize": "workspace:*",
+    "@lorenz/runtime-events": "workspace:*",
     "ink": "catalog:",
     "react": "catalog:"
   }

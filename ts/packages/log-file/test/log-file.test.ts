@@ -3,8 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { afterEach, test, vi } from "vitest";
-import { appendLogEvent, configureLogFile, defaultLogFile } from "@symphony/cli";
-import { assert, tempDir } from "@symphony/test-utils";
+import { appendLogEvent, configureLogFile, defaultLogFile } from "@lorenz/cli";
+import { assert, tempDir } from "@lorenz/test-utils";
 
 const fsSyncMockState = vi.hoisted(() => ({
   failNextSymlinkSync: false,
@@ -30,7 +30,7 @@ afterEach(() => {
 });
 
 test("log file configuration uses pino-roll with a stable path", async () => {
-  const root = await tempDir("symphony-ts-log-file");
+  const root = await tempDir("lorenz-log-file");
   const logFile = defaultLogFile(root);
   assert.equal(logFile, path.join(root, "log", "symphony.log"));
 
@@ -72,7 +72,7 @@ test("log file configuration uses pino-roll with a stable path", async () => {
 });
 
 test("log file configuration delegates size rotation to pino-roll", async () => {
-  const root = await tempDir("symphony-ts-log-file-roll");
+  const root = await tempDir("lorenz-log-file-roll");
   const logFile = defaultLogFile(root);
   const maxFiles = 1;
   const maxBytes = 120;
@@ -145,7 +145,7 @@ test("log file configuration delegates size rotation to pino-roll", async () => 
 });
 
 test("rotation filesystem failures warn instead of escaping from the drain callback", async () => {
-  const root = await tempDir("symphony-ts-log-file-roll-warning");
+  const root = await tempDir("lorenz-log-file-roll-warning");
   const logFile = defaultLogFile(root);
   await configureLogFile(logFile, {
     maxBytes: 120,
@@ -181,7 +181,7 @@ test("rotation filesystem failures warn instead of escaping from the drain callb
 });
 
 test("stable log path remains available if rotation symlink replacement fails", async () => {
-  const root = await tempDir("symphony-ts-log-file-roll-stable");
+  const root = await tempDir("lorenz-log-file-roll-stable");
   const logFile = defaultLogFile(root);
   await configureLogFile(logFile, {
     maxBytes: 120,
@@ -216,7 +216,7 @@ test("stable log path remains available if rotation symlink replacement fails", 
 });
 
 test("log file configuration warns without crashing when the sink is unavailable", async () => {
-  const root = await tempDir("symphony-ts-log-file-blocked");
+  const root = await tempDir("lorenz-log-file-blocked");
   const blocker = path.join(root, "blocked");
   await fs.writeFile(blocker, "not a directory");
 
@@ -242,7 +242,7 @@ async function waitForSyntheticSymlinkFailure(): Promise<void> {
 }
 
 test("appendLogEvent without prior configureLogFile uses default logger path", async () => {
-  const root = await tempDir("symphony-ts-log-file-coldstart");
+  const root = await tempDir("lorenz-log-file-coldstart");
   const logFile = path.join(root, "log", "symphony.log");
 
   await appendLogEvent(logFile, {
@@ -265,7 +265,7 @@ test("appendLogEvent without prior configureLogFile uses default logger path", a
 });
 
 test("appendLogEvent emits stderr warning when writing fails after configuration", async () => {
-  const root = await tempDir("symphony-ts-log-file-write-fail");
+  const root = await tempDir("lorenz-log-file-write-fail");
   const logFile = path.join(root, "log", "symphony.log");
   await fs.mkdir(path.dirname(logFile), { recursive: true });
 

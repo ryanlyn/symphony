@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/tracker-sdk",
+  "name": "@lorenz/tracker-sdk",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*",
-    "@symphony/tool-sdk": "workspace:*"
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/tool-sdk": "workspace:*"
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { TraceWatcher } from "@symphony/traceviz-server";
+import { TraceWatcher } from "@lorenz/traceviz-server";
 
 describe("TraceWatcher broadcast callback", () => {
   it("invokes callback with issueId and compact ticket info when lines change", async () => {

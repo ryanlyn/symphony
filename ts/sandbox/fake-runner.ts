@@ -1,6 +1,6 @@
-import type { AgentUpdate, Issue, RunResult, UsageTotals } from "@symphony/cli";
-import type { ClockPort } from "@symphony/domain";
-import type { RuntimeRunner } from "@symphony/runtime";
+import type { AgentUpdate, Issue, RunResult, UsageTotals } from "@lorenz/cli";
+import type { ClockPort } from "@lorenz/domain";
+import type { RuntimeRunner } from "@lorenz/runtime";
 
 import { sleep } from "./fixtures.js";
 

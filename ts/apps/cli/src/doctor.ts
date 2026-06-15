@@ -9,18 +9,18 @@ import {
   hasHelpFlag,
   parseRequiredValue,
   type ParseResult,
-} from "@symphony/cli-kit";
-import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
-import { errorMessage, type Settings } from "@symphony/domain";
-import { loadWorkflow, workflowFilePath } from "@symphony/workflow";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
+} from "@lorenz/cli-kit";
+import { settingsForIssueState, validateDispatchConfig } from "@lorenz/config";
+import { errorMessage, type Settings } from "@lorenz/domain";
+import { loadWorkflow, workflowFilePath } from "@lorenz/workflow";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
 import {
   acpAgentOptions,
   isClaudeCompatibleBridgeCommand,
   resolveBridgeCommand,
-} from "@symphony/acp";
-import { defaultToolRegistry } from "@symphony/tool-sdk";
-import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
+} from "@lorenz/acp";
+import { defaultToolRegistry } from "@lorenz/tool-sdk";
+import { defaultTrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { registerBuiltinBackends, runtimeDefaultSettingsOptions } from "./daemon.js";
 
@@ -75,7 +75,7 @@ interface AgentCliRequirement {
 
 export type DoctorParseResult = ParseResult<DoctorCommandOptions>;
 
-export function createDoctorCommand(name = "symphony-ts doctor"): Command {
+export function createDoctorCommand(name = "lorenz doctor"): Command {
   return new Command(name)
     .description("Validate a Symphony workflow and local runtime prerequisites.")
     .allowExcessArguments(false)

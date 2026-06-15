@@ -1,15 +1,15 @@
-import type { ClockPort } from "@symphony/domain";
+import type { ClockPort } from "@lorenz/domain";
 
 /**
  * The worker driver contract: everything a third party needs to ship a new worker
  * backend (their own cloud, their own VM fleet) as an extension, without
  * touching the pool engine. A driver provisions, probes, destroys, and lists
  * SSH-addressable workers behind one interface; the warm pool in
- * `@symphony/worker-pool` owns every lifecycle decision (leasing, reaping,
+ * `@lorenz/worker-pool` owns every lifecycle decision (leasing, reaping,
  * spend, crash recovery) and only ever calls these four operations.
  *
  * This module is dependency-light by design: it pulls `ClockPort` from
- * `@symphony/domain` only, so extensions implementing a driver depend on the
+ * `@lorenz/domain` only, so extensions implementing a driver depend on the
  * SDK layer alone.
  */
 

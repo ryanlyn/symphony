@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { AgentExecutorRegistry, type AgentExecutorProvider } from "@symphony/agent-sdk";
+import { AgentExecutorRegistry, type AgentExecutorProvider } from "@lorenz/agent-sdk";
 
 function provider(executor: string): AgentExecutorProvider {
   return {

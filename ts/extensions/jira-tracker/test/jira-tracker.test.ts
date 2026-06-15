@@ -1,14 +1,14 @@
 import { test } from "vitest";
-import { parseConfig } from "@symphony/config";
-import { assert } from "@symphony/test-utils";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
+import { parseConfig } from "@lorenz/config";
+import { assert } from "@lorenz/test-utils";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import {
   JiraClient,
   JiraMcpClient,
   jiraMcpTrackerProvider,
   jiraTrackerProvider,
-} from "@symphony/jira-tracker";
+} from "@lorenz/jira-tracker";
 
 interface FetchCall {
   url: string;

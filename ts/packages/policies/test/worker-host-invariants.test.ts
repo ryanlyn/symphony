@@ -1,8 +1,8 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { selectLeastLoadedHost } from "@symphony/policies";
+import { selectLeastLoadedHost } from "@lorenz/policies";
 
 // --- Helper arbitraries ---
 

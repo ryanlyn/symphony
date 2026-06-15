@@ -7,7 +7,7 @@
  *
  * Creates simple coding tasks that a Codex agent can complete quickly.
  */
-import { LinearClient, parseConfig } from "@symphony/cli";
+import { LinearClient, parseConfig } from "@lorenz/cli";
 
 const issues = [
   {

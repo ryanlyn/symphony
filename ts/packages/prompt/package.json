@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/prompt",
+  "name": "@lorenz/prompt",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "liquidjs": "catalog:",
-    "@symphony/domain": "workspace:*",
-    "@symphony/workflow": "workspace:*"
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/workflow": "workspace:*"
   }
 }

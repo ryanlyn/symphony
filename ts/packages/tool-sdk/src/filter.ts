@@ -1,4 +1,4 @@
-import { isRecord } from "@symphony/domain";
+import { isRecord } from "@lorenz/domain";
 
 /**
  * A small query DSL backing the read tools of the structured trackers

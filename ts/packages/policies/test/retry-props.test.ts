@@ -1,8 +1,8 @@
 import { describe, test } from "vitest";
 import fc from "fast-check";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { MIN_RETRY_DELAY_MS, retryBackoffMs } from "@symphony/policies";
+import { MIN_RETRY_DELAY_MS, retryBackoffMs } from "@lorenz/policies";
 
 test("INVARIANT: When failure retry delay is calculated, it SHALL be monotonically non-decreasing with attempt number", () => {
   fc.assert(

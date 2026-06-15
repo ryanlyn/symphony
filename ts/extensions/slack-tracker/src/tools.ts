@@ -1,4 +1,4 @@
-import { errorMessage, isRecord, type Settings } from "@symphony/domain";
+import { errorMessage, isRecord, type Settings } from "@lorenz/domain";
 import {
   applyQuery,
   parseQuerySpec,
@@ -10,7 +10,7 @@ import {
   type ToolProvider,
   type ToolResult,
   type ToolSpec,
-} from "@symphony/tool-sdk";
+} from "@lorenz/tool-sdk";
 
 import { slackMessageToRow, slackPermalink, splitIssueId, trackedRootsOf } from "./client.js";
 import { requireBotUserId, requireTrackedMessage, updateSlackStatus } from "./operations.js";

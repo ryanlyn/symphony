@@ -3,17 +3,17 @@ import { createServer } from "node:net";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { afterEach, beforeEach, test, vi } from "vitest";
-import { startReverseTunnel } from "@symphony/ssh";
-import { workerHostPool } from "@symphony/worker-host-pool";
-import type { Settings } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { startReverseTunnel } from "@lorenz/ssh";
+import { workerHostPool } from "@lorenz/worker-host-pool";
+import type { Settings } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 import { acquireAgentMcpEndpointForRun } from "../src/agentEndpoint.js";
 import { mcpAuthScopeForSettings, validMcpToken } from "../src/auth.js";
 
 // Avoid spawning a real `ssh -N` reverse tunnel; the per-run tunnel allocation
 // logic in WorkerHostPool is exercised against a fake child process.
-vi.mock("@symphony/ssh", () => ({
+vi.mock("@lorenz/ssh", () => ({
   startReverseTunnel: vi.fn(),
   // The pool awaits remote-port readiness before returning a lease; the fake
   // resolves immediately so these tests exercise the lease lifecycle, not the

@@ -1,9 +1,9 @@
 import { test } from "vitest";
-import { issueMcpToken, revokeMcpToken, validMcpToken } from "@symphony/cli";
-import { parseConfig } from "@symphony/config";
-import { assert } from "@symphony/test-utils";
+import { issueMcpToken, revokeMcpToken, validMcpToken } from "@lorenz/cli";
+import { parseConfig } from "@lorenz/config";
+import { assert } from "@lorenz/test-utils";
 
-import { mcpAuthScopeForSettings } from "@symphony/mcp";
+import { mcpAuthScopeForSettings } from "@lorenz/mcp";
 
 test("issueMcpToken — returns a unique, non-empty cryptographically strong string", () => {
   const tokens: string[] = [];

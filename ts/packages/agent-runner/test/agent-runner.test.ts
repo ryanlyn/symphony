@@ -6,9 +6,9 @@ import type {
   Issue,
   SessionNotification,
   Settings,
-} from "@symphony/domain";
-import { defaultSettings } from "@symphony/config";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/domain";
+import { defaultSettings } from "@lorenz/config";
+import { assert } from "@lorenz/test-utils";
 
 import { runAgentAttempt, type RunAgentAttemptAdapters } from "../src/index.js";
 

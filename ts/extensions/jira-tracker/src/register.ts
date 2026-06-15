@@ -1,4 +1,4 @@
-import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { jiraMcpTrackerProvider, jiraTrackerProvider } from "./provider.js";
 

@@ -1,9 +1,9 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { parseSlackConfig } from "./helpers.js";
 
-import { InMemorySlackTransport, SlackTrackerClient } from "@symphony/slack-tracker";
+import { InMemorySlackTransport, SlackTrackerClient } from "@lorenz/slack-tracker";
 
 function settings() {
   return parseSlackConfig(

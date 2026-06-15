@@ -10,14 +10,14 @@ import {
   parseConfig as parseConfigWith,
   resolveBridgeCommand,
   shellEscape,
-} from "@symphony/cli";
-import type { AgentUpdate } from "@symphony/cli";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import { workerHostPool } from "@symphony/worker-host-pool";
-import { assert, sampleIssue, tempDir, writeExecutable } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { AgentUpdate } from "@lorenz/cli";
+import { AgentExecutorRegistry } from "@lorenz/agent-sdk";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import { workerHostPool } from "@lorenz/worker-host-pool";
+import { assert, sampleIssue, tempDir, writeExecutable } from "@lorenz/test-utils";
 
-import { acpExecutorProvider } from "@symphony/acp";
+import { acpExecutorProvider } from "@lorenz/acp";
 
 // Private executor registry so agent records parse through the ACP provider's option
 // vocabulary without touching the process-wide default registry.
@@ -41,11 +41,14 @@ test("hostAgentBinaryEnv resolves missing agent binaries and respects explicit o
     CODEX_PATH: "/host/codex",
   });
   // Nothing is set when the host has no such binary.
-  assert.deepEqual(hostAgentBinaryEnv({}, () => null), {});
+  assert.deepEqual(
+    hostAgentBinaryEnv({}, () => null),
+    {},
+  );
 });
 
 test("ACP executor starts a session, translates updates, approves permissions, and exposes fs", async () => {
-  const root = await tempDir("symphony-ts-acp");
+  const root = await tempDir("lorenz-acp");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
@@ -105,7 +108,7 @@ test("ACP executor starts a session, translates updates, approves permissions, a
 });
 
 test("ACP executor can pass through cumulative bridge usage without double counting", async () => {
-  const root = await tempDir("symphony-ts-acp-cumulative-usage");
+  const root = await tempDir("lorenz-acp-cumulative-usage");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
@@ -136,7 +139,7 @@ test("ACP executor can pass through cumulative bridge usage without double count
 });
 
 test("ACP executor accumulates per-call usage buckets incrementally", async () => {
-  const root = await tempDir("symphony-ts-acp-call-usage");
+  const root = await tempDir("lorenz-acp-call-usage");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "call-usage");
@@ -179,7 +182,7 @@ test("ACP executor accumulates per-call usage buckets incrementally", async () =
 });
 
 test("ACP executor reconciles bucket undercount against the turn aggregate", async () => {
-  const root = await tempDir("symphony-ts-acp-call-usage-undercount");
+  const root = await tempDir("lorenz-acp-call-usage-undercount");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "call-usage-undercount");
@@ -198,7 +201,7 @@ test("ACP executor reconciles bucket undercount against the turn aggregate", asy
 });
 
 test("ACP executor floors bucket totals with the bridge cumulative counter", async () => {
-  const root = await tempDir("symphony-ts-acp-call-usage-floor");
+  const root = await tempDir("lorenz-acp-call-usage-floor");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "call-usage-total-floor", 5_000, {
@@ -219,7 +222,7 @@ test("ACP executor floors bucket totals with the bridge cumulative counter", asy
 });
 
 test("ACP executor ignores session updates for a different active session", async () => {
-  const root = await tempDir("symphony-ts-acp-session-mismatch");
+  const root = await tempDir("lorenz-acp-session-mismatch");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "wrong-session-update");
@@ -261,7 +264,7 @@ test("ACP executor ignores session updates for a different active session", asyn
 });
 
 test("ACP executor times out stalled bridge turns and emits a typed failure", async () => {
-  const root = await tempDir("symphony-ts-acp-stall");
+  const root = await tempDir("lorenz-acp-stall");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "stall", 5_000, { stallTimeoutMs: 50 });
@@ -289,7 +292,7 @@ test("ACP executor times out stalled bridge turns and emits a typed failure", as
 });
 
 test("ACP executor resets the stall timeout on session notifications", async () => {
-  const root = await tempDir("symphony-ts-acp-active-stall-reset");
+  const root = await tempDir("lorenz-acp-active-stall-reset");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "active-long-turn", 5_000, {
@@ -335,7 +338,7 @@ test("ACP executor emits matching terminal sessionUpdate kinds for cancelled and
   ] as const;
 
   for (const testCase of cases) {
-    const root = await tempDir(`symphony-ts-acp-${testCase.mode}`);
+    const root = await tempDir(`lorenz-acp-${testCase.mode}`);
     const fake = await writeFakeBridge(root);
     const trace = path.join(root, "trace.jsonl");
     const settings = acpSettings(root, fake, trace, testCase.mode);
@@ -365,7 +368,7 @@ test("ACP executor emits matching terminal sessionUpdate kinds for cancelled and
 });
 
 test("ACP executor suppresses late terminal updates after turn timeout", async () => {
-  const root = await tempDir("symphony-ts-acp-late-timeout");
+  const root = await tempDir("lorenz-acp-late-timeout");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "late-complete-after-timeout", 50);
@@ -396,7 +399,7 @@ test("ACP executor suppresses late terminal updates after turn timeout", async (
 });
 
 test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-session tokens", async () => {
-  const root = await tempDir("symphony-ts-acp-remote-mcp");
+  const root = await tempDir("lorenz-acp-remote-mcp");
   const trace = path.join(root, "ssh.trace");
   const leases: Awaited<ReturnType<typeof acquireAgentMcpEndpoint>>[] = [];
   try {
@@ -436,7 +439,7 @@ test("ACP MCP endpoint leases reuse one reverse tunnel per worker host with per-
 });
 
 test("ACP executor consumes a threaded mcpEndpoint and SKIPS its own acquire and release", async () => {
-  const root = await tempDir("symphony-ts-acp-threaded");
+  const root = await tempDir("lorenz-acp-threaded");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
@@ -465,7 +468,7 @@ test("ACP executor consumes a threaded mcpEndpoint and SKIPS its own acquire and
 });
 
 test("ACP executor acquires AND releases its OWN endpoint when no mcpEndpoint is threaded", async () => {
-  const root = await tempDir("symphony-ts-acp-own");
+  const root = await tempDir("lorenz-acp-own");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   await fs.writeFile(path.join(root, "README.md"), "workspace read\n");
@@ -488,7 +491,7 @@ test("ACP executor acquires AND releases its OWN endpoint when no mcpEndpoint is
 });
 
 test("provider config rides session/new _meta as a claude settings overlay", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-claude");
+  const root = await tempDir("lorenz-acp-provider-claude");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = { model: "claude-opus-4-6", permissions: { defaultMode: "dontAsk" } };
@@ -507,7 +510,7 @@ test("provider config rides session/new _meta as a claude settings overlay", asy
 });
 
 test("provider config pins the default claude model via session _meta", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-claude-model");
+  const root = await tempDir("lorenz-acp-provider-claude-model");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "new", 5_000);
@@ -527,7 +530,7 @@ test("provider config pins the default claude model via session _meta", async ()
 });
 
 test("provider config rides session/new _meta as codex config overrides", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-codex");
+  const root = await tempDir("lorenz-acp-provider-codex");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const providerConfig = {
@@ -553,7 +556,7 @@ test("provider config rides session/new _meta as codex config overrides", async 
 });
 
 test("session requests omit _meta when providerConfig is absent", async () => {
-  const root = await tempDir("symphony-ts-acp-provider-none");
+  const root = await tempDir("lorenz-acp-provider-none");
   const fake = await writeFakeBridge(root);
   const trace = path.join(root, "trace.jsonl");
   const settings = acpSettings(root, fake, trace, "new", 5_000, { agentKind: "codex" });

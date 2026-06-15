@@ -2,9 +2,9 @@ import type {
   RuntimeRunHistoryEntry,
   RuntimeRunningEntry,
   RuntimeSnapshot,
-} from "@symphony/runtime-events";
-import { humanizeAgentMessage } from "@symphony/humanize";
-import { durationMs, type UsageTotals } from "@symphony/domain";
+} from "@lorenz/runtime-events";
+import { humanizeAgentMessage } from "@lorenz/humanize";
+import { durationMs, type UsageTotals } from "@lorenz/domain";
 
 export interface PresenterParams {
   [key: string]: string | boolean | number | undefined;

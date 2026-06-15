@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
-import { humanizeAgentMessage } from "@symphony/humanize";
-import type { AgentUpdateType } from "@symphony/domain";
-import type { RuntimeSnapshot } from "@symphony/runtime-events";
+import { humanizeAgentMessage } from "@lorenz/humanize";
+import type { AgentUpdateType } from "@lorenz/domain";
+import type { RuntimeSnapshot } from "@lorenz/runtime-events";
 
 const REFRESH_INTERVAL_MS = 250;
 
@@ -15,7 +15,7 @@ export {
   humanizeAgentMessage,
   humanizeCodexMessage,
   humanizeClaudeMessage,
-} from "@symphony/humanize";
+} from "@lorenz/humanize";
 
 export function RuntimeApp({
   runtime,

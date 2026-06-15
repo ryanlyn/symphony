@@ -1,8 +1,8 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { MIN_RETRY_DELAY_MS, retryBackoffMs } from "@symphony/policies";
+import { MIN_RETRY_DELAY_MS, retryBackoffMs } from "@lorenz/policies";
 
 describe("INVARIANT: When a retry delay is calculated, it SHALL be a finite number.", () => {
   test("retryBackoffMs - delay is always finite for the full input domain", () => {

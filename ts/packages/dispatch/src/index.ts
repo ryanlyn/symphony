@@ -1,6 +1,6 @@
-import { ensembleSize, isTerminalState } from "@symphony/issue";
-import { normalizeRouteName, normalizeStateName, settingsForIssueState } from "@symphony/config";
-import type { DispatchBlockReason, Issue, Priority, Settings } from "@symphony/domain";
+import { ensembleSize, isTerminalState } from "@lorenz/issue";
+import { normalizeRouteName, normalizeStateName, settingsForIssueState } from "@lorenz/config";
+import type { DispatchBlockReason, Issue, Priority, Settings } from "@lorenz/domain";
 
 export function routeNames(issue: Issue, settings: Settings): string[] {
   const prefix = settings.tracker.dispatch.routeLabelPrefix.trim().toLowerCase();

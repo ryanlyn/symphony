@@ -20,6 +20,6 @@ try {
     throw error;
   }
 
-  console.error("symphony-ts has not been built yet. Run `pnpm build` or `mise run build` first.");
+  console.error("lorenz has not been built yet. Run `pnpm build` or `mise run build` first.");
   process.exitCode = 1;
 }

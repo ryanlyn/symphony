@@ -1,9 +1,9 @@
-import { acpExecutorProvider } from "@symphony/acp";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
-import { registerMemoryTracker } from "@symphony/memory-tracker";
-import { SymphonyRuntime } from "@symphony/runtime";
-import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@symphony/cli";
-import type { RuntimeEvent, RuntimeSnapshot, SymphonyRuntimeOptions } from "@symphony/runtime";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { registerMemoryTracker } from "@lorenz/memory-tracker";
+import { SymphonyRuntime } from "@lorenz/runtime";
+import type { Issue, IssueStateType, Settings, WorkflowDefinition } from "@lorenz/cli";
+import type { RuntimeEvent, RuntimeSnapshot, SymphonyRuntimeOptions } from "@lorenz/runtime";
 
 import { ChaosLinearClient, type ChaosConfig } from "./chaos-client.js";
 import { createFakeClock, type FakeClock } from "./fake-clock.js";

@@ -2,7 +2,7 @@
 //
 // This is the cross-cutting proof that `slotsPerMachine > 1` actually works
 // end-to-end through the REAL `DispatchCoordinator` over the REAL
-// `@symphony/worker-pool` (driver=fake, max=1, slotsPerMachine=2,
+// `@lorenz/worker-pool` (driver=fake, max=1, slotsPerMachine=2,
 // coResidence=true). The ONLY seam replaced is the per-run MCP endpoint manager:
 // a fake distinct-port manager (no real `ssh -N`, no real token/local-server)
 // that hands out a unique reverse-tunnel port per (workerHost, runKey) so the
@@ -31,7 +31,7 @@
 //   - the tunnel-exhaustion ceiling surfaces as a TYPED `no_capacity`
 //     ('tunnel_exhausted'), never an unhandled throw inside acquireRunSlot.
 //
-// The coordinator + pool are imported from `@symphony/cli` (the re-export barrel
+// The coordinator + pool are imported from `@lorenz/cli` (the re-export barrel
 // the live/e2e suites use). Tests run against the live `.ts` source via vite's
 // `.js`->`.ts` resolution.
 
@@ -41,13 +41,13 @@ import {
   createWorkerPool,
   createDispatchCoordinator,
   registerFakeWorkerDriver,
-} from "@symphony/cli";
-import type { WorkerPool, McpEndpointManager } from "@symphony/cli";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import { withDerivedMaxInFlight } from "@symphony/domain";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import type { ClockPort, TimerHandle } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { WorkerPool, McpEndpointManager } from "@lorenz/cli";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { withDerivedMaxInFlight } from "@lorenz/domain";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import type { ClockPort, TimerHandle } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 // ---------------------------------------------------------------------------
 // A controllable clock: `now`/`advance` drive the pool's spend/ttl/idle logical

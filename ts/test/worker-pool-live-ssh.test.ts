@@ -5,12 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
+import { assert, sampleIssue, tempDir } from "@lorenz/test-utils";
 import { test, vi } from "vitest";
-import { systemClock, withDerivedMaxInFlight } from "@symphony/domain";
-import type { WorkerDriverKind, WorkerPoolSettings } from "@symphony/domain";
-import { createWorkspaceForIssue, parseConfig, runSsh, shellEscape } from "@symphony/cli";
-import type { Issue } from "@symphony/cli";
+import { systemClock, withDerivedMaxInFlight } from "@lorenz/domain";
+import type { WorkerDriverKind, WorkerPoolSettings } from "@lorenz/domain";
+import { createWorkspaceForIssue, parseConfig, runSsh, shellEscape } from "@lorenz/cli";
+import type { Issue } from "@lorenz/cli";
 
 // The pool engine barrel has NO side effects (no driver is registered on import);
 // this test registers its OWN live-SSH driver - one that talks to a real loopback
@@ -477,7 +477,7 @@ function configuredHosts(): string[] {
 }
 
 async function setupWorkers(): Promise<WorkerSetupResult> {
-  const runId = `symphony-ts-worker-live-ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const runId = `lorenz-worker-live-ssh-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const byo = configuredHosts();
   if (byo.length > 0) {
     const runRoot = `~/.${runId}`;
@@ -509,7 +509,7 @@ async function setupNativeSshdWorker(runId: string): Promise<WorkerSetup> {
   if (!(await fileExists("/usr/sbin/sshd"))) throw new Error("local sshd is unavailable");
   if (!(await commandExists("ssh-keygen"))) throw new Error("ssh-keygen is unavailable");
 
-  const root = await tempDir("symphony-ts-worker-live-native-sshd");
+  const root = await tempDir("lorenz-worker-live-native-sshd");
   const keyPath = path.join(root, "id_ed25519");
   const hostKeyPath = path.join(root, "ssh_host_ed25519_key");
   const configPath = path.join(root, "sshd_config");

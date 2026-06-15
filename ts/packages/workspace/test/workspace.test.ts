@@ -12,9 +12,9 @@ import {
   removeWorkspace,
   removeIssueWorkspaces,
   shellEscape,
-} from "@symphony/cli";
-import type { HookExecutionMessage, Settings } from "@symphony/domain";
-import { assert, tempDir, sampleIssue, writeExecutable } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { HookExecutionMessage, Settings } from "@lorenz/domain";
+import { assert, tempDir, sampleIssue, writeExecutable } from "@lorenz/test-utils";
 
 import { runHook, syncWorkspaceSkills, type WorkspaceSkillOverlay } from "../src/index.js";
 

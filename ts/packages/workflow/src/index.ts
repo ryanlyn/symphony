@@ -5,17 +5,17 @@ import path from "node:path";
 
 import { Liquid } from "liquidjs";
 import YAML from "yaml";
-import { parseConfig } from "@symphony/config";
+import { parseConfig } from "@lorenz/config";
 import {
   errorMessage,
   isRecord,
   type ParsedPromptTemplate,
   type WorkflowContentStamp,
   type WorkflowDefinition,
-} from "@symphony/domain";
-import type { DefaultSettingsOptions } from "@symphony/config";
-import type { AgentExecutorRegistry } from "@symphony/agent-sdk";
-import type { TrackerRegistry } from "@symphony/tracker-sdk";
+} from "@lorenz/domain";
+import type { DefaultSettingsOptions } from "@lorenz/config";
+import type { AgentExecutorRegistry } from "@lorenz/agent-sdk";
+import type { TrackerRegistry } from "@lorenz/tracker-sdk";
 
 type WorkflowLoadOptions = DefaultSettingsOptions & {
   cwd?: string | undefined;

@@ -1,10 +1,10 @@
 import { test } from "vitest";
-import type { Issue, Settings } from "@symphony/domain";
-import type { ToolProvider } from "@symphony/tool-sdk";
-import { assert, makeSettings } from "@symphony/test-utils";
+import type { Issue, Settings } from "@lorenz/domain";
+import type { ToolProvider } from "@lorenz/tool-sdk";
+import { assert, makeSettings } from "@lorenz/test-utils";
 
-import { TrackerRegistry, type TrackerProvider, type TrackerToolOps } from "@symphony/tracker-sdk";
-import { createTrackerToolProvider } from "@symphony/tracker-sdk";
+import { TrackerRegistry, type TrackerProvider, type TrackerToolOps } from "@lorenz/tracker-sdk";
+import { createTrackerToolProvider } from "@lorenz/tracker-sdk";
 
 const TRACKER_TOOL_NAMES = [
   "tracker_read_issue",

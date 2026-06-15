@@ -2,10 +2,10 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { BoardStore } from "@symphony/local-tracker";
-import { InMemorySlackTransport, SlackTrackerClient } from "@symphony/slack-tracker";
+import { BoardStore } from "@lorenz/local-tracker";
+import { InMemorySlackTransport, SlackTrackerClient } from "@lorenz/slack-tracker";
 import { beforeAll, test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { registerBuiltinBackends } from "../src/daemon.js";
 
@@ -16,7 +16,7 @@ import {
   SymphonyRuntime,
   type SymphonyRuntimeOptions,
   type WorkflowDefinition,
-} from "@symphony/cli";
+} from "@lorenz/cli";
 
 // createTrackerClient resolves the configured kind through the process-default tracker
 // registry, so populate it the same way the CLI entrypoints do.

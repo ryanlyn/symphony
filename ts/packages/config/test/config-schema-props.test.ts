@@ -1,8 +1,8 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { parseConfig } from "@symphony/cli";
-import { ONE_WEEK_MS, PORT_MAX } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { parseConfig } from "@lorenz/cli";
+import { ONE_WEEK_MS, PORT_MAX } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 // --- camelToSnake (tested indirectly via error labels) ---
 

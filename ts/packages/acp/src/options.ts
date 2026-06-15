@@ -1,4 +1,4 @@
-import { isOneOf, isRecord, type AgentConfig } from "@symphony/domain";
+import { isOneOf, isRecord, type AgentConfig } from "@lorenz/domain";
 
 export const AGENT_USAGE_ACCOUNTING_VALUES = ["per-turn", "cumulative"] as const;
 

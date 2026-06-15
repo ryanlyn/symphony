@@ -1,11 +1,11 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { defaultSettings, parseConfig } from "@symphony/config";
-import { slotKey } from "@symphony/dispatch";
-import type { Issue, RunningEntry, Settings } from "@symphony/domain";
-import { assert, issueWith as makeIssue } from "@symphony/test-utils";
+import { defaultSettings, parseConfig } from "@lorenz/config";
+import { slotKey } from "@lorenz/dispatch";
+import type { Issue, RunningEntry, Settings } from "@lorenz/domain";
+import { assert, issueWith as makeIssue } from "@lorenz/test-utils";
 
-import { Orchestrator } from "@symphony/orchestrator";
+import { Orchestrator } from "@lorenz/orchestrator";
 
 // --- Helpers ---
 

@@ -17,14 +17,14 @@
  *   npx tsx sandbox/seed-local.ts .symphony/local 2     # seeds only the first 2 issues
  *   npx tsx sandbox/seed-local.ts /tmp/demo-board 3 XXX- # seeds XXX-1..XXX-3
  *
- * Issues are written as `BOARD-<n>.md` files via @symphony/local-tracker's BoardStore so
+ * Issues are written as `BOARD-<n>.md` files via @lorenz/local-tracker's BoardStore so
  * the ids and on-disk format stay correct and match what the running tracker expects.
  *
  * NOTE: there is intentionally no Slack equivalent of this seeder. Slack issues are real
  * messages in a live workspace, so they cannot be seeded offline - post a message and add
  * the configured "in progress" reaction in your Slack channel instead.
  */
-import { BoardStore } from "@symphony/local-tracker";
+import { BoardStore } from "@lorenz/local-tracker";
 
 interface SeedIssue {
   title: string;

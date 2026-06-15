@@ -7,7 +7,7 @@ process wiring and CLI commands belong in `apps/cli`.
 
 Create a package when a boundary has a clear owner. Each package needs:
 
-- `package.json` named `@symphony/<name>` with internal dependencies declared as `workspace:*`
+- `package.json` named `@lorenz/<name>` with internal dependencies declared as `workspace:*`
 - `tsconfig.json` extending `../../tsconfig.base.json` with project references for internal deps
 - `src/index.ts` with curated exports, not wildcard re-exports
 - package-owned tests under `packages/<name>/test/`

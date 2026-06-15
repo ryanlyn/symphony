@@ -3,8 +3,8 @@ import type { ServerType } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { match } from "ts-pattern";
 import { z } from "zod";
-import { httpUrlHost, isRecord, normalizeHttpBindHost, type Settings } from "@symphony/domain";
-import { defaultToolRegistry, type ToolRegistry } from "@symphony/tool-sdk";
+import { httpUrlHost, isRecord, normalizeHttpBindHost, type Settings } from "@lorenz/domain";
+import { defaultToolRegistry, type ToolRegistry } from "@lorenz/tool-sdk";
 
 import { createMcpAuthScope, mcpAuthScopeForSettings, validMcpToken } from "./auth.js";
 import { executeTool, toolSpecs } from "./tools.js";

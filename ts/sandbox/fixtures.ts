@@ -1,7 +1,7 @@
-import type { Issue } from "@symphony/cli";
-import { makeIssue } from "@symphony/test-utils";
+import type { Issue } from "@lorenz/cli";
+import { makeIssue } from "@lorenz/test-utils";
 
-export { makeIssue, makeSettings } from "@symphony/test-utils";
+export { makeIssue, makeSettings } from "@lorenz/test-utils";
 
 /** Promisified setTimeout. */
 export function sleep(ms: number): Promise<void> {

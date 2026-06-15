@@ -1,7 +1,7 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { WorkerHostPool } from "@symphony/worker-host-pool";
+import { WorkerHostPool } from "@lorenz/worker-host-pool";
 
 test("acquireRemoteMcpTunnel fails before handing out a lease when ssh cannot be spawned", async () => {
   const originalPath = process.env.PATH;

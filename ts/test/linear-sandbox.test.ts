@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { Issue } from "@symphony/cli";
-import type { RuntimeEvent } from "@symphony/runtime";
+import type { Issue } from "@lorenz/cli";
+import type { RuntimeEvent } from "@lorenz/runtime";
 
 import { setupLinearSandbox, runLinearScenario } from "../sandbox/linear-sandbox.js";
 import { checkAssertions, sleep } from "../sandbox/sandbox.js";

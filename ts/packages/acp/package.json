@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/acp",
+  "name": "@lorenz/acp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,13 +12,13 @@
     "@agentclientprotocol/claude-agent-acp": "workspace:*",
     "@agentclientprotocol/codex-acp": "workspace:*",
     "@agentclientprotocol/sdk": "catalog:",
-    "@symphony/agent-sdk": "workspace:*",
-    "@symphony/domain": "workspace:*",
-    "@symphony/mcp": "workspace:*",
-    "@symphony/policies": "workspace:*",
-    "@symphony/ssh": "workspace:*",
-    "@symphony/worker-host-pool": "workspace:*",
-    "@symphony/workspace": "workspace:*",
+    "@lorenz/agent-sdk": "workspace:*",
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/mcp": "workspace:*",
+    "@lorenz/policies": "workspace:*",
+    "@lorenz/ssh": "workspace:*",
+    "@lorenz/worker-host-pool": "workspace:*",
+    "@lorenz/workspace": "workspace:*",
     "execa": "catalog:"
   }
 }

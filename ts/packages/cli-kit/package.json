@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/cli-kit",
+  "name": "@lorenz/cli-kit",
   "version": "0.1.0",
   "private": true,
   "type": "module",

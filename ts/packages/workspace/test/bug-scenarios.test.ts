@@ -1,7 +1,7 @@
 import { describe, test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { safeIdentifier, workspacePath } from "@symphony/workspace";
+import { safeIdentifier, workspacePath } from "@lorenz/workspace";
 
 describe("Bug 6: Empty identifier produces root-equal workspace path", () => {
   test("safeIdentifier of empty string returns empty string (precondition)", () => {

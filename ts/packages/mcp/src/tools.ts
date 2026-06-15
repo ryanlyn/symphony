@@ -1,4 +1,4 @@
-import type { Settings } from "@symphony/domain";
+import type { Settings } from "@lorenz/domain";
 import {
   defaultToolRegistry,
   executeMountedTool,
@@ -7,10 +7,10 @@ import {
   type ToolRegistry,
   type ToolResult,
   type ToolSpec,
-} from "@symphony/tool-sdk";
-import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
+} from "@lorenz/tool-sdk";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sdk";
 
-export type { ToolResult, ToolSpec } from "@symphony/tool-sdk";
+export type { ToolResult, ToolSpec } from "@lorenz/tool-sdk";
 
 /** The provider-neutral pack mounted for every tracker backend. */
 const NEUTRAL_PACK = "tracker";

@@ -1,8 +1,8 @@
 import { test } from "vitest";
 import fc from "fast-check";
-import { assert, arbUsageTotals } from "@symphony/test-utils";
+import { assert, arbUsageTotals } from "@lorenz/test-utils";
 
-import { mergeMonotonicUsage } from "@symphony/policies";
+import { mergeMonotonicUsage } from "@lorenz/policies";
 
 const arbPartialUpdate = () =>
   fc.record({

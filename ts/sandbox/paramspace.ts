@@ -1,4 +1,4 @@
-import type { Issue } from "@symphony/cli";
+import type { Issue } from "@lorenz/cli";
 
 import type { Assertion } from "./assertions.js";
 import type { ChaosConfig } from "./chaos-client.js";

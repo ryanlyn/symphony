@@ -2,12 +2,12 @@ import EventEmitter from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 import { beforeEach, test, vi } from "vitest";
-import { startReverseTunnel } from "@symphony/ssh";
-import { assert } from "@symphony/test-utils";
+import { startReverseTunnel } from "@lorenz/ssh";
+import { assert } from "@lorenz/test-utils";
 
-import { WorkerHostPool } from "@symphony/worker-host-pool";
+import { WorkerHostPool } from "@lorenz/worker-host-pool";
 
-vi.mock("@symphony/ssh", () => ({
+vi.mock("@lorenz/ssh", () => ({
   startReverseTunnel: vi.fn(),
   // The pool awaits remote-port readiness before returning a lease; the fake
   // resolves immediately so these tests exercise allocation and lifecycle,

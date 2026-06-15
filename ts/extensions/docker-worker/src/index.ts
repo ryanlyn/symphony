@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 
-import { POOL_OWNED_LABEL, defaultWorkerDriverRegistry } from "@symphony/worker-sdk";
+import { POOL_OWNED_LABEL, defaultWorkerDriverRegistry } from "@lorenz/worker-sdk";
 import type {
   WorkerDescriptor,
   WorkerDriver,
@@ -12,7 +12,7 @@ import type {
   ProvisionRequest,
   SshRunner,
   TeardownReason,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";
 
 const KIND = "docker";
 

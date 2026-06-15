@@ -3,9 +3,9 @@ import http from "node:http";
 import path from "node:path";
 
 import { test, vi } from "vitest";
-import { assert, tempDir } from "@symphony/test-utils";
+import { assert, tempDir } from "@lorenz/test-utils";
 
-import { parseRunsArgs, runRunsCommand, runRunsMain } from "@symphony/cli/runs";
+import { parseRunsArgs, runRunsCommand, runRunsMain } from "@lorenz/cli/runs";
 
 test("runs command parses run-history filters", () => {
   assert.deepEqual(
@@ -284,7 +284,7 @@ test("runs command uses workflow-derived default server host and port", async ()
   try {
     const address = server.address();
     assert.ok(address && typeof address === "object");
-    const dir = await tempDir("symphony-ts-runs-workflow");
+    const dir = await tempDir("lorenz-runs-workflow");
     const workflowPath = path.join(dir, "WORKFLOW.md");
     await fs.writeFile(
       workflowPath,
@@ -307,7 +307,7 @@ test("runs command uses workflow-derived host for explicit positive port", async
   vi.stubGlobal("fetch", fetchSpy);
 
   try {
-    const dir = await tempDir("symphony-ts-runs-port-host");
+    const dir = await tempDir("lorenz-runs-port-host");
     const workflowPath = path.join(dir, "WORKFLOW.md");
     await fs.writeFile(workflowPath, `---\nserver:\n  host: localhost\n  port: 1\n---\nRun it\n`);
     vi.stubEnv("SYMPHONY_WORKFLOW", workflowPath);
@@ -326,7 +326,7 @@ test("runs command treats port zero as no explicit port and falls through to wor
   vi.stubGlobal("fetch", fetchSpy);
 
   try {
-    const dir = await tempDir("symphony-ts-runs-port-zero");
+    const dir = await tempDir("lorenz-runs-port-zero");
     const workflowPath = path.join(dir, "WORKFLOW.md");
     await fs.writeFile(
       workflowPath,
@@ -348,7 +348,7 @@ test("runs command treats port zero as no explicit port and keeps the no-port co
     throw new Error(`unexpected fetch ${String(url)}`);
   });
   vi.stubGlobal("fetch", fetchSpy);
-  const dir = await tempDir("symphony-ts-runs-port-zero-error");
+  const dir = await tempDir("lorenz-runs-port-zero-error");
   const workflowPath = path.join(dir, "WORKFLOW.md");
   await fs.writeFile(workflowPath, "---\nserver:\n  host: 127.0.0.1\n  port: 0\n---\nRun it\n");
   vi.stubEnv("SYMPHONY_WORKFLOW", workflowPath);

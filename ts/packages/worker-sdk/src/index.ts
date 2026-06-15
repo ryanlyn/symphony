@@ -1,7 +1,7 @@
 // The worker SDK: the contract a worker backend implements to join the warm
 // worker pool, the registry the composition root wires it into, and the
 // in-memory reference driver. The conformance kit lives behind the
-// `@symphony/worker-sdk/conformance` subpath so the runtime barrel never pulls
+// `@lorenz/worker-sdk/conformance` subpath so the runtime barrel never pulls
 // vitest.
 
 export {

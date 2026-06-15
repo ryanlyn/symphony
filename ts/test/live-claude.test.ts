@@ -1,8 +1,8 @@
 import { test } from "vitest";
-import { Executor, parseConfig as parseConfigWith } from "@symphony/cli";
-import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
-import { assert, sampleIssue, tempDir } from "@symphony/test-utils";
+import { Executor, parseConfig as parseConfigWith } from "@lorenz/cli";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { AgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { assert, sampleIssue, tempDir } from "@lorenz/test-utils";
 
 // Parsing resolves the ACP option vocabulary through an explicit registry; the executor
 // under test is constructed directly.
@@ -17,7 +17,7 @@ const claudeBridge = process.env.SYMPHONY_TS_CLAUDE_ACP_BRIDGE_COMMAND;
 const runLiveClaude = process.env.SYMPHONY_TS_RUN_REAL_CLAUDE_E2E === "1" && Boolean(claudeBridge);
 
 test("live Claude ACP bridge smoke", { timeout: 180_000, skip: !runLiveClaude }, async () => {
-  const workspace = await tempDir("symphony-ts-live-claude");
+  const workspace = await tempDir("lorenz-live-claude");
   const settings = liveClaudeSettings(180_000);
   const executor = new Executor("claude");
   const session = await executor.startSession({ workspace, settings, issue: sampleIssue });
@@ -35,7 +35,7 @@ test(
   { timeout: 240_000, skip: !runLiveClaude },
   async () => {
     assert.ok(process.env.LINEAR_API_KEY, "LINEAR_API_KEY is required for live MCP E2E");
-    const workspace = await tempDir("symphony-ts-live-mcp");
+    const workspace = await tempDir("lorenz-live-mcp");
     const settings = liveClaudeSettings(240_000, {
       tracker: {
         api_key: "$LINEAR_API_KEY",

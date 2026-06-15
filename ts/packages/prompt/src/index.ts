@@ -1,7 +1,7 @@
 import { Liquid } from "liquidjs";
-import type { EnsembleContext, Issue, IssueRef } from "@symphony/domain";
-import type { ParsedPromptTemplate } from "@symphony/domain";
-import { effectivePromptTemplate, parsePromptTemplate } from "@symphony/workflow";
+import type { EnsembleContext, Issue, IssueRef } from "@lorenz/domain";
+import type { ParsedPromptTemplate } from "@lorenz/domain";
+import { effectivePromptTemplate, parsePromptTemplate } from "@lorenz/workflow";
 import type { Template } from "liquidjs";
 
 const engine = new Liquid({

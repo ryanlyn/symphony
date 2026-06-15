@@ -5,7 +5,7 @@ import {
   assertWorkerDriverModule,
   type WorkerDriverModule,
   type WorkerDriverRegistry,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";
 
 /**
  * Out-of-tree worker-driver loading: the configured worker-pool driver accepts a MODULE

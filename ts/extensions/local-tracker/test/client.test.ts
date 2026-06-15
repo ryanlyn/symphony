@@ -2,12 +2,12 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseConfig as parseWorkflowConfig } from "@symphony/cli";
+import { parseConfig as parseWorkflowConfig } from "@lorenz/cli";
 import { test } from "vitest";
-import { TrackerRegistry } from "@symphony/tracker-sdk";
-import { assert } from "@symphony/test-utils";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
+import { assert } from "@lorenz/test-utils";
 
-import { BoardStore, LocalTrackerClient, localTrackerProvider } from "@symphony/local-tracker";
+import { BoardStore, LocalTrackerClient, localTrackerProvider } from "@lorenz/local-tracker";
 
 // Parse config against a private registry so the local provider's aliases and option
 // validation apply without mutating the process-wide default registry.

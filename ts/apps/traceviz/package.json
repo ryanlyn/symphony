@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/traceviz",
+  "name": "@lorenz/traceviz",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@hono/node-server": "catalog:",
-    "@symphony/traceviz-server": "workspace:*",
+    "@lorenz/traceviz-server": "workspace:*",
     "hono": "catalog:"
   },
   "devDependencies": {

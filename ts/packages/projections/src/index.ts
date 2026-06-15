@@ -1,8 +1,4 @@
-import type {
-  RuntimeEvent,
-  RuntimeRunHistoryEntry,
-  RuntimeSnapshot,
-} from "@symphony/runtime-events";
+import type { RuntimeEvent, RuntimeRunHistoryEntry, RuntimeSnapshot } from "@lorenz/runtime-events";
 
 export type RuntimeProjectionInput = Omit<RuntimeSnapshot, "runHistory" | "recentEvents">;
 

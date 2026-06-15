@@ -1,4 +1,4 @@
-import { defaultWorkerDriverRegistry } from "@symphony/worker-sdk";
+import { defaultWorkerDriverRegistry } from "@lorenz/worker-sdk";
 import type {
   WorkerDescriptor,
   WorkerDriver,
@@ -10,7 +10,7 @@ import type {
   ProvisionRequest,
   SshRunner,
   TeardownReason,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";
 
 const KIND = "static-ssh";
 

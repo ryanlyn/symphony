@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import { normalizeRouteName } from "@symphony/config";
-import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
+import { normalizeRouteName } from "@lorenz/config";
+import { assert, issueWith, settingsWith as makeSettings } from "@lorenz/test-utils";
 
-import { routeNames, routedToThisWorker } from "@symphony/dispatch";
+import { routeNames, routedToThisWorker } from "@lorenz/dispatch";
 
 const arbRouteName = fc.oneof(
   fc.string({ minLength: 1, maxLength: 12 }).filter((s) => s.trim().length > 0),

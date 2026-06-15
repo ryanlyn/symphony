@@ -1,4 +1,4 @@
-import type { Issue, RuntimeTrackerClient, Settings } from "@symphony/domain";
+import type { Issue, RuntimeTrackerClient, Settings } from "@lorenz/domain";
 
 /** Ambient dependencies handed to provider hooks that must not touch process globals directly. */
 export interface TrackerContext {
@@ -56,7 +56,7 @@ export interface TrackerToolOps {
  * extension point. A provider owns its slice of the selected tracker bundle, the runtime
  * client that feeds issues into dispatch, and the normalized operations behind the
  * provider-neutral `tracker_*` tools. Agent-facing tool packs are a separate extension
- * point (`ToolProvider` in `@symphony/tool-sdk`): a tracker package may ship one, declare
+ * point (`ToolProvider` in `@lorenz/tool-sdk`): a tracker package may ship one, declare
  * it as a default pack for this tracker, and a workflow may still mount other registered
  * packs explicitly through its `tools:` map.
  *

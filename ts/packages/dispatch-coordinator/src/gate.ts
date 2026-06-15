@@ -13,7 +13,7 @@
 // where a live daemon could reload `max_in_flight > 1` past a gate that only ran
 // once at boot.
 
-import type { WorkerPoolSettings } from "@symphony/domain";
+import type { WorkerPoolSettings } from "@lorenz/domain";
 
 /** The subset of a coordinator's capabilities the gate consumes. */
 export interface SlotsPerMachineGateCapabilities {

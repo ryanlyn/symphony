@@ -1,5 +1,5 @@
 import type { ToolCallContent } from "@agentclientprotocol/sdk";
-import { isRecord, type TraceEvent } from "@symphony/domain";
+import { isRecord, type TraceEvent } from "@lorenz/domain";
 
 import type { DisplayEvent, ToolCallDisplayEvent, TokenUsage } from "./models/display-events.js";
 

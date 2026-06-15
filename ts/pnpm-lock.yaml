@@ -163,97 +163,97 @@ importers:
       "@eslint/js":
         specifier: "catalog:"
         version: 10.0.1(eslint@10.4.1(jiti@2.7.0))
-      "@symphony/acp":
+      "@lorenz/acp":
         specifier: workspace:*
         version: link:packages/acp
-      "@symphony/agent-runner":
+      "@lorenz/agent-runner":
         specifier: workspace:*
         version: link:packages/agent-runner
-      "@symphony/agent-sdk":
+      "@lorenz/agent-sdk":
         specifier: workspace:*
         version: link:packages/agent-sdk
-      "@symphony/cli":
+      "@lorenz/cli":
         specifier: workspace:*
         version: link:apps/cli
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:packages/config
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:packages/dispatch
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:packages/domain
-      "@symphony/humanize":
+      "@lorenz/humanize":
         specifier: workspace:*
         version: link:packages/humanize
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:packages/issue
-      "@symphony/jira-tracker":
+      "@lorenz/jira-tracker":
         specifier: workspace:*
         version: link:extensions/jira-tracker
-      "@symphony/linear-tracker":
+      "@lorenz/linear-tracker":
         specifier: workspace:*
         version: link:extensions/linear-tracker
-      "@symphony/local-tracker":
+      "@lorenz/local-tracker":
         specifier: workspace:*
         version: link:extensions/local-tracker
-      "@symphony/log-file":
+      "@lorenz/log-file":
         specifier: workspace:*
         version: link:packages/log-file
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:packages/mcp
-      "@symphony/memory-tracker":
+      "@lorenz/memory-tracker":
         specifier: workspace:*
         version: link:extensions/memory-tracker
-      "@symphony/orchestrator":
+      "@lorenz/orchestrator":
         specifier: workspace:*
         version: link:packages/orchestrator
-      "@symphony/policies":
+      "@lorenz/policies":
         specifier: workspace:*
         version: link:packages/policies
-      "@symphony/projections":
+      "@lorenz/projections":
         specifier: workspace:*
         version: link:packages/projections
-      "@symphony/retry-scheduler":
+      "@lorenz/retry-scheduler":
         specifier: workspace:*
         version: link:packages/retry-scheduler
-      "@symphony/runtime":
+      "@lorenz/runtime":
         specifier: workspace:*
         version: link:packages/runtime
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:packages/runtime-events
-      "@symphony/server":
+      "@lorenz/server":
         specifier: workspace:*
         version: link:packages/server
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:packages/ssh
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:packages/test-utils
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:packages/tool-sdk
-      "@symphony/traceviz-emitter":
+      "@lorenz/traceviz-emitter":
         specifier: workspace:*
         version: link:packages/traceviz-emitter
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:packages/tracker-sdk
-      "@symphony/tui":
+      "@lorenz/tui":
         specifier: workspace:*
         version: link:packages/tui
-      "@symphony/worker-host-pool":
+      "@lorenz/worker-host-pool":
         specifier: workspace:*
         version: link:packages/worker-host-pool
-      "@symphony/workflow":
+      "@lorenz/workflow":
         specifier: workspace:*
         version: link:packages/workflow
-      "@symphony/workspace":
+      "@lorenz/workspace":
         specifier: workspace:*
         version: link:packages/workspace
       "@testing-library/dom":
@@ -319,115 +319,115 @@ importers:
 
   apps/cli:
     dependencies:
-      "@symphony/acp":
+      "@lorenz/acp":
         specifier: workspace:*
         version: link:../../packages/acp
-      "@symphony/agent-runner":
+      "@lorenz/agent-runner":
         specifier: workspace:*
         version: link:../../packages/agent-runner
-      "@symphony/agent-sdk":
+      "@lorenz/agent-sdk":
         specifier: workspace:*
         version: link:../../packages/agent-sdk
-      "@symphony/cli-kit":
+      "@lorenz/cli-kit":
         specifier: workspace:*
         version: link:../../packages/cli-kit
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../../packages/config
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:../../packages/dispatch
-      "@symphony/dispatch-coordinator":
+      "@lorenz/dispatch-coordinator":
         specifier: workspace:*
         version: link:../../packages/dispatch-coordinator
-      "@symphony/docker-worker":
+      "@lorenz/docker-worker":
         specifier: workspace:*
         version: link:../../extensions/docker-worker
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/humanize":
+      "@lorenz/humanize":
         specifier: workspace:*
         version: link:../../packages/humanize
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/jira-tracker":
+      "@lorenz/jira-tracker":
         specifier: workspace:*
         version: link:../../extensions/jira-tracker
-      "@symphony/linear-tracker":
+      "@lorenz/linear-tracker":
         specifier: workspace:*
         version: link:../../extensions/linear-tracker
-      "@symphony/local-tracker":
+      "@lorenz/local-tracker":
         specifier: workspace:*
         version: link:../../extensions/local-tracker
-      "@symphony/log-file":
+      "@lorenz/log-file":
         specifier: workspace:*
         version: link:../../packages/log-file
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:../../packages/mcp
-      "@symphony/memory-tracker":
+      "@lorenz/memory-tracker":
         specifier: workspace:*
         version: link:../../extensions/memory-tracker
-      "@symphony/orchestrator":
+      "@lorenz/orchestrator":
         specifier: workspace:*
         version: link:../../packages/orchestrator
-      "@symphony/policies":
+      "@lorenz/policies":
         specifier: workspace:*
         version: link:../../packages/policies
-      "@symphony/presenter":
+      "@lorenz/presenter":
         specifier: workspace:*
         version: link:../../packages/presenter
-      "@symphony/projections":
+      "@lorenz/projections":
         specifier: workspace:*
         version: link:../../packages/projections
-      "@symphony/prompt":
+      "@lorenz/prompt":
         specifier: workspace:*
         version: link:../../packages/prompt
-      "@symphony/retry-scheduler":
+      "@lorenz/retry-scheduler":
         specifier: workspace:*
         version: link:../../packages/retry-scheduler
-      "@symphony/runtime":
+      "@lorenz/runtime":
         specifier: workspace:*
         version: link:../../packages/runtime
-      "@symphony/server":
+      "@lorenz/server":
         specifier: workspace:*
         version: link:../../packages/server
-      "@symphony/slack-tracker":
+      "@lorenz/slack-tracker":
         specifier: workspace:*
         version: link:../../extensions/slack-tracker
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:../../packages/ssh
-      "@symphony/static-worker":
+      "@lorenz/static-worker":
         specifier: workspace:*
         version: link:../../packages/static-worker
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../../packages/tool-sdk
-      "@symphony/traceviz-emitter":
+      "@lorenz/traceviz-emitter":
         specifier: workspace:*
         version: link:../../packages/traceviz-emitter
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
-      "@symphony/tui":
+      "@lorenz/tui":
         specifier: workspace:*
         version: link:../../packages/tui
-      "@symphony/worker-host-pool":
+      "@lorenz/worker-host-pool":
         specifier: workspace:*
         version: link:../../packages/worker-host-pool
-      "@symphony/worker-pool":
+      "@lorenz/worker-pool":
         specifier: workspace:*
         version: link:../../packages/worker-pool
-      "@symphony/worker-sdk":
+      "@lorenz/worker-sdk":
         specifier: workspace:*
         version: link:../../packages/worker-sdk
-      "@symphony/workflow":
+      "@lorenz/workflow":
         specifier: workspace:*
         version: link:../../packages/workflow
-      "@symphony/workspace":
+      "@lorenz/workspace":
         specifier: workspace:*
         version: link:../../packages/workspace
       commander:
@@ -442,10 +442,10 @@ importers:
 
   apps/symphony-dashboard:
     dependencies:
-      "@symphony/presenter":
+      "@lorenz/presenter":
         specifier: workspace:*
         version: link:../../packages/presenter
-      "@symphony/traceviz-server":
+      "@lorenz/traceviz-server":
         specifier: workspace:*
         version: link:../../packages/traceviz-server
       clsx:
@@ -494,7 +494,7 @@ importers:
       "@hono/node-server":
         specifier: "catalog:"
         version: 1.19.14(hono@4.12.23)
-      "@symphony/traceviz-server":
+      "@lorenz/traceviz-server":
         specifier: workspace:*
         version: link:../../packages/traceviz-server
       hono:
@@ -513,23 +513,23 @@ importers:
 
   extensions/docker-worker:
     dependencies:
-      "@symphony/worker-sdk":
+      "@lorenz/worker-sdk":
         specifier: workspace:*
         version: link:../../packages/worker-sdk
     devDependencies:
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:../../packages/test-utils
 
   extensions/jira-tracker:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
 
@@ -538,31 +538,31 @@ importers:
       "@linear/sdk":
         specifier: "catalog:"
         version: 84.0.0(graphql@16.14.0)
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../../packages/tool-sdk
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
 
   extensions/local-tracker:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../../packages/tool-sdk
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
       yaml:
@@ -571,28 +571,28 @@ importers:
 
   extensions/memory-tracker:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
 
   extensions/slack-tracker:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../../packages/domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../../packages/tool-sdk
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk
 
@@ -607,25 +607,25 @@ importers:
       "@agentclientprotocol/sdk":
         specifier: "catalog:"
         version: 0.21.1(zod@4.4.3)
-      "@symphony/agent-sdk":
+      "@lorenz/agent-sdk":
         specifier: workspace:*
         version: link:../agent-sdk
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:../mcp
-      "@symphony/policies":
+      "@lorenz/policies":
         specifier: workspace:*
         version: link:../policies
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:../ssh
-      "@symphony/worker-host-pool":
+      "@lorenz/worker-host-pool":
         specifier: workspace:*
         version: link:../worker-host-pool
-      "@symphony/workspace":
+      "@lorenz/workspace":
         specifier: workspace:*
         version: link:../workspace
       execa:
@@ -634,22 +634,22 @@ importers:
 
   packages/agent-runner:
     dependencies:
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:../dispatch
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../issue
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:../mcp
-      "@symphony/prompt":
+      "@lorenz/prompt":
         specifier: workspace:*
         version: link:../prompt
     devDependencies:
@@ -659,7 +659,7 @@ importers:
 
   packages/agent-sdk:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
@@ -671,16 +671,16 @@ importers:
 
   packages/config:
     dependencies:
-      "@symphony/agent-sdk":
+      "@lorenz/agent-sdk":
         specifier: workspace:*
         version: link:../agent-sdk
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../tool-sdk
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../tracker-sdk
       execa:
@@ -692,29 +692,29 @@ importers:
 
   packages/dispatch:
     dependencies:
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../issue
 
   packages/dispatch-coordinator:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:../mcp
-      "@symphony/worker-pool":
+      "@lorenz/worker-pool":
         specifier: workspace:*
         version: link:../worker-pool
     devDependencies:
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:../test-utils
 
@@ -728,7 +728,7 @@ importers:
 
   packages/issue:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
@@ -749,10 +749,10 @@ importers:
       "@hono/node-server":
         specifier: "catalog:"
         version: 1.19.14(hono@4.12.23)
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../tool-sdk
       hono:
@@ -765,82 +765,82 @@ importers:
         specifier: "catalog:"
         version: 4.4.3
     devDependencies:
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/jira-tracker":
+      "@lorenz/jira-tracker":
         specifier: workspace:*
         version: link:../../extensions/jira-tracker
-      "@symphony/linear-tracker":
+      "@lorenz/linear-tracker":
         specifier: workspace:*
         version: link:../../extensions/linear-tracker
-      "@symphony/local-tracker":
+      "@lorenz/local-tracker":
         specifier: workspace:*
         version: link:../../extensions/local-tracker
-      "@symphony/memory-tracker":
+      "@lorenz/memory-tracker":
         specifier: workspace:*
         version: link:../../extensions/memory-tracker
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:../test-utils
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../tracker-sdk
 
   packages/orchestrator:
     dependencies:
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:../dispatch
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../issue
-      "@symphony/policies":
+      "@lorenz/policies":
         specifier: workspace:*
         version: link:../policies
 
   packages/policies:
     dependencies:
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:../dispatch
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
   packages/presenter:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/humanize":
+      "@lorenz/humanize":
         specifier: workspace:*
         version: link:../humanize
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
 
   packages/projections:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
 
   packages/prompt:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/workflow":
+      "@lorenz/workflow":
         specifier: workspace:*
         version: link:../workflow
       liquidjs:
@@ -849,58 +849,58 @@ importers:
 
   packages/retry-scheduler:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
 
   packages/runtime:
     dependencies:
-      "@symphony/agent-runner":
+      "@lorenz/agent-runner":
         specifier: workspace:*
         version: link:../agent-runner
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/dispatch":
+      "@lorenz/dispatch":
         specifier: workspace:*
         version: link:../dispatch
-      "@symphony/dispatch-coordinator":
+      "@lorenz/dispatch-coordinator":
         specifier: workspace:*
         version: link:../dispatch-coordinator
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../issue
-      "@symphony/orchestrator":
+      "@lorenz/orchestrator":
         specifier: workspace:*
         version: link:../orchestrator
-      "@symphony/policies":
+      "@lorenz/policies":
         specifier: workspace:*
         version: link:../policies
-      "@symphony/projections":
+      "@lorenz/projections":
         specifier: workspace:*
         version: link:../projections
-      "@symphony/retry-scheduler":
+      "@lorenz/retry-scheduler":
         specifier: workspace:*
         version: link:../retry-scheduler
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
-      "@symphony/worker-pool":
+      "@lorenz/worker-pool":
         specifier: workspace:*
         version: link:../worker-pool
-      "@symphony/workflow":
+      "@lorenz/workflow":
         specifier: workspace:*
         version: link:../workflow
 
   packages/runtime-events:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
@@ -912,19 +912,19 @@ importers:
       "@hono/node-ws":
         specifier: "catalog:"
         version: 1.3.1(@hono/node-server@1.19.14(hono@4.12.23))(hono@4.12.23)
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/mcp":
+      "@lorenz/mcp":
         specifier: workspace:*
         version: link:../mcp
-      "@symphony/presenter":
+      "@lorenz/presenter":
         specifier: workspace:*
         version: link:../presenter
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
-      "@symphony/traceviz-server":
+      "@lorenz/traceviz-server":
         specifier: workspace:*
         version: link:../traceviz-server
       better-sqlite3:
@@ -940,7 +940,7 @@ importers:
 
   packages/ssh:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
       execa:
@@ -953,23 +953,23 @@ importers:
 
   packages/static-worker:
     dependencies:
-      "@symphony/worker-sdk":
+      "@lorenz/worker-sdk":
         specifier: workspace:*
         version: link:../worker-sdk
     devDependencies:
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:../test-utils
 
   packages/test-utils:
     dependencies:
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/issue":
+      "@lorenz/issue":
         specifier: workspace:*
         version: link:../issue
       fast-check:
@@ -981,13 +981,13 @@ importers:
 
   packages/tool-sdk:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
   packages/traceviz-emitter:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
 
@@ -996,7 +996,7 @@ importers:
       "@agentclientprotocol/sdk":
         specifier: "catalog:"
         version: 0.21.1(zod@4.4.3)
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
     devDependencies:
@@ -1012,22 +1012,22 @@ importers:
 
   packages/tracker-sdk:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/tool-sdk":
+      "@lorenz/tool-sdk":
         specifier: workspace:*
         version: link:../tool-sdk
 
   packages/tui:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/humanize":
+      "@lorenz/humanize":
         specifier: workspace:*
         version: link:../humanize
-      "@symphony/runtime-events":
+      "@lorenz/runtime-events":
         specifier: workspace:*
         version: link:../runtime-events
       ink:
@@ -1039,29 +1039,29 @@ importers:
 
   packages/worker-host-pool:
     dependencies:
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:../ssh
 
   packages/worker-pool:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:../ssh
-      "@symphony/worker-sdk":
+      "@lorenz/worker-sdk":
         specifier: workspace:*
         version: link:../worker-sdk
     devDependencies:
-      "@symphony/test-utils":
+      "@lorenz/test-utils":
         specifier: workspace:*
         version: link:../test-utils
 
   packages/worker-sdk:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
     devDependencies:
@@ -1071,16 +1071,16 @@ importers:
 
   packages/workflow:
     dependencies:
-      "@symphony/agent-sdk":
+      "@lorenz/agent-sdk":
         specifier: workspace:*
         version: link:../agent-sdk
-      "@symphony/config":
+      "@lorenz/config":
         specifier: workspace:*
         version: link:../config
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/tracker-sdk":
+      "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../tracker-sdk
       liquidjs:
@@ -1092,10 +1092,10 @@ importers:
 
   packages/workspace:
     dependencies:
-      "@symphony/domain":
+      "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@symphony/ssh":
+      "@lorenz/ssh":
         specifier: workspace:*
         version: link:../ssh
       execa:

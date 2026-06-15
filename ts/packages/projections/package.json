@@ -1,5 +1,5 @@
 {
-  "name": "@symphony/projections",
+  "name": "@lorenz/projections",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@symphony/domain": "workspace:*",
-    "@symphony/runtime-events": "workspace:*"
+    "@lorenz/domain": "workspace:*",
+    "@lorenz/runtime-events": "workspace:*"
   }
 }

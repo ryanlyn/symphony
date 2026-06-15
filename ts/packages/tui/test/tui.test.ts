@@ -4,8 +4,8 @@ import path from "node:path";
 import React from "react";
 import { test } from "vitest";
 import { render } from "ink-testing-library";
-import type { RuntimeSnapshot } from "@symphony/runtime";
-import { assert } from "@symphony/test-utils";
+import type { RuntimeSnapshot } from "@lorenz/runtime";
+import { assert } from "@lorenz/test-utils";
 
 import {
   formatDashboard,
@@ -14,7 +14,7 @@ import {
   rollingThroughput,
   RuntimeDashboard,
   updateTokenSamples,
-} from "@symphony/tui";
+} from "@lorenz/tui";
 
 test("Ink dashboard renders operational sections", () => {
   const { lastFrame } = render(

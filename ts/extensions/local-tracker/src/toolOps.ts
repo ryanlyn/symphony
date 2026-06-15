@@ -1,6 +1,6 @@
-import { normalizeIssue } from "@symphony/issue";
-import { isRecord, type Issue, type Settings } from "@symphony/domain";
-import type { TrackerQueryResult, TrackerToolOps } from "@symphony/tracker-sdk";
+import { normalizeIssue } from "@lorenz/issue";
+import { isRecord, type Issue, type Settings } from "@lorenz/domain";
+import type { TrackerQueryResult, TrackerToolOps } from "@lorenz/tracker-sdk";
 
 import { executeLocalTool } from "./tools.js";
 

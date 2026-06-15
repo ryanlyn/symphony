@@ -4,7 +4,7 @@ import {
   normalizeHttpBindHost,
   type Settings,
   type TrackerKind,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
 import { startMcpServer, type ObservabilityServerHandle } from "./server.js";

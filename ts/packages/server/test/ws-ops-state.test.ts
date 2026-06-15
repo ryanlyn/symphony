@@ -1,9 +1,9 @@
 import { test } from "vitest";
-import { statePayload } from "@symphony/presenter";
-import type { RuntimeSnapshot } from "@symphony/runtime-events";
-import { assert } from "@symphony/test-utils";
+import { statePayload } from "@lorenz/presenter";
+import type { RuntimeSnapshot } from "@lorenz/runtime-events";
+import { assert } from "@lorenz/test-utils";
 
-import { startObservabilityServer, type RuntimeServerSource } from "@symphony/server";
+import { startObservabilityServer, type RuntimeServerSource } from "@lorenz/server";
 
 test("observability /ws pushes ops state on connect and broadcasts runtime updates", async () => {
   const listeners = new Set<(snapshot: RuntimeSnapshot) => void>();

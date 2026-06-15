@@ -12,20 +12,20 @@ import {
   parseNonNegativeInteger,
   parseRequiredValue,
   type ParseResult,
-} from "@symphony/cli-kit";
-import { validateDispatchConfig } from "@symphony/config";
-import { checkSlotsPerMachineGate } from "@symphony/dispatch-coordinator";
-import { startObservabilityServer } from "@symphony/server";
-import { configureLogFile } from "@symphony/log-file";
-import { SymphonyRuntime } from "@symphony/runtime";
-import { RuntimeApp } from "@symphony/tui";
-import { loadWorkflow } from "@symphony/workflow";
-import { defaultAgentExecutorRegistry } from "@symphony/agent-sdk";
-import { defaultToolRegistry } from "@symphony/tool-sdk";
-import { defaultTrackerRegistry } from "@symphony/tracker-sdk";
-import { TraceEmitter } from "@symphony/traceviz-emitter";
-import { defaultIssueStorePath, IssueStore } from "@symphony/server";
-import { errorMessage, type Settings, type WorkflowDefinition } from "@symphony/domain";
+} from "@lorenz/cli-kit";
+import { validateDispatchConfig } from "@lorenz/config";
+import { checkSlotsPerMachineGate } from "@lorenz/dispatch-coordinator";
+import { startObservabilityServer } from "@lorenz/server";
+import { configureLogFile } from "@lorenz/log-file";
+import { SymphonyRuntime } from "@lorenz/runtime";
+import { RuntimeApp } from "@lorenz/tui";
+import { loadWorkflow } from "@lorenz/workflow";
+import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { defaultToolRegistry } from "@lorenz/tool-sdk";
+import { defaultTrackerRegistry } from "@lorenz/tracker-sdk";
+import { TraceEmitter } from "@lorenz/traceviz-emitter";
+import { defaultIssueStorePath, IssueStore } from "@lorenz/server";
+import { errorMessage, type Settings, type WorkflowDefinition } from "@lorenz/domain";
 
 import {
   createRunsCommand,
@@ -266,7 +266,7 @@ export async function runDaemon(options: CliOptions): Promise<number> {
   }
 }
 
-function createDaemonCommand(name = "symphony-ts"): Command {
+function createDaemonCommand(name = "lorenz"): Command {
   return new Command(name)
     .description("Run the Symphony TypeScript orchestrator.")
     .allowExcessArguments(false)
@@ -284,7 +284,7 @@ function createDaemonCommand(name = "symphony-ts"): Command {
 }
 
 function createRootCommand(): Command {
-  return createDaemonCommand("symphony-ts");
+  return createDaemonCommand("lorenz");
 }
 
 function cliOptionsFromCommander(parsed: CliCommanderOptions, workflowPath?: string): CliOptions {

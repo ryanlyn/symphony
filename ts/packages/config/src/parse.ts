@@ -13,20 +13,20 @@ import type {
   WorkerPoolSettings,
   WorkerPoolSettingsInput,
   WorkerSettings,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 import {
   errorMessage,
   isRecord as isPlainRecord,
   normalizeHttpBindHost,
   withDerivedMaxInFlight,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 import {
   defaultAgentExecutorRegistry,
   type AgentExecutorProvider,
   type AgentExecutorRegistry,
-} from "@symphony/agent-sdk";
-import type { ToolRegistry } from "@symphony/tool-sdk";
-import { defaultTrackerRegistry, type TrackerRegistry } from "@symphony/tracker-sdk";
+} from "@lorenz/agent-sdk";
+import type { ToolRegistry } from "@lorenz/tool-sdk";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { hooksAliases, normalizeAliases } from "./aliases.js";
 import { defaultAgentRecords, defaultSettings, type DefaultSettingsOptions } from "./defaults.js";

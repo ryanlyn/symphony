@@ -2,17 +2,17 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseConfig as parseWorkflowConfig } from "@symphony/config";
-import type { Settings } from "@symphony/domain";
-import { registerLinearTracker } from "@symphony/linear-tracker";
-import { registerLocalTracker } from "@symphony/local-tracker";
-import { ToolRegistry } from "@symphony/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@symphony/tracker-sdk";
+import { parseConfig as parseWorkflowConfig } from "@lorenz/config";
+import type { Settings } from "@lorenz/domain";
+import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerLocalTracker } from "@lorenz/local-tracker";
+import { ToolRegistry } from "@lorenz/tool-sdk";
+import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
 import { Hono } from "hono";
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { createMcpAuthScope, issueMcpToken, mountMcp, revokeMcpToken } from "@symphony/mcp";
+import { createMcpAuthScope, issueMcpToken, mountMcp, revokeMcpToken } from "@lorenz/mcp";
 
 // Private registries so the mount is exercised without mutating the process defaults.
 const trackers = new TrackerRegistry();

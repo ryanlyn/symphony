@@ -1,22 +1,22 @@
-// Shared types for @symphony/dispatch-coordinator.
+// Shared types for @lorenz/dispatch-coordinator.
 //
 // Leaf types module: every implementation file (runSlot, mcpEndpointManager, the
 // coordinator) imports from here so concrete files never form import cycles. The
 // only cross-package value dependencies are the canonical worker-pool/domain nouns.
 //
-// `AgentMcpEndpointLease` (from `@symphony/mcp`) is the WHOLE per-run endpoint
+// `AgentMcpEndpointLease` (from `@lorenz/mcp`) is the WHOLE per-run endpoint
 // lease (auth token + refcounted local mcp server + reverse tunnel) the
 // coordinator owns end-to-end in later steps. It is pulled in with a TYPE-ONLY
 // import so it is fully erased by tsc and forms NO runtime edge to
-// `@symphony/mcp` (which pulls in the observability server, the tunnel pool,
+// `@lorenz/mcp` (which pulls in the observability server, the tunnel pool,
 // hono, etc.) - keeping this package (and `worker-pool`) free of any
 // mcp/tunnel RUNTIME dependency (invariant #8 in the dispatch-coordinator plan).
 // In STEP 1 every RunSlot carries `mcpEndpoint = null`, so nothing here reads the
 // lease at runtime yet; the type lives here only to nail the contract shape.
 
-import type { Settings } from "@symphony/domain";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import type { WorkerOutcome } from "@symphony/worker-pool";
+import type { Settings } from "@lorenz/domain";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import type { WorkerOutcome } from "@lorenz/worker-pool";
 
 /**
  * One run's slot over a leased machine. A `RunSlot` fuses the machine-side

@@ -5,12 +5,12 @@ import {
   shouldDispatchIssue,
   slotKey,
   sortForDispatch,
-} from "@symphony/dispatch";
-import { ensembleSize } from "@symphony/issue";
-import { normalizeStateName, settingsForIssueState } from "@symphony/config";
-import { retryBackoffMs } from "@symphony/policies/retry";
-import { mergeMonotonicUsage } from "@symphony/policies/usage";
-import { selectLeastLoadedHost } from "@symphony/policies/workerHost";
+} from "@lorenz/dispatch";
+import { ensembleSize } from "@lorenz/issue";
+import { normalizeStateName, settingsForIssueState } from "@lorenz/config";
+import { retryBackoffMs } from "@lorenz/policies/retry";
+import { mergeMonotonicUsage } from "@lorenz/policies/usage";
+import { selectLeastLoadedHost } from "@lorenz/policies/workerHost";
 import {
   systemClock,
   type AgentKind,
@@ -24,7 +24,7 @@ import {
   type Settings,
   type UsageTokenUpdate,
   type UsageTotals,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 /**
  * Internal record of a phase-1 slot hold while the dispatch coordinator negotiates capacity

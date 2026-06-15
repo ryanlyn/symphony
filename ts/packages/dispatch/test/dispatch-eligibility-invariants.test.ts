@@ -7,9 +7,9 @@ import {
   slotKey,
   issueIsActive,
   routedToThisWorker,
-} from "@symphony/cli";
-import type { Issue } from "@symphony/domain";
-import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import type { Issue } from "@lorenz/domain";
+import { assert, issueWith, settingsWith as makeSettings } from "@lorenz/test-utils";
 
 // --- Helper arbitraries and factories ---
 

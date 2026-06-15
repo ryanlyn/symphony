@@ -1,13 +1,13 @@
 import { test } from "vitest";
-import { acpExecutorProvider } from "@symphony/acp";
-import { AgentExecutorRegistry } from "@symphony/agent-sdk";
-import { settingsForIssueState, validateDispatchConfig } from "@symphony/config";
-import type { Settings } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import { acpExecutorProvider } from "@lorenz/acp";
+import { AgentExecutorRegistry } from "@lorenz/agent-sdk";
+import { settingsForIssueState, validateDispatchConfig } from "@lorenz/config";
+import type { Settings } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 import { parseSlackConfig, slackTrackers } from "./helpers.js";
 
-import { slackTrackerOptions } from "@symphony/slack-tracker";
+import { slackTrackerOptions } from "@lorenz/slack-tracker";
 
 const executors = new AgentExecutorRegistry();
 executors.register(acpExecutorProvider);

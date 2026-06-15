@@ -1,5 +1,5 @@
-import { defaultStateType, normalizeIssue } from "@symphony/issue";
-import type { Issue, IssueStateType, RuntimeTrackerClient, Settings } from "@symphony/domain";
+import { defaultStateType, normalizeIssue } from "@lorenz/issue";
+import type { Issue, IssueStateType, RuntimeTrackerClient, Settings } from "@lorenz/domain";
 
 import {
   emojiForState,

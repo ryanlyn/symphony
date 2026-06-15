@@ -1,13 +1,13 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
-import type { Settings } from "@symphony/domain";
+import { assert } from "@lorenz/test-utils";
+import type { Settings } from "@lorenz/domain";
 
 import {
   ToolRegistry,
   executeMountedTool,
   mountedToolSpecs,
   type ToolProvider,
-} from "@symphony/tool-sdk";
+} from "@lorenz/tool-sdk";
 
 const settings = { tracker: {} } as unknown as Settings;
 

@@ -7,8 +7,8 @@ import {
   issueHasOpenBlockers,
   dispatchBlockReason,
   normalizeRouteName,
-} from "@symphony/cli";
-import { assert, issueWith, settingsWith as makeSettings } from "@symphony/test-utils";
+} from "@lorenz/cli";
+import { assert, issueWith, settingsWith as makeSettings } from "@lorenz/test-utils";
 
 // --- routeNames ---
 

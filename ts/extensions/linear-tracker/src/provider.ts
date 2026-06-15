@@ -1,10 +1,10 @@
-import type { TrackerProvider } from "@symphony/tracker-sdk";
+import type { TrackerProvider } from "@lorenz/tracker-sdk";
 import {
   rejectUnknownOptions,
   resolveEnvReference,
   stringListOption,
   stringOption,
-} from "@symphony/tracker-sdk";
+} from "@lorenz/tracker-sdk";
 
 import { LinearClient } from "./client.js";
 import { LINEAR_DEFAULT_ENDPOINT, linearTrackerOptions } from "./options.js";

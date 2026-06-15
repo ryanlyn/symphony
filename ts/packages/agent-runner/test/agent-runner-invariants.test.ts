@@ -1,9 +1,9 @@
 import { test, describe } from "vitest";
 import fc from "fast-check";
-import type { AgentSession, AgentUpdate, Issue, Settings } from "@symphony/domain";
+import type { AgentSession, AgentUpdate, Issue, Settings } from "@lorenz/domain";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
-import { defaultSettings } from "@symphony/config";
-import { assert } from "@symphony/test-utils";
+import { defaultSettings } from "@lorenz/config";
+import { assert } from "@lorenz/test-utils";
 
 import { runAgentAttempt, type RunAgentAttemptAdapters } from "../src/index.js";
 

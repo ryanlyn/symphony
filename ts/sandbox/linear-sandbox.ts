@@ -14,22 +14,22 @@
  *   LINEAR_API_KEY=... LINEAR_PROJECT_SLUG=... npx tsx sandbox/linear-sandbox.ts
  */
 
-import { LinearClient, parseConfig } from "@symphony/cli";
+import { LinearClient, parseConfig } from "@lorenz/cli";
 import {
   runAgentAttempt as runAgentAttemptCore,
   type RunAgentAttemptAdapters,
   type RunAgentAttemptInput,
   type RunResult,
-} from "@symphony/agent-runner";
-import { SymphonyRuntime } from "@symphony/runtime";
-import type { Issue, Settings, WorkflowDefinition, AgentExecutor, AgentSession } from "@symphony/cli";
+} from "@lorenz/agent-runner";
+import { SymphonyRuntime } from "@lorenz/runtime";
+import type { Issue, Settings, WorkflowDefinition, AgentExecutor, AgentSession } from "@lorenz/cli";
 import type {
   RuntimeRunner,
   RuntimeSnapshot,
   RuntimeEvent,
   SymphonyRuntimeOptions,
-} from "@symphony/runtime";
-import type { LinearProject, LinearTeam, LinearState } from "@symphony/linear-tracker";
+} from "@lorenz/runtime";
+import type { LinearProject, LinearTeam, LinearState } from "@lorenz/linear-tracker";
 
 import { sleep } from "./sandbox.js";
 import type { FakeRunnerConfig, FakeRunnerIssueBehavior, Assertion } from "./sandbox.js";

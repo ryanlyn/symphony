@@ -3,15 +3,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, test } from "vitest";
-import { WorkerDriverRegistry, POOL_OWNED_LABEL } from "@symphony/worker-sdk";
-import type {
-  DriverDeps,
-  ProvisionRequest,
-  SshRunOptions,
-  SshRunResult,
-} from "@symphony/worker-sdk";
-import { runDriverConformanceSuite } from "@symphony/worker-sdk/conformance";
-import { assert, writeExecutable } from "@symphony/test-utils";
+import { WorkerDriverRegistry, POOL_OWNED_LABEL } from "@lorenz/worker-sdk";
+import type { DriverDeps, ProvisionRequest, SshRunOptions, SshRunResult } from "@lorenz/worker-sdk";
+import { runDriverConformanceSuite } from "@lorenz/worker-sdk/conformance";
+import { assert, writeExecutable } from "@lorenz/test-utils";
 
 import {
   DockerWorkerDriver,

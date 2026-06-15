@@ -1,5 +1,5 @@
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
 import { createLease } from "../src/lease.js";
 import { createMutex } from "../src/mutex.js";

@@ -1,14 +1,14 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { executeSlackTool, InMemorySlackTransport } from "@symphony/slack-tracker";
+import { executeSlackTool, InMemorySlackTransport } from "@lorenz/slack-tracker";
 import { beforeAll, test } from "vitest";
-import type { Issue } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import type { Issue } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
 import { registerBuiltinBackends } from "../src/daemon.js";
 
-import { buildPrompt, parseConfig, parseWorkflowContent } from "@symphony/cli";
+import { buildPrompt, parseConfig, parseWorkflowContent } from "@lorenz/cli";
 
 // parseConfig resolves the slack tracker options through the process-default tracker
 // registry, so populate it the same way the CLI entrypoints do.

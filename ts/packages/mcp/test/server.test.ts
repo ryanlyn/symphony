@@ -1,8 +1,8 @@
-import { parseConfig } from "@symphony/config";
+import { parseConfig } from "@lorenz/config";
 import { test } from "vitest";
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 
-import { mcpResponse } from "@symphony/mcp";
+import { mcpResponse } from "@lorenz/mcp";
 
 const settings = parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {});
 

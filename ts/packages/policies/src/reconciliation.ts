@@ -1,5 +1,5 @@
-import { issueHasOpenBlockers, issueIsActive, routedToThisWorker } from "@symphony/dispatch";
-import type { Issue, Settings } from "@symphony/domain";
+import { issueHasOpenBlockers, issueIsActive, routedToThisWorker } from "@lorenz/dispatch";
+import type { Issue, Settings } from "@lorenz/domain";
 
 export const RUNTIME_RECONCILIATION_REASONS = [
   "terminal",

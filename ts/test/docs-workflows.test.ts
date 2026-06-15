@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test } from "vitest";
-import { assert, tempDir, writeExecutable } from "@symphony/test-utils";
+import { assert, tempDir, writeExecutable } from "@lorenz/test-utils";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const linearWorkflowFiles = ["WORKFLOW.md", "WORKFLOW_FULL_ACCESS.md"];

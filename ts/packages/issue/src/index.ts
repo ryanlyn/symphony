@@ -7,7 +7,7 @@ import {
   type IssueStateType,
   type Priority,
   isValidEnsembleSize,
-} from "@symphony/domain";
+} from "@lorenz/domain";
 
 export function normalizeIssue(input: Record<string, unknown>, assignee?: string): Issue {
   const id = requiredString(input, "id");

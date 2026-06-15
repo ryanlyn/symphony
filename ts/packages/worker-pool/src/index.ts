@@ -1,7 +1,7 @@
-// Public barrel for @symphony/worker-pool: the pool ENGINE.
+// Public barrel for @lorenz/worker-pool: the pool ENGINE.
 //
 // Exports the pool surface (createWorkerPool + the lease/inventory/snapshot types)
-// and re-exports the driver contract from `@symphony/worker-sdk` so the engine
+// and re-exports the driver contract from `@lorenz/worker-sdk` so the engine
 // surface stays one-stop for the runtime/CLI. Importing this barrel has NO side
 // effects: no driver is registered here. Concrete drivers live in extensions
 // (and the in-memory fake in the SDK); the composition root registers them into
@@ -34,7 +34,7 @@ export {
   FakeWorkerDriver,
   POOL_OWNED_LABEL,
   registerFakeWorkerDriver,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";
 export type {
   WorkerDescriptor,
   WorkerDriver,
@@ -42,4 +42,4 @@ export type {
   WorkerHealth,
   DriverDeps,
   TeardownReason,
-} from "@symphony/worker-sdk";
+} from "@lorenz/worker-sdk";

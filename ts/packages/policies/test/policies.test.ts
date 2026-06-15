@@ -1,8 +1,8 @@
 import { test, describe } from "vitest";
-import type { Issue, Settings } from "@symphony/domain";
-import { assert } from "@symphony/test-utils";
+import type { Issue, Settings } from "@lorenz/domain";
+import { assert } from "@lorenz/test-utils";
 
-import { actionForStopReason, reconciliationStopReason } from "@symphony/policies";
+import { actionForStopReason, reconciliationStopReason } from "@lorenz/policies";
 
 // --- actionForStopReason ---
 

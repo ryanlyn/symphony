@@ -1,8 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { Issue } from "@symphony/domain";
-import { defaultStateType, normalizeIssue } from "@symphony/issue";
+import type { Issue } from "@lorenz/domain";
+import { defaultStateType, normalizeIssue } from "@lorenz/issue";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 interface ParsedFile {

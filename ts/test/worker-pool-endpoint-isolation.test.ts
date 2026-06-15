@@ -3,7 +3,7 @@
 // the REAL `acquireAgentMcpEndpointForRun` (token + refcounted local mcp server +
 // reverse tunnel behind ONE lease), the concrete per-run `McpEndpointManager`,
 // and the REAL `DispatchCoordinator` over a fake machine `WorkerPool`. The ONLY seam
-// replaced is `@symphony/ssh` (`startReverseTunnel`'s `ssh -N` child plus its
+// replaced is `@lorenz/ssh` (`startReverseTunnel`'s `ssh -N` child plus its
 // readiness probe), mocked so no real ssh is spawned and so a leaked / surviving
 // child shows up as an un-`kill()`ed fake
 // process. Everything else - the three sub-resources of the endpoint lease, the
@@ -28,13 +28,13 @@
 //     endpoint byte-for-byte (the coordinator mints nothing);
 //   - the default single-slot path opens EXACTLY ONE endpoint per machine.
 //
-// The coordinator surface is imported from `@symphony/cli` (its re-export barrel,
+// The coordinator surface is imported from `@lorenz/cli` (its re-export barrel,
 // the same path the live/e2e suites use). The concrete per-run manager is built
 // inline as the trivial host-routing adapter over the REAL
 // `acquireAgentMcpEndpointForRun` (the dispatch-coordinator unit suite already
 // pins `createPerRunEndpointManager`'s routing; here the point is the composed
 // behaviour, which the real acquire + real WorkerHostPool drive end-to-end).
-// `@symphony/ssh` is mocked by module specifier so the real acquire picks up the
+// `@lorenz/ssh` is mocked by module specifier so the real acquire picks up the
 // fake `startReverseTunnel`. Tests import the compiled package barrels (the suite
 // runs against tsc --build output).
 
@@ -42,19 +42,15 @@ import EventEmitter from "node:events";
 import { createServer } from "node:net";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
-import { assert } from "@symphony/test-utils";
+import { assert } from "@lorenz/test-utils";
 import { afterEach, beforeEach, test, vi } from "vitest";
-import { startReverseTunnel } from "@symphony/ssh";
-import { parseConfig } from "@symphony/config";
-import type { WorkerPoolSettings } from "@symphony/domain";
-import {
-  acquireAgentMcpEndpointForRun,
-  mcpAuthScopeForSettings,
-  validMcpToken,
-} from "@symphony/mcp";
-import type { AgentMcpEndpointLease } from "@symphony/mcp";
-import { WorkerHostPool, workerHostPool } from "@symphony/worker-host-pool";
-import { createDispatchCoordinator } from "@symphony/cli";
+import { startReverseTunnel } from "@lorenz/ssh";
+import { parseConfig } from "@lorenz/config";
+import type { WorkerPoolSettings } from "@lorenz/domain";
+import { acquireAgentMcpEndpointForRun, mcpAuthScopeForSettings, validMcpToken } from "@lorenz/mcp";
+import type { AgentMcpEndpointLease } from "@lorenz/mcp";
+import { WorkerHostPool, workerHostPool } from "@lorenz/worker-host-pool";
+import { createDispatchCoordinator } from "@lorenz/cli";
 import type {
   AcquireResult,
   WorkerLease,
@@ -62,14 +58,14 @@ import type {
   WorkerPoolSnapshot,
   McpEndpointManager,
   Settings,
-} from "@symphony/cli";
+} from "@lorenz/cli";
 
 // The reverse-tunnel child is the ONE seam we replace: a fake EventEmitter whose
 // `kill()` is observable, so a surviving (un-killed) child is a leaked ssh -N.
 // The pool awaits remote-port readiness before returning a lease; the fake
 // `waitForRemoteTcpPort` resolves immediately so the suite exercises the lease
 // lifecycle, not the readiness probe.
-vi.mock("@symphony/ssh", () => ({
+vi.mock("@lorenz/ssh", () => ({
   startReverseTunnel: vi.fn(),
   waitForRemoteTcpPort: vi.fn(async () => {}),
 }));
