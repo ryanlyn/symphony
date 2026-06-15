@@ -1,23 +1,23 @@
-# Symphony
+# Lorenz
 
-This repository is a TypeScript port of [OpenAI Symphony](https://github.com/openai/symphony).
+Lorenz is heavily birthed from [OpenAI's Symphony orchestrator](https://github.com/openai/symphony), reimplemented and extended in TypeScript.
 
-Symphony is an orchestrator that connects a project tracker (Linear) to coding agents (Codex or
+Lorenz is an orchestrator that connects a project tracker (Linear) to coding agents (Codex or
 Claude Code). It polls for issues, creates isolated workspaces, and runs agents against each issue
 until the work is done.
 
 ## Screenshots
 
-The TypeScript port ships two operator views over the same runtime snapshot: an Ink terminal
+Lorenz ships two operator views over the same runtime snapshot: an Ink terminal
 dashboard (TUI) and a web dashboard served by the observability API.
 
 ### Terminal dashboard (TUI)
 
-![Symphony terminal dashboard](docs/images/symphony-tui.png)
+![Lorenz terminal dashboard](docs/images/symphony-tui.png)
 
 ### Web dashboard
 
-![Symphony web dashboard](docs/images/symphony-dashboard.png)
+![Lorenz web dashboard](docs/images/symphony-dashboard.png)
 
 ## How it works
 
@@ -30,7 +30,7 @@ dashboard (TUI) and a web dashboard served by the observability API.
    agent and cleans up the workspace
 
 The workflow file (`WORKFLOW.md`) defines both the orchestrator configuration (YAML front matter) and
-the agent session prompt (Markdown body). Editing the workflow while Symphony is running reloads the
+the agent session prompt (Markdown body). Editing the workflow while Lorenz is running reloads the
 configuration automatically - no restart needed.
 
 ## Extensions
@@ -41,7 +41,7 @@ configuration automatically - no restart needed.
 | Claude Code executor | Adds `agent.kind: "claude"` support, including Claude CLI execution, JSONL event parsing, built-in `/mcp` tool serving instead of the Python MCP sidecar, authenticated remote worker access, and Claude-specific runtime settings. |
 | Workflow and runtime hardening | Defaults Codex workflows to sandboxed `workspace-write`, honors Linear `Retry-After` backoff on `429`, tightens remote workspace path validation, and improves long-running orchestrator reliability. |
 | Claude parity and MCP handling | Routes Claude and Codex through the same Linear tool backend, removes the Python MCP sidecar, and improves remote cleanup behavior. |
-| Dispatch routing | Adds tracker-scoped static routing with Linear labels such as `Symphony:shard-a`, so multiple Symphony instances can split work by configured route labels. |
+| Dispatch routing | Adds tracker-scoped static routing with Linear labels such as `Lorenz:shard-a`, so multiple Lorenz instances can split work by configured route labels. |
 | Run history CLI | Adds an orchestrator run history command (`lorenz runs`) exposing completed attempts, retries, token totals, and per-run forensic context beyond live state. |
 | Secret resolution | Resolves `op://` references in workflow secrets (e.g. `LINEAR_API_KEY`) through the 1Password CLI. |
 
