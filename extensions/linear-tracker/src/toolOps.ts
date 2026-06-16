@@ -1,6 +1,7 @@
 import { normalizeIssue } from "@lorenz/issue";
 import { isRecord, type Issue, type Settings } from "@lorenz/domain";
 import type {
+  TrackerComment,
   TrackerCreateIssueInput,
   TrackerOpsContext,
   TrackerToolOps,
@@ -41,7 +42,10 @@ export function linearToolOps(settings: Settings, context: TrackerOpsContext): T
     queryIssues: async (args) => queryLinearIssues(settings, args, fetchImpl),
     updateStatus: async (issueId, status) =>
       updateLinearStatus(settings, issueId, status, fetchImpl),
+    listComments: async (issueId) => listLinearComments(settings, issueId, fetchImpl),
     addComment: async (issueId, body) => createLinearComment(settings, issueId, body, fetchImpl),
+    updateComment: async (_issueId, commentId, body) =>
+      updateLinearComment(settings, commentId, body, fetchImpl),
     createIssue: async (input) => createLinearIssue(settings, input, fetchImpl),
   };
 }
@@ -148,6 +152,70 @@ async function createLinearComment(
   if (!data.commentCreate.success) throw new Error("linear commentCreate failed");
 }
 
+async function listLinearComments(
+  settings: Settings,
+  issueId: string,
+  fetchImpl: typeof fetch,
+): Promise<TrackerComment[]> {
+  const data = await linearData<{
+    issue?: {
+      comments?: { nodes?: Array<Record<string, unknown>> };
+    } | null;
+  }>(
+    settings,
+    `query LorenzTrackerLinearComments($id: String!) {
+      issue(id: $id) {
+        comments(first: 100) {
+          nodes {
+            id
+            body
+            createdAt
+            updatedAt
+            url
+            user { id name email }
+          }
+        }
+      }
+    }`,
+    { id: issueId },
+    fetchImpl,
+  );
+  if (!data.issue) throw new Error(`linear issue not found: ${issueId}`);
+  return (data.issue.comments?.nodes ?? []).map(normalizeLinearComment);
+}
+
+async function updateLinearComment(
+  settings: Settings,
+  commentId: string,
+  body: string,
+  fetchImpl: typeof fetch,
+): Promise<TrackerComment> {
+  const data = await linearData<{
+    commentUpdate: { success: boolean; comment: Record<string, unknown> | null };
+  }>(
+    settings,
+    `mutation LorenzTrackerLinearCommentUpdate($id: String!, $input: CommentUpdateInput!) {
+      commentUpdate(id: $id, input: $input) {
+        success
+        comment {
+          id
+          body
+          createdAt
+          updatedAt
+          url
+          user { id name email }
+        }
+      }
+    }`,
+    { id: commentId, input: { body } },
+    fetchImpl,
+  );
+  if (!data.commentUpdate.success || !data.commentUpdate.comment) {
+    throw new Error("linear commentUpdate failed");
+  }
+  return normalizeLinearComment(data.commentUpdate.comment);
+}
+
 async function createLinearIssue(
   settings: Settings,
   input: TrackerCreateIssueInput,
@@ -246,9 +314,32 @@ function normalizeLinearIssue(issue: Record<string, unknown>, assignee?: string)
   );
 }
 
+function normalizeLinearComment(comment: Record<string, unknown>): TrackerComment {
+  const user = isRecord(comment.user) ? comment.user : {};
+  return {
+    id: requireStr(comment, "id"),
+    body: typeof comment.body === "string" ? comment.body : "",
+    author: stringValue(user, "id") ?? stringValue(user, "name") ?? stringValue(user, "email"),
+    createdAt: stringValue(comment, "createdAt"),
+    updatedAt: stringValue(comment, "updatedAt"),
+    url: stringValue(comment, "url"),
+  };
+}
+
 function nodesFromConnection(value: unknown): unknown[] {
   if (!isRecord(value) || !Array.isArray(value.nodes)) return [];
   return value.nodes;
+}
+
+function stringValue(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+function requireStr(record: Record<string, unknown>, key: string): string {
+  const value = stringValue(record, key);
+  if (!value) throw new Error(`'${key}' is required`);
+  return value;
 }
 
 function stringArray(value: unknown): string[] | null {

@@ -30,7 +30,9 @@ const TRACKER_TOOL_NAMES = [
   "tracker_read_issue",
   "tracker_query",
   "tracker_update_status",
+  "tracker_list_comments",
   "tracker_comment",
+  "tracker_update_comment",
   "tracker_create_issue",
 ];
 
@@ -152,6 +154,89 @@ test("common tracker tools work against the local board provider", async () => {
     id: "BOARD-1",
     state: "In Progress",
   });
+});
+
+test("common tracker comment tools work against the Linear provider", async () => {
+  const settings = linearSettings();
+  const calls: Array<{ query: string; variables: Record<string, unknown> }> = [];
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      query?: string;
+      variables?: Record<string, unknown>;
+    };
+    calls.push({ query: body.query ?? "", variables: body.variables ?? {} });
+
+    if (body.query?.includes("LorenzTrackerLinearComments")) {
+      return new Response(
+        JSON.stringify({
+          data: {
+            issue: {
+              comments: {
+                nodes: [
+                  {
+                    id: "comment-1",
+                    body: "## Codex Workpad",
+                    createdAt: "2026-06-01T00:00:00Z",
+                    updatedAt: "2026-06-01T00:00:00Z",
+                    url: "https://linear.app/team/issue/ENG-1#comment-comment-1",
+                    user: { id: "user-1", name: "Worker", email: "worker@example.com" },
+                  },
+                ],
+              },
+            },
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
+
+    return new Response(
+      JSON.stringify({
+        data: {
+          commentUpdate: {
+            success: true,
+            comment: {
+              id: "comment-1",
+              body: "Updated workpad",
+              createdAt: "2026-06-01T00:00:00Z",
+              updatedAt: "2026-06-02T00:00:00Z",
+              url: "https://linear.app/team/issue/ENG-1#comment-comment-1",
+              user: { id: "user-1", name: "Worker", email: "worker@example.com" },
+            },
+          },
+        },
+      }),
+      { headers: { "content-type": "application/json" } },
+    );
+  };
+
+  const listed = await executeTool(
+    "tracker_list_comments",
+    { issueId: "issue-1" },
+    settings,
+    fakeFetch,
+    tools,
+  );
+  assert.equal(listed.success, true);
+  const comments = (listed.result as { comments: Array<{ id: string; body: string }> }).comments;
+  assert.equal(comments[0]?.id, "comment-1");
+  assert.equal(comments[0]?.body, "## Codex Workpad");
+
+  const updated = await executeTool(
+    "tracker_update_comment",
+    { issueId: "issue-1", commentId: "comment-1", body: "Updated workpad" },
+    settings,
+    fakeFetch,
+    tools,
+  );
+  assert.equal(updated.success, true);
+  const comment = (updated.result as { comment: { id: string; body: string } }).comment;
+  assert.equal(comment.id, "comment-1");
+  assert.equal(comment.body, "Updated workpad");
+  assert.deepEqual(
+    calls.map((call) => call.variables),
+    [{ id: "issue-1" }, { id: "comment-1", input: { body: "Updated workpad" } }],
+  );
 });
 
 test("a throwing pack surfaces as a failed tool result, not a thrown error", async () => {
