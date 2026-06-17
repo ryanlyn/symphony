@@ -35,6 +35,19 @@ export function isBotMention(text: string, botUserId?: string): boolean {
 }
 
 /**
+ * True when a message authored by `user` is allowed to create issues. An empty `allowedUsers`
+ * list means no author constraint (back-compat: any author, as long as the bot is mentioned).
+ * With a non-empty list only the listed user ids match, and a message with no known author never
+ * matches (fail closed). The allowlist can only narrow dispatch, never widen it: the bot-mention
+ * requirement still applies on top of it. It lets an operator constrain dispatch to a known set
+ * of requesters, which is what makes DM channels safe to watch (anyone can DM the bot).
+ */
+export function isAllowedAuthor(user: string | undefined, allowedUsers: string[]): boolean {
+  if (allowedUsers.length === 0) return true;
+  return user !== undefined && allowedUsers.includes(user);
+}
+
+/**
  * Strip a single leading bot mention (and following whitespace) from `text`. With `botUserId`
  * set, only that user's leading mention is stripped; without it, any leading `<@U...>` mention is.
  */

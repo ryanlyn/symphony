@@ -1,4 +1,4 @@
-import { isBotMention } from "./mapping.js";
+import { isAllowedAuthor, isBotMention } from "./mapping.js";
 import type {
   SlackChannelScan,
   SlackMessage,
@@ -23,7 +23,9 @@ interface StoredMessage extends SlackMessage {
 
 interface InMemoryOptions {
   botUserId?: string;
-  /** The bot's own user id when posting replies (defaults to `botUserId`). */
+  /** Author allowlist mirroring `tracker.users`: empty means no author constraint. */
+  allowedUsers?: string[];
+  /** Resolvable user profiles for `getUser` (defaults to none). */
   users?: Record<string, SlackUser>;
 }
 
@@ -31,10 +33,12 @@ export class InMemorySlackTransport implements SlackTransport {
   readonly replies: Array<{ channel: string; threadTs: string; body: string }> = [];
   private readonly messages: Map<string, StoredMessage[]> = new Map();
   private readonly botUserId: string | undefined;
+  private readonly allowedUsers: string[];
   private readonly users: Record<string, SlackUser>;
 
   constructor(seed: Record<string, SeedMessage[]> = {}, opts: InMemoryOptions = {}) {
     this.botUserId = opts.botUserId;
+    this.allowedUsers = opts.allowedUsers ?? [];
     this.users = opts.users ?? {};
     for (const [channel, msgs] of Object.entries(seed)) {
       this.messages.set(
@@ -57,7 +61,8 @@ export class InMemorySlackTransport implements SlackTransport {
     const threadedRoots: SlackMessage[] = [];
     for (const channel of channels) {
       for (const m of this.messages.get(channel) ?? []) {
-        if (isBotMention(m.text, this.botUserId)) mentions.push(this.snapshot(m));
+        if (isBotMention(m.text, this.botUserId) && isAllowedAuthor(m.user, this.allowedUsers))
+          mentions.push(this.snapshot(m));
         else if (m.thread.length > 0) threadedRoots.push(this.snapshot(m));
       }
     }
