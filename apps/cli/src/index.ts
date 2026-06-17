@@ -48,6 +48,19 @@ export { LinearClient } from "@lorenz/linear-tracker";
 export { JiraClient, JiraMcpClient } from "@lorenz/jira-tracker";
 export { MemoryTrackerClient, memoryIssuesFromEnv } from "@lorenz/memory-tracker";
 export { configureLogFile, appendLogEvent, defaultLogFile } from "@lorenz/log-file";
+export {
+  acquireDaemonLock,
+  createDaemonIdentity,
+  daemonLockIsStale,
+  daemonLockPath,
+  readDaemonLock,
+  type AcquireDaemonLockOptions,
+  type AcquireDaemonLockResult,
+  type DaemonEndpoint,
+  type DaemonIdentity,
+  type DaemonLockRecord,
+} from "./daemonLock.js";
+export { daemonStatusPayload, type DaemonStatusPayload } from "./daemonStatus.js";
 export { Orchestrator } from "@lorenz/orchestrator";
 export type { RunResult } from "@lorenz/agent-runner";
 export { LorenzRuntime, RUNTIME_EVENT_TYPES } from "@lorenz/runtime";
