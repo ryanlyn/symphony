@@ -1,6 +1,6 @@
 import { errorMessage, isRecord, type Settings } from "@lorenz/domain";
 
-import { isBotMention } from "./mapping.js";
+import { isAllowedAuthor, isBotMention } from "./mapping.js";
 import { slackEndpoint, slackTrackerOptions } from "./options.js";
 import type {
   SlackChannelScan,
@@ -60,6 +60,7 @@ export class SlackWebTransport implements SlackTransport {
   private readonly endpoint: string;
   private readonly token: string;
   private readonly botUserId: string | undefined;
+  private readonly allowedUsers: string[];
   private readonly maxHistoryPages: number;
   private warnedNoBotUserId = false;
 
@@ -72,7 +73,9 @@ export class SlackWebTransport implements SlackTransport {
   ) {
     this.endpoint = slackEndpoint(settings);
     this.token = settings.tracker.apiKey ?? "";
-    this.botUserId = slackTrackerOptions(settings).botUserId;
+    const slackOptions = slackTrackerOptions(settings);
+    this.botUserId = slackOptions.botUserId;
+    this.allowedUsers = slackOptions.users;
     this.maxHistoryPages = options.maxHistoryPages ?? MAX_HISTORY_PAGES;
   }
 
@@ -166,10 +169,15 @@ export class SlackWebTransport implements SlackTransport {
       const messages = Array.isArray(body.messages) ? (body.messages as RawSlackMessage[]) : [];
       for (const m of messages) {
         if (typeof m.ts !== "string") continue;
-        if (isBotMention(m.text ?? "", this.botUserId)) {
+        if (
+          isBotMention(m.text ?? "", this.botUserId) &&
+          isAllowedAuthor(m.user, this.allowedUsers)
+        ) {
           buffer.mentions.push(toMessage(channel, m, this.botUserId));
         } else if ((m.reply_count ?? 0) > 0) {
-          // Non-mention roots that carry a thread: candidates for reply-mention tracking.
+          // Non-mention roots (and root mentions from a non-allowed author) that carry a thread:
+          // candidates for reply-mention tracking. A reply from an allowed user mentioning the bot
+          // can still make the thread an issue; resolveThreadState applies the same author gate.
           buffer.threadedRoots.push(toMessage(channel, m, this.botUserId));
         }
       }

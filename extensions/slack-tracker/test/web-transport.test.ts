@@ -112,6 +112,36 @@ test("listMentions fails closed when no botUserId is configured: no mentions, wa
   assert.match(warnings[0]!, /SLACK_BOT_USER_ID|bot_user_id/);
 });
 
+test("listMentions applies the tracker.users author allowlist on top of the bot mention", async () => {
+  const fetchImpl = (async () => {
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        messages: [
+          { ts: "1.1", text: "<@U_BOT> from alice", user: "U_ALICE", reactions: [] },
+          { ts: "1.2", text: "<@U_BOT> from bob", user: "U_BOB", reactions: [] },
+          { ts: "1.3", text: "<@U_BOT> no author field", reactions: [] },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+
+  const constrained = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U_BOT", users: ["U_ALICE"] } },
+    { SLACK_BOT_TOKEN: "xoxb-abc" },
+  );
+  const transport = new SlackWebTransport(constrained, fetchImpl);
+  const messages = await transport.listMentions(["C1"]);
+
+  // Only the bot mention authored by an allowed user survives; a non-allowed author and a message
+  // with no author field are both dropped (fail closed).
+  assert.deepEqual(
+    messages.map((m) => m.ts),
+    ["1.1"],
+  );
+});
+
 test("listMentions follows response_metadata.next_cursor across pages", async () => {
   const calls: Array<{ url: string }> = [];
   const fetchImpl = (async (url: string | URL) => {
