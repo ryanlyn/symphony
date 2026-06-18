@@ -95,13 +95,17 @@ const vendoredRuntimeDependencyTargets = new Map(
 
 export async function stageRelease(options: StageReleaseOptions = {}): Promise<StagedRelease> {
   const workspaceRoot = path.resolve(options.workspaceRoot ?? defaultWorkspaceRoot);
+  const rootPackage = await readJson<PackageJson>(path.join(workspaceRoot, "package.json"));
   const allPackages = await readWorkspacePackages(workspaceRoot);
   const cliPackage = allPackages.get("@lorenz/cli");
   if (!cliPackage) {
     throw new Error("Cannot stage CLI release: @lorenz/cli package was not found.");
   }
 
-  const version = options.version ?? cliPackage.packageJson.version ?? "0.0.0";
+  const version = options.version ?? rootPackage.version;
+  if (!version) {
+    throw new Error("Cannot stage CLI release: package.json has no version.");
+  }
   const releaseName = options.releaseName ?? `lorenz-v${version}`;
   const outputRoot = path.resolve(
     options.outputRoot ?? path.join(workspaceRoot, "dist", "release"),
@@ -657,7 +661,7 @@ function printHelp(): void {
 Options:
   --out-dir <path>   Directory that receives the staged release
   --name <name>      Release directory name
-  --version <value>  Release package version
+  --version <value>  Release package version (defaults to root package.json)
   --tarball          Also create a .tar.gz archive next to the release directory
   --force            Replace an existing release directory or archive
   --help             Show this help
