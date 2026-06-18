@@ -231,44 +231,6 @@ test("config command rejects literal API secrets", async () => {
   assert.match(await fs.readFile(workflowPath, "utf8"), /api_key: \$CUSTOM_JIRA_TOKEN/);
 });
 
-test("config command accepts 1Password secret references without resolving them", async () => {
-  const root = await tempDir("lorenz-config-one-password-reference");
-  const workflowPath = path.join(root, "WORKFLOW.md");
-  const stderr = new CaptureWriter();
-  const prompter = new ScriptedPrompter([
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    "op://Engineering/Jira/api-token",
-    "ENG",
-  ]);
-
-  assert.equal(
-    await runConfigCommand(
-      { workflowPath, force: false },
-      {
-        prompter,
-        stdout: new CaptureWriter(),
-        stderr,
-        env: { PATH: "/nonexistent" },
-        cwd: root,
-      },
-    ),
-    0,
-  );
-
-  assert.equal(stderr.value, "");
-  assert.equal(
-    prompter.messages.some((message) => /literal secrets are not stored/.test(message)),
-    false,
-  );
-  assert.match(
-    await fs.readFile(workflowPath, "utf8"),
-    /api_key: op:\/\/Engineering\/Jira\/api-token/,
-  );
-});
-
 function defaultAnswers(): OnboardingAnswers {
   return {
     tracker: {

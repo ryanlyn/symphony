@@ -4,7 +4,7 @@
 
 - Changed fresh workflow defaults to Jira and Claude, with Jira-aware active-state defaults.
 - Added the interactive `lorenz config` and `lorenz-config` onboarding commands, including
-  provider-specific prompts, `$VAR` and `op://` API secret references, durable atomic workflow
+  provider-specific prompts, environment-only API secret references, durable atomic workflow
   writes, and overwrite protection.
 
 ## 2026-06-14

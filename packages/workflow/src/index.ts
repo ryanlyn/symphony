@@ -162,7 +162,7 @@ export async function writeWorkflowFile(
 ): Promise<string> {
   const absolute = path.resolve(filePath);
   const directory = path.dirname(absolute);
-  await fs.mkdir(directory, { recursive: true });
+  await ensureDirectory(directory);
 
   const tempPath = `${absolute}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
   let tempExists = false;
@@ -219,7 +219,12 @@ export async function writeWorkflowFile(
     }
     throw operationError;
   }
-  if (cleanupFailed) throw cleanupError;
+  if (cleanupFailed) {
+    throw new Error(
+      `workflow file created at ${absolute}, but failed to finalize cleanup for temporary file ${tempPath}: ${errorMessage(cleanupError)}`,
+      { cause: cleanupError },
+    );
+  }
 
   return absolute;
 }
@@ -315,12 +320,25 @@ function isUnsupportedDirectorySyncError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return (
     code === "EINVAL" ||
+    code === "EISDIR" ||
+    code === "EBADF" ||
     code === "ENOTSUP" ||
     code === "EOPNOTSUPP" ||
     code === "ENOSYS" ||
-    code === "EISDIR" ||
     (process.platform === "win32" && (code === "EACCES" || code === "EPERM"))
   );
+}
+
+async function ensureDirectory(directory: string): Promise<void> {
+  await fs.mkdir(directory, { recursive: true });
+
+  let ancestor = path.dirname(path.resolve(directory));
+  while (true) {
+    await syncDirectory(ancestor);
+    const next = path.dirname(ancestor);
+    if (next === ancestor) break;
+    ancestor = next;
+  }
 }
 
 function aggregateWorkflowErrors(

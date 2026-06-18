@@ -182,6 +182,34 @@ test("writeWorkflowFile creates parent directories and returns the absolute path
   );
 });
 
+test("writeWorkflowFile syncs the full ancestor chain before publication", async () => {
+  const root = await tempDir("lorenz-workflow-write-new-directory-chain");
+  const first = path.join(root, "first");
+  const second = path.join(first, "second");
+  const workflowFile = path.join(second, "WORKFLOW.md");
+  const synced: string[] = [];
+  const originalOpen = fs.open.bind(fs);
+
+  vi.spyOn(fs, "open").mockImplementation(async (filePath, flags, mode) => {
+    const handle = await originalOpen(filePath, flags, mode);
+    const originalSync = handle.sync.bind(handle);
+    vi.spyOn(handle, "sync").mockImplementation(async () => {
+      synced.push(path.resolve(String(filePath)));
+      await originalSync();
+    });
+    return handle;
+  });
+
+  await writeWorkflowFile(workflowFile, {}, "durable directories");
+
+  for (const directory of [path.parse(root).root, path.dirname(root), root, first, second]) {
+    assert.ok(
+      synced.includes(path.resolve(directory)),
+      `expected ${directory} to be synced, saw ${JSON.stringify(synced)}`,
+    );
+  }
+});
+
 test("writeWorkflowFile does not clobber an existing workflow by default", async () => {
   const dir = await tempDir("lorenz-workflow-write-no-clobber");
   const workflowFile = path.join(dir, "WORKFLOW.md");
@@ -248,6 +276,7 @@ test.each([
       }
 
       const handle = await originalOpen(filePath, flags, mode);
+      if (flags !== "wx") return handle;
       const originalSync = handle.sync.bind(handle);
       vi.spyOn(handle, "sync").mockImplementation(async () => {
         events.push("temp-sync");
@@ -274,19 +303,50 @@ test.each([
   },
 );
 
-test("writeWorkflowFile tolerates unsupported directory sync", async () => {
-  const dir = await tempDir("lorenz-workflow-write-unsupported-directory-sync");
+test.each(["EINVAL", "EBADF"])(
+  "writeWorkflowFile tolerates unsupported directory sync error %s",
+  async (code) => {
+    const dir = await tempDir("lorenz-workflow-write-unsupported-directory-sync");
+    const workflowFile = path.join(dir, "WORKFLOW.md");
+    const originalOpen = fs.open.bind(fs);
+    const unsupported = Object.assign(new Error("directory sync unsupported"), {
+      code,
+    });
+
+    vi.spyOn(fs, "open").mockImplementation(async (filePath, flags, mode) => {
+      if (path.resolve(String(filePath)) === path.resolve(dir)) {
+        return {
+          sync: async () => {
+            throw unsupported;
+          },
+          close: async () => {},
+        } as FileHandle;
+      }
+      return originalOpen(filePath, flags, mode);
+    });
+
+    await writeWorkflowFile(workflowFile, {}, "portable");
+
+    assert.equal(await fs.readFile(workflowFile, "utf8"), renderWorkflowContent({}, "portable"));
+    assert.deepEqual(await fs.readdir(dir), ["WORKFLOW.md"]);
+  },
+);
+
+test("writeWorkflowFile propagates POSIX directory permission errors", async () => {
+  if (process.platform === "win32") return;
+
+  const dir = await tempDir("lorenz-workflow-write-directory-permission-error");
   const workflowFile = path.join(dir, "WORKFLOW.md");
   const originalOpen = fs.open.bind(fs);
-  const unsupported = Object.assign(new Error("directory sync unsupported"), {
-    code: "EINVAL",
+  const permissionError = Object.assign(new Error("directory sync denied"), {
+    code: "EACCES",
   });
 
   vi.spyOn(fs, "open").mockImplementation(async (filePath, flags, mode) => {
     if (path.resolve(String(filePath)) === path.resolve(dir)) {
       return {
         sync: async () => {
-          throw unsupported;
+          throw permissionError;
         },
         close: async () => {},
       } as FileHandle;
@@ -294,13 +354,17 @@ test("writeWorkflowFile tolerates unsupported directory sync", async () => {
     return originalOpen(filePath, flags, mode);
   });
 
-  await writeWorkflowFile(workflowFile, {}, "portable");
-
-  assert.equal(await fs.readFile(workflowFile, "utf8"), renderWorkflowContent({}, "portable"));
-  assert.deepEqual(await fs.readdir(dir), ["WORKFLOW.md"]);
+  await assert.rejects(
+    () => writeWorkflowFile(workflowFile, {}, "permission failure"),
+    (error) => {
+      if (!(error instanceof AggregateError)) return false;
+      assert.deepEqual(error.errors, [permissionError, permissionError]);
+      return true;
+    },
+  );
 });
 
-test("writeWorkflowFile reports an unexpected temp cleanup failure", async () => {
+test("writeWorkflowFile reports successful publication with a temp cleanup failure", async () => {
   const dir = await tempDir("lorenz-workflow-write-cleanup-failure");
   const workflowFile = path.join(dir, "WORKFLOW.md");
   const cleanupError = Object.assign(new Error("synthetic temp cleanup failure"), {
@@ -311,8 +375,16 @@ test("writeWorkflowFile reports an unexpected temp cleanup failure", async () =>
   try {
     await assert.rejects(
       () => writeWorkflowFile(workflowFile, {}, "published"),
-      (error) => error === cleanupError,
+      (error) => {
+        assert.equal(error instanceof Error ? error.cause : undefined, cleanupError);
+        assert.match(
+          error instanceof Error ? error.message : "",
+          /workflow file created at .* but failed to finalize cleanup for temporary file .*synthetic temp cleanup failure/,
+        );
+        return true;
+      },
     );
+    assert.equal(await fs.readFile(workflowFile, "utf8"), renderWorkflowContent({}, "published"));
   } finally {
     rmSpy.mockRestore();
     await removeWorkflowTestFiles(dir);
