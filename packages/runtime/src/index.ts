@@ -1151,7 +1151,6 @@ export class LorenzRuntime {
       const meta = tracked.get(issue.id);
       const active = issueIsActive(issue, this.workflow.settings);
       const routed = routedToThisWorker(issue, this.workflow.settings);
-      if (active && !routed && meta?.kind === "retry") continue;
       if (active && routed && !issueHasOpenBlockers(issue, this.workflow.settings)) {
         this.orchestrator.refreshRunningIssue(issue);
         continue;
@@ -1168,8 +1167,8 @@ export class LorenzRuntime {
       if (isTerminalState(issue.state, this.workflow.settings.tracker.terminalStates)) {
         await this.removeIssueWorkspaces(
           this.workflow.settings,
-          issue.identifier || tracked.get(issue.id)?.identifier,
-          tracked.get(issue.id)?.workerHost,
+          issue.identifier || meta?.identifier,
+          meta?.workerHost,
           issue,
         );
         this.addEvent("workspace_cleanup", `${issue.identifier} ${reason}`);
