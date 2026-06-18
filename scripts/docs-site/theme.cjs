@@ -8,8 +8,8 @@
  * confidence; Inter for body; JetBrains Mono strictly for code and small
  * metadata labels. Three-column shell - grouped left sidebar, comfortable
  * content measure, right "On this page" TOC with scroll-spy. Slim top bar
- * with a wordmark, theme toggle, and a real-looking search field; the
- * section groups live only in the left sidebar, never repeated up top.
+ * with a wordmark and theme toggle; the section groups live only in the
+ * left sidebar, never repeated up top.
  */
 
 const escapeHtml = (s) =>
@@ -249,7 +249,7 @@ a:hover{text-decoration:underline;text-underline-offset:2px}
   box-shadow:var(--shadow-bar);
 }
 .brand{
-  display:flex;align-items:center;gap:10px;flex:0 0 auto;
+  display:flex;align-items:center;gap:10px;flex:0 0 auto;margin-right:auto;
   font-family:var(--font-display);font-weight:600;color:var(--text);
   letter-spacing:-.02em;
 }
@@ -272,31 +272,6 @@ a:hover{text-decoration:underline;text-underline-offset:2px}
   font-size:.62rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
   color:var(--accent);background:var(--accent-soft);
   padding:2px 7px;border-radius:6px;margin-left:2px;
-}
-
-.searchbox{
-  flex:1 1 auto;min-width:0;max-width:420px;margin:0 auto 0 8px;
-  display:flex;align-items:center;gap:9px;
-  height:38px;padding:0 12px;
-  background:var(--panel);
-  border:1px solid var(--border);
-  border-radius:10px;
-  color:var(--text-mute);font-size:.9rem;cursor:text;
-  transition:border-color .15s,background .15s,box-shadow .15s;
-}
-.searchbox:hover{border-color:var(--border-strong)}
-.searchbox:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.searchbox svg{width:16px;height:16px;flex:0 0 auto;opacity:.85}
-.searchbox input{
-  flex:1 1 auto;border:0;outline:0;background:none;
-  font-family:var(--font-sans);font-size:.9rem;color:var(--text);
-  min-width:0;
-}
-.searchbox input::placeholder{color:var(--text-mute)}
-.searchbox .kbd{
-  margin-left:auto;font-family:var(--font-mono);font-size:.7rem;
-  border:1px solid var(--border-strong);border-radius:5px;padding:1px 6px;
-  color:var(--text-mute);background:var(--bg-soft);
 }
 
 .icon-btn{
@@ -579,7 +554,6 @@ html[data-theme="dark"] .theme-toggle .moon{display:inline}
   .shell{grid-template-columns:minmax(0,1fr)}
   .content{padding:28px 26px 70px}
   .menu-btn{display:inline-flex}
-  .searchbox{max-width:none}
   .sidebar{
     position:fixed;top:var(--topbar-h);left:0;z-index:56;
     width:min(86vw,330px);
@@ -592,7 +566,6 @@ html[data-theme="dark"] .theme-toggle .moon{display:inline}
   body.nav-open .scrim{display:block}
 }
 @media (max-width:560px){
-  .searchbox .kbd{display:none}
   .brand__tag{display:none}
   .content{padding:24px 16px 64px}
   .pager-row{grid-template-columns:1fr}
@@ -620,12 +593,6 @@ const SCRIPT = `
     if(scrim){scrim.addEventListener('click',close);}
     document.querySelectorAll('.sidebar a').forEach(function(a){a.addEventListener('click',close);});
     document.addEventListener('keydown',function(e){if(e.key==='Escape')close();});
-
-    // focus search with "/"
-    var search=document.getElementById('docsearch');
-    if(search){document.addEventListener('keydown',function(e){
-      if(e.key==='/'&&document.activeElement!==search){e.preventDefault();search.focus();}
-    });}
 
     // build right TOC from h2/h3
     var main=document.getElementById('content-main');
@@ -691,8 +658,6 @@ const SCRIPT = `
 })();
 `
 
-const SEARCH_SVG =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
 const SUN_SVG =
   '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.4M12 19.6V22M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2 12h2.4M19.6 12H22M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/></svg>'
 const MOON_SVG =
@@ -764,11 +729,6 @@ function render({
     <span class="brand__name">${escapeHtml(siteTitle)}</span>
     <span class="brand__tag">Docs</span>
   </a>
-  <div class="searchbox" role="search">
-    ${SEARCH_SVG}
-    <input id="docsearch" type="search" placeholder="Search the docs" aria-label="Search the documentation" autocomplete="off">
-    <span class="kbd" aria-hidden="true">/</span>
-  </div>
   <button id="theme-toggle" class="icon-btn theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">${SUN_SVG}${MOON_SVG}</button>
 </header>
 
