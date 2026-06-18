@@ -1,6 +1,8 @@
 # Lorenz
 
-Originated from [OpenAI Symphony](https://openai.com/index/open-source-codex-orchestration-symphony/), Lorenz lets you declare work on trackers (in-memory, Obsidian markdown files, Linear, Jira, Slack etc.) and manage the dispatch, execution, and convergence of concurrent agent sessions until they reach a specified terminal state. It is harness-agnostic through the [Agent-Client Protocol](https://agentclientprotocol.com/get-started/introduction) with support for local, static SSH boxes, or (experimental) cloud-brokered VMs. 
+[![Documentation](https://img.shields.io/badge/docs-ryanlyn.github.io%2Florenz-14b8a6)](https://ryanlyn.github.io/lorenz/)
+
+Originated from [OpenAI Symphony](https://openai.com/index/open-source-codex-orchestration-symphony/), Lorenz lets you declare work on trackers (in-memory, Obsidian markdown files, Linear, Jira, Slack etc.) and manage the dispatch, execution, and convergence of concurrent agent sessions until they reach a specified terminal state. It is harness-agnostic through the [Agent-Client Protocol](https://agentclientprotocol.com/get-started/introduction) with support for local, static SSH boxes, or (experimental) cloud-brokered VMs.
 
 ## Screenshots
 
@@ -17,7 +19,7 @@ and a web dashboard served by the observability API.
 
 ## Documentation
 
-The full docs live in [`docs/`](./docs). Start here:
+The published documentation site is at **[ryanlyn.github.io/lorenz](https://ryanlyn.github.io/lorenz/)**, built from [`docs/`](./docs). Start here:
 
 - [Getting started](./docs/getting-started.md) - install, write a `WORKFLOW.md`, run your first issue.
 - [How it works](./docs/how-it-works.md) - the polling, dispatch, and run lifecycle.
