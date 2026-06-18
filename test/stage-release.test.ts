@@ -38,6 +38,7 @@ test("stages a source-free CLI release tree with rewritten package manifests", a
 
   const rootPackage = await readJson(path.join(releaseDir, "package.json"));
   assert.equal(rootPackage.name, "lorenz");
+  assert.equal(rootPackage.version, "0.1.0");
   assert.equal(rootPackage.private, undefined);
   assert.deepEqual(rootPackage.publishConfig, { access: "public" });
   assert.deepEqual(rootPackage.bin, { lorenz: "./bin/lorenz" });
@@ -83,6 +84,7 @@ test("stages a source-free CLI release tree with rewritten package manifests", a
   assert.equal(entrypointSource.includes("../node_modules/"), false);
 
   const cliPackage = await readJson(path.join(releaseDir, "apps/cli/package.json"));
+  assert.equal(cliPackage.version, "9.9.9");
   assert.deepEqual(cliPackage.dependencies, {
     "@lorenz/acp": "file:../../packages/acp",
     "@lorenz/server": "file:../../packages/server",
@@ -90,6 +92,7 @@ test("stages a source-free CLI release tree with rewritten package manifests", a
   });
 
   const serverPackage = await readJson(path.join(releaseDir, "packages/server/package.json"));
+  assert.equal(serverPackage.version, "0.1.0");
   assert.deepEqual(serverPackage.dependencies, {
     "@lorenz/acp": "file:../acp",
     "better-sqlite3": "^12.10.0",
@@ -97,6 +100,7 @@ test("stages a source-free CLI release tree with rewritten package manifests", a
   });
 
   const manifest = await readJson(path.join(releaseDir, "RELEASE-MANIFEST.json"));
+  assert.equal(manifest.version, "0.1.0");
   assert.deepEqual(
     manifest.packages.map((entry: { name: string }) => entry.name),
     [
@@ -145,6 +149,13 @@ test("reports missing build outputs before writing a release tree", async () => 
 });
 
 async function seedWorkspace(workspaceRoot: string): Promise<void> {
+  await writeFile(workspaceRoot, "package.json", {
+    name: "lorenz",
+    version: "0.1.0",
+    private: true,
+    type: "module",
+  });
+
   await writeFile(
     workspaceRoot,
     "pnpm-workspace.yaml",
@@ -163,7 +174,7 @@ catalog:
 
   await seedPackage(workspaceRoot, "apps/cli", {
     name: "@lorenz/cli",
-    version: "0.1.0",
+    version: "9.9.9",
     type: "module",
     bin: { lorenz: "./bin/lorenz.js" },
     main: "./dist/index.js",
