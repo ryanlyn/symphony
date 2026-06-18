@@ -1,5 +1,5 @@
-import { test } from "vitest";
-import { assert } from "@lorenz/test-utils";
+import { test, vi } from "vitest";
+import { assert, settle } from "@lorenz/test-utils";
 
 import { SlackSocketMode, type SlackWebSocketLike } from "@lorenz/slack-tracker";
 
@@ -32,6 +32,11 @@ class FakeSocket implements SlackWebSocketLike {
 
   receive(frame: unknown): void {
     this.emit("message", { data: JSON.stringify(frame) });
+  }
+
+  /** True once a listener of `type` is registered — lets tests poll for wiring. */
+  hasListener(type: string): boolean {
+    return (this.listeners.get(type)?.length ?? 0) > 0;
   }
 }
 
@@ -153,9 +158,9 @@ test("a disconnect frame closes the socket and reconnects", async () => {
   first.receive({ type: "disconnect", reason: "refresh_requested" });
   assert.equal(first.closed, true);
 
-  // Let the reconnect timer (delay 0) and the new connect()'s fetch settle.
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  await flush();
+  // Wait for the reconnect to complete: the new socket is wired with a message
+  // listener once connect() resolves apps.connections.open and opens it.
+  await vi.waitFor(() => assert.equal(second.hasListener("message"), true));
 
   second.receive({
     type: "events_api",
@@ -187,9 +192,11 @@ test("close() stops reconnecting after the socket drops", async () => {
   await flush();
 
   sm.close();
-  // A close that originates from us must not schedule a reconnect.
+  // A close that originates from us must not schedule a reconnect. This asserts
+  // an absence, which cannot be polled for — settle briefly then confirm no
+  // second connection was attempted.
   first.emit("close");
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await settle(5);
   await flush();
   assert.equal(connects, 1);
 });
@@ -221,8 +228,9 @@ test("a failed apps.connections.open schedules a reconnect rather than throwing"
     reconnectDelayMs: () => 0,
   });
   sm.start();
-  await flush();
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  // The first apps.connections.open fails; wait for the scheduled reconnect to
+  // perform its second open attempt before driving the recovered socket.
+  await vi.waitFor(() => assert.ok(attempts >= 2));
   await flush();
 
   second.receive({

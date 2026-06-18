@@ -14,7 +14,7 @@ import {
   shellEscape,
 } from "@lorenz/cli";
 import type { HookExecutionMessage, Settings } from "@lorenz/domain";
-import { assert, tempDir, sampleIssue, writeExecutable } from "@lorenz/test-utils";
+import { assert, tempDir, sampleIssue, writeExecutable, settle } from "@lorenz/test-utils";
 
 import { runHook, syncWorkspaceSkills, type WorkspaceSkillOverlay } from "../src/index.js";
 
@@ -296,10 +296,7 @@ test("createWorkspaceForIssue — writes .gitignore in skills destination", asyn
     await fs.readFile(path.join(ws, ".lorenz", "skills", "lorenz-linear", "SKILL.md"), "utf8"),
     "linear\n",
   );
-  assert.equal(
-    await fs.readFile(path.join(ws, ".lorenz", "skills", ".gitignore"), "utf8"),
-    "*\n",
-  );
+  assert.equal(await fs.readFile(path.join(ws, ".lorenz", "skills", ".gitignore"), "utf8"), "*\n");
 });
 
 test("createWorkspaceForIssue — refreshes skills when reusing an existing workspace", async () => {
@@ -878,7 +875,10 @@ test("runHook — abort terminates subprocesses before they write later markers"
   controller.abort();
 
   await assert.rejects(() => promise, /hook canceled/);
-  await new Promise((resolve) => setTimeout(resolve, 350));
+  // Asserting an absence (the aborted hook must never write the late marker).
+  // This cannot be polled for, so settle past the hook's own `sleep 0.2` then
+  // confirm the marker never appeared.
+  await settle(350);
 
   assert.equal(await fileExists(marker), false);
 });
