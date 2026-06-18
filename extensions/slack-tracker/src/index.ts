@@ -18,6 +18,7 @@ export type {
 export {
   DEFAULT_EMOJI_STATES,
   emojiForState,
+  isAllowedAuthor,
   isBotMention,
   stateFromReactions,
   statusEmojiMap,

@@ -6,7 +6,11 @@ export const SLACK_DEFAULT_ENDPOINT = "https://slack.com/api";
 
 /** Slack-specific keys of the selected tracker bundle, validated by the provider. */
 export interface SlackTrackerOptions {
-  /** Slack channel IDs to watch for mentions. */
+  /**
+   * Slack conversation IDs to watch for mentions. Public/private channels (`C…`/`G…`) and
+   * direct-message channels (`D…`) are treated identically: the bot-mention requirement applies
+   * to all of them, so a DM is watched by listing its `D…` id here.
+   */
   channels: string[];
   /**
    * Slack user id of the bot/worker identity (e.g. `"U0123ABCD"`). Only messages that
@@ -22,6 +26,14 @@ export interface SlackTrackerOptions {
    * unaffected either way - this token is used ONLY to open the events socket.
    */
   appToken?: string | undefined;
+  /**
+   * Optional allowlist of Slack user ids (e.g. `"U0123ABCD"`) whose messages may create issues.
+   * Empty means no author constraint (any author, as long as the bot is mentioned). When
+   * non-empty, only these users' bot-mentions become issues - the way to constrain dispatch to a
+   * known set of requesters, which is what makes a watched DM channel (anyone can DM the bot)
+   * safe. It only narrows dispatch; the bot-mention requirement still applies on top of it.
+   */
+  users: string[];
   /** Slack emoji-name → workflow-state overrides (merged over the defaults). */
   emojiStates?: Record<string, string> | undefined;
   /** Emoji the bot reacts with to mark a reply-tracked thread root (default `robot_face`). */
@@ -43,6 +55,7 @@ export function slackTrackerOptions(settings: Settings): SlackTrackerOptions {
   const replyLookbackDays = numberOption(options, "replyLookbackDays");
   return {
     channels: stringListOption(options, "channels") ?? [],
+    users: stringListOption(options, "users") ?? [],
     ...(botUserId !== undefined ? { botUserId } : {}),
     ...(appToken !== undefined ? { appToken } : {}),
     ...(emojiStates !== undefined ? { emojiStates } : {}),

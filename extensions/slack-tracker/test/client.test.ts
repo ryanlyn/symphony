@@ -201,6 +201,118 @@ test("with botUserId only mentions of the bot become candidates", async () => {
   );
 });
 
+function allowlistSettings() {
+  return parseSlackConfig(
+    {
+      tracker: {
+        kind: "slack",
+        channels: ["C1"],
+        bot_user_id: "U_BOT",
+        users: ["U_ALICE"],
+        active_states: ["Todo", "In Progress"],
+      },
+    },
+    { SLACK_BOT_TOKEN: "xoxb-test" },
+  );
+}
+
+test("tracker.users constrains candidate mentions to allowed authors (fail closed on unknown author)", async () => {
+  const transport = new InMemorySlackTransport(
+    {
+      C1: [
+        { ts: "1700000000.000100", text: "<@U_BOT> from alice", user: "U_ALICE", reactions: [] },
+        { ts: "1700000000.000200", text: "<@U_BOT> from bob", user: "U_BOB", reactions: [] },
+        { ts: "1700000000.000300", text: "<@U_BOT> no author", reactions: [] },
+      ],
+    },
+    { botUserId: "U_BOT", allowedUsers: ["U_ALICE"] },
+  );
+  const client = new SlackTrackerClient(allowlistSettings(), transport);
+
+  // Only the allowed author's mention becomes an issue; a non-allowed author and a message with
+  // no known author are both dropped.
+  assert.deepEqual(
+    (await client.fetchCandidateIssues()).map((i) => i.id),
+    ["C1:1700000000.000100"],
+  );
+});
+
+test("tracker.users gates reply-mention tracking by the request reply's author", async () => {
+  const now = Date.now() / 1000;
+  const rootA = `${(now - 3600).toFixed(6)}`;
+  const rootB = `${(now - 3000).toFixed(6)}`;
+  const transport = new InMemorySlackTransport(
+    {
+      C1: [
+        {
+          ts: rootA,
+          text: "some discussion",
+          reactions: [],
+          replies: [
+            { ts: `${(now - 1800).toFixed(6)}`, text: "<@U_BOT> please do it", user: "U_BOB" },
+          ],
+        },
+        {
+          ts: rootB,
+          text: "other discussion",
+          reactions: [],
+          replies: [
+            { ts: `${(now - 1700).toFixed(6)}`, text: "<@U_BOT> handle this", user: "U_ALICE" },
+          ],
+        },
+      ],
+    },
+    { botUserId: "U_BOT", allowedUsers: ["U_ALICE"] },
+  );
+  const client = new SlackTrackerClient(allowlistSettings(), transport);
+
+  // A bot-mention reply from a non-allowed author does not create an issue; only the thread whose
+  // request reply is from an allowed author is tracked.
+  assert.deepEqual(
+    (await client.fetchCandidateIssues()).map((i) => i.id),
+    [`C1:${rootB}`],
+  );
+});
+
+test("tracker.users gates the tool trust boundary, but a bot-marked root stays tracked", async () => {
+  const transport = new InMemorySlackTransport(
+    {
+      C1: [
+        {
+          ts: "1700000000.000100",
+          text: "<@U_BOT> from alice",
+          user: "U_ALICE",
+          reactions: ["eyes"],
+        },
+        { ts: "1700000000.000200", text: "<@U_BOT> from bob", user: "U_BOB", reactions: ["eyes"] },
+        // Author not allowed, but the bot already marked it on an earlier poll: stays tracked so a
+        // later tightening of `users` does not orphan an in-flight issue.
+        {
+          ts: "1700000000.000300",
+          text: "<@U_BOT> from carol",
+          user: "U_CAROL",
+          reactions: ["eyes"],
+          botReacted: true,
+        },
+      ],
+    },
+    { botUserId: "U_BOT", allowedUsers: ["U_ALICE"] },
+  );
+  const client = new SlackTrackerClient(allowlistSettings(), transport);
+
+  assert.deepEqual(
+    (await client.fetchIssuesByIds(["C1:1700000000.000100"])).map((i) => i.id),
+    ["C1:1700000000.000100"],
+  );
+  // Non-allowed author with no bot marker -> reconciles as gone.
+  assert.deepEqual(await client.fetchIssuesByIds(["C1:1700000000.000200"]), []);
+  // Non-allowed author the bot already marked -> still tracked.
+  assert.deepEqual(
+    (await client.fetchIssuesByIds(["C1:1700000000.000300"])).map((i) => i.id),
+    ["C1:1700000000.000300"],
+  );
+});
+
 test("issue identifiers keep the channel: equal ts values in two channels stay distinct", async () => {
   const transport = new InMemorySlackTransport({
     C1: [{ ts: "1700000000.000100", text: "<@U_BOT> in channel one", reactions: [] }],

@@ -36,7 +36,15 @@ export const slackTrackerProvider: TrackerProvider = {
   parseOptions(options, context) {
     rejectUnknownOptions(
       options,
-      ["channels", "botUserId", "appToken", "emojiStates", "markerEmoji", "replyLookbackDays"],
+      [
+        "channels",
+        "users",
+        "botUserId",
+        "appToken",
+        "emojiStates",
+        "markerEmoji",
+        "replyLookbackDays",
+      ],
       "slack",
     );
     // Channel entries resolve `$VAR` references like the documented bot_user_id one line below
@@ -45,6 +53,12 @@ export const slackTrackerProvider: TrackerProvider = {
     const channels = stringListOption(options, "channels")
       ?.map((channel) => resolveEnvReference(channel, context.env))
       .filter((channel) => channel !== "");
+    // The optional author allowlist resolves `$VAR` references the same way and drops empties, so
+    // an unresolved `$SLACK_USER_ID` collapses to "no entry" rather than narrowing dispatch to a
+    // literal that can never match.
+    const users = stringListOption(options, "users")
+      ?.map((user) => resolveEnvReference(user, context.env))
+      .filter((user) => user !== "");
     const botUserId = context.resolveSecret?.(
       stringOption(options, "botUserId"),
       "SLACK_BOT_USER_ID",
@@ -57,6 +71,7 @@ export const slackTrackerProvider: TrackerProvider = {
     const replyLookbackDays = numberOption(options, "replyLookbackDays");
     return {
       ...(channels !== undefined && channels.length > 0 ? { channels } : {}),
+      ...(users !== undefined && users.length > 0 ? { users } : {}),
       ...(botUserId !== undefined ? { botUserId } : {}),
       ...(appToken !== undefined && appToken !== "" ? { appToken } : {}),
       ...(emojiStates !== undefined ? { emojiStates } : {}),
