@@ -5,10 +5,12 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
+/** @beta */
 export const DAEMON_LOCK_VERSION = 1;
 const MUTATION_LOCK_RETRY_MS = 10;
 const MUTATION_LOCK_STALE_MS = 30_000;
 
+/** @beta */
 export interface DaemonEndpoint {
   kind: "http" | "socket";
   address: string;
@@ -109,6 +111,7 @@ export function daemonLockIsStale(
   return now.getTime() - heartbeatMs > staleAfterMs;
 }
 
+/** @beta */
 export class DaemonLock {
   private operationQueue: Promise<void> = Promise.resolve();
 
