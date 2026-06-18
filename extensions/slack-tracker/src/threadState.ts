@@ -2,6 +2,7 @@ import type { Settings } from "@lorenz/domain";
 import { defaultStateType } from "@lorenz/issue";
 
 import {
+  isAllowedAuthor,
   isBotMention,
   stateFromReactions,
   statusEmojiMap,
@@ -132,7 +133,7 @@ export function stateFromThread(
   replies: SlackThreadReply[],
   settings: Settings,
 ): ThreadState {
-  const { botUserId } = slackTrackerOptions(settings);
+  const { botUserId, users } = slackTrackerOptions(settings);
   const ordered = [...replies].sort((a, b) => tsValue(a.ts) - tsValue(b.ts));
   const rootIsMention = isBotMention(root.text, botUserId);
 
@@ -151,8 +152,12 @@ export function stateFromThread(
     }
     if (!isBotMention(reply.text, botUserId)) continue;
     if (!rootIsMention && request === undefined) {
-      // The first mention in a non-mention thread is the request itself, not a transition.
-      request = { ts: reply.ts, text: reply.text, user: reply.user };
+      // The first bot-mention reply from an allowed author in a non-mention thread is the request
+      // itself, not a transition. A reply from a non-allowed author is skipped so a later allowed
+      // reply can still become the request (the author allowlist narrows who can create issues).
+      if (isAllowedAuthor(reply.user, users)) {
+        request = { ts: reply.ts, text: reply.text, user: reply.user };
+      }
       continue;
     }
     const command = parseStatusCommand(reply.text, botUserId, settings);

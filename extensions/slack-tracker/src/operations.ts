@@ -1,6 +1,6 @@
 import type { Settings } from "@lorenz/domain";
 
-import { emojiForState, isBotMention, statusEmojiMap } from "./mapping.js";
+import { emojiForState, isAllowedAuthor, isBotMention, statusEmojiMap } from "./mapping.js";
 import { slackTrackerOptions } from "./options.js";
 import { BOT_STATUS_PREFIX, resolveStateName } from "./threadState.js";
 import type { SlackMessage, SlackTransport } from "./transport.js";
@@ -32,7 +32,7 @@ export async function requireTrackedMessage(
   channel: string,
   ts: string,
 ): Promise<SlackMessage> {
-  const { channels } = slackTrackerOptions(settings);
+  const { channels, users } = slackTrackerOptions(settings);
   const botUserId = requireBotUserId(settings);
   if (!channels.includes(channel)) {
     throw new Error(`channel '${channel}' is not a configured tracker channel`);
@@ -41,14 +41,25 @@ export async function requireTrackedMessage(
   if (!message) {
     throw new Error(`no tracked issue at ${channel}:${ts}`);
   }
-  if (isBotMention(message.text, botUserId) || message.botReacted === true) {
+  // A root the bot already marked (its own reaction) stays tracked regardless of the author
+  // allowlist: it was accepted on an earlier poll, so tightening `users` later must not orphan
+  // an issue the agent is mid-flight on. New tracking honors the allowlist on the author.
+  if (
+    (isBotMention(message.text, botUserId) && isAllowedAuthor(message.user, users)) ||
+    message.botReacted === true
+  ) {
     return message;
   }
   // Reply-tracked thread: the request lives in a reply rather than the root. Last resort
   // because it costs a conversations.replies fetch.
   if ((message.replyCount ?? 0) > 0) {
     const replies = await transport.getThread(channel, ts);
-    if (replies.some((reply) => isBotMention(reply.text, botUserId))) return message;
+    if (
+      replies.some(
+        (reply) => isBotMention(reply.text, botUserId) && isAllowedAuthor(reply.user, users),
+      )
+    )
+      return message;
   }
   throw new Error("message is not a tracked bot-mention issue");
 }

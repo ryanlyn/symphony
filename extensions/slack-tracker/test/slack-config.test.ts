@@ -166,6 +166,46 @@ test("channel entries resolve $VAR references like bot_user_id does", () => {
   assert.throws(() => validateSlackDispatch(unresolved), /channels is required/);
 });
 
+test("parses the optional users allowlist and resolves $VAR references, dropping empties", () => {
+  const explicit = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U1", users: ["U_A", "U_B"] } },
+    { SLACK_BOT_TOKEN: "xoxb" },
+  );
+  assert.deepEqual(slackTrackerOptions(explicit).users, ["U_A", "U_B"]);
+
+  const fromRef = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U1", users: ["$SLACK_USER_ID"] } },
+    { SLACK_BOT_TOKEN: "xoxb", SLACK_USER_ID: "U_REF" },
+  );
+  assert.deepEqual(slackTrackerOptions(fromRef).users, ["U_REF"]);
+
+  // An unresolved reference collapses to empty and is dropped rather than narrowing dispatch to
+  // a literal "$SLACK_USER_ID" that can never match an author.
+  const unresolved = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U1", users: ["$SLACK_USER_ID"] } },
+    { SLACK_BOT_TOKEN: "xoxb" },
+  );
+  assert.deepEqual(slackTrackerOptions(unresolved).users, []);
+
+  // Omitting it entirely means no author constraint (an empty list).
+  const omitted = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["C1"], bot_user_id: "U1" } },
+    { SLACK_BOT_TOKEN: "xoxb" },
+  );
+  assert.deepEqual(slackTrackerOptions(omitted).users, []);
+});
+
+test("a direct-message channel id is a valid watched channel", () => {
+  // DMs are watched by listing the D... channel id; nothing special distinguishes it from a
+  // C.../G... channel at the config layer, and dispatch validation accepts it.
+  const settings = parseSlackConfig(
+    { tracker: { kind: "slack", channels: ["D0123456789"], bot_user_id: "U_BOT" } },
+    { SLACK_BOT_TOKEN: "xoxb" },
+  );
+  assert.deepEqual(slackTrackerOptions(settings).channels, ["D0123456789"]);
+  validateSlackDispatch(settings);
+});
+
 test("slack tracker rejects an assignee: messages have no assignee to filter on", () => {
   // Silently accepting it would mark every issue dispatchable on every instance, defeating
   // an assignee-partitioned deployment.
