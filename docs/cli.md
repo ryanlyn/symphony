@@ -124,6 +124,7 @@ Doctor uses the same path resolution as the daemon. It runs these checks in orde
 | --- | --- | --- |
 | `workflow_file` | The workflow path exists, is a file, and is readable. | `error` (stops here). |
 | `workflow_load` | The workflow parses into valid settings. | `error` (stops here). |
+| `config_deprecations` / `config_deprecation_*` | No deprecated config keys are in use (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options). One `config_deprecation_<key>` check per deprecated key names its replacement. | `warning`. |
 | `dispatch_config` | `validateDispatchConfig` passes against the built-in tracker, executor, and tool registries. | `error`. |
 | `dashboard_assets` | The built dashboard SPA (`server.staticDir`, else the default `dist`) is present. | `warning`. |
 | `log_path` | The nearest existing ancestor of `logging.log_file` exists and is writable. | `warning`. |
