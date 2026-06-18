@@ -12,6 +12,7 @@ export { SlackTrackerClient } from "./client.js";
 export {
   DEFAULT_EMOJI_STATES,
   emojiForState,
+  isAllowedAuthor,
   isBotMention,
   stateFromReactions,
   statusEmojiMap,
