@@ -192,6 +192,7 @@ Validates a workflow and the local runtime prerequisites, then prints a report. 
 | --- | --- | --- |
 | `workflow_file` | The workflow path exists, is a file, and is readable. | `error` (short-circuits) |
 | `workflow_load` | The workflow loads and parses. | `error` (short-circuits) |
+| `config_deprecations` / `config_deprecation_<key>` | No deprecated config keys are in use; one warning check per deprecated key (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options) names its replacement. | `warning` |
 | `dispatch_config` | `validateDispatchConfig` passes with the built-in registries. | `error` |
 | `dashboard_assets` | `index.html` and `assets/` exist under `server.static_dir` (or the default). | `warning` |
 | `log_path` | The nearest existing parent of `logging.log_file` is a writable directory. | `warning` |

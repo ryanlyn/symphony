@@ -11,13 +11,14 @@ export interface DefaultSettingsOptions {
 
 /** Model id Claude sessions are pinned to unless overridden via `claude.model` or a provider config. */
 const DEFAULT_CLAUDE_MODEL = "claude-opus-4-6[1m]";
+export const DEFAULT_TRACKER_KIND = "jira";
 
 export const defaultSettings = (options: DefaultSettingsOptions = {}): Settings => {
   const tmpdir = options.tmpdir ?? "/tmp";
   const workspaceRoot = joinPath(tmpdir, "lorenz_workspaces");
   return {
     tracker: {
-      kind: "jira",
+      kind: DEFAULT_TRACKER_KIND,
       activeStates: ["To Do", "In Progress"],
       terminalStates: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"],
       dispatch: {

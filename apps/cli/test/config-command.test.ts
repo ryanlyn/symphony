@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { test } from "vitest";
+import { collectConfigDeprecations } from "@lorenz/config";
 import { loadWorkflow } from "@lorenz/workflow";
 import { assert, tempDir } from "@lorenz/test-utils";
 
@@ -42,7 +43,7 @@ test("initial workflow defaults to Jira and Claude with secret references", () =
     tracker: {
       kind: "jira",
       active_states: ["To Do", "In Progress"],
-      terminal_states: ["Done", "Closed", "Cancelled", "Canceled"],
+      terminal_states: ["Done", "Closed", "Cancelled", "Canceled", "Duplicate"],
     },
     trackers: {
       jira: {
@@ -55,6 +56,7 @@ test("initial workflow defaults to Jira and Claude with secret references", () =
     },
     agent: { kind: "claude" },
   });
+  assert.deepEqual(collectConfigDeprecations(config), []);
 });
 
 test("config command creates a loadable Jira and Claude workflow", async () => {
@@ -89,6 +91,13 @@ test("config command creates a loadable Jira and Claude workflow", async () => {
     {},
   );
   assert.equal(workflow.settings.tracker.kind, "jira");
+  assert.deepEqual(workflow.settings.tracker.terminalStates, [
+    "Done",
+    "Closed",
+    "Cancelled",
+    "Canceled",
+    "Duplicate",
+  ]);
   assert.equal(workflow.settings.agent.kind, "claude");
   assert.match(workflow.promptTemplate, /Use the available tracker tools/);
   assert.match(stdout.value, /Created .*WORKFLOW\.md/);

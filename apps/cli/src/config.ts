@@ -424,7 +424,7 @@ function trackerConfig(tracker: TrackerOnboarding): {
           project_keys: tracker.projectKeys,
         },
         activeStates: ["To Do", "In Progress"],
-        terminalStates: ["Done", "Closed", "Cancelled", "Canceled"],
+        terminalStates: ["Done", "Closed", "Cancelled", "Canceled", "Duplicate"],
       };
     case "linear":
       return {

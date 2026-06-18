@@ -99,7 +99,7 @@ requires its provider essentials before dispatch; use the wizard or configure th
 
 The recommended nested bundle shape names the implementation explicitly: `tracker.kind` selects the bundle and the matching `trackers.<bundle>.provider` names the provider (it does not default to the bundle name). The selector options under `tracker` merge into that bundle. If `tracker.kind` is omitted, the selector is `jira`; any explicit selector replaces that default.
 
-The flat shape (`tracker.kind: <provider>` with provider options directly under `tracker`) is a terser shorthand that works when no matching `trackers.<name>` bundle is present. Unregistered kinds parse generically (options pass through unvalidated) and are rejected at dispatch validation.
+The flat shape (`tracker.kind: <provider>` with provider options directly under `tracker`) still works when no matching `trackers.<name>` bundle is present, but it is **deprecated**: provider-specific keys placed directly under `tracker` (anything outside the core selector keys `kind`, `provider`, `endpoint`, `api_key`, `assignee`, `active_states`, `terminal_states`, `dispatch`) emit a deprecation warning recommending you move them into a `trackers.<name>` bundle selected by `tracker.kind`. The warning is printed at daemon start, at config validation, and as a `config_deprecation_*` check in `lorenz doctor`. Unregistered kinds parse generically (options pass through unvalidated) and are rejected at dispatch validation.
 
 *Diagram placeholder: tracker selection, flat `tracker.kind` versus a `trackers.<name>.provider` bundle, and option passthrough to `provider.parseOptions`. Caption: how the parser picks a provider and hands it its option slice.*
 
@@ -312,7 +312,7 @@ The built-in `codex` record uses `bridge_command: codex-acp`. The default `claud
 
 ### Legacy agent sugar
 
-Top-level `codex:` and `claude:` sections map into `agents.<kind>` records. `command` maps to `bridge_command` (the canonical key wins when both are set). `claude.model` pins `provider_config.model` unless `provider_config` already sets it. These spellings are being phased out; prefer the `agents` block.
+Top-level `codex:` and `claude:` sections map into `agents.<kind>` records. `command` maps to `bridge_command` (the canonical key wins when both are set). `claude.model` pins `provider_config.model` unless `provider_config` already sets it. These sections are **deprecated**: every key under a top-level `codex:`/`claude:` block emits a deprecation warning naming its `agents.<kind>` replacement. The warning is printed at daemon start, at config validation, and as a `config_deprecation_*` check in `lorenz doctor`. Prefer the `agents` block.
 
 | Legacy key | Maps to |
 | --- | --- |
