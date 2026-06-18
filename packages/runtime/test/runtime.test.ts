@@ -32,7 +32,7 @@ import type {
 import type { WorkerPoolSettings } from "@lorenz/domain";
 import type { AgentMcpEndpointLease } from "@lorenz/mcp";
 import type { AcquireResult, WorkerLease, WorkerOutcome, WorkerPool } from "@lorenz/worker-pool";
-import { assert, tempDir } from "@lorenz/test-utils";
+import { assert, settle, tempDir } from "@lorenz/test-utils";
 
 import {
   RUNTIME_EVENT_TYPES as RUNTIME_EVENT_TYPES_FROM_RUNTIME,
@@ -2702,7 +2702,9 @@ test("worker pool: a reserving (in-acquire) slot is never stall-finished and rec
     await waitFor(() => orchestrator.snapshot().reserving.length === 1, 1_000);
 
     // Let the acquire window outlast the stall timeout, then run the reconciler.
-    await new Promise<void>((resolve) => setTimeout(resolve, 80));
+    // This asserts an absence (the reserving slot is NOT stall-finished), which
+    // cannot be polled for, so settle past the stall window before reconciling.
+    await settle(80);
     await runtime.pollOnce({ dryRun: true });
 
     // The reserving slot was NOT stall-finished: no run_stalled, no retry entry
@@ -3593,7 +3595,9 @@ test("runtime replays retry timer due while a poll is active", async () => {
 
     const dryPoll = runtime.pollOnce({ dryRun: true });
     await waitFor(() => candidateFetches === 2, 1_000);
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    // The second fetch is confirmed entered; settle briefly to be sure the poll
+    // has parked on the blocked fetch before we release it.
+    await settle(50);
 
     const unblockFetch = fetchControl.release;
     assert.ok(unblockFetch);
