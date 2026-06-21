@@ -16,17 +16,17 @@ import {
 import { executeTool, toolSpecs } from "./tools.js";
 
 /**
- * Read-only liveness oracle injected from the composition root (daemon.ts in
- * C4). Given a per-run claim's `(runKey, workerHost, generation)`, returns false
- * once the run is settled/recycled/superseded, pairing liveness with the
- * generation fence. Until C4 wires the coordinator-backed oracle, the mount
- * defaults to {@link defaultIsRunLive} so the Token B re-check plumbing is in
- * place without yet enforcing liveness/generation. No Token B is minted before
- * C3, so this default never authorizes a real per-run request.
+ * Read-only liveness oracle injected from the composition root (daemon.ts).
+ * Given a per-run claim's `(runKey, workerHost, generation)`, returns false once
+ * the run is settled/recycled/superseded, pairing liveness with the generation
+ * fence. The per-run claim-enforcing mount always injects the real
+ * coordinator-backed oracle; {@link defaultIsRunLive} is the FAIL-CLOSED default
+ * for any mount that resolves a Token B claim without one, so a wiring omission
+ * denies rather than authorizes.
  */
 export type IsRunLive = (runKey: string, workerHost: string, generation: number) => boolean;
 
-const defaultIsRunLive: IsRunLive = () => true;
+const defaultIsRunLive: IsRunLive = () => false;
 
 export interface ObservabilityServerOptions {
   host: string;
@@ -95,6 +95,12 @@ export function mountMcp(
   const currentSettings = typeof settings === "function" ? settings : () => settings;
   const authScope = options.authScope ?? createMcpAuthScope();
   const isRunLive = options.isRunLive ?? defaultIsRunLive;
+  // A mount handed a real `isRunLive` oracle IS the per-run claim-enforcing
+  // (co-residence) MCP server: it accepts ONLY Token B and never falls back to
+  // the settings-wide Token A path, so a settings-wide token can never authorize
+  // a co-resident run's MCP calls. Non-claim mounts (the observability server,
+  // the legacy acp/local endpoint) inject no oracle and keep the Token A path.
+  const enforcePerRunClaim = options.isRunLive !== undefined;
   app.use(mcpPath, async (c, next) => {
     if (c.req.method !== "POST") {
       await next();
@@ -114,8 +120,14 @@ export function mountMcp(
       await next();
       return;
     }
-    // Legacy settings-wide token (Token A side). Kept until C6 closes the
-    // bypass paths so non-co-resident endpoints keep working unchanged.
+    // Claim-enforcing mount: NO Token A fallback. A bearer that is not a live
+    // Token B is refused outright (fail closed), closing the settings-wide
+    // bypass on the shared per-run server.
+    if (enforcePerRunClaim) {
+      return unauthorizedMcpResponse();
+    }
+    // Non-claim mount: the settings-wide Token A path (observability server,
+    // legacy acp/local endpoint).
     if (!validMcpToken(bearer, authScope)) {
       return unauthorizedMcpResponse();
     }

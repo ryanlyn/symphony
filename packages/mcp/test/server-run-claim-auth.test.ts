@@ -152,30 +152,36 @@ test("Token B: the injected oracle receives runKey, workerHost, and generation f
   }
 });
 
-test("Legacy back-compat: a valid settings-wide token (Token A) still authorizes", async () => {
+test("Token A authorizes on a NON-claim mount (observability / legacy acp endpoint)", async () => {
+  // A mount with no injected oracle is not claim-enforcing: the settings-wide
+  // Token A path stays available for the observability server and the legacy
+  // acp/local endpoint, which never co-reside runs on a shared server.
+  const { app, authScope } = mountWith({});
+  const token = issueMcpToken(authScope);
+  try {
+    assert.equal(await toolsListStatus(app, token), 200);
+  } finally {
+    revokeMcpToken(token);
+  }
+});
+
+test("A claim-enforcing mount REJECTS a valid Token A (no settings-wide bypass)", async () => {
+  // RE-ANCHOR (Token A hardening): previously a claim-enforcing mount also
+  // accepted a settings-wide Token A. That was the latent fail-open the review
+  // flagged. A mount handed a real isRunLive oracle is the per-run
+  // claim-enforcing (co-residence) server: it accepts ONLY Token B and refuses
+  // the Token A path outright, so a settings-wide token can never authorize a
+  // co-resident run's MCP calls.
   const { app, authScope } = mountWith({ isRunLive: () => true });
   const token = issueMcpToken(authScope);
   try {
-    assert.equal(await toolsListStatus(app, token), 200);
+    assert.equal(await toolsListStatus(app, token), 401);
   } finally {
     revokeMcpToken(token);
   }
 });
 
-test("Legacy back-compat: an unknown bearer (neither Token B nor Token A) is denied 401", async () => {
+test("Claim-enforcing mount: an unknown bearer (neither Token B nor Token A) is denied 401", async () => {
   const { app } = mountWith({ isRunLive: () => true });
   assert.equal(await toolsListStatus(app, "not-a-real-token"), 401);
-});
-
-test("A Token A token is NOT silently treated as a per-run claim", async () => {
-  // A settings-wide token must take the legacy path, not resolveRunClaim. With a
-  // never-live oracle, a Token A request still succeeds because it never reaches
-  // the per-run re-check.
-  const { app, authScope } = mountWith({ isRunLive: () => false });
-  const token = issueMcpToken(authScope);
-  try {
-    assert.equal(await toolsListStatus(app, token), 200);
-  } finally {
-    revokeMcpToken(token);
-  }
 });
