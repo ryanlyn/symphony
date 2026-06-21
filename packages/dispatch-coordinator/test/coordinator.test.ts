@@ -679,11 +679,15 @@ test("capabilities.perRunEndpoint reflects a manager advertising perRunEndpoint=
 // owns this lease end-to-end (it never calls release() itself; it routes through
 // the manager), so the lease's own release records only that the MANAGER closed
 // it via the manager.release(lease) path.
-function makeFakeEndpoint(id: string): AgentMcpEndpointLease & { released: { count: number } } {
+function makeFakeEndpoint(
+  id: string,
+  generation = 1,
+): AgentMcpEndpointLease & { released: { count: number } } {
   const released = { count: 0 };
   return {
     url: `http://127.0.0.1:46000/mcp#${id}`,
     token: `tok-${id}`,
+    generation,
     acpServer: () => ({ type: "http", name: "lorenz_linear", url: "", headers: [] }),
     async release(): Promise<void> {
       released.count += 1;
@@ -782,6 +786,48 @@ test("open-after-bind: a per-run manager mints the endpoint and the slot carries
   assert.equal(manager.openCalls[0]?.workerHost, "ssh://host-7");
   assert.equal(manager.openCalls[0]?.runKey, "issue-1#3");
   assert.equal(result.slot.mcpEndpoint, manager.opened[0]);
+});
+
+test("isRunLive: true only for a live slot matching runKey + workerHost + endpoint generation", async () => {
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-7", workerHost: "ssh://host-7" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoordinator(pool, manager);
+
+  const result = await coordinator.acquireRunSlot({ ...acquireReq, slotIndex: 3 });
+  if (result.status !== "bound") throw new Error("expected bound");
+  const runKey = result.slot.runKey;
+  const generation = manager.opened[0]?.generation ?? -1;
+  assert.equal(runKey, "issue-1#3");
+  assert.equal(generation, 1);
+
+  // Exact (runKey, workerHost, generation) of the live slot => live.
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), true);
+  // Generation backstop: a token stamped against a different (prior/recycled)
+  // generation of the same slot is denied even while the slot is registered.
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation + 1), false);
+  // A self-reported runKey / workerHost that does not match the live slot is denied.
+  assert.equal(coordinator.isRunLive("issue-1#9", "ssh://host-7", generation), false);
+  assert.equal(coordinator.isRunLive(runKey, "ssh://other-host", generation), false);
+});
+
+test("isRunLive: false once the slot settles (run no longer live)", async () => {
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-7", workerHost: "ssh://host-7" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoordinator(pool, manager);
+
+  const result = await coordinator.acquireRunSlot({ ...acquireReq, slotIndex: 3 });
+  if (result.status !== "bound") throw new Error("expected bound");
+  const runKey = result.slot.runKey;
+  const generation = manager.opened[0]?.generation ?? -1;
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), true);
+
+  // After the slot settles it is deregistered, so a leaked Token B fails closed.
+  await result.slot.release("healthy");
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), false);
 });
 
 test("close-before-settle: slot.release closes the endpoint BEFORE settling the lease", async () => {

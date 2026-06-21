@@ -187,6 +187,24 @@ export interface DispatchCoordinator extends CapacityProbe {
   onCapacityAvailable(cb: () => void): void;
   readonly capabilities: { readonly perRunEndpoint: boolean };
   /**
+   * Read-only per-run liveness oracle the gateway re-checks on EVERY MCP request
+   * (injected into `@lorenz/mcp` from the composition root, the same seam as the
+   * per-run endpoint manager so the gateway depends on this interface, never on
+   * the coordinator). Returns `true` only while a live {@link RunSlot} exists for
+   * `(runKey, workerHost)` whose per-run endpoint was minted at exactly
+   * `generation`. Once the run settles, the machine is recycled, or the slot is
+   * superseded by a higher-generation re-acquire, it returns `false` so a
+   * leaked/stale Token B fails closed.
+   *
+   * The live-slot registry is the single source of truth the coordinator mutates
+   * (never a cached copy), read SYNCHRONOUSLY here. The `generation` argument is
+   * the backstop for that registry's own async settle/recycle window: even if a
+   * slot is momentarily still registered while tearing down, a recycle bumps the
+   * shared local-MCP-server generation, so a token stamped against the prior
+   * generation no longer matches and is denied.
+   */
+  isRunLive(runKey: string, workerHost: string, generation: number): boolean;
+  /**
    * Reconciles the live pool (and the coordinator-owned settings) onto `next`.
    * Async ONLY for the injected `driverLoader` (out-of-tree driver modules are
    * dynamic-imported BEFORE the pool reconcile); the pool reconcile itself
@@ -646,6 +664,31 @@ export function createDispatchCoordinator(
 
     async hydrate(): Promise<void> {
       await pool.hydrate();
+    },
+
+    isRunLive(runKey: string, workerHost: string, generation: number): boolean {
+      // SYNCHRONOUS read of the live-slot registry the coordinator itself
+      // mutates (added on a successful lease-bind, removed on settle/recycle) -
+      // never a cached copy, so a run that has settled or whose machine was
+      // recycled is observed not-live immediately. A slot matches only when its
+      // runKey AND workerHost line up with the resolved Token B claim (the claim
+      // carries no self-reported identity the caller could spoof; both come from
+      // the server-side claim record). The generation must match the endpoint the
+      // live slot actually holds: a recycle bumps the shared local-MCP-server
+      // generation, so a re-acquired slot for the same runKey carries a strictly
+      // higher generation and a token stamped against the prior generation is
+      // denied even inside the registry's own async teardown window.
+      for (const slot of slots.values()) {
+        if (
+          slot.runKey === runKey &&
+          slot.workerHost === workerHost &&
+          slot.mcpEndpoint !== null &&
+          slot.mcpEndpoint.generation === generation
+        ) {
+          return true;
+        }
+      }
+      return false;
     },
 
     snapshot(): DispatchCoordinatorSnapshot {

@@ -7,7 +7,7 @@ import {
 } from "@lorenz/domain";
 import type { McpServer } from "@agentclientprotocol/sdk";
 
-import { startMcpServer, type ObservabilityServerHandle } from "./server.js";
+import { startMcpServer, type IsRunLive, type ObservabilityServerHandle } from "./server.js";
 import {
   issueMcpToken,
   issueRunMcpToken,
@@ -24,6 +24,16 @@ export function trackerMcpServerName(kind: TrackerKind | undefined): string {
 export interface AgentMcpEndpointLease {
   url: string;
   token: string;
+  /**
+   * Generation of the shared local MCP server this lease (and its Token B claim)
+   * was minted against, captured BEFORE the per-run tunnel was opened. The
+   * composition root carries it onto the live `RunSlot` so the injected
+   * `isRunLive(runKey, workerHost, generation)` re-check denies a token whose
+   * generation no longer matches the live slot - the generation backstop for the
+   * liveness re-check's own async window. `1` on the local/null path (no shared
+   * server is recycled in place there).
+   */
+  generation: number;
   acpServer(): McpServer;
   release(): Promise<void>;
 }
@@ -137,6 +147,7 @@ export async function acquireAgentMcpEndpoint(
     return {
       url: endpoint.url,
       token,
+      generation: endpoint.generation,
       acpServer: () => ({
         type: "http",
         name: trackerMcpServerName(settings.tracker.kind),
@@ -171,6 +182,7 @@ export async function acquireAgentMcpEndpointForRun(
   workerHost: string,
   runKey: string,
   tunnels: RemoteMcpTunnelTransport,
+  isRunLive?: IsRunLive,
 ): Promise<AgentMcpEndpointLease> {
   let endpoint: McpEndpoint | null = null;
   let token: string | null = null;
@@ -183,6 +195,7 @@ export async function acquireAgentMcpEndpointForRun(
       settings,
       configuredToken,
       tunnels,
+      isRunLive,
     );
     // The configured external-server bypass (Token A) is closed in C6; for now a
     // configured token is revoked immediately because the per-run lease is scoped
@@ -196,6 +209,7 @@ export async function acquireAgentMcpEndpointForRun(
     return {
       url: endpoint.url,
       token,
+      generation: endpoint.generation,
       acpServer: () => ({
         type: "http",
         name: trackerMcpServerName(settings.tracker.kind),
@@ -298,14 +312,17 @@ async function acquirePerRunMcpEndpoint(
   settings: Settings,
   configuredToken: IssuedMcpToken | null,
   tunnels: RemoteMcpTunnelTransport,
+  isRunLive?: IsRunLive,
 ): Promise<McpEndpoint> {
   // The refcounted local MCP server is acquired BEFORE the per-run tunnel is
   // opened. If anything after this point throws (notably `openForRun` failing
   // to spawn the reverse tunnel), this function rejects before returning an
   // McpEndpoint, so the caller never sees `localServer` and cannot release it.
   // Drop the ref here so repeated tunnel-spawn failures don't leak refcounted
-  // local MCP servers / their listeners.
-  const localServer = await ensureLocalMcpServer(settings, configuredToken);
+  // local MCP servers / their listeners. The per-run server is mounted with the
+  // injected `isRunLive` oracle so its Token B middleware enforces the owner
+  // re-check + generation fence on every request.
+  const localServer = await ensureLocalMcpServer(settings, configuredToken, isRunLive);
   // Capture the shared local server's generation BEFORE the `openForRun` await.
   // The single event loop is single-writer only BETWEEN awaits: stamping the
   // claim with the generation that was live at this point (rather than re-reading
@@ -338,6 +355,7 @@ async function acquirePerRunMcpEndpoint(
 async function ensureLocalMcpServer(
   settings: Settings,
   configuredToken: IssuedMcpToken | null,
+  isRunLive?: IsRunLive,
 ): Promise<LocalMcpServerLease | null> {
   const configuredPort = settings.server.port;
   const serverHost = normalizeHttpBindHost(settings.server.host);
@@ -361,6 +379,7 @@ async function ensureLocalMcpServer(
         host: serverHost,
         port: configuredPort,
         authScope: identity,
+        isRunLive,
       });
       // Bump the slot's generation when a brand-new entry replaces a torn-down
       // one. The first entry for a key gets generation 1; each recycle is
@@ -373,7 +392,7 @@ async function ensureLocalMcpServer(
     });
   }
 
-  const handle = await startMcpServer(settings, { host: serverHost, port: 0 });
+  const handle = await startMcpServer(settings, { host: serverHost, port: 0, isRunLive });
   // Ephemeral (port 0) servers are not shared/refcounted, so each lease is its
   // own generation-1 slot stopped on release; nothing recycles it in place.
   return { key: null, handle, generation: 1 };

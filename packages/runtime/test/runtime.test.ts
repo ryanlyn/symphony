@@ -1712,6 +1712,7 @@ function makeFakeEndpointLease(): AgentMcpEndpointLease {
   return {
     url: "http://127.0.0.1:46999/claude-mcp",
     token: "run-token",
+    generation: 1,
     acpServer: () => ({ type: "http", name: "threaded_endpoint", url: "", headers: [] }),
     async release() {},
   };

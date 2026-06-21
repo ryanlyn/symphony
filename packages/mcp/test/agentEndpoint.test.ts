@@ -84,6 +84,57 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// POST a non-tool MCP request (`tools/list`, so the per-tool allowlist is
+// skipped and ONLY the injected owner re-check + generation fence gates it) to the
+// live local MCP server with the per-run Token B and return the HTTP status. A
+// denied owner re-check fails closed as 401.
+async function mcpListStatus(host: string, port: number, token: string): Promise<number> {
+  const response = await fetch(`http://${host}:${port}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    signal: AbortSignal.timeout(500),
+  });
+  return response.status;
+}
+
+test("the per-run server enforces the INJECTED isRunLive on every Token B request (fail closed when not live)", async () => {
+  const port = await freeLocalPort();
+  const settings = settingsWithPort(port);
+  // The composition root injects this oracle; flip it between requests to prove the
+  // per-run server re-checks liveness on EVERY request rather than only at mint.
+  let live = true;
+  const seen: Array<[string, string, number]> = [];
+  const isRunLive = (runKey: string, workerHost: string, generation: number): boolean => {
+    seen.push([runKey, workerHost, generation]);
+    return live;
+  };
+
+  const lease = await acquireAgentMcpEndpointForRun(
+    settings,
+    "worker-1",
+    "run-live",
+    workerHostPool,
+    isRunLive,
+  );
+  const claim = resolveRunClaim(lease.token);
+  assert.ok(claim);
+
+  // Live: the owner re-check passes, so the request is NOT 401 (it reaches the
+  // handler). The oracle was consulted with the claim's resolved identity.
+  const okStatus = await mcpListStatus("127.0.0.1", port, lease.token);
+  assert.notEqual(okStatus, 401);
+  assert.deepEqual(seen.at(-1), ["run-live", "worker-1", claim?.generation]);
+
+  // Not live (run settled/recycled/superseded): the SAME token now fails closed
+  // with 401, proving the re-check runs per request, not just at mint.
+  live = false;
+  const deniedStatus = await mcpListStatus("127.0.0.1", port, lease.token);
+  assert.equal(deniedStatus, 401);
+
+  await lease.release();
+});
+
 test("acquireAgentMcpEndpointForRun.release() revokes the token, drops the local-server ref, AND closes the per-run tunnel", async () => {
   const port = await freeLocalPort();
   const settings = settingsWithPort(port);

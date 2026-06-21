@@ -23,7 +23,7 @@ import { registerLocalTracker } from "@lorenz/local-tracker";
 import { registerMemoryTracker } from "@lorenz/memory-tracker";
 import { registerSlackTracker } from "@lorenz/slack-tracker";
 import { registerStaticSshWorkerDriver } from "@lorenz/static-worker";
-import { acquireAgentMcpEndpointForRun } from "@lorenz/mcp";
+import { acquireAgentMcpEndpointForRun, type IsRunLive } from "@lorenz/mcp";
 import { createWorkerPool, type WorkerPool } from "@lorenz/worker-pool";
 import { workerHostPool } from "@lorenz/worker-host-pool";
 import {
@@ -171,7 +171,17 @@ export async function buildDispatchCoordinator(
   const baseDir = options.baseDir ?? process.cwd();
   const logEvent = (event: Record<string, unknown>): void =>
     void appendLogEvent(settings.logging.logFile, event);
-  return createDispatchCoordinator({
+  // Forward reference so the per-run endpoint manager's `acquireForRun` can inject
+  // the coordinator's own `isRunLive` oracle into `@lorenz/mcp`. The coordinator
+  // is the live-slot authority the gateway owner re-check reads; the daemon is the
+  // only legal place that holds both `@lorenz/mcp` and the coordinator, so it
+  // closes the loop here WITHOUT either package importing the other (invariant #8).
+  // `acquireForRun` is only ever called AFTER `createDispatchCoordinator` returns
+  // (during an `acquireRunSlot`), so `ref.coordinator` is always bound by then.
+  const ref: { coordinator: DispatchCoordinator | undefined } = { coordinator: undefined };
+  const isRunLive: IsRunLive = (runKey, workerHost, generation) =>
+    ref.coordinator?.isRunLive(runKey, workerHost, generation) ?? false;
+  const coordinator = createDispatchCoordinator({
     pool,
     // The concrete manager OWNS each run's whole endpoint lease; it calls the
     // injected `acquireAgentMcpEndpointForRun` (signature-compatible) for an
@@ -179,10 +189,14 @@ export async function buildDispatchCoordinator(
     // local path keeps using acp's own endpoint.
     mcpEndpointManager: createPerRunEndpointManager({
       // The composition root binds the concrete tunnel transport (the shared
-      // worker-host pool), keeping `@lorenz/mcp` free of any worker-host-pool
-      // import (invariant #8) while the coordinator stays on the 3-arg acquirer.
+      // worker-host pool) AND the coordinator-backed `isRunLive` oracle, keeping
+      // `@lorenz/mcp` free of any worker-host-pool / coordinator import
+      // (invariant #8) while the coordinator stays on the 3-arg manager seam. The
+      // per-run MCP server mounts `isRunLive` so its Token B middleware enforces
+      // the per-request owner re-check + generation fence over live coordinator
+      // slots; the C3 capture-before-await fence is what makes that window safe.
       acquireForRun: async (runSettings, workerHost, runKey) =>
-        acquireAgentMcpEndpointForRun(runSettings, workerHost, runKey, workerHostPool),
+        acquireAgentMcpEndpointForRun(runSettings, workerHost, runKey, workerHostPool, isRunLive),
     }),
     // Same structured-event sink as the pool so coordinator faults (e.g.
     // worker_pool_endpoint_release_failed) reach the log file instead of being
@@ -196,6 +210,8 @@ export async function buildDispatchCoordinator(
     driverLoader: async (driver: string) =>
       ensureWorkerDriverLoaded(driver, defaultWorkerDriverRegistry, { baseDir, logEvent }),
   });
+  ref.coordinator = coordinator;
+  return coordinator;
 }
 
 /**
