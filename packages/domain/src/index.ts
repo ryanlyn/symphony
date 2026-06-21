@@ -249,7 +249,13 @@ export interface TrackerSettings {
  * Durations are milliseconds; spend caps are seconds (matching {@link UsageTotals.secondsRunning}).
  */
 export interface WorkerPoolSettings {
-  /** Master switch. When false the pool is constructed-but-inert (or not constructed at all). */
+  /**
+   * Internal liveness switch, NOT an operator-facing config key (feature E removed the
+   * `worker.worker_pool.enabled` config field). A parsed config always produces `enabled: true`;
+   * the reload-drain is the only writer that flips it to `false`, to drain a removed pool to zero
+   * (`reconcile` then skips the driver swap and tears the workers down). When `false` the pool is
+   * constructed-but-inert (or not constructed at all) and `governs()` falls through to local/static.
+   */
   enabled: boolean;
   /** Worker driver backend that provisions, probes, and destroys workers. */
   driver: WorkerDriverKind;

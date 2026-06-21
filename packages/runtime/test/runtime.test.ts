@@ -1459,6 +1459,14 @@ function workerPoolWorkflowFixture(
   root = "/tmp/lorenz-runtime-workerpool",
   overrides: Record<string, unknown> = {},
 ): WorkflowDefinition {
+  // Feature E removed the operator-facing `enabled` flag, so config can no longer carry it. A
+  // disabled pool is the INTERNAL drained shape the reload-drain produces; tests that drive the
+  // reload-disable path pass `{ enabled: false }` here, which is applied to the parsed settings
+  // object AFTER parse (config rejects the key). All other overrides still flow through config.
+  const { enabled, ...configOverrides } = overrides as { enabled?: boolean } & Record<
+    string,
+    unknown
+  >;
   const settings = parseConfig({
     tracker: {
       kind: "linear",
@@ -1471,14 +1479,16 @@ function workerPoolWorkflowFixture(
     workspace: { root },
     worker: {
       worker_pool: {
-        enabled: true,
         driver: "fake",
         acquire_timeout_ms: 12_345,
         drain_deadline_ms: 9_999,
-        ...overrides,
+        ...configOverrides,
       },
     },
   });
+  if (enabled !== undefined && settings.worker.workerPool) {
+    settings.worker.workerPool = { ...settings.worker.workerPool, enabled };
+  }
   return {
     path: "/tmp/WORKFLOW.md",
     config: {},
@@ -3083,7 +3093,11 @@ test("worker pool: a reload that throws the anti-double-capacity guard keeps las
       workflow: firstWorkflow,
       workerPool,
       reloadWorkflow: async () => {
-        throw new Error("worker.worker_pool.enabled cannot be combined with worker.ssh_hosts");
+        // RE-ANCHOR (feature E): the old `worker.worker_pool.enabled cannot be combined with
+        // worker.ssh_hosts` throw is gone; a real ambiguous reload now throws on the driver +
+        // ssh_hosts combination. The test injects the current message to drive the throwing-reload
+        // path (keep last-good, surface the message) - the throw source is irrelevant here.
+        throw new Error("worker.worker_pool.driver cannot be combined with worker.ssh_hosts");
       },
       client: {
         fetchCandidateIssues: async () => [issue],
@@ -3102,6 +3116,7 @@ test("worker pool: a reload that throws the anti-double-capacity guard keeps las
     .recentEvents.find((event) => event.type === "workflow_reload_failed");
   assert.ok(reloadFailed);
   assert.ok(reloadFailed.message.includes("cannot be combined with worker.ssh_hosts"));
+  assert.ok(reloadFailed.message.includes("worker.worker_pool.driver"));
 });
 
 function perRunEndpointManager(): McpEndpointManager {

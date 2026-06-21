@@ -456,7 +456,11 @@ function parseWorkerPool(
     throw new Error("worker.worker_pool.driver cannot be combined with worker.ssh_hosts");
   }
 
-  const enabled = raw?.enabled ?? selectedWorker !== undefined;
+  // The operator-facing `enabled` flag is gone (feature E): the pool is the single dispatch path,
+  // so any present `worker_pool` block or named `worker.kind` profile yields an ENABLED pool. The
+  // absent-config defaults are produced by `defaultDispatchWorkerPool` above; this branch only runs
+  // when the operator explicitly configured a pool, which is always enabled.
+  const enabled = true;
   const driver = selectedWorker?.driver ?? raw?.driver ?? "fake";
   const min = raw?.min ?? 0;
   const max = raw?.max ?? 1;

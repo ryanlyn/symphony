@@ -203,7 +203,13 @@ const workerPoolSpendRawSchema = z
   .strict();
 const workerPoolRawSchema = z
   .object({
-    enabled: coercedBoolean.optional(),
+    // Feature E removed the operator-facing `enabled` flag: the pool is the single dispatch
+    // path now. An absent `worker_pool` defaults to an enabled `local` pool (byte-identical to
+    // the old local single-tenant path), and `ssh_hosts` folds into an enabled static-ssh pool,
+    // so there is no longer an operator scenario that wants the pool "off". The `.strict()` schema
+    // therefore REJECTS `enabled`. The internal `WorkerPoolSettings.enabled` field survives because
+    // the reload-drain still toggles it to drain a removed/disabled pool to zero.
+    //
     // The driver selector is open-ended; whether the kind is supported is decided by the
     // worker-driver registry at pool construction, not by the schema.
     driver: z.string().min(1).optional(),

@@ -15,7 +15,7 @@ There are two distinct config shapes that both involve a fixed SSH host list. Pi
 
 This page documents the first surface: `worker.ssh_hosts`. The `static-ssh` driver is the same fixed-host idea wired into the pool's lease/reap machinery instead of the runtime's own host selection. Reach for it only when you want the pool's accounting around a fixed fleet; for plain "run on these N boxes" the legacy path is enough.
 
-The config parser refuses to combine them. Setting `worker.ssh_hosts` alongside `worker.worker_pool.enabled` throws `worker.worker_pool.enabled cannot be combined with worker.ssh_hosts`, and combining it with `worker.kind` throws `worker.kind cannot be combined with worker.ssh_hosts`.
+Under the hood, `worker.ssh_hosts` folds into a `static-ssh` pool (one slot per host) - it is the pool's single dispatch path, not a separate model. You cannot name a driver twice for the same hosts: setting `worker.ssh_hosts` alongside `worker.worker_pool.driver` throws `worker.worker_pool.driver cannot be combined with worker.ssh_hosts`, and combining it with `worker.kind` throws `worker.kind cannot be combined with worker.ssh_hosts`.
 
 ## When to use it
 

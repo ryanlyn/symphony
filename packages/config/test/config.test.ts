@@ -1324,7 +1324,8 @@ test("worker.worker_pool parses all keys with snake_case aliasing", () => {
     worker: {
       kind: "static-prod",
       worker_pool: {
-        enabled: true,
+        // RE-ANCHOR (feature E): the operator-facing `enabled` key was removed; the parsed pool is
+        // always enabled, asserted on the output below. Config no longer accepts `enabled`.
         min: 1,
         max: 4,
         warm: 2,
@@ -1382,7 +1383,6 @@ test("worker.worker_pool parses co_residence and max_concurrent_tunnels (snake->
   const settings = parseConfig({
     worker: {
       worker_pool: {
-        enabled: true,
         driver: "fake",
         max_in_flight: 2,
         co_residence: true,
@@ -1405,7 +1405,7 @@ test("worker.worker_pool parses co_residence and max_concurrent_tunnels (snake->
 
 test("worker.worker_pool co_residence and max_concurrent_tunnels default absent", () => {
   const settings = parseConfig({
-    worker: { worker_pool: { enabled: true, driver: "fake" } },
+    worker: { worker_pool: { driver: "fake" } },
   });
 
   const workerPool = settings.worker.workerPool;
@@ -1426,7 +1426,7 @@ test("worker.worker_pool rejects non-positive max_concurrent_tunnels", () => {
 test("worker.worker_pool applies defaults when keys omitted", () => {
   const settings = parseConfig({
     worker: {
-      worker_pool: { enabled: true, driver: "fake" },
+      worker_pool: { driver: "fake" },
     },
   });
 
@@ -1453,7 +1453,7 @@ test("worker.worker_pool applies defaults when keys omitted", () => {
 test("worker.worker_pool max_in_flight parses into slotsPerMachine with maxInFlight mirroring it", () => {
   const settings = parseConfig({
     worker: {
-      worker_pool: { enabled: true, driver: "fake", max_in_flight: 3 },
+      worker_pool: { driver: "fake", max_in_flight: 3 },
     },
   });
 
@@ -1515,8 +1515,9 @@ test("worker.worker_pool driver is an open string resolved by the registry", () 
 test("workers.<name> options are accepted for open driver names", () => {
   const settings = parseConfig({
     worker: {
+      // RE-ANCHOR (feature E): a named `worker.kind` alone yields an enabled pool now; the old
+      // `worker_pool: { enabled: true }` opt-in is gone (the `enabled` key is rejected).
       kind: "antarctica",
-      worker_pool: { enabled: true },
     },
     workers: {
       antarctica: {
@@ -1602,7 +1603,7 @@ test("ssh_hosts folds into an enabled static-ssh pool (no throw)", () => {
       parseConfig({
         worker: {
           ssh_hosts: ["user@host:22"],
-          worker_pool: { enabled: true, driver: "fake" },
+          worker_pool: { driver: "fake" },
         },
       }),
     /worker\.worker_pool\.driver cannot be combined with worker\.ssh_hosts/,
@@ -1628,13 +1629,13 @@ test("static-ssh ssh_hosts validation belongs to the driver, not the parser", ()
   // (the same fail-loud startup point as an unregistered kind); config parsing
   // passes the options through untouched, including camelCase spellings.
   const parsed = parseConfig({
-    worker: { kind: "static-prod", worker_pool: { enabled: true } },
+    worker: { kind: "static-prod" },
     workers: { "static-prod": { driver: "static-ssh" } },
   });
   assert.equal(parsed.worker.workerPool?.driverOptions, undefined);
 
   const camel = parseConfig({
-    worker: { kind: "static-prod", worker_pool: { enabled: true } },
+    worker: { kind: "static-prod" },
     workers: {
       "static-prod": { driver: "static-ssh", sshHosts: ["user@host:22"] },
     },
@@ -1648,6 +1649,22 @@ test("unknown key under worker_pool throws (strict schema)", () => {
   assert.throws(
     () => parseConfig({ worker: { worker_pool: { driver: "fake", bogus: 1 } } }),
     /unsupported keys: bogus/,
+  );
+});
+
+test("worker.worker_pool.enabled is no longer an operator-facing key (feature E)", () => {
+  // RE-ANCHOR (feature E): the operator-facing `enabled` flag was removed because the pool is now
+  // the single dispatch path (an absent pool defaults to an enabled local pool; ssh_hosts folds
+  // into static-ssh), so there is no operator scenario that turns the pool "off". The `.strict()`
+  // schema rejects `enabled` like any other unknown key - the disabled-path coverage that used to
+  // pass `enabled: false` is re-anchored to this rejection plus the default-on behavior above.
+  assert.throws(
+    () => parseConfig({ worker: { worker_pool: { driver: "fake", enabled: false } } }),
+    /unsupported keys: enabled/,
+  );
+  assert.throws(
+    () => parseConfig({ worker: { worker_pool: { enabled: true } } }),
+    /unsupported keys: enabled/,
   );
 });
 
@@ -1704,9 +1721,6 @@ test("cloneSettings deep-copies driverOptions nested ssh_hosts array", () => {
   const settings = parseConfig({
     worker: {
       kind: "static-prod",
-      worker_pool: {
-        enabled: true,
-      },
     },
     workers: {
       "static-prod": {
@@ -1733,7 +1747,6 @@ test("cloneSettings deep-copies spend so mutating the clone leaves the original 
   const settings = parseConfig({
     worker: {
       worker_pool: {
-        enabled: true,
         driver: "fake",
         spend: { max_worker_seconds: 7_200 },
       },
@@ -1750,7 +1763,6 @@ test("worker.worker_pool spend.* parse in seconds while ttl/idle/drain stay in m
   const settings = parseConfig({
     worker: {
       worker_pool: {
-        enabled: true,
         driver: "fake",
         ttl_ms: 1_800_000,
         idle_reap_ms: 60_000,
@@ -1772,7 +1784,6 @@ test("workers.<name> option keys pass through un-normalized", () => {
   const settings = parseConfig({
     worker: {
       kind: "static-prod",
-      worker_pool: { enabled: true },
     },
     workers: {
       "static-prod": {

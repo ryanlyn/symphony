@@ -21,9 +21,18 @@ function workerPoolSettings(
   return parseConfig(workerPool ? { worker: { worker_pool: workerPool } } : {}).worker.workerPool;
 }
 
+// The operator-facing `enabled` flag was removed in feature E, so config can no longer express a
+// disabled pool. The reload-drain still produces the INTERNAL disabled shape; build it directly
+// from a parsed enabled pool to preserve the disabled-pool gate coverage.
+function internallyDisabledPoolSettings(
+  workerPool: Record<string, unknown>,
+): WorkerPoolSettings {
+  const parsed = workerPoolSettings(workerPool)!;
+  return { ...parsed, enabled: false };
+}
+
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the endpoint message", () => {
   const settings = workerPoolSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: true,
@@ -34,7 +43,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the en
 });
 
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent returns the co-residence message", () => {
-  const settings = workerPoolSettings({ enabled: true, driver: "fake", max_in_flight: 2 });
+  const settings = workerPoolSettings({ driver: "fake", max_in_flight: 2 });
   assert.equal(settings?.coResidence, undefined);
   const message = checkSlotsPerMachineGate(settings, capable);
   assert.ok(message);
@@ -43,7 +52,6 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
 
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false returns the co-residence message", () => {
   const settings = workerPoolSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: false,
@@ -55,7 +63,6 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
 
 test("gate predicate: slotsPerMachine>1 with perRunEndpoint AND coResidence returns null", () => {
   const settings = workerPoolSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: true,
@@ -63,13 +70,14 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint AND coResidence retu
   assert.equal(checkSlotsPerMachineGate(settings, capable), null);
 });
 
-test("gate predicate: DISABLED pool with slotsPerMachine>1 returns null (dormant value, gate no-ops like an absent pool)", () => {
-  // A disabled pool cannot co-reside anything: runs go static/local, so a dormant
-  // max_in_flight>1 must be ignored exactly like an absent pool. Otherwise the
-  // startup gate hard-aborts the daemon over a value the disabled pool never uses.
-  const settings = workerPoolSettings({ enabled: false, driver: "fake", max_in_flight: 2 });
-  assert.equal(settings?.enabled, false);
-  assert.equal(settings?.slotsPerMachine, 2);
+test("gate predicate: an internally DISABLED pool with slotsPerMachine>1 returns null (dormant value, gate no-ops like an absent pool)", () => {
+  // RE-ANCHOR (feature E): config can no longer disable the pool, but the reload-drain still
+  // produces an internally disabled pool. A disabled pool cannot co-reside anything: runs go
+  // static/local, so a dormant max_in_flight>1 must be ignored exactly like an absent pool.
+  // Otherwise the startup gate hard-aborts the daemon over a value the disabled pool never uses.
+  const settings = internallyDisabledPoolSettings({ driver: "fake", max_in_flight: 2 });
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.slotsPerMachine, 2);
   // No capability AND no opt-in: still null, because the pool is off entirely.
   assert.equal(checkSlotsPerMachineGate(settings, undefined), null);
   assert.equal(checkSlotsPerMachineGate(settings, incapable), null);
@@ -77,7 +85,7 @@ test("gate predicate: DISABLED pool with slotsPerMachine>1 returns null (dormant
 });
 
 test("gate predicate: default slotsPerMachine=1 always returns null regardless of capability/opt-in", () => {
-  const enabledDefault = workerPoolSettings({ enabled: true, driver: "fake" });
+  const enabledDefault = workerPoolSettings({ driver: "fake" });
   assert.equal(enabledDefault?.slotsPerMachine, 1);
   assert.equal(checkSlotsPerMachineGate(enabledDefault, incapable), null);
   assert.equal(checkSlotsPerMachineGate(enabledDefault, capable), null);

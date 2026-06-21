@@ -6,12 +6,11 @@ The pool is one of two mutually exclusive ways to get a `workerHost`. The other 
 
 ## Turning it on
 
-Selecting a `workers.<name>` profile through `worker.kind` auto-enables the pool. A bare `worker.worker_pool` block does not: it needs `enabled: true`, because `enabled` defaults to `false` unless a `worker.kind` profile is selected. The minimum config sets `enabled` and picks a driver:
+The pool is always on - it is the single dispatch path. With no `worker.worker_pool` block and no `worker.ssh_hosts`, the pool defaults to the `local` driver at `max: 1`, which runs agents locally on the daemon's own in-process endpoint (no SSH, no provisioning). To put runs on real machines, set a `driver` (and its sizing knobs); there is no `enabled` flag to set:
 
 ```yaml
 worker:
   worker_pool:
-    enabled: true
     driver: docker
     min: 1
     max: 4

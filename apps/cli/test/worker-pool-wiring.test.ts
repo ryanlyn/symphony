@@ -43,15 +43,39 @@ test("buildWorkerPool builds the DEFAULT enabled local pool for an absent worker
   await workerPool!.drain({ deadlineMs: 1_000 });
 });
 
-test("buildWorkerPool returns undefined when worker_pool is present but enabled:false", async () => {
-  const settings = parseConfig({ worker: { worker_pool: { enabled: false, driver: "fake" } } }, {});
-  assert.equal(settings.worker.workerPool?.enabled, false);
-  assert.equal(await buildWorkerPool(settings, {}), undefined);
+test("the operator-facing worker_pool.enabled opt-out is removed (feature E)", () => {
+  // RE-ANCHOR (feature E): the old `enabled:false` operator opt-out (buildWorkerPool -> undefined)
+  // is gone - the pool is the single dispatch path, and an operator who wants "no pool" already
+  // gets the inert default local pool. The `.strict()` config schema now rejects `enabled`. The
+  // INTERNAL disabled-pool -> undefined contract still holds for hand-built settings (covered by
+  // the "buildWorkerPool returns undefined for an internally disabled pool" test below), which is
+  // the shape the reload-drain produces; it is no longer reachable from operator config.
+  assert.throws(
+    () => parseConfig({ worker: { worker_pool: { enabled: false, driver: "fake" } } }, {}),
+    /unsupported keys: enabled/,
+  );
+});
+
+test("buildWorkerPool returns undefined for an internally disabled pool", async () => {
+  // The reload-drain reconciles a removed pool to an internally disabled settings object; nothing
+  // operator-facing produces this shape anymore, but buildWorkerPool must still short-circuit it so
+  // a drained pool is never rebuilt. Construct the disabled shape directly (parseConfig can no
+  // longer express it) to pin the internal `enabled:false` -> undefined contract.
+  const settings = parseConfig({ worker: { worker_pool: { driver: "fake" } } }, {});
+  const disabled = {
+    ...settings,
+    worker: {
+      ...settings.worker,
+      workerPool: { ...settings.worker.workerPool!, enabled: false },
+    },
+  };
+  assert.equal(disabled.worker.workerPool?.enabled, false);
+  assert.equal(await buildWorkerPool(disabled, {}), undefined);
 });
 
 test("buildWorkerPool constructs an enabled fake pool with a workspace-scoped ledger path", async () => {
   const settings = parseConfig(
-    { worker: { worker_pool: { enabled: true, driver: "fake", max: 2, warm: 1 } } },
+    { worker: { worker_pool: { driver: "fake", max: 2, warm: 1 } } },
     {},
   );
   const workerPool = await buildWorkerPool(settings, {});
@@ -69,7 +93,7 @@ test("buildWorkerPool constructs an enabled fake pool with a workspace-scoped le
 test("buildWorkerPool rejects with worker_pool_driver_unavailable for an unregistered enabled kind", async () => {
   // "nope" is never registered by registerBuiltinBackends and resolves as no
   // module, so the loader aborts pool construction with the known-kinds hint.
-  const settings = parseConfig({ worker: { worker_pool: { enabled: true, driver: "nope" } } }, {});
+  const settings = parseConfig({ worker: { worker_pool: { driver: "nope" } } }, {});
   await assert.rejects(
     () => buildWorkerPool(settings, {}),
     /worker_pool_driver_unavailable: nope.*(known kinds: .*fake)/,
@@ -103,7 +127,6 @@ function gateSettings(workerPool: Record<string, unknown> | undefined) {
 
 test("gate: slotsPerMachine>1 with perRunEndpoint=false throws", () => {
   const settings = gateSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: true,
@@ -115,14 +138,13 @@ test("gate: slotsPerMachine>1 with perRunEndpoint=false throws", () => {
 });
 
 test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent throws", () => {
-  const settings = gateSettings({ enabled: true, driver: "fake", max_in_flight: 2 });
+  const settings = gateSettings({ driver: "fake", max_in_flight: 2 });
   assert.equal(settings.worker.workerPool?.coResidence, undefined);
   assert.throws(() => assertSlotsPerMachineGate(settings, capable), /co.?residence/i);
 });
 
 test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false throws", () => {
   const settings = gateSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: false,
@@ -132,7 +154,6 @@ test("gate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false thr
 
 test("gate: slotsPerMachine>1 with perRunEndpoint AND coResidence passes", () => {
   const settings = gateSettings({
-    enabled: true,
     driver: "fake",
     max_in_flight: 2,
     co_residence: true,
@@ -141,12 +162,21 @@ test("gate: slotsPerMachine>1 with perRunEndpoint AND coResidence passes", () =>
   assertSlotsPerMachineGate(settings, capable);
 });
 
-test("gate: DISABLED pool with max_in_flight>1 does not abort daemon startup", async () => {
-  // A dormant max_in_flight>1 on a DISABLED pool must not gate startup: the pool
-  // is off (runs go static/local), so buildDispatchCoordinator returns undefined
-  // and assertSlotsPerMachineGate(settings, undefined) must NOT throw. Before the
-  // fix this fail-closed regression aborted the daemon over a value never used.
-  const settings = gateSettings({ enabled: false, driver: "fake", max_in_flight: 2 });
+test("gate: an internally DISABLED pool with max_in_flight>1 does not abort daemon startup", async () => {
+  // RE-ANCHOR (feature E): the operator `enabled:false` opt-out is gone, so this is no longer
+  // reachable from config; the INTERNAL disabled shape (produced by the reload-drain) still must
+  // not gate startup. A dormant max_in_flight>1 on a disabled pool must not gate: the pool is off
+  // (runs go static/local), so buildDispatchCoordinator returns undefined and
+  // assertSlotsPerMachineGate(settings, undefined) must NOT throw. Construct the disabled shape
+  // directly (config can no longer express it) to preserve the original coverage intent.
+  const parsed = gateSettings({ driver: "fake", max_in_flight: 2 });
+  const settings = {
+    ...parsed,
+    worker: {
+      ...parsed.worker,
+      workerPool: { ...parsed.worker.workerPool!, enabled: false },
+    },
+  };
   assert.equal(settings.worker.workerPool?.enabled, false);
   assert.equal(settings.worker.workerPool?.slotsPerMachine, 2);
   const coordinator = await buildDispatchCoordinator(settings, {});
@@ -157,7 +187,7 @@ test("gate: DISABLED pool with max_in_flight>1 does not abort daemon startup", a
 
 test("gate: default slotsPerMachine=1 always passes regardless of capability/opt-in", () => {
   // Enabled pool, default slots, no capability, no opt-in: gate never triggers.
-  const enabledDefault = gateSettings({ enabled: true, driver: "fake" });
+  const enabledDefault = gateSettings({ driver: "fake" });
   assert.equal(enabledDefault.worker.workerPool?.slotsPerMachine, 1);
   assertSlotsPerMachineGate(enabledDefault, incapable);
   assertSlotsPerMachineGate(enabledDefault, capable);
@@ -191,7 +221,7 @@ function localPoolSettings(extra: Record<string, unknown> = {}) {
   // local worker is minted on-demand by acquire. max:1 + slotsPerMachine=1 is the
   // single-tenant shape a default-on local pool will use.
   return parseConfig({
-    worker: { worker_pool: { enabled: true, driver: "local", warm: 0, min: 0, max: 1, ...extra } },
+    worker: { worker_pool: { driver: "local", warm: 0, min: 0, max: 1, ...extra } },
   });
 }
 
