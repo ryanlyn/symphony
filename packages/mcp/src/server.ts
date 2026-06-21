@@ -6,8 +6,27 @@ import { z } from "zod";
 import { httpUrlHost, isRecord, normalizeHttpBindHost, type Settings } from "@lorenz/domain";
 import { defaultToolRegistry, type ToolRegistry } from "@lorenz/tool-sdk";
 
-import { createMcpAuthScope, mcpAuthScopeForSettings, validMcpToken } from "./auth.js";
+import {
+  checkRunClaim,
+  createMcpAuthScope,
+  mcpAuthScopeForSettings,
+  resolveRunClaim,
+  validMcpToken,
+} from "./auth.js";
 import { executeTool, toolSpecs } from "./tools.js";
+
+/**
+ * Read-only liveness oracle injected from the composition root (daemon.ts in
+ * C4). Given a per-run claim's `(runKey, workerHost, generation)`, returns false
+ * once the run is settled/recycled/superseded, pairing liveness with the
+ * generation fence. Until C4 wires the coordinator-backed oracle, the mount
+ * defaults to {@link defaultIsRunLive} so the Token B re-check plumbing is in
+ * place without yet enforcing liveness/generation. No Token B is minted before
+ * C3, so this default never authorizes a real per-run request.
+ */
+export type IsRunLive = (runKey: string, workerHost: string, generation: number) => boolean;
+
+const defaultIsRunLive: IsRunLive = () => true;
 
 export interface ObservabilityServerOptions {
   host: string;
@@ -15,6 +34,11 @@ export interface ObservabilityServerOptions {
   authScope?: string | undefined;
   /** Tool packs available to this endpoint; defaults to the process-wide registry. */
   tools?: ToolRegistry | undefined;
+  /**
+   * Read-only liveness oracle for per-run (Token B) claims. Injected at the
+   * composition root; defaults to a permissive placeholder until C4.
+   */
+  isRunLive?: IsRunLive | undefined;
 }
 
 export interface ObservabilityServerHandle {
@@ -29,6 +53,11 @@ export interface McpMountOptions {
   authScope?: string | undefined;
   /** Tool packs available to this endpoint; defaults to the process-wide registry. */
   tools?: ToolRegistry | undefined;
+  /**
+   * Read-only liveness oracle for per-run (Token B) claims. Injected at the
+   * composition root; defaults to a permissive placeholder until C4.
+   */
+  isRunLive?: IsRunLive | undefined;
 }
 
 const mcpPath = "/mcp";
@@ -44,7 +73,7 @@ export async function startMcpServer(
     (options.port > 0
       ? mcpAuthScopeForSettings(settings, bindHost, options.port)
       : createMcpAuthScope());
-  mountMcp(app, settings, { authScope, tools: options.tools });
+  mountMcp(app, settings, { authScope, tools: options.tools, isRunLive: options.isRunLive });
   app.notFound((c) =>
     c.req.method === "GET"
       ? errorResponse(404, "not_found", "Route not found")
@@ -65,21 +94,30 @@ export function mountMcp(
 ): void {
   const currentSettings = typeof settings === "function" ? settings : () => settings;
   const authScope = options.authScope ?? createMcpAuthScope();
+  const isRunLive = options.isRunLive ?? defaultIsRunLive;
   app.use(mcpPath, async (c, next) => {
     if (c.req.method !== "POST") {
       await next();
       return;
     }
-    if (!authorizedMcpHeader(c.req.header("authorization"), authScope)) {
-      return jsonResponse(
-        {
-          error: {
-            code: "unauthorized",
-            message: "Missing or invalid MCP bearer token",
-          },
-        },
-        401,
-      );
+    const bearer = bearerToken(c.req.header("authorization"));
+    // Token B (per-run scoped claim) is the only source of a request's runKey:
+    // resolve it server-side from the opaque token and re-check the owner on
+    // EVERY request. A self-reported runKey header is never trusted.
+    const claim = resolveRunClaim(bearer);
+    if (claim) {
+      // Hono caches the parsed body, so reading the text here does not consume
+      // it for the downstream `handleMcp` request handler.
+      const toolName = requestToolName(await c.req.text());
+      const decision = checkRunClaim(claim, { toolName, isRunLive });
+      if (!decision.ok) return unauthorizedMcpResponse();
+      await next();
+      return;
+    }
+    // Legacy settings-wide token (Token A side). Kept until C6 closes the
+    // bypass paths so non-co-resident endpoints keep working unchanged.
+    if (!validMcpToken(bearer, authScope)) {
+      return unauthorizedMcpResponse();
     }
     await next();
   });
@@ -141,9 +179,40 @@ async function requestJson(c: Context): Promise<Record<string, unknown>> {
   return parsed;
 }
 
-function authorizedMcpHeader(authorization: string | undefined, authScope: string): boolean {
-  const bearer = /^Bearer\s+(.+)$/.exec(authorization ?? "")?.[1];
-  return validMcpToken(bearer, authScope);
+function bearerToken(authorization: string | undefined): string | undefined {
+  return /^Bearer\s+(.+)$/.exec(authorization ?? "")?.[1];
+}
+
+function unauthorizedMcpResponse(): Response {
+  return jsonResponse(
+    {
+      error: {
+        code: "unauthorized",
+        message: "Missing or invalid MCP bearer token",
+      },
+    },
+    401,
+  );
+}
+
+/**
+ * Best-effort `tools/call` name for the per-run allowlist re-check, parsed from
+ * the raw request body. Returns null for non-tool requests or unparseable
+ * bodies; the allowlist only narrows tool calls, so a null name simply skips the
+ * allowlist (the rest of the claim still gates the request).
+ */
+function requestToolName(rawBody: string): string | null {
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return null;
+  }
+  if (!isRecord(body) || body.method !== "tools/call") return null;
+  const params = body.params;
+  if (!isRecord(params)) return null;
+  const name = params.name;
+  return typeof name === "string" ? name.trim() || null : null;
 }
 
 export async function mcpResponse(
