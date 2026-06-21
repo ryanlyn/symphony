@@ -2,7 +2,7 @@
 // @lorenz/worker-pool WorkerPool.
 //
 // With the default settings (slotsPerMachine=1) and the NULL McpEndpointManager
-// (perRunEndpoint=false, mcpEndpoint=null), every operation here is byte-identical
+// (perRunClaimEnforcement=false, mcpEndpoint=null), every operation here is byte-identical
 // at the runtime boundary to calling the underlying WorkerPool directly:
 //   - acquireRunSlot calls pool.acquire and, on `leased`, mints a RunSlot whose
 //     release/fail/heartbeat delegate straight to the wrapped WorkerLease (so the
@@ -140,6 +140,37 @@ export class RunSlotCollisionError extends Error {
 }
 
 /**
+ * Thrown by {@link DispatchCoordinator.acquireRunSlot} when a co-residence run
+ * (`slotsPerMachine > 1`, per-run-claim enforcement on) binds to a LOCAL (empty)
+ * worker host. The per-run claim model only covers REAL remote hosts: an empty host
+ * routes through the manager's null/local path, which mints NO Token B claim and
+ * keeps acp's settings-wide endpoint - so a co-resident local run would share an
+ * unscoped endpoint with its neighbours, exactly the cross-run authority leak the
+ * startup gate exists to prevent. The startup/reload gate already refuses
+ * co-residence without claim enforcement or with an external server; this is the
+ * runtime backstop for the remaining bypass (a slot that lands on an empty host at
+ * acquire time). The just-bound lease is settled HEALTHY (the worker itself is fine)
+ * and NO slot is registered; the runtime maps the throw to worker_pool_acquire_error.
+ */
+export class LocalCoResidenceError extends Error {
+  readonly issueId: string;
+  readonly slotIndex: number;
+  readonly machineLeaseId: string;
+
+  constructor(args: { issueId: string; slotIndex: number; machineLeaseId: string }) {
+    super(
+      `local_co_residence_unscoped: (issueId=${args.issueId}, slotIndex=${args.slotIndex}) bound to ` +
+        `an empty worker host under slotsPerMachine>1; a local run cannot mint a per-run scoped ` +
+        `Token B claim, so co-residence on a local host is refused`,
+    );
+    this.name = "LocalCoResidenceError";
+    this.issueId = args.issueId;
+    this.slotIndex = args.slotIndex;
+    this.machineLeaseId = args.machineLeaseId;
+  }
+}
+
+/**
  * One entry in the coordinator snapshot's `slots` view. STEP 1 always reports an
  * empty list (no live per-run accounting yet); the shape is fixed now so the
  * runtime/observability surface is stable across the later steps that populate it.
@@ -185,7 +216,25 @@ export interface DispatchCoordinator extends CapacityProbe {
    * capacity-skipped issue re-dispatches without waiting out the poll interval.
    */
   onCapacityAvailable(cb: () => void): void;
-  readonly capabilities: { readonly perRunEndpoint: boolean };
+  readonly capabilities: { readonly perRunClaimEnforcement: boolean };
+  /**
+   * Read-only per-run liveness oracle the gateway re-checks on EVERY MCP request
+   * (injected into `@lorenz/mcp` from the composition root, the same seam as the
+   * per-run endpoint manager so the gateway depends on this interface, never on
+   * the coordinator). Returns `true` only while a live {@link RunSlot} exists for
+   * `(runKey, workerHost)` whose per-run endpoint was minted at exactly
+   * `generation`. Once the run settles, the machine is recycled, or the slot is
+   * superseded by a higher-generation re-acquire, it returns `false` so a
+   * leaked/stale Token B fails closed.
+   *
+   * The live-slot registry is the single source of truth the coordinator mutates
+   * (never a cached copy), read SYNCHRONOUSLY here. The `generation` argument is
+   * the backstop for that registry's own async settle/recycle window: even if a
+   * slot is momentarily still registered while tearing down, a recycle bumps the
+   * shared local-MCP-server generation, so a token stamped against the prior
+   * generation no longer matches and is denied.
+   */
+  isRunLive(runKey: string, workerHost: string, generation: number): boolean;
   /**
    * Reconciles the live pool (and the coordinator-owned settings) onto `next`.
    * Async ONLY for the injected `driverLoader` (out-of-tree driver modules are
@@ -316,7 +365,7 @@ function createRunSlot(args: {
  * past construction (the pool owns the live settings). The injected
  * `mcpEndpointManager` is the null passthrough in STEP 1, so every minted slot
  * carries `mcpEndpoint = null` and the coordinator advertises
- * `perRunEndpoint = false`.
+ * `perRunClaimEnforcement = false`.
  */
 export function createDispatchCoordinator(
   deps: CreateDispatchCoordinatorDeps,
@@ -339,16 +388,26 @@ export function createDispatchCoordinator(
   // races live slot teardown and strands those resources.
   const pendingRecycleFails = new Set<Promise<void>>();
 
-  // SYNCHRONOUS tunnel reservations held while an acquire is between the ceiling
-  // check and a successful registration. The ceiling check passes and increments
-  // this in the SAME JS tick (before any `await mcpEndpointManager.open`), so two
-  // concurrent acquires can never both slip past a maxConcurrentTunnels ceiling:
-  // the second sees the first's pending reservation. Each reservation is released
-  // exactly once - on open FAILURE, on a post-open guard rejection, or on slot
-  // settlement (via the slot's onSettled) - mirroring the worker pool's single-flight
-  // reservedProvisions counter. A negative count is impossible because every
-  // increment is paired with exactly one release.
-  let reservedTunnels = 0;
+  // SYNCHRONOUS per-HOST tunnel reservations held while an acquire is between the
+  // ceiling check and a successful registration, keyed by worker host. The ceiling
+  // check passes and increments the host's reservation count in the SAME JS tick
+  // (before any `await mcpEndpointManager.open`), so two concurrent acquires can
+  // never both slip past a maxConcurrentTunnels ceiling: the second sees the first's
+  // pending reservation. Per-HOST collapse (C7): co-resident runs on ONE host share
+  // ONE `ssh -R` tunnel, so the budget counts DISTINCT hosts - a host that already
+  // has a live tunnel (or reservation) consumes no additional budget for a second
+  // co-resident run. Each reservation is released exactly once - on open FAILURE, on
+  // a post-open guard rejection, or on slot settlement (via the slot's onSettled).
+  const reservedTunnelHosts = new Map<string, number>();
+  const reserveTunnelHost = (workerHost: string): void => {
+    reservedTunnelHosts.set(workerHost, (reservedTunnelHosts.get(workerHost) ?? 0) + 1);
+  };
+  const unreserveTunnelHost = (workerHost: string): void => {
+    const count = reservedTunnelHosts.get(workerHost);
+    if (count === undefined) return;
+    if (count <= 1) reservedTunnelHosts.delete(workerHost);
+    else reservedTunnelHosts.set(workerHost, count - 1);
+  };
 
   // The live settings the coordinator reads for the tunnel-exhaustion ceiling.
   // `reconcile` updates this in place so a config reload that raises/lowers the
@@ -357,21 +416,37 @@ export function createDispatchCoordinator(
   // this reference is only read for the coordinator-owned tunnel budget.
   let currentSettings: WorkerPoolSettings = deps.settings;
 
-  // Counts LIVE per-run tunnels: registered slots whose `mcpEndpoint` is non-null
-  // (a local / null-endpoint slot consumes no tunnel budget) PLUS the pending
-  // reservations held by in-flight acquires that have passed the ceiling check but
-  // not yet registered. Including the reservations is what closes the
+  // Counts LIVE per-HOST tunnels: the number of DISTINCT worker hosts that hold a
+  // live `ssh -R` reverse tunnel. A host is counted when it has a registered slot
+  // whose `mcpEndpoint` is non-null (a local / null-endpoint slot consumes no
+  // tunnel budget) OR a pending reservation held by an in-flight acquire that has
+  // passed the ceiling check but not yet registered. Per-HOST collapse (C7): two
+  // co-resident runs on ONE host SHARE one tunnel, so that host counts ONCE - the
+  // budget tracks actual tunnels, not slots. Including the reservations closes the
   // concurrent-acquire race: registration happens only AFTER `await
-  // mcpEndpointManager.open`, so without the reservation a second acquire would
-  // count zero live tunnels while the first is still mid-open and over-open the
-  // ceiling. The registered refcount stays exact via the open-on-bind /
+  // mcpEndpointManager.open`, so without the reservation a second acquire (on a
+  // NEW host) would count one fewer tunnel while the first is still mid-open and
+  // over-open the ceiling. The registered set stays exact via the open-on-bind /
   // close-on-settle lifecycle; the reservation covers the open-in-flight gap.
   const liveTunnelCount = (): number => {
-    let count = reservedTunnels;
+    const hosts = new Set<string>(reservedTunnelHosts.keys());
     for (const slot of slots.values()) {
-      if (slot.mcpEndpoint !== null) count += 1;
+      if (slot.mcpEndpoint !== null) hosts.add(slot.workerHost);
     }
-    return count;
+    return hosts.size;
+  };
+
+  // Whether `workerHost` ALREADY holds a live per-host tunnel (a registered
+  // non-null-endpoint slot on it, or a pending in-flight reservation for it). A
+  // co-resident acquire on such a host opens NO new tunnel, so it neither trips the
+  // ceiling nor takes an additional budget unit - the shared host tunnel is already
+  // counted.
+  const hostHasLiveTunnel = (workerHost: string): boolean => {
+    if ((reservedTunnelHosts.get(workerHost) ?? 0) > 0) return true;
+    for (const slot of slots.values()) {
+      if (slot.mcpEndpoint !== null && slot.workerHost === workerHost) return true;
+    }
+    return false;
   };
 
   // Recycle-vs-endpoint ordering invariant: the pool fires this INSIDE the per-worker
@@ -411,7 +486,9 @@ export function createDispatchCoordinator(
     });
   }
 
-  const capabilities = { perRunEndpoint: mcpEndpointManager.perRunEndpoint } as const;
+  const capabilities = {
+    perRunClaimEnforcement: mcpEndpointManager.perRunClaimEnforcement,
+  } as const;
 
   return {
     capabilities,
@@ -460,6 +537,39 @@ export function createDispatchCoordinator(
         }
       }
 
+      // C6 bypass closure: a CO-RESIDENCE run (`slotsPerMachine > 1`, per-run-claim
+      // enforcement on) that needs an MCP endpoint must NEVER land on a LOCAL (empty)
+      // worker host. The per-run manager routes an empty host through its null/local
+      // path, which mints NO Token B claim and keeps acp's settings-wide endpoint, so
+      // a co-resident local run would share one unscoped endpoint with its neighbours -
+      // the cross-run authority leak the startup gate prevents. The gate refuses
+      // co-residence without claim enforcement or with an external server, but a slot
+      // can still land on an empty host at acquire time; this is the runtime backstop.
+      // Checked AFTER lease-bind + collision but BEFORE the endpoint open / tunnel
+      // reservation so no unscoped endpoint is ever minted. The just-bound lease is
+      // settled HEALTHY (the worker is fine) and NO slot is registered; the runtime
+      // maps the throw to worker_pool_acquire_error. Single-tenant (slotsPerMachine<=1)
+      // and runs that consume no endpoint are unaffected - the local path stays
+      // byte-identical there.
+      const needsMcpEndpoint = req.needsMcpEndpoint ?? true;
+      if (
+        needsMcpEndpoint &&
+        mcpEndpointManager.perRunClaimEnforcement &&
+        currentSettings.slotsPerMachine > 1 &&
+        isLocalWorkerHost(acquired.lease.workerHost)
+      ) {
+        try {
+          await acquired.lease.release("healthy");
+        } catch {
+          // Swallow: the bypass refusal is the surfaced fault; the worker is healthy.
+        }
+        throw new LocalCoResidenceError({
+          issueId: req.issueId,
+          slotIndex: req.slotIndex,
+          machineLeaseId,
+        });
+      }
+
       // STEP 3 (T3c #1): tunnel-exhaustion ceiling. When `maxConcurrentTunnels` is
       // set, opening another per-run endpoint that would exceed it surfaces as a
       // TYPED `no_capacity` ('tunnel_exhausted'), NEVER an unhandled throw inside
@@ -474,7 +584,7 @@ export function createDispatchCoordinator(
       // single `worker_host_capacity` dispatch signal instead of seeing a fault.
       //
       // The ceiling check + the reservation are a SINGLE synchronous step (no
-      // `await` between `liveTunnelCount()` and `reservedTunnels += 1`): two
+      // `await` between `liveTunnelCount()` and `reserveTunnelHost(...)`): two
       // concurrent acquires therefore cannot both pass it, because the second's
       // count includes the first's pending reservation. The reservation is held
       // across the (awaited) open so the gap between check and registration cannot
@@ -483,20 +593,24 @@ export function createDispatchCoordinator(
       // finishes). Mirrors the worker pool's reservedProvisions single-flight.
       const runKey = runKeyFor(req.issueId, req.slotIndex);
       const tunnelCeiling = currentSettings.maxConcurrentTunnels;
-      // Whether THIS run actually consumes a per-run MCP endpoint. The Codex/appserver
+      // `needsMcpEndpoint` (resolved above the local-co-residence guard) is whether
+      // THIS run actually consumes a per-run MCP endpoint. The Codex/appserver
       // executor runs its dynamic tools IN-PROCESS and ignores the endpoint, so a
-      // run that needs none must SKIP the open AND the tunnel reservation/ceiling
-      // entirely (it would otherwise be SKIPPED by an open failure / port-forward
-      // restriction / maxConcurrentTunnels for an endpoint it never uses). Only
-      // ACP/Claude reads `/mcp` over the reverse tunnel. Defaults to `true`
-      // (the existing ACP behaviour) when a legacy caller omits the field.
-      const needsMcpEndpoint = req.needsMcpEndpoint ?? true;
+      // run that needs none SKIPS the open AND the tunnel reservation/ceiling entirely
+      // (it would otherwise be SKIPPED by an open failure / port-forward restriction /
+      // maxConcurrentTunnels for an endpoint it never uses). Only ACP/Claude reads
+      // `/mcp` over the reverse tunnel.
       const wouldOpenTunnel =
         needsMcpEndpoint &&
-        mcpEndpointManager.perRunEndpoint &&
+        mcpEndpointManager.perRunClaimEnforcement &&
         !isLocalWorkerHost(acquired.lease.workerHost);
+      // Per-HOST collapse (C7): a co-resident acquire on a host that ALREADY holds a
+      // live tunnel opens no NEW tunnel, so it is exempt from the ceiling AND takes
+      // no extra budget unit (the shared host tunnel is already counted). Only an
+      // acquire that would open a tunnel on a NEW host is gated/reserved.
+      const opensNewHostTunnel = wouldOpenTunnel && !hostHasLiveTunnel(acquired.lease.workerHost);
       let tunnelReserved = false;
-      if (wouldOpenTunnel && tunnelCeiling !== undefined) {
+      if (opensNewHostTunnel && tunnelCeiling !== undefined) {
         if (liveTunnelCount() >= tunnelCeiling) {
           // Settle the just-bound lease HEALTHY (best-effort; a settle hiccup must
           // not mask the capacity signal) and return the typed no_capacity reason.
@@ -507,8 +621,8 @@ export function createDispatchCoordinator(
           }
           return { status: "no_capacity", reason: "tunnel_exhausted" };
         }
-        // Take the reservation in the SAME JS tick the ceiling check passed.
-        reservedTunnels += 1;
+        // Take the per-host reservation in the SAME JS tick the ceiling check passed.
+        reserveTunnelHost(acquired.lease.workerHost);
         tunnelReserved = true;
       }
       // Releases this acquire's pending tunnel reservation exactly once (a no-op if
@@ -516,7 +630,7 @@ export function createDispatchCoordinator(
       const releaseReservation = (): void => {
         if (tunnelReserved) {
           tunnelReserved = false;
-          reservedTunnels -= 1;
+          unreserveTunnelHost(acquired.lease.workerHost);
         }
       };
 
@@ -646,6 +760,31 @@ export function createDispatchCoordinator(
 
     async hydrate(): Promise<void> {
       await pool.hydrate();
+    },
+
+    isRunLive(runKey: string, workerHost: string, generation: number): boolean {
+      // SYNCHRONOUS read of the live-slot registry the coordinator itself
+      // mutates (added on a successful lease-bind, removed on settle/recycle) -
+      // never a cached copy, so a run that has settled or whose machine was
+      // recycled is observed not-live immediately. A slot matches only when its
+      // runKey AND workerHost line up with the resolved Token B claim (the claim
+      // carries no self-reported identity the caller could spoof; both come from
+      // the server-side claim record). The generation must match the endpoint the
+      // live slot actually holds: a recycle bumps the shared local-MCP-server
+      // generation, so a re-acquired slot for the same runKey carries a strictly
+      // higher generation and a token stamped against the prior generation is
+      // denied even inside the registry's own async teardown window.
+      for (const slot of slots.values()) {
+        if (
+          slot.runKey === runKey &&
+          slot.workerHost === workerHost &&
+          slot.mcpEndpoint !== null &&
+          slot.mcpEndpoint.generation === generation
+        ) {
+          return true;
+        }
+      }
+      return false;
     },
 
     snapshot(): DispatchCoordinatorSnapshot {

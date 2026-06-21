@@ -7,13 +7,13 @@ import { checkSlotsPerMachineGate } from "../src/gate.js";
 
 // `checkSlotsPerMachineGate` is the PURE predicate behind the slots-per-machine
 // co-residence safety gate. It returns an operator-facing error message when the
-// settings would be unsafe (slotsPerMachine>1 without the per-run-endpoint
+// settings would be unsafe (slotsPerMachine>1 without the per-run-claim-enforcement
 // capability OR without the explicit co-residence opt-in) and `null` otherwise.
 // The same predicate drives BOTH the daemon startup gate (which throws) and the
 // runtime reload guard (which keeps last-good and emits workflow_reload_failed).
 
-const capable = { perRunEndpoint: true } as const;
-const incapable = { perRunEndpoint: false } as const;
+const capable = { perRunClaimEnforcement: true } as const;
+const incapable = { perRunClaimEnforcement: false } as const;
 
 function workerPoolSettings(
   workerPool: Record<string, unknown> | undefined,
@@ -31,7 +31,7 @@ function internallyDisabledPoolSettings(
   return { ...parsed, enabled: false };
 }
 
-test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the endpoint message", () => {
+test("gate predicate: slotsPerMachine>1 with perRunClaimEnforcement=false returns the claim-enforcement message", () => {
   const settings = workerPoolSettings({
     driver: "fake",
     max_in_flight: 2,
@@ -39,10 +39,10 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=false returns the en
   });
   const message = checkSlotsPerMachineGate(settings, incapable);
   assert.ok(message);
-  assert.match(message!, /per-run.*endpoint|perRunEndpoint/i);
+  assert.match(message!, /per-run scoped claims|perRunClaimEnforcement/i);
 });
 
-test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence absent returns the co-residence message", () => {
+test("gate predicate: slotsPerMachine>1 with perRunClaimEnforcement=true but coResidence absent returns the co-residence message", () => {
   const settings = workerPoolSettings({ driver: "fake", max_in_flight: 2 });
   assert.equal(settings?.coResidence, undefined);
   const message = checkSlotsPerMachineGate(settings, capable);
@@ -50,7 +50,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
   assert.match(message!, /co.?residence/i);
 });
 
-test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence=false returns the co-residence message", () => {
+test("gate predicate: slotsPerMachine>1 with perRunClaimEnforcement=true but coResidence=false returns the co-residence message", () => {
   const settings = workerPoolSettings({
     driver: "fake",
     max_in_flight: 2,
@@ -61,7 +61,7 @@ test("gate predicate: slotsPerMachine>1 with perRunEndpoint=true but coResidence
   assert.match(message!, /co.?residence/i);
 });
 
-test("gate predicate: slotsPerMachine>1 with perRunEndpoint AND coResidence returns null", () => {
+test("gate predicate: slotsPerMachine>1 with perRunClaimEnforcement AND coResidence returns null", () => {
   const settings = workerPoolSettings({
     driver: "fake",
     max_in_flight: 2,

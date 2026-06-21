@@ -1,7 +1,7 @@
 // STEP 1 (T1c): DispatchCoordinator 1:1 passthrough over WorkerPool.
 //
 // These tests pin the byte-identical-at-the-runtime-boundary contract: with the
-// default null McpEndpointManager (perRunEndpoint=false, mcpEndpoint=null), the
+// default null McpEndpointManager (perRunClaimEnforcement=false, mcpEndpoint=null), the
 // coordinator delegates every operation to the underlying WorkerPool with NO change
 // in observable behaviour. Concretely:
 //   - acquireRunSlot delegates to pool.acquire; a `leased` result mints a RunSlot
@@ -35,6 +35,7 @@ import { assert, settle } from "@lorenz/test-utils";
 import {
   createDispatchCoordinator,
   EndpointOpenError,
+  LocalCoResidenceError,
   RunSlotCollisionError,
 } from "../src/index.js";
 import { nullEndpointManager } from "../src/nullEndpointManager.js";
@@ -649,18 +650,18 @@ test("snapshot() returns the pool snapshot extended with an empty slots array (S
 });
 
 // ---------------------------------------------------------------------------
-// capabilities: perRunEndpoint mirrors the injected manager
+// capabilities: perRunClaimEnforcement mirrors the injected manager
 // ---------------------------------------------------------------------------
 
-test("capabilities.perRunEndpoint mirrors the injected manager (false for the null passthrough)", () => {
+test("capabilities.perRunClaimEnforcement mirrors the injected manager (false for the null passthrough)", () => {
   const pool = makeFakeWorkerPool();
   const coordinator = makeCoordinator(pool, nullEndpointManager);
-  assert.equal(coordinator.capabilities.perRunEndpoint, false);
+  assert.equal(coordinator.capabilities.perRunClaimEnforcement, false);
 });
 
-test("capabilities.perRunEndpoint reflects a manager advertising perRunEndpoint=true", () => {
+test("capabilities.perRunClaimEnforcement reflects a manager advertising perRunClaimEnforcement=true", () => {
   const perRunManager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<null> {
       return null;
     },
@@ -668,7 +669,7 @@ test("capabilities.perRunEndpoint reflects a manager advertising perRunEndpoint=
   };
   const pool = makeFakeWorkerPool();
   const coordinator = makeCoordinator(pool, perRunManager);
-  assert.equal(coordinator.capabilities.perRunEndpoint, true);
+  assert.equal(coordinator.capabilities.perRunClaimEnforcement, true);
 });
 
 // ---------------------------------------------------------------------------
@@ -679,11 +680,15 @@ test("capabilities.perRunEndpoint reflects a manager advertising perRunEndpoint=
 // owns this lease end-to-end (it never calls release() itself; it routes through
 // the manager), so the lease's own release records only that the MANAGER closed
 // it via the manager.release(lease) path.
-function makeFakeEndpoint(id: string): AgentMcpEndpointLease & { released: { count: number } } {
+function makeFakeEndpoint(
+  id: string,
+  generation = 1,
+): AgentMcpEndpointLease & { released: { count: number } } {
   const released = { count: 0 };
   return {
     url: `http://127.0.0.1:46000/mcp#${id}`,
     token: `tok-${id}`,
+    generation,
     acpServer: () => ({ type: "http", name: "lorenz_linear", url: "", headers: [] }),
     async release(): Promise<void> {
       released.count += 1;
@@ -707,7 +712,7 @@ function makeRecordingManager(
   return {
     openCalls,
     opened,
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(req): Promise<AgentMcpEndpointLease | null> {
       openCalls.push({ workerHost: req.workerHost, runKey: req.runKey });
       if (options.openThrows) {
@@ -782,6 +787,48 @@ test("open-after-bind: a per-run manager mints the endpoint and the slot carries
   assert.equal(manager.openCalls[0]?.workerHost, "ssh://host-7");
   assert.equal(manager.openCalls[0]?.runKey, "issue-1#3");
   assert.equal(result.slot.mcpEndpoint, manager.opened[0]);
+});
+
+test("isRunLive: true only for a live slot matching runKey + workerHost + endpoint generation", async () => {
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-7", workerHost: "ssh://host-7" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoordinator(pool, manager);
+
+  const result = await coordinator.acquireRunSlot({ ...acquireReq, slotIndex: 3 });
+  if (result.status !== "bound") throw new Error("expected bound");
+  const runKey = result.slot.runKey;
+  const generation = manager.opened[0]?.generation ?? -1;
+  assert.equal(runKey, "issue-1#3");
+  assert.equal(generation, 1);
+
+  // Exact (runKey, workerHost, generation) of the live slot => live.
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), true);
+  // Generation backstop: a token stamped against a different (prior/recycled)
+  // generation of the same slot is denied even while the slot is registered.
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation + 1), false);
+  // A self-reported runKey / workerHost that does not match the live slot is denied.
+  assert.equal(coordinator.isRunLive("issue-1#9", "ssh://host-7", generation), false);
+  assert.equal(coordinator.isRunLive(runKey, "ssh://other-host", generation), false);
+});
+
+test("isRunLive: false once the slot settles (run no longer live)", async () => {
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-7", workerHost: "ssh://host-7" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoordinator(pool, manager);
+
+  const result = await coordinator.acquireRunSlot({ ...acquireReq, slotIndex: 3 });
+  if (result.status !== "bound") throw new Error("expected bound");
+  const runKey = result.slot.runKey;
+  const generation = manager.opened[0]?.generation ?? -1;
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), true);
+
+  // After the slot settles it is deregistered, so a leaked Token B fails closed.
+  await result.slot.release("healthy");
+  assert.equal(coordinator.isRunLive(runKey, "ssh://host-7", generation), false);
 });
 
 test("close-before-settle: slot.release closes the endpoint BEFORE settling the lease", async () => {
@@ -930,7 +977,7 @@ test("drain awaits recycle-triggered per-run cleanup (endpoint release) before r
   // fails to AWAIT the recycle-triggered fail would return with the endpoint still
   // open (released.count === 0).
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<AgentMcpEndpointLease | null> {
       return endpoint;
     },
@@ -1041,8 +1088,10 @@ test("acquireRunSlot REJECTS a second (issueId, slotIndex) on the SAME machine (
 
 test("(issueId, slotIndex) uniqueness: runKey AND workspace-suffix uniqueness hold SIMULTANEOUSLY across co-resident slots", async () => {
   // Two DISTINCT slots of one issue co-residing on ONE worker (slotsPerMachine>1):
-  // distinct slotIndex => distinct runKey (per-run endpoint/tunnel key) AND distinct
-  // workspace slot suffix, so neither the tunnel nor the workspace is shared.
+  // distinct slotIndex => distinct runKey (the per-run CLAIM key - Token B is bound
+  // to it) AND distinct workspace slot suffix. The per-HOST reverse tunnel is now
+  // SHARED across the two co-resident slots (they are kept apart by their claim, not
+  // by a per-run port); the workspace dir stays distinct.
   const s0 = makeFakeLease({ leaseId: "g0", workerId: "worker-1", workerHost: "ssh://host-1" });
   const s1 = makeFakeLease({ leaseId: "g1", workerId: "worker-1", workerHost: "ssh://host-1" });
   const pool = makeScriptedWorkerPool([s0, s1]);
@@ -1053,9 +1102,9 @@ test("(issueId, slotIndex) uniqueness: runKey AND workspace-suffix uniqueness ho
   if (r0.status !== "bound" || r1.status !== "bound") throw new Error("expected bound");
 
   // runKey is the issue-scoped `${issueId}#${slotIndex}`: distinct per slot (the
-  // slotIndex differs), so the two co-resident slots get distinct per-run
-  // endpoint/tunnel keys; the workspace dir stays distinct via its own slotIndex
-  // suffix simultaneously.
+  // slotIndex differs), so the two co-resident slots get distinct per-run CLAIM
+  // keys (each binds its own Token B) while SHARING the one per-host tunnel; the
+  // workspace dir stays distinct via its own slotIndex suffix simultaneously.
   assert.equal(r0.slot.runKey, "issue-1#0");
   assert.equal(r1.slot.runKey, "issue-1#1");
   assert.ok(r0.slot.runKey !== r1.slot.runKey);
@@ -1069,10 +1118,11 @@ test("(issueId, slotIndex) uniqueness: runKey AND workspace-suffix uniqueness ho
 test("runKey is ISSUE-SCOPED: two DIFFERENT issues at slotIndex 0 co-resident on ONE machine get DISTINCT runKeys", async () => {
   // Codex HIGH #2: with slotsPerMachine>1, DIFFERENT issues can co-reside on ONE
   // workerHost. A bare `${slotIndex}` runKey would make both non-ensemble issues
-  // (slotIndex 0) key to "0", so `${workerHost}#${runKey}` collides ACROSS issues ->
-  // shared tunnel/port, broken per-run isolation. The runKey must be ISSUE-SCOPED
-  // (`${issueId}#${slotIndex}`) so co-resident runs of different issues get DISTINCT
-  // per-run endpoint/tunnel keys.
+  // (slotIndex 0) key to "0", so two co-resident runs would collide on ONE per-run
+  // CLAIM (`${issueId}#${slotIndex}`) -> Token B for one would authorize the other,
+  // broken per-run isolation. The runKey must be ISSUE-SCOPED so co-resident runs of
+  // different issues get DISTINCT per-run claim keys (the per-HOST tunnel is shared
+  // by design; the claim, not the port, is what isolates the runs).
   const order: string[] = [];
   const manager = makeRecordingManager(order);
   const a = makeFakeLease({ leaseId: "a", workerId: "worker-1", workerHost: "ssh://host-1" });
@@ -1090,8 +1140,8 @@ test("runKey is ISSUE-SCOPED: two DIFFERENT issues at slotIndex 0 co-resident on
   assert.ok(ra.slot.runKey !== rb.slot.runKey);
 
   // The per-run manager opened each endpoint with the DISTINCT issue-scoped runKey
-  // (the key that feeds `${workerHost}#${runKey}` in the tunnel pool), so the two
-  // co-resident runs never share a tunnel/port.
+  // (the key each run's Token B CLAIM is bound to), so the two co-resident runs hold
+  // DISTINCT claims even though they share the one per-host tunnel.
   assert.equal(manager.openCalls[0]?.runKey, "issue-a#0");
   assert.equal(manager.openCalls[1]?.runKey, "issue-b#0");
 });
@@ -1158,14 +1208,79 @@ test("collision rejection does NOT open an endpoint (the colliding endpoint is n
 });
 
 // ---------------------------------------------------------------------------
-// createPerRunEndpointManager: local-vs-remote routing + perRunEndpoint=true
+// C6 bypass closure: a co-residence run cannot land on a LOCAL (empty) host.
 // ---------------------------------------------------------------------------
 
-test("createPerRunEndpointManager advertises perRunEndpoint=true", () => {
+// A coordinator whose live settings declare co-residence (slotsPerMachine>1). The
+// empty-host guard only fires under co-residence + per-run-claim enforcement.
+function makeCoResidenceCoordinator(
+  pool: FakeWorkerPool,
+  manager: McpEndpointManager,
+): ReturnType<typeof createDispatchCoordinator> {
+  return createDispatchCoordinator({
+    pool,
+    mcpEndpointManager: manager,
+    settings: { slotsPerMachine: 2 } as unknown as WorkerPoolSettings,
+  });
+}
+
+test("acquireRunSlot REFUSES a co-residence run that binds to a LOCAL (empty) worker host", async () => {
+  // Under co-residence (slotsPerMachine>1) + per-run-claim enforcement, an empty
+  // worker host routes through the manager's null/local path, which mints NO Token B
+  // claim - so a co-resident local run would share an unscoped endpoint with its
+  // neighbours (the cross-run authority leak the startup gate prevents). The
+  // coordinator is the runtime backstop: it asserts-and-rejects before opening any
+  // endpoint, settling the just-bound lease HEALTHY and registering NO slot.
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-1", workerHost: "" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoResidenceCoordinator(pool, manager);
+
+  let thrown: unknown;
+  try {
+    await coordinator.acquireRunSlot(acquireReq);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof LocalCoResidenceError);
+
+  // No endpoint was opened (the refusal precedes the open) and the just-bound lease
+  // was settled HEALTHY (the worker itself is fine) - no slot is registered.
+  assert.equal(manager.openCalls.length, 0);
+  assert.equal(coordinator.snapshot().slots.length, 0);
+  assert.deepEqual(lease.settles, [{ kind: "release", arg: "healthy" }]);
+});
+
+test("acquireRunSlot ALLOWS a local-host run at slotsPerMachine=1 (the empty-host guard is co-residence-only)", async () => {
+  // The guard is gated on currentSettings.slotsPerMachine>1, NOT merely on the
+  // per-run-claim capability. With the SAME capable manager but the default
+  // slotsPerMachine=1 settings stub, a local (empty) host binds normally - the
+  // single-tenant local path is unaffected by the co-residence backstop.
+  const order: string[] = [];
+  const manager = makeRecordingManager(order);
+  const lease = makeFakeLease({ workerId: "worker-1", workerHost: "" });
+  const pool = makeFakeWorkerPool({ lease });
+  const coordinator = makeCoordinator(pool, manager);
+
+  const result = await coordinator.acquireRunSlot(acquireReq);
+  assert.equal(result.status, "bound");
+  if (result.status !== "bound") return;
+  assert.equal(result.slot.workerHost, "");
+  // No refusal: the slot is registered (the guard did not fire at slotsPerMachine=1).
+  assert.equal(coordinator.snapshot().slots.length, 1);
+  await result.slot.release("healthy");
+});
+
+// ---------------------------------------------------------------------------
+// createPerRunEndpointManager: local-vs-remote routing + perRunClaimEnforcement=true
+// ---------------------------------------------------------------------------
+
+test("createPerRunEndpointManager advertises perRunClaimEnforcement=true", () => {
   const manager = createPerRunEndpointManager({
     acquireForRun: async () => makeFakeEndpoint("x"),
   });
-  assert.equal(manager.perRunEndpoint, true);
+  assert.equal(manager.perRunClaimEnforcement, true);
 });
 
 test("createPerRunEndpointManager opens a per-run endpoint for an ssh-addressable host", async () => {
@@ -1217,7 +1332,7 @@ test("createPerRunEndpointManager.release closes the lease; release(null) is a n
 // --- STAGE 2: an empty-host (local-driver) lease through the CONCRETE per-run
 // manager binds with a NULL endpoint and NEVER mints a tunnel ----------------
 // The `local` worker driver yields an EMPTY workerHost. Routed end-to-end through
-// the coordinator wired with the REAL createPerRunEndpointManager (perRunEndpoint=true),
+// the coordinator wired with the REAL createPerRunEndpointManager (perRunClaimEnforcement=true),
 // the empty host must short-circuit open() to null so acp keeps its OWN endpoint:
 // acquireForRun (which would mint the per-run token + reverse tunnel) is NEVER called.
 // This is the coordinator-level twin of the apps/cli wiring proof: the byte-identical
@@ -1240,7 +1355,7 @@ test("local driver (empty host) through the concrete per-run manager binds a nul
 
   // The coordinator advertises the per-run capability (identical to a remote pool);
   // the local behaviour is purely the empty-host short-circuit, not a degraded cap.
-  assert.equal(coordinator.capabilities.perRunEndpoint, true);
+  assert.equal(coordinator.capabilities.perRunClaimEnforcement, true);
 
   const result = await coordinator.acquireRunSlot({ ...acquireReq, issueId: "issue-local", slotIndex: 0 });
   assert.equal(result.status, "bound");
@@ -1441,7 +1556,7 @@ test("tunnel ceiling: absent maxConcurrentTunnels never gates (no ceiling config
 });
 
 test("tunnel ceiling: the NULL passthrough never trips the ceiling (no per-run endpoint is minted)", async () => {
-  // perRunEndpoint=false mints no tunnels, so even an absurdly low ceiling never
+  // perRunClaimEnforcement=false mints no tunnels, so even an absurdly low ceiling never
   // gates - the default single-tenant path stays byte-identical.
   const pool = makeMultiWorkerPool(3);
   const coordinator = makeCoordinatorWithSettings(pool, nullEndpointManager, {
@@ -1468,7 +1583,7 @@ test("tunnel ceiling: a local-host slot (null endpoint) does NOT consume tunnel 
   // Wrap the recording manager so a local host mints no endpoint (mirrors the
   // concrete per-run manager's host routing).
   const routingManager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(req): Promise<AgentMcpEndpointLease | null> {
       if (req.workerHost.length === 0) return null;
       return manager.open(req);
@@ -1602,7 +1717,7 @@ test("settle: endpoint-release REJECTION still settles the WorkerLease, deregist
   // A per-run manager whose endpoint open succeeds but whose release REJECTS.
   const endpoint = makeFakeEndpoint("x");
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<AgentMcpEndpointLease | null> {
       order.push("open");
       return endpoint;
@@ -1643,7 +1758,7 @@ test("settle: endpoint-release REJECTION still settles the WorkerLease, deregist
 test("settle: endpoint-release REJECTION on a poison fail still fails the WorkerLease and deregisters (HIGH #1)", async () => {
   const order: string[] = [];
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<AgentMcpEndpointLease | null> {
       order.push("open");
       return makeFakeEndpoint("y");
@@ -1694,7 +1809,7 @@ function makeGatedManager(): McpEndpointManager & {
     releaseGate(): void {
       resolveGate();
     },
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<AgentMcpEndpointLease | null> {
       openCalls.count += 1;
       await gate;
@@ -1750,7 +1865,7 @@ function makeThrowingOpenManager(order: string[]): McpEndpointManager & {
   const openCalls = { count: 0 };
   return {
     openCalls,
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(): Promise<AgentMcpEndpointLease | null> {
       openCalls.count += 1;
       order.push("open:throw");
