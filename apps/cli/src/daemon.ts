@@ -12,6 +12,7 @@ import {
 import {
   defaultWorkerDriverRegistry,
   registerFakeWorkerDriver,
+  registerLocalWorkerDriver,
   type WorkerDriverRegistry,
 } from "@lorenz/worker-sdk";
 import type { DefaultSettingsOptions } from "@lorenz/config";
@@ -82,6 +83,7 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
 
   const workerDrivers = registries.workerDrivers ?? defaultWorkerDriverRegistry;
   registerFakeWorkerDriver({ workerDrivers });
+  registerLocalWorkerDriver({ workerDrivers });
   registerStaticSshWorkerDriver({ workerDrivers });
   registerDockerWorkerDriver({ workerDrivers });
 }
