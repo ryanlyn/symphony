@@ -22,10 +22,25 @@ beforeAll(() => {
   registerBuiltinBackends();
 });
 
-test("buildWorkerPool returns undefined when the pool is disabled (byte-identical path)", async () => {
+test("buildWorkerPool builds the DEFAULT enabled local pool for an absent worker_pool", async () => {
+  // RE-ANCHOR (feature E): parseConfig({}) no longer yields an undefined pool - the pool is the
+  // single dispatch path, defaulting to an enabled `local` pool at slotsPerMachine=1 with
+  // min=0/warm=0/max=1. buildWorkerPool now constructs it (nothing provisions eagerly because
+  // warm=0/min=0). The byte-identical disabled-path coverage moves to the explicit enabled:false
+  // test below.
   const settings = parseConfig({}, {});
-  assert.equal(settings.worker.workerPool, undefined);
-  assert.equal(await buildWorkerPool(settings, {}), undefined);
+  assert.equal(settings.worker.workerPool?.enabled, true);
+  assert.equal(settings.worker.workerPool?.driver, "local");
+  assert.equal(settings.worker.workerPool?.min, 0);
+  assert.equal(settings.worker.workerPool?.warm, 0);
+  const workerPool = await buildWorkerPool(settings, {});
+  assert.ok(workerPool);
+  const snapshot = workerPool!.snapshot();
+  assert.equal(snapshot.enabled, true);
+  assert.equal(snapshot.driver, "local");
+  // No worker is provisioned eagerly at min=0/warm=0: the local worker is minted on first acquire.
+  assert.equal(snapshot.workers.length, 0);
+  await workerPool!.drain({ deadlineMs: 1_000 });
 });
 
 test("buildWorkerPool returns undefined when worker_pool is present but enabled:false", async () => {
@@ -147,10 +162,14 @@ test("gate: default slotsPerMachine=1 always passes regardless of capability/opt
   assertSlotsPerMachineGate(enabledDefault, incapable);
   assertSlotsPerMachineGate(enabledDefault, capable);
 
-  // Absent worker_pool / absent coordinator: byte-identical no-op.
-  const noPool = gateSettings(undefined);
-  assert.equal(noPool.worker.workerPool, undefined);
-  assertSlotsPerMachineGate(noPool, undefined);
+  // RE-ANCHOR (feature E): an absent worker_pool now defaults to the enabled `local` pool at
+  // slotsPerMachine=1, so the gate is still inert (slotsPerMachine===1 never triggers). The
+  // default-path gate is byte-identical: it passes for both a present and an absent coordinator.
+  const defaultPool = gateSettings(undefined);
+  assert.equal(defaultPool.worker.workerPool?.driver, "local");
+  assert.equal(defaultPool.worker.workerPool?.slotsPerMachine, 1);
+  assertSlotsPerMachineGate(defaultPool, undefined);
+  assertSlotsPerMachineGate(defaultPool, capable);
 });
 
 // --- STAGE 2: an EXPLICIT enabled local pool is byte-identical at slotsPerMachine=1 ---
@@ -242,4 +261,40 @@ test("gate: an explicit local pool at slotsPerMachine=1 is inert for both capabl
   assert.equal(settings.worker.workerPool?.slotsPerMachine, 1);
   assertSlotsPerMachineGate(settings, incapable);
   assertSlotsPerMachineGate(settings, capable);
+});
+
+// --- STAGE 3: the IMPLICIT-DEFAULT local pool (absent worker_pool) is byte-identical ---
+// parseConfig({}) now defaults to the enabled local pool. Prove the DEFAULT (not just the
+// explicit) pool, built via buildDispatchCoordinator, reproduces local single-tenant dispatch:
+// an empty-host slot with a null MCP lease, and NO worker provisioned until first acquire.
+
+test("wiring: the IMPLICIT default local pool leases an empty-host slot and provisions nothing eagerly", async () => {
+  const settings = parseConfig({});
+  assert.equal(settings.worker.workerPool?.enabled, true);
+  assert.equal(settings.worker.workerPool?.driver, "local");
+  assert.equal(settings.worker.workerPool?.min, 0);
+  assert.equal(settings.worker.workerPool?.warm, 0);
+
+  const coordinator = await buildDispatchCoordinator(settings, {});
+  assert.ok(coordinator);
+  try {
+    // min=0/warm=0: nothing is provisioned before the first acquire.
+    assert.equal(coordinator!.snapshot().slots.length, 0);
+
+    const result = await coordinator!.acquireRunSlot({
+      issueId: "issue-default-local",
+      slotIndex: 0,
+      labels: [],
+      timeoutMs: 5_000,
+      settings,
+    });
+    assert.equal(result.status, "bound");
+    if (result.status !== "bound") return;
+    // Empty workerHost -> null MCP lease -> acp keeps its own in-process endpoint (no tunnel).
+    assert.equal(result.slot.workerHost, "");
+    assert.equal(result.slot.mcpEndpoint, null);
+    await result.slot.release("healthy");
+  } finally {
+    await coordinator!.drain({ deadlineMs: 1_000 });
+  }
 });

@@ -102,11 +102,16 @@ export function parseConfig(
   if (workerRaw.kind !== undefined && settings.worker.sshHosts.length > 0) {
     throw new Error("worker.kind cannot be combined with worker.ssh_hosts");
   }
-  const workerPool = parseWorkerPool(workerRaw.workerPool, workerRaw, parsed.workers ?? {});
-  if (workerPool) settings.worker.workerPool = workerPool;
-  if (workerPool?.enabled && settings.worker.sshHosts.length > 0) {
-    throw new Error("worker.worker_pool.enabled cannot be combined with worker.ssh_hosts");
-  }
+  // The pool is now the single dispatch path: an absent worker_pool defaults to an enabled
+  // local pool (the byte-identical successor to the old local single-tenant path), and a
+  // non-empty `ssh_hosts` is REPRESENTED by an enabled static-ssh pool rather than an
+  // exclusive legacy branch. Both are produced inside parseWorkerPool from `settings.worker.sshHosts`.
+  settings.worker.workerPool = parseWorkerPool(
+    workerRaw.workerPool,
+    workerRaw,
+    parsed.workers ?? {},
+    settings.worker.sshHosts,
+  );
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
@@ -427,11 +432,28 @@ function parseWorkerPool(
   raw: WorkerPoolRaw | null | undefined,
   workerRaw: NonNullable<WorkflowConfigRaw["worker"]>,
   workersRaw: WorkersRaw,
-): WorkerPoolSettings | undefined {
+  sshHosts: readonly string[],
+): WorkerPoolSettings {
   const selectedWorker = selectedWorkerProfile(workerRaw.kind, workersRaw);
-  if ((raw === undefined || raw === null) && selectedWorker === undefined) return undefined;
+
+  // No explicit worker_pool and no named worker profile: the pool defaults the dispatch path.
+  // - Non-empty ssh_hosts -> an enabled `static-ssh` pool that REPRESENTS the legacy static-host
+  //   model (one slot per machine, max bounded by the host count, hosts threaded through
+  //   driverOptions exactly as the static-ssh driver's readSshHosts expects).
+  // - Empty ssh_hosts -> an enabled `local` pool at min=0/warm=0/max=1 so NOTHING provisions
+  //   eagerly: byte-identical to the old local single-tenant path (empty workerHost -> no tunnel,
+  //   acp keeps its own in-process MCP endpoint).
+  if ((raw === undefined || raw === null) && selectedWorker === undefined) {
+    return defaultDispatchWorkerPool(sshHosts);
+  }
   if (selectedWorker !== undefined && raw?.driver !== undefined) {
     throw new Error("worker.kind cannot be combined with worker.worker_pool.driver");
+  }
+  // An explicit `worker_pool.driver` alongside non-empty ssh_hosts is ambiguous: the fold-in only
+  // auto-selects static-ssh when the operator named NO driver. A named driver wins, so reject the
+  // combination rather than silently dropping the hosts.
+  if (raw?.driver !== undefined && sshHosts.length > 0) {
+    throw new Error("worker.worker_pool.driver cannot be combined with worker.ssh_hosts");
   }
 
   const enabled = raw?.enabled ?? selectedWorker !== undefined;
@@ -485,6 +507,56 @@ function parseWorkerPool(
   // lives with the registered driver and runs at pool construction - the same
   // fail-loud startup point as an unregistered kind.
   return settings;
+}
+
+/**
+ * The implicit, default dispatch pool produced when no `worker_pool` and no `worker.kind` are
+ * configured. It is the byte-identical successor to the pre-pool local/static-host dispatch:
+ * - empty `sshHosts`  -> an enabled `local` pool, slotsPerMachine=1, min=0/warm=0/max=1 so the
+ *   reaper warms toward nothing and the single local worker is minted on first acquire. The local
+ *   driver yields an EMPTY workerHost, so the per-run endpoint manager mints no tunnel and acp
+ *   keeps its own in-process MCP endpoint - exactly the old no-hosts local path.
+ * - non-empty `sshHosts` -> an enabled `static-ssh` pool whose driverOptions carry the configured
+ *   hosts (the `ssh_hosts` spelling the driver's `readSshHosts` expects). `max` is the host count
+ *   and slotsPerMachine=1, so each host serves one slot - the static-host model, now pool-shaped.
+ *   The provision policy is round-robin first-free (static-ssh `provision`), NOT the legacy
+ *   least-loaded selection; the static-host inventory and per-host single-tenancy are preserved.
+ */
+function defaultDispatchWorkerPool(sshHosts: readonly string[]): WorkerPoolSettings {
+  if (sshHosts.length > 0) {
+    const input: WorkerPoolSettingsInput = {
+      enabled: true,
+      driver: "static-ssh",
+      min: 0,
+      max: sshHosts.length,
+      warm: 0,
+      slotsPerMachine: 1,
+      ttlMs: 3_600_000,
+      idleReapMs: 300_000,
+      acquireTimeoutMs: 30_000,
+      reapIntervalMs: 15_000,
+      staleHeartbeatMs: 600_000,
+      drainDeadlineMs: 30_000,
+      driverOptions: { ssh_hosts: [...sshHosts] },
+    };
+    return withDerivedMaxInFlight(input);
+  }
+
+  const input: WorkerPoolSettingsInput = {
+    enabled: true,
+    driver: "local",
+    min: 0,
+    max: 1,
+    warm: 0,
+    slotsPerMachine: 1,
+    ttlMs: 3_600_000,
+    idleReapMs: 300_000,
+    acquireTimeoutMs: 30_000,
+    reapIntervalMs: 15_000,
+    staleHeartbeatMs: 600_000,
+    drainDeadlineMs: 30_000,
+  };
+  return withDerivedMaxInFlight(input);
 }
 
 function selectedWorkerProfile(

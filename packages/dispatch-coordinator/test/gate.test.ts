@@ -82,9 +82,12 @@ test("gate predicate: default slotsPerMachine=1 always returns null regardless o
   assert.equal(checkSlotsPerMachineGate(enabledDefault, incapable), null);
   assert.equal(checkSlotsPerMachineGate(enabledDefault, capable), null);
 
-  // Absent worker_pool / absent capabilities: byte-identical no-op (null).
-  const noPool = workerPoolSettings(undefined);
-  assert.equal(noPool, undefined);
-  assert.equal(checkSlotsPerMachineGate(noPool, undefined), null);
-  assert.equal(checkSlotsPerMachineGate(noPool, capable), null);
+  // RE-ANCHOR (feature E): an absent worker_pool now defaults to the enabled `local` pool at
+  // slotsPerMachine=1, so the gate predicate still returns null (the gate only fires for
+  // slotsPerMachine>1). The default path stays a byte-identical no-op for any capability.
+  const defaultPool = workerPoolSettings(undefined);
+  assert.equal(defaultPool?.driver, "local");
+  assert.equal(defaultPool?.slotsPerMachine, 1);
+  assert.equal(checkSlotsPerMachineGate(defaultPool, undefined), null);
+  assert.equal(checkSlotsPerMachineGate(defaultPool, capable), null);
 });

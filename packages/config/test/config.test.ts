@@ -1470,17 +1470,30 @@ test("worker.worker_pool max_in_flight parses into slotsPerMachine with maxInFli
   assert.equal(clone?.maxInFlight, clone?.slotsPerMachine);
 });
 
-test("absent worker_pool leaves settings.worker.workerPool undefined", () => {
+test("absent worker_pool defaults to an enabled local pool (byte-identical local dispatch)", () => {
+  // RE-ANCHOR (feature E): the pool is now the single dispatch path. An absent worker_pool with no
+  // hosts no longer leaves workerPool undefined; it defaults to an enabled `local` pool at
+  // slotsPerMachine=1 with min=0/warm=0/max=1, which provisions nothing eagerly and routes runs
+  // through acp's own endpoint (empty workerHost) - byte-identical to the old local single-tenant path.
   const settings = parseConfig({ worker: { ssh_timeout_ms: 1_000 } });
-  assert.equal(settings.worker.workerPool, undefined);
-  assert.equal("workerPool" in settings.worker, false);
+  assert.ok(settings.worker.workerPool);
+  assert.equal(settings.worker.workerPool?.enabled, true);
+  assert.equal(settings.worker.workerPool?.driver, "local");
+  assert.equal(settings.worker.workerPool?.slotsPerMachine, 1);
+  assert.equal(settings.worker.workerPool?.min, 0);
+  assert.equal(settings.worker.workerPool?.warm, 0);
+  assert.equal(settings.worker.workerPool?.max, 1);
 });
 
-test("REGRESSION: absent worker_pool Settings clone deep-equals the issue-state clone", () => {
+test("REGRESSION: default local-pool Settings clone deep-equals the issue-state clone", () => {
+  // RE-ANCHOR (feature E): the byte-identity clone property is preserved over the NEW default pool.
+  // The deep-equal-clone shape still holds; the only change is workerPool is now present (the
+  // default local pool) rather than absent, so assert it is present-and-equal in the clone.
   const settings = parseConfig({});
   const clone = settingsForIssueState(settings, "Todo");
   assert.deepEqual(clone, settings);
-  assert.equal("workerPool" in clone.worker, false);
+  assert.ok("workerPool" in clone.worker);
+  assert.deepEqual(clone.worker.workerPool, settings.worker.workerPool);
 });
 
 test("worker.worker_pool driver is an open string resolved by the registry", () => {
@@ -1563,7 +1576,27 @@ test("worker.worker_pool rejects non-positive integers where positive is require
   );
 });
 
-test("worker.worker_pool enabled cannot be combined with non-empty ssh_hosts", () => {
+test("ssh_hosts folds into an enabled static-ssh pool (no throw)", () => {
+  // RE-ANCHOR (feature E): the old enabled&&ssh_hosts mutual-exclusivity throw is GONE - the pool
+  // now REPRESENTS the static-host case. A bare ssh_hosts (no named driver) yields an enabled
+  // `static-ssh` pool with the hosts threaded through driverOptions.ssh_hosts and max bounded by
+  // the host count. The legacy static-host behavior is preserved (per-host single tenancy); the
+  // provision policy is round-robin first-free (static-ssh driver), documented vs the old
+  // least-loaded selection.
+  const folded = parseConfig({
+    worker: { ssh_hosts: ["user@host-a:22", "user@host-b:22"] },
+  });
+  assert.deepEqual(folded.worker.sshHosts, ["user@host-a:22", "user@host-b:22"]);
+  assert.equal(folded.worker.workerPool?.enabled, true);
+  assert.equal(folded.worker.workerPool?.driver, "static-ssh");
+  assert.equal(folded.worker.workerPool?.slotsPerMachine, 1);
+  assert.equal(folded.worker.workerPool?.max, 2);
+  assert.deepEqual(folded.worker.workerPool?.driverOptions, {
+    ssh_hosts: ["user@host-a:22", "user@host-b:22"],
+  });
+
+  // An EXPLICIT worker_pool.driver alongside ssh_hosts is still rejected: the fold-in only
+  // auto-selects static-ssh when no driver was named, so a named driver + hosts is ambiguous.
   assert.throws(
     () =>
       parseConfig({
@@ -1572,17 +1605,8 @@ test("worker.worker_pool enabled cannot be combined with non-empty ssh_hosts", (
           worker_pool: { enabled: true, driver: "fake" },
         },
       }),
-    /worker\.worker_pool\.enabled cannot be combined with worker\.ssh_hosts/,
+    /worker\.worker_pool\.driver cannot be combined with worker\.ssh_hosts/,
   );
-
-  const ok = parseConfig({
-    worker: {
-      ssh_hosts: ["user@host:22"],
-      worker_pool: { enabled: false, driver: "fake" },
-    },
-  });
-  assert.deepEqual(ok.worker.sshHosts, ["user@host:22"]);
-  assert.equal(ok.worker.workerPool?.enabled, false);
 });
 
 test("worker.kind cannot be combined with non-empty ssh_hosts", () => {

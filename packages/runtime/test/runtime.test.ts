@@ -2869,12 +2869,19 @@ test("worker pool: reconcile is called on workflow reload with the next worker-p
   assert.equal(workerPool.reconcileCalls[0]?.max, 3);
 });
 
-test("worker pool: a reload that removes the worker_pool block drains the live pool (no leak)", async () => {
+test("worker pool: a reload that removes the worker_pool block reconciles to the default local pool", async () => {
+  // RE-ANCHOR (feature E): the pool is now the single dispatch path, so REMOVING the worker_pool
+  // block no longer disables the pool - it reconciles to the DEFAULT enabled `local` pool
+  // (min=0/warm=0/max=1), which provisions nothing eagerly. The "drain to zero on disable"
+  // coverage is preserved by the sibling test below that sets an EXPLICIT `enabled:false`; an
+  // operator must now disable explicitly rather than by deleting the block.
   const issue = issueFixture("issue-bp-remove", "MT-BP-REMOVE");
   const firstWorkflow = workerPoolWorkflowFixture();
-  // The reloaded workflow has NO worker.worker_pool block at all.
+  // The reloaded workflow has NO worker.worker_pool block: it now carries the default local pool.
   const secondWorkflow = workflowFixture("/tmp/lorenz-runtime-workerpool-removed");
-  assert.equal(secondWorkflow.settings.worker.workerPool, undefined);
+  assert.equal(secondWorkflow.settings.worker.workerPool?.enabled, true);
+  assert.equal(secondWorkflow.settings.worker.workerPool?.driver, "local");
+  assert.equal(secondWorkflow.settings.worker.workerPool?.warm, 0);
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
   let reloads = 0;
   const runtime = new LorenzRuntime(
@@ -2895,10 +2902,12 @@ test("worker pool: a reload that removes the worker_pool block drains the live p
   await runtime.pollOnce({ dryRun: true });
 
   assert.equal(reloads, 1);
-  // Removing the block must still reconcile the live pool to a disabled-equivalent
-  // so it drains to zero instead of leaking its (paid) workers.
+  // The reload reconciles the live pool to the new default local pool: still enabled, but
+  // warm=0/min=0 so it holds no idle (paid) workers and the fake pool reconciles exactly once.
   assert.equal(workerPool.reconcileCalls.length, 1);
-  assert.equal(workerPool.reconcileCalls[0]?.enabled, false);
+  assert.equal(workerPool.reconcileCalls[0]?.enabled, true);
+  assert.equal(workerPool.reconcileCalls[0]?.driver, "local");
+  assert.equal(workerPool.reconcileCalls[0]?.warm, 0);
 });
 
 test("worker pool: a reload that disables the worker_pool block drains the live pool (no leak)", async () => {
