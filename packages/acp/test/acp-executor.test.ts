@@ -1032,6 +1032,7 @@ async function expectRejectsWithin(
         Promise.race([
           promise,
           new Promise((_, reject) => {
+            // eslint-disable-next-line no-restricted-syntax -- bounded failure deadline for a rejection assertion (cleared in the finally below), not a wall-clock sleep that gates an assertion.
             timeout = setTimeout(
               () => reject(new Error(`promise did not reject within ${timeoutMs}ms`)),
               timeoutMs,
