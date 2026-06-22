@@ -2,13 +2,13 @@
 
 ## Status
 
-Exploration. The current CLI already runs a daemon-shaped foreground process: it loads a
+Exploration. The CLI runs a daemon-shaped foreground process: it loads a
 workflow, constructs `LorenzRuntime`, owns the dispatch coordinator, starts the
 observability server, renders the TUI when attached to a terminal, and drains resources on
 shutdown. This document describes how to turn that foreground process into a durable
 same-host service without moving scheduler I/O into `@lorenz/orchestrator`.
 
-## Current Shape
+## Runtime Shape
 
 `apps/cli/src/main.ts` is the composition root. `runDaemon()` loads and validates the
 workflow, configures logging, builds a dispatch coordinator, constructs `TraceEmitter`,
@@ -34,7 +34,7 @@ surface for daemon clients.
 ## Goals
 
 - Make one long-lived same-host owner responsible for polling, dispatch, runtime history,
-  worker pool lifecycle, trace emission, issue-store writes, and future durable claims.
+  worker pool lifecycle, trace emission, issue-store writes, and claim-store ownership.
 - Allow multiple local clients to observe or control that owner without each starting a
   second scheduler.
 - Support crash recovery once a durable claim store exists, including retry state and
@@ -56,7 +56,7 @@ surface for daemon clients.
 
 ### Option A: Managed Foreground Daemon
 
-Keep the current `runDaemon()` process mostly intact and document how launchd, systemd,
+Keep the `runDaemon()` process mostly intact and document how launchd, systemd,
 or a process supervisor should run it.
 
 Complexity: low.
@@ -64,7 +64,7 @@ Complexity: low.
 Benefits:
 
 - Minimal code movement.
-- Reuses current shutdown, drain, dashboard, TUI-disabled, and signal behavior.
+- Reuses shutdown, drain, dashboard, TUI-disabled, and signal behavior.
 - Gives operators a stable service process quickly.
 
 Tradeoffs:
@@ -78,7 +78,7 @@ Best use: immediate operational hardening, not the final architecture.
 
 ### Option B: Local Singleton Daemon With Control Socket
 
-Add a same-host singleton lock and local control endpoint around the current runtime. The
+Add a same-host singleton lock and local control endpoint around the runtime. The
 daemon owns the runtime. CLI commands become clients when the daemon is already running.
 
 Complexity: medium.
@@ -88,10 +88,10 @@ Benefits:
 - Prevents accidental same-workflow multi-instance dispatch.
 - Gives `lorenz runs`, refresh, status, shutdown, and reload commands one stable owner.
 - Can reuse the existing HTTP server or add a Unix domain socket for local-only control.
-- Establishes daemon identity and heartbeat before durable persistence lands.
+- Establishes daemon identity and heartbeat independent of durable persistence.
 - Establishes a `LeadershipStore` boundary so the initial local-file implementation can
-  later be replaced by a Turso/SQLite row, Postgres advisory lock, Kubernetes Lease, or
-  another deployment-native provider.
+  be backed by a Turso/SQLite row, Postgres advisory lock, Kubernetes Lease, or another
+  deployment-native provider.
 
 Tradeoffs:
 
@@ -103,7 +103,7 @@ Tradeoffs:
 - File-based leadership is same-host only. It prevents duplicate local schedulers, but it
   is not a distributed election primitive for multiple pods.
 
-Best use: first real daemon milestone.
+Best use: local daemon ownership with attachable clients.
 
 ### Option C: Daemon Package Plus Thin CLI Clients
 
@@ -116,10 +116,10 @@ Complexity: medium-high.
 Benefits:
 
 - Cleanly separates process ownership from command parsing.
-- Makes the future SQLite claim store a daemon-owned dependency, not a CLI detail.
+- Makes durable claim stores daemon-owned dependencies, not CLI details.
 - Gives tests a reusable daemon harness that can start, attach, reload, and stop.
-- Reduces pressure on `apps/cli/src/main.ts`, which currently owns composition,
-  lifecycle, client behavior, and TUI behavior in one path.
+- Reduces pressure on `apps/cli/src/main.ts`, which owns composition, lifecycle, client
+  behavior, and TUI behavior in one path.
 
 Tradeoffs:
 
@@ -164,12 +164,12 @@ Benefits:
 
 Tradeoffs:
 
-- Too large for the current same-host problem.
+- Too large for same-host singleton ownership.
 - Requires new deployment, auth, schema migration, and failure-mode design.
 - Risks turning a local automation tool into infrastructure before the local daemon
   contract is understood.
 
-Best use: future scale-out, not the next step.
+Best use: distributed scale-out after the local daemon contract is proven.
 
 ## Recommended Direction
 
@@ -192,8 +192,8 @@ Build Option B first, with boundaries that do not block Option C.
 5. Expose daemon status in `/api/v1/state` or a dedicated `/api/v1/daemon` route:
    daemon id, pid, started_at, heartbeat_at, workflow path, lock path, control endpoint,
    claim-store status, last reload result, and worker-pool drain status.
-6. Keep the in-memory claim store as the default. When the durable claim store lands, the
-   daemon should own store construction and pass the store into `Orchestrator`.
+6. Keep the in-memory claim store as the default. Durable claim-store construction belongs
+   in the daemon, which passes the selected store into `Orchestrator`.
 7. Split into a daemon package only after the control and singleton behavior are stable.
    The package split should be mechanical: move lifecycle ownership out of `main.ts`,
    not redesign dispatch.
@@ -211,7 +211,7 @@ When the claim store remains in memory:
 - observability can still report that the active store has no crash-recovery or
   cross-process capabilities.
 
-When a SQLite claim store is introduced:
+When a durable claim store is configured:
 
 - the daemon should open the database with WAL, a busy timeout, and explicit
   transactions around claim-store mutations;
@@ -322,7 +322,7 @@ horizontally through worker pools and durable claims. Second, shard leadership b
 route, tenant, or tracker project so multiple leaders own disjoint scopes. A fully
 leaderless scheduler would need compare-and-swap claim transactions on every poll result
 and careful tracker-rate coordination; it is possible, but it is a larger architecture than
-the same-host daemon milestone.
+the local daemon ownership model.
 
 ## Testing Plan
 
@@ -331,7 +331,7 @@ the same-host daemon milestone.
 - Integration-test two CLI starts for the same workflow: first owns, second attaches or
   fails without polling.
 - Integration-test refresh and stop through the local control endpoint.
-- With a future durable store, add kill-and-restart tests that prove retry attempts are
+- With a durable store, add kill-and-restart tests that prove retry attempts are
   hydrated, abandoned active claims are expired, and no duplicate claim is dispatched.
 - Keep existing shutdown tests green: TUI unmount, signal handling, server stop, issue
   store close, and worker-pool drain.
@@ -355,5 +355,5 @@ the same-host daemon milestone.
 2. Add singleton lock and attach-or-fail startup behavior.
 3. Add local control client plumbing for status, refresh, runs, and stop.
 4. Convert TUI/dashboard attachment to observe an existing daemon when present.
-5. Introduce durable claim-store construction in the daemon once the store exists.
+5. Introduce durable claim-store construction in the daemon behind the store interface.
 6. Package service-manager integration after local daemon semantics are stable.

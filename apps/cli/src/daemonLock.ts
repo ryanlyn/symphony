@@ -5,6 +5,9 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { isOneOf, isRecord } from "@lorenz/domain";
+import { createMutex, type Mutex } from "@lorenz/worker-pool";
+
 import type {
   LeadershipAcquireResult,
   LeadershipEndpoint,
@@ -17,7 +20,10 @@ import type {
 /** @beta */
 export const DAEMON_LOCK_VERSION = 1;
 const MUTATION_LOCK_RETRY_MS = 10;
+const MUTATION_LOCK_MAX_RETRY_MS = 250;
 const MUTATION_LOCK_STALE_MS = 30_000;
+const MUTATION_LOCK_TIMEOUT_MS = 120_000;
+const DAEMON_ENDPOINT_KINDS = ["http", "socket"] as const;
 
 /** @beta */
 export type DaemonEndpoint = LeadershipEndpoint;
@@ -52,7 +58,7 @@ export type AcquireDaemonLockResult =
   | { status: "acquired"; lock: DaemonLock }
   | { status: "conflict"; record: DaemonLockRecord | null; stale: boolean };
 
-export type AcquireLocalFileLeadershipResult = LeadershipAcquireResult<
+export type AcquireLocalFileDaemonLeadershipResult = LeadershipAcquireResult<
   DaemonLock,
   DaemonLockRecord
 >;
@@ -78,7 +84,7 @@ export function daemonLockPath(workspaceRoot: string, workflowPath: string): str
 export async function acquireDaemonLock(
   options: AcquireDaemonLockOptions,
 ): Promise<AcquireDaemonLockResult> {
-  const result = await new LocalFileLeadershipStore().acquire(options);
+  const result = await new LocalFileDaemonLeadershipStore().acquire(options);
   return result.status === "acquired" ? { status: "acquired", lock: result.lease } : result;
 }
 
@@ -104,7 +110,7 @@ export function daemonLockIsStale(
 
 /** @beta */
 export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
-  private operationQueue: Promise<void> = Promise.resolve();
+  private readonly operationMutex: Mutex = createMutex();
 
   constructor(
     readonly lockPath: string,
@@ -116,7 +122,7 @@ export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
   }
 
   async heartbeat(now = new Date()): Promise<DaemonLockRecord> {
-    return this.enqueueOperation(async () => {
+    return this.operationMutex.runExclusive(async () => {
       return withDaemonLockMutation(this.lockPath, async () => {
         const current = await readDaemonLock(this.lockPath);
         if (!current || current.ownerId !== this.record.ownerId) {
@@ -130,7 +136,7 @@ export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
   }
 
   async release(): Promise<boolean> {
-    return this.enqueueOperation(async () => {
+    return this.operationMutex.runExclusive(async () => {
       return withDaemonLockMutation(this.lockPath, async () => {
         const current = await readDaemonLock(this.lockPath);
         if (!current || current.ownerId !== this.record.ownerId) return false;
@@ -139,19 +145,10 @@ export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
       });
     });
   }
-
-  private async enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.operationQueue.then(operation, operation);
-    this.operationQueue = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
 }
 
 /** @beta */
-export class LocalFileLeadershipStore implements LeadershipStore<
+export class LocalFileDaemonLeadershipStore implements LeadershipStore<
   AcquireDaemonLockOptions,
   string,
   DaemonLockRecord,
@@ -159,7 +156,9 @@ export class LocalFileLeadershipStore implements LeadershipStore<
 > {
   readonly kind = "local-file";
 
-  async acquire(options: AcquireDaemonLockOptions): Promise<AcquireLocalFileLeadershipResult> {
+  async acquire(
+    options: AcquireDaemonLockOptions,
+  ): Promise<AcquireLocalFileDaemonLeadershipResult> {
     const now = options.now ?? new Date();
     const record = daemonLockRecord(options.lockPath, options.identity, options.endpoint, now);
     await fs.mkdir(path.dirname(options.lockPath), { recursive: true, mode: 0o700 });
@@ -250,7 +249,7 @@ function parseDaemonLockRecord(raw: string, lockPath: string): DaemonLockRecord 
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (!isRecord(parsed)) return null;
 
   const record = parsed as Partial<DaemonLockRecord>;
   if (
@@ -262,9 +261,9 @@ function parseDaemonLockRecord(raw: string, lockPath: string): DaemonLockRecord 
     typeof record.workflowPath !== "string" ||
     typeof record.workspaceRoot !== "string" ||
     typeof record.heartbeatAt !== "string" ||
-    !record.endpoint ||
-    typeof record.endpoint !== "object" ||
-    (record.endpoint.kind !== "http" && record.endpoint.kind !== "socket") ||
+    !isRecord(record.endpoint) ||
+    typeof record.endpoint.kind !== "string" ||
+    !isOneOf(record.endpoint.kind, DAEMON_ENDPOINT_KINDS) ||
     typeof record.endpoint.address !== "string"
   ) {
     return null;
@@ -303,12 +302,19 @@ async function withDaemonLockMutation<T>(
 ): Promise<T> {
   const mutationPath = `${lockPath}.mutation`;
   const token = randomUUID();
+  const startedAt = Date.now();
+  let retryDelayMs = MUTATION_LOCK_RETRY_MS;
   await fs.mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   while (!(await tryAcquireMutationLock(mutationPath, token))) {
     if (await removeStaleMutationLock(mutationPath)) {
+      retryDelayMs = MUTATION_LOCK_RETRY_MS;
       continue;
     }
-    await sleep(MUTATION_LOCK_RETRY_MS);
+    if (Date.now() - startedAt > MUTATION_LOCK_TIMEOUT_MS) {
+      throw new Error("daemon_lock_mutation_timeout");
+    }
+    await sleep(retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, MUTATION_LOCK_MAX_RETRY_MS);
   }
   try {
     return await operation();
@@ -347,8 +353,7 @@ async function removeMalformedMutationLockIfStale(
     const stat = await fs.stat(mutationPath);
     if (now.getTime() - stat.mtimeMs <= MUTATION_LOCK_STALE_MS) return false;
     if (await readMutationLock(mutationPath)) return false;
-    await fs.rm(mutationPath, { force: true });
-    return true;
+    throw new Error("daemon_lock_mutation_guard_malformed");
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return true;
     throw error;
@@ -367,7 +372,7 @@ async function readMutationLock(
   try {
     const raw = await fs.readFile(mutationPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    if (!isRecord(parsed)) return null;
     const record = parsed as Partial<{ token: string; createdAt: string }>;
     if (typeof record.token !== "string" || typeof record.createdAt !== "string") return null;
     return { token: record.token, createdAt: record.createdAt };

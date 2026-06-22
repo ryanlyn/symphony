@@ -10,7 +10,7 @@ import {
   createDaemonIdentity,
   daemonLockIsStale,
   daemonLockPath,
-  LocalFileLeadershipStore,
+  LocalFileDaemonLeadershipStore,
   readDaemonLock,
 } from "../src/daemonLock.js";
 import { daemonStatusPayload } from "../src/daemonStatus.js";
@@ -91,12 +91,12 @@ test("daemon heartbeat updates only the owning lock", async () => {
   }
 });
 
-test("local file leadership store exposes generic lease operations", async () => {
+test("local file daemon leadership store exposes lease operations", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "lorenz-leadership-store-"));
   try {
     const workflowPath = path.join(root, "WORKFLOW.md");
     const lockPath = daemonLockPath(root, workflowPath);
-    const store = new LocalFileLeadershipStore();
+    const store = new LocalFileDaemonLeadershipStore();
     const acquired = await store.acquire({
       lockPath,
       identity: createDaemonIdentity({

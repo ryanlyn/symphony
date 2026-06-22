@@ -1,4 +1,4 @@
-import { daemonLockIsStale, type DaemonLockRecord } from "./daemonLock.js";
+import { daemonLockIsStale, type DaemonEndpoint, type DaemonLockRecord } from "./daemonLock.js";
 
 export interface DaemonStatusPayload {
   owner_id: string;
@@ -8,10 +8,7 @@ export interface DaemonStatusPayload {
   workflow_path: string;
   workspace_root: string;
   lock_path: string;
-  endpoint: {
-    kind: "http" | "socket";
-    address: string;
-  };
+  endpoint: DaemonEndpoint;
   heartbeat_at: string;
   heartbeat_age_ms: number | null;
   stale: boolean;
