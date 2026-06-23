@@ -19,7 +19,7 @@ export const flags = defineFlags({
   legacy_timeout: flag.int({
     default: 30000,
     description: "Deprecated request timeout.",
-    deprecation: { replacement: "timeout_ms", detail: "Express the value in milliseconds." },
+    deprecation: { detail: "Express the value in milliseconds." },
   }),
 });
 
@@ -43,7 +43,7 @@ export const features = defineFeatures(flags, {
     default: false,
     description: "Deprecated feature with no preset.",
     preset: {},
-    deprecation: { replacement: "fast_mode" },
+    deprecation: {},
   }),
 });
 

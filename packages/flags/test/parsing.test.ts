@@ -87,7 +87,7 @@ test("an explicitly-set deprecated flag warns once per process", () => {
   assert.equal(first.messages.length, 1);
   assert.match(
     first.messages[0] ?? "",
-    /`legacy_timeout` is deprecated; use `timeout_ms` instead\. Express the value in milliseconds\./,
+    /`legacy_timeout` is deprecated\. Express the value in milliseconds\./,
   );
 
   const second = capture();
@@ -105,7 +105,7 @@ test("a deprecated feature warns when explicitly enabled", () => {
   const captured = capture();
   resolveFlags(manifest, withCli(flagInputsFromCli(manifest, [], ["legacy"])), captured);
   assert.equal(captured.messages.length, 1);
-  assert.match(captured.messages[0] ?? "", /`legacy` is deprecated; use `fast_mode` instead\./);
+  assert.match(captured.messages[0] ?? "", /`legacy` is deprecated\./);
 });
 
 test("a deprecated key set to an invalid value does not consume its warning slot", () => {

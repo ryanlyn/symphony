@@ -4,9 +4,8 @@ import type { z } from "zod";
 // modules (manifest, errors, resolve, ...) form an acyclic graph and never trip the `no-circular`
 // architecture rule.
 
-/** Per-key deprecation fact. `replacement` is optional: a flag may be retired with no successor. */
+/** Per-key deprecation marker. `detail` adds optional guidance to the warning. */
 export interface FlagDeprecation {
-  readonly replacement?: string | undefined;
   readonly detail?: string | undefined;
 }
 

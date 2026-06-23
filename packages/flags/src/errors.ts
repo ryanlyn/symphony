@@ -28,7 +28,7 @@ export class FlagIssueCollector {
   }
 }
 
-export function formatFlagIssues(issues: readonly FlagIssue[]): string {
+function formatFlagIssues(issues: readonly FlagIssue[]): string {
   const header =
     issues.length === 1 ? "lorenz flags: 1 problem:" : `lorenz flags: ${issues.length} problems:`;
   return `${header}\n${issues.map((issue) => `  - ${issue.message}`).join("\n")}`;

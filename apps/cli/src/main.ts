@@ -50,7 +50,12 @@ import {
   runtimeAdapters,
   runtimeDefaultSettingsOptions,
 } from "./daemon.js";
-import { accumulateOption, renderFlagDiagnostics, resolveAppFlags } from "./flags-manifest.js";
+import {
+  accumulateOption,
+  getFlags,
+  renderFlagDiagnostics,
+  resolveAppFlags,
+} from "./flags-manifest.js";
 
 export interface CliOptions {
   workflowPath: string | null;
@@ -205,8 +210,9 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       { warn: (message) => process.stderr.write(`warning: ${message}\n`) },
     );
     setDefaultFlags(flags);
-    if (flags.get("diagnostics.log_flag_resolution")) {
-      process.stderr.write(renderFlagDiagnostics(flags));
+    // Read back through the installed typed accessor, the same path engine code uses.
+    if (getFlags().get("diagnostics.log_flag_resolution")) {
+      process.stderr.write(renderFlagDiagnostics(getFlags()));
     }
     await configureLogFile(workflow.settings.logging.logFile);
 

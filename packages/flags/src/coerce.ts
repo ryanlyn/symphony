@@ -9,7 +9,7 @@ import { z } from "zod";
 const DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
 /** A finite number, or a strictly-decimal numeric string (env/CLI string inputs). */
-export const numericInput: z.ZodType<number, string | number> = z.union([
+const numericInput: z.ZodType<number, string | number> = z.union([
   z.number().refine(Number.isFinite, { message: "must be a finite number" }),
   z
     .string()

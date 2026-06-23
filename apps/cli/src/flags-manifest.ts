@@ -47,13 +47,13 @@ const features = defineFeatures(flags, {
   }),
 });
 
-export const appManifest: FlagManifest<typeof flags, typeof features> = { flags, features };
+const appManifest: FlagManifest<typeof flags, typeof features> = { flags, features };
 
 // Fail fast in CI if the manifest is internally inconsistent (bad default / bad preset).
 validateManifest(appManifest);
 
-export type AppFlags = typeof flags;
-export type AppFeatures = typeof features;
+type AppFlags = typeof flags;
+type AppFeatures = typeof features;
 export type AppFlagsSnapshot = FlagsSnapshot<AppFlags, AppFeatures>;
 type AppFlagKey = FlagKeyOf<AppFlags>;
 type AppFeatureKey = FeatureKeyOf<AppFeatures>;

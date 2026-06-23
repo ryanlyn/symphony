@@ -15,7 +15,7 @@ export function flagEnvName(key: string): string {
   return `${FLAG_PREFIX}${encodeKey(key)}`;
 }
 
-export function featureEnvName(name: string): string {
+function featureEnvName(name: string): string {
   return `${FEATURE_PREFIX}${encodeKey(name)}`;
 }
 

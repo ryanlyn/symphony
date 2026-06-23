@@ -1,12 +1,7 @@
 import type { FlagDeprecation, FlagManifest } from "./types.js";
 
-// Mirrors `@lorenz/config`'s `formatConfigDeprecation` in the replacement case (identical wording),
-// and extends it with a no-successor "retirement" variant for flags that are simply removed.
-
-export function formatFlagDeprecation(key: string, deprecation: FlagDeprecation): string {
-  const base = deprecation.replacement
-    ? `\`${key}\` is deprecated; use \`${deprecation.replacement}\` instead.`
-    : `\`${key}\` is deprecated and will be removed.`;
+function formatFlagDeprecation(key: string, deprecation: FlagDeprecation): string {
+  const base = `\`${key}\` is deprecated.`;
   return deprecation.detail ? `${base} ${deprecation.detail}` : base;
 }
 
