@@ -1,4 +1,5 @@
 import type {
+  RuntimeDaemonStatus,
   RuntimeRunHistoryEntry,
   RuntimeRunningEntry,
   RuntimeSnapshot,
@@ -76,6 +77,21 @@ export interface ClaimStorePayload {
   last_checkpoint_at: string | null;
 }
 
+export interface DaemonPayload {
+  owner_id: string;
+  pid: number;
+  hostname: string;
+  started_at: string;
+  workflow_path: string;
+  workspace_root: string;
+  lock_path: string;
+  endpoint: { kind: "http" | "socket"; address: string };
+  heartbeat_at: string;
+  heartbeat_age_ms: number | null;
+  stale: boolean;
+  leadership_store_kind: string;
+}
+
 export interface OpsStatePayload {
   generated_at: string;
   counts: { running: number; retrying: number; blocked: number };
@@ -86,6 +102,7 @@ export interface OpsStatePayload {
   usage_totals: UsageTotalsPayload;
   rate_limits: unknown;
   claim_store: ClaimStorePayload | null;
+  daemon: DaemonPayload | null;
 }
 
 type RunsPayloadResult =
@@ -116,6 +133,25 @@ export function statePayload(snapshot: RuntimeSnapshot, generatedAt = nowIso()):
     usage_totals: usagePayload(snapshot.usageTotals),
     rate_limits: snapshot.rateLimits,
     claim_store: claimStorePayload(snapshot.claimStore),
+    daemon: daemonPayload(snapshot.daemon),
+  };
+}
+
+export function daemonPayload(snapshot: RuntimeDaemonStatus | undefined): DaemonPayload | null {
+  if (!snapshot) return null;
+  return {
+    owner_id: snapshot.ownerId,
+    pid: snapshot.pid,
+    hostname: snapshot.hostname,
+    started_at: snapshot.startedAt,
+    workflow_path: snapshot.workflowPath,
+    workspace_root: snapshot.workspaceRoot,
+    lock_path: snapshot.lockPath,
+    endpoint: { ...snapshot.endpoint },
+    heartbeat_at: snapshot.heartbeatAt,
+    heartbeat_age_ms: snapshot.heartbeatAgeMs,
+    stale: snapshot.stale,
+    leadership_store_kind: snapshot.leadershipStoreKind,
   };
 }
 

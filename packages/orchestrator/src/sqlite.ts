@@ -5,6 +5,8 @@ import Database from "better-sqlite3";
 
 import type { ClaimStoreBackend, ClaimStoreCheckpoint } from "./claimStore.js";
 
+export const CLAIM_STORE_SCHEMA_VERSION = 1;
+
 export interface SqliteClaimStoreBackendOptions {
   busyTimeoutMs?: number | undefined;
   maxEventRows?: number | undefined;
@@ -40,6 +42,10 @@ export class SqliteClaimStoreBackend implements ClaimStoreBackend {
     this.db.pragma(`busy_timeout = ${options.busyTimeoutMs ?? 5000}`);
     this.db.pragma("foreign_keys = ON");
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS claim_store_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS claim_store_snapshot (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         ownerId TEXT NOT NULL,
@@ -60,6 +66,7 @@ export class SqliteClaimStoreBackend implements ClaimStoreBackend {
         heartbeatAt TEXT NOT NULL
       );
     `);
+    this.verifySchemaVersion();
     this.loadStmt = this.db.prepare("SELECT checkpointJson FROM claim_store_snapshot WHERE id = 1");
     this.upsertSnapshotStmt = this.db.prepare(`
       INSERT INTO claim_store_snapshot (id, ownerId, writtenAt, operation, checkpointJson)
@@ -152,5 +159,23 @@ export class SqliteClaimStoreBackend implements ClaimStoreBackend {
       operation: checkpoint.operation,
     });
     this.pruneEventsStmt.run({ maxEventRows: this.maxEventRows });
+  }
+
+  private verifySchemaVersion(): void {
+    const row = this.db
+      .prepare("SELECT value FROM claim_store_meta WHERE key = 'schema_version'")
+      .get() as { value: string } | undefined;
+    if (row) {
+      const version = Number(row.value);
+      if (version !== CLAIM_STORE_SCHEMA_VERSION) {
+        throw new Error(
+          `unsupported_claim_store_schema_version: expected=${CLAIM_STORE_SCHEMA_VERSION} actual=${row.value}`,
+        );
+      }
+      return;
+    }
+    this.db
+      .prepare("INSERT INTO claim_store_meta (key, value) VALUES ('schema_version', ?)")
+      .run(String(CLAIM_STORE_SCHEMA_VERSION));
   }
 }

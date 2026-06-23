@@ -2,6 +2,7 @@ import path from "node:path";
 
 import { test } from "vitest";
 import fc from "fast-check";
+import Database from "better-sqlite3";
 import { Orchestrator, normalizeIssue, parseConfig, slotKey } from "@lorenz/cli";
 import { systemClock, type ClockPort, type Issue, type RunningEntry } from "@lorenz/domain";
 import { assert, tempDir } from "@lorenz/test-utils";
@@ -17,7 +18,14 @@ import {
   type ClaimStoreCheckpoint,
   type SlotReservation,
 } from "@lorenz/orchestrator";
-import { TursoClaimStoreBackend } from "@lorenz/orchestrator/turso";
+import {
+  CLAIM_STORE_SCHEMA_VERSION as TURSO_CLAIM_STORE_SCHEMA_VERSION,
+  TursoClaimStoreBackend,
+} from "@lorenz/orchestrator/turso";
+import {
+  CLAIM_STORE_SCHEMA_VERSION as SQLITE_CLAIM_STORE_SCHEMA_VERSION,
+  SqliteClaimStoreBackend,
+} from "@lorenz/orchestrator/sqlite";
 
 function fakeClock(initial = new Date()) {
   let tick = initial.getTime();
@@ -771,6 +779,81 @@ test("turso claim store hydrates retry state across restart", async () => {
     });
   } finally {
     await restartedStore.close();
+  }
+});
+
+test("SQLite claim store records and validates its schema version", async () => {
+  const root = await tempDir("lorenz-sqlite-schema");
+  const dbPath = path.join(root, "claims.db");
+  const backend = new SqliteClaimStoreBackend(dbPath);
+  backend.close();
+
+  const db = new Database(dbPath);
+  try {
+    const row = db
+      .prepare("SELECT value FROM claim_store_meta WHERE key = 'schema_version'")
+      .get() as { value: string } | undefined;
+    assert.equal(row?.value, String(SQLITE_CLAIM_STORE_SCHEMA_VERSION));
+  } finally {
+    db.close();
+  }
+
+  const reopened = new SqliteClaimStoreBackend(dbPath);
+  reopened.close();
+  assert.equal(TURSO_CLAIM_STORE_SCHEMA_VERSION, SQLITE_CLAIM_STORE_SCHEMA_VERSION);
+});
+
+test("Turso claim store rejects unsupported schema versions", async () => {
+  const root = await tempDir("lorenz-turso-schema-version");
+  const dbPath = path.join(root, "claims.db");
+  const backend = await TursoClaimStoreBackend.open(dbPath);
+  await backend.close();
+
+  const db = await import("@tursodatabase/database");
+  const connection = await db.connect(dbPath, { timeout: 5000 });
+  try {
+    await connection.run(
+      "UPDATE claim_store_meta SET value = ? WHERE key = 'schema_version'",
+      "999",
+    );
+  } finally {
+    await connection.close();
+  }
+
+  await assert.rejects(
+    () => TursoClaimStoreBackend.open(dbPath),
+    /unsupported_claim_store_schema_version/,
+  );
+});
+
+test("Turso claim store serializes concurrent claims for the same slot", async () => {
+  const root = await tempDir("lorenz-turso-concurrent-claim");
+  const dbPath = path.join(root, "claims.db");
+  const firstBackend = await TursoClaimStoreBackend.open(dbPath);
+  const secondBackend = await TursoClaimStoreBackend.open(dbPath);
+  const firstStore = await AsyncPersistentClaimStore.create(firstBackend, { ownerId: "owner-a" });
+  const secondStore = await AsyncPersistentClaimStore.create(secondBackend, { ownerId: "owner-b" });
+  const settings = parseConfig();
+  const issue = normalizeIssue({
+    id: "turso-concurrent-claim",
+    identifier: "MT-TURSO-CONCURRENT",
+    title: "Concurrent claim",
+    state: { name: "Todo", type: "unstarted" },
+  });
+  const first = new Orchestrator(settings, systemClock, firstStore);
+  const second = new Orchestrator(settings, systemClock, secondStore);
+
+  try {
+    const [firstClaim, secondClaim] = await Promise.all([
+      claimEntryAsync(first, issue),
+      claimEntryAsync(second, issue),
+    ]);
+    assert.equal([firstClaim, secondClaim].filter(Boolean).length, 1);
+    assert.equal((await first.snapshotAsync()).running.length, 1);
+    assert.equal((await second.snapshotAsync()).running.length, 1);
+  } finally {
+    await firstStore.close();
+    await secondStore.close();
   }
 });
 

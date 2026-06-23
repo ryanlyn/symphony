@@ -1,3 +1,5 @@
+import type { RuntimeDaemonStatus } from "@lorenz/runtime-events";
+
 import { daemonLockIsStale, type DaemonEndpoint, type DaemonLockRecord } from "./daemonLock.js";
 
 export interface DaemonStatusPayload {
@@ -12,12 +14,14 @@ export interface DaemonStatusPayload {
   heartbeat_at: string;
   heartbeat_age_ms: number | null;
   stale: boolean;
+  leadership_store_kind: string;
 }
 
 export function daemonStatusPayload(
   record: DaemonLockRecord,
   now = new Date(),
   staleAfterMs = 60_000,
+  leadershipStoreKind = "local-file",
 ): DaemonStatusPayload {
   const heartbeatMs = Date.parse(record.heartbeatAt);
   const heartbeatAgeMs = Number.isFinite(heartbeatMs)
@@ -35,5 +39,29 @@ export function daemonStatusPayload(
     heartbeat_at: record.heartbeatAt,
     heartbeat_age_ms: heartbeatAgeMs,
     stale: daemonLockIsStale(record, now, staleAfterMs),
+    leadership_store_kind: leadershipStoreKind,
+  };
+}
+
+export function runtimeDaemonStatus(
+  record: DaemonLockRecord,
+  now = new Date(),
+  staleAfterMs = 60_000,
+  leadershipStoreKind = "local-file",
+): RuntimeDaemonStatus {
+  const payload = daemonStatusPayload(record, now, staleAfterMs, leadershipStoreKind);
+  return {
+    ownerId: payload.owner_id,
+    pid: payload.pid,
+    hostname: payload.hostname,
+    startedAt: payload.started_at,
+    workflowPath: payload.workflow_path,
+    workspaceRoot: payload.workspace_root,
+    lockPath: payload.lock_path,
+    endpoint: { ...payload.endpoint },
+    heartbeatAt: payload.heartbeat_at,
+    heartbeatAgeMs: payload.heartbeat_age_ms,
+    stale: payload.stale,
+    leadershipStoreKind: payload.leadership_store_kind,
   };
 }

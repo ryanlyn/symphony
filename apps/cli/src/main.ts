@@ -10,12 +10,12 @@ import {
   hasHelpFlag,
   isCommanderHelp,
   parseNonNegativeInteger,
+  parsePositiveInteger,
   parseRequiredValue,
   type ParseResult,
 } from "@lorenz/cli-kit";
 import { validateDispatchConfig } from "@lorenz/config";
 import { checkSlotsPerMachineGate } from "@lorenz/dispatch-coordinator";
-import { startObservabilityServer } from "@lorenz/server";
 import { configureLogFile } from "@lorenz/log-file";
 import { LorenzRuntime } from "@lorenz/runtime";
 import { RuntimeApp } from "@lorenz/tui";
@@ -24,9 +24,38 @@ import { defaultAgentExecutorRegistry } from "@lorenz/agent-sdk";
 import { defaultToolRegistry } from "@lorenz/tool-sdk";
 import { defaultTrackerRegistry } from "@lorenz/tracker-sdk";
 import { TraceEmitter } from "@lorenz/traceviz-emitter";
-import { defaultIssueStorePath, IssueStore } from "@lorenz/server";
+import {
+  defaultIssueStorePath,
+  IssueStore,
+  startObservabilityServer,
+  type RuntimeServerSource,
+} from "@lorenz/server";
 import { errorMessage, type Settings, type WorkflowDefinition } from "@lorenz/domain";
+import type { RuntimeSnapshot } from "@lorenz/runtime-events";
 
+import {
+  buildClaimStoreHandle,
+  parseClaimStoreBackend,
+  type ClaimStoreHandle,
+  type ClaimStoreCliOptions,
+} from "./claimStore.js";
+import {
+  acquireDaemonLock,
+  createDaemonIdentity,
+  daemonLockPath,
+  type DaemonEndpoint,
+  type DaemonLock,
+} from "./daemonLock.js";
+import { runtimeDaemonStatus } from "./daemonStatus.js";
+import {
+  createDaemonRefreshCommand,
+  createDaemonStatusCommand,
+  createDaemonStopCommand,
+  daemonControlOptionsFromCommanderOptions,
+  runDaemonRefreshCommand,
+  runDaemonStatusCommand,
+  runDaemonStopCommand,
+} from "./daemonControl.js";
 import {
   createRunsCommand,
   runRunsCommand,
@@ -57,6 +86,7 @@ export interface CliOptions {
   dashboard: boolean;
   port: number | null;
   logsRoot: string | null;
+  claimStore: ClaimStoreCliOptions;
 }
 
 interface CliCommanderOptions {
@@ -66,6 +96,9 @@ interface CliCommanderOptions {
   dashboard?: boolean;
   port?: number;
   logsRoot?: string;
+  claimStore?: ClaimStoreCliOptions["backend"];
+  claimStorePath?: string;
+  claimStoreOwnerStaleMs?: number;
 }
 
 export type CliParseResult = ParseResult<CliOptions>;
@@ -101,6 +134,42 @@ export async function main(args = process.argv.slice(2)): Promise<number> {
     );
   });
   command.addCommand(runsCommand);
+
+  const statusCommand = createDaemonStatusCommand("status");
+  statusCommand.action(async (workflowPath: string | undefined) => {
+    const rootOptions = command.opts<CliCommanderOptions>();
+    const statusOptions = statusCommand.opts();
+    const result = await runDaemonStatusCommand(
+      daemonControlOptionsFromCommanderOptions({ ...rootOptions, ...statusOptions }, workflowPath),
+    );
+    process.stdout.write(result.output);
+    status = result.statusCode;
+  });
+  command.addCommand(statusCommand);
+
+  const refreshCommand = createDaemonRefreshCommand("refresh");
+  refreshCommand.action(async (workflowPath: string | undefined) => {
+    const rootOptions = command.opts<CliCommanderOptions>();
+    const refreshOptions = refreshCommand.opts();
+    const result = await runDaemonRefreshCommand(
+      daemonControlOptionsFromCommanderOptions({ ...rootOptions, ...refreshOptions }, workflowPath),
+    );
+    process.stdout.write(result.output);
+    status = result.statusCode;
+  });
+  command.addCommand(refreshCommand);
+
+  const stopCommand = createDaemonStopCommand("stop");
+  stopCommand.action(async (workflowPath: string | undefined) => {
+    const rootOptions = command.opts<CliCommanderOptions>();
+    const stopOptions = stopCommand.opts();
+    const result = await runDaemonStopCommand(
+      daemonControlOptionsFromCommanderOptions({ ...rootOptions, ...stopOptions }, workflowPath),
+    );
+    process.stdout.write(result.output);
+    status = result.statusCode;
+  });
+  command.addCommand(stopCommand);
 
   const doctorCommand = createDoctorCommand("doctor");
   doctorCommand.action(async (workflowPath: string | undefined, parsed: DoctorCommanderOptions) => {
@@ -152,74 +221,87 @@ export async function runDaemon(options: CliOptions): Promise<number> {
       return workflow;
     };
     const workflow = await loadRuntimeWorkflow();
-    await configureLogFile(workflow.settings.logging.logFile);
-
-    // baseDir anchors `./relative` driver module specifiers to the workflow
-    // file's directory - the most predictable anchor for operators.
-    const coordinator = await buildDispatchCoordinator(workflow.settings, process.env, {
-      baseDir: path.dirname(workflow.path),
-    });
-    // Post-construction gate: slotsPerMachine>1 is only safe once the coordinator
-    // advertises per-run MCP endpoints AND the operator has explicitly opted into
-    // co-residence (a poisoned worker fails every co-resident run on recycle). The
-    // capability is known only here, after the coordinator exists, so this is the
-    // right home for the check (validateDispatchConfig stays capability-free).
-    assertSlotsPerMachineGate(workflow.settings, coordinator);
-    const traceDir = workflow.settings.server.traceDir!;
-    const traceEmitter = new TraceEmitter(traceDir);
-    const issueStore = new IssueStore(defaultIssueStorePath());
-    const runtime = new LorenzRuntime({
-      workflow,
-      clientFactory: createTrackerClient,
-      reloadWorkflow: loadRuntimeWorkflow,
-      runner: runAgentAttempt,
-      coordinator,
-      validateDispatch: (settings) =>
-        validateDispatchConfig(
-          settings,
-          defaultTrackerRegistry,
-          defaultAgentExecutorRegistry,
-          defaultToolRegistry,
-        ),
-      onAgentUpdate: (issue, update) => {
-        traceEmitter.emit(issue.id, issue.identifier, update);
-      },
-      onIssueDispatched: (issue) => {
-        issueStore.upsert({
-          issueId: issue.id,
-          issueIdentifier: issue.identifier,
-          title: issue.title,
-          url: issue.url ?? null,
-        });
-      },
-      ...runtimeAdapters,
-    });
-    await coordinator?.hydrate();
-    let instance: ReturnType<typeof render> | null = null;
-    // Persistent (not once) handlers so the graceful teardown below actually
-    // runs to completion. With process.once, the listener is removed after the
-    // first SIGINT; a second SIGINT — which Node + Ink can surface while the
-    // daemon is still winding down — then hits the default disposition and kills
-    // the process with code 130 mid-shutdown, before Ink restores the terminal.
-    // That abrupt kill is what leaves a garbled/red error state on Ctrl+C.
-    let shuttingDown = false;
-    const requestStop = () => {
-      if (shuttingDown) {
-        // Repeated Ctrl+C: force-quit, but unmount Ink first so the terminal is
-        // left clean rather than mid-render.
-        instance?.unmount();
-        process.exit(130);
-      }
-      shuttingDown = true;
-      runtime.stop();
-    };
-    process.on("SIGINT", requestStop);
-    process.on("SIGTERM", requestStop);
-
+    let daemonLock = options.once ? null : await acquireDaemonLeadership(workflow);
+    let claimStoreHandle: ClaimStoreHandle | null = null;
+    let issueStore: IssueStore | null = null;
+    let runtime: LorenzRuntime | null = null;
     let server: Awaited<ReturnType<typeof startObservabilityServer>> | null = null;
+    let daemonHeartbeat: NodeJS.Timeout | null = null;
+    let detachSignalHandlers: (() => void) | null = null;
+    let instance: ReturnType<typeof render> | null = null;
     try {
+      claimStoreHandle = await buildClaimStoreHandle(workflow, options.claimStore, process.env);
+      await configureLogFile(workflow.settings.logging.logFile);
+
+      // baseDir anchors `./relative` driver module specifiers to the workflow
+      // file's directory - the most predictable anchor for operators.
+      const coordinator = await buildDispatchCoordinator(workflow.settings, process.env, {
+        baseDir: path.dirname(workflow.path),
+      });
+      // Post-construction gate: slotsPerMachine>1 is only safe once the coordinator
+      // advertises per-run MCP endpoints AND the operator has explicitly opted into
+      // co-residence (a poisoned worker fails every co-resident run on recycle). The
+      // capability is known only here, after the coordinator exists, so this is the
+      // right home for the check (validateDispatchConfig stays capability-free).
+      assertSlotsPerMachineGate(workflow.settings, coordinator);
+      const traceDir = workflow.settings.server.traceDir!;
+      const traceEmitter = new TraceEmitter(traceDir);
+      issueStore = new IssueStore(defaultIssueStorePath());
+      runtime = new LorenzRuntime({
+        workflow,
+        clientFactory: createTrackerClient,
+        reloadWorkflow: loadRuntimeWorkflow,
+        runner: runAgentAttempt,
+        coordinator,
+        validateDispatch: (settings) =>
+          validateDispatchConfig(
+            settings,
+            defaultTrackerRegistry,
+            defaultAgentExecutorRegistry,
+            defaultToolRegistry,
+          ),
+        onAgentUpdate: (issue, update) => {
+          traceEmitter.emit(issue.id, issue.identifier, update);
+        },
+        onIssueDispatched: (issue) => {
+          issueStore?.upsert({
+            issueId: issue.id,
+            issueIdentifier: issue.identifier,
+            title: issue.title,
+            url: issue.url ?? null,
+          });
+        },
+        ...(claimStoreHandle.claimStore ? { claimStore: claimStoreHandle.claimStore } : {}),
+        ...runtimeAdapters,
+      });
+      await coordinator?.hydrate();
+      // Persistent (not once) handlers so the graceful teardown below actually
+      // runs to completion. With process.once, the listener is removed after the
+      // first SIGINT; a second SIGINT — which Node + Ink can surface while the
+      // daemon is still winding down — then hits the default disposition and kills
+      // the process with code 130 mid-shutdown, before Ink restores the terminal.
+      // That abrupt kill is what leaves a garbled/red error state on Ctrl+C.
+      let shuttingDown = false;
+      const requestStop = () => {
+        if (shuttingDown) {
+          // Repeated Ctrl+C: force-quit, but unmount Ink first so the terminal is
+          // left clean rather than mid-render.
+          instance?.unmount();
+          process.exit(130);
+        }
+        shuttingDown = true;
+        runtime?.stop();
+      };
+      process.on("SIGINT", requestStop);
+      process.on("SIGTERM", requestStop);
+      detachSignalHandlers = () => {
+        process.off("SIGINT", requestStop);
+        process.off("SIGTERM", requestStop);
+      };
+
+      if (daemonLock) daemonHeartbeat = startDaemonHeartbeat(daemonLock, () => runtime?.stop());
       if (options.dashboard) {
-        server = await startObservabilityServer(runtime, {
+        server = await startObservabilityServer(daemonServerSource(runtime, daemonLock), {
           host: workflow.settings.server.host,
           port: workflow.settings.server.port ?? 0,
           ...(workflow.settings.server.traceDir !== undefined && {
@@ -233,6 +315,9 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         });
         workflow.settings.server.port = server.port;
         boundServerPort = server.port;
+        if (daemonLock) {
+          await daemonLock.updateEndpoint({ kind: "http", address: server.url("/") });
+        }
         process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
       }
 
@@ -262,12 +347,16 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         instance?.unmount();
         // start() returns once stop() flips the runtime to stopped; drain paid
         // cloud workers before tearing down the server so they are destroyed on exit.
-        await runtime.drainWorkerPool();
+        await runtime?.drainWorkerPool();
         await server?.stop();
-        issueStore.close();
+        issueStore?.close();
+        await claimStoreHandle?.close();
+        claimStoreHandle = null;
+        if (daemonHeartbeat) clearInterval(daemonHeartbeat);
+        await daemonLock?.release();
+        daemonLock = null;
       } finally {
-        process.off("SIGINT", requestStop);
-        process.off("SIGTERM", requestStop);
+        detachSignalHandlers?.();
       }
     }
   } catch (error) {
@@ -290,6 +379,21 @@ function createDaemonCommand(name = "lorenz"): Command {
       "Root directory for Lorenz logs.",
       parseRequiredValue("--logs-root", "path"),
     )
+    .option(
+      "--claim-store <backend>",
+      "Claim store backend: memory, sqlite, or turso.",
+      parseClaimStoreBackend,
+    )
+    .option(
+      "--claim-store-path <path>",
+      "Durable claim store database path.",
+      parseRequiredValue("--claim-store-path", "path"),
+    )
+    .option(
+      "--claim-store-owner-stale-ms <ms>",
+      "Claim owner lease stale threshold.",
+      parsePositiveInteger("--claim-store-owner-stale-ms"),
+    )
     .option("--port <port>", "Observability API port.", parseNonNegativeInteger("--port"));
 }
 
@@ -306,6 +410,11 @@ function cliOptionsFromCommander(parsed: CliCommanderOptions, workflowPath?: str
     dashboard: parsed.dashboard ?? true,
     port: parsed.port ?? null,
     logsRoot: parsed.logsRoot ?? null,
+    claimStore: {
+      backend: parsed.claimStore ?? null,
+      path: parsed.claimStorePath ?? null,
+      ownerStaleMs: parsed.claimStoreOwnerStaleMs ?? null,
+    },
   };
 }
 
@@ -322,6 +431,69 @@ function applyCliOverrides(workflow: WorkflowDefinition, options: CliOptions): v
 
 export function projectUrlForSettings(settings: Settings): string | undefined {
   return defaultTrackerRegistry.providerFor(settings)?.projectUrl?.(settings);
+}
+
+async function acquireDaemonLeadership(workflow: WorkflowDefinition): Promise<DaemonLock> {
+  const lockPath = daemonLockPath(workflow.settings.workspace.root, workflow.path);
+  const endpoint = daemonEndpointForSettings(workflow.settings);
+  const result = await acquireDaemonLock({
+    lockPath,
+    identity: createDaemonIdentity({
+      workflowPath: workflow.path,
+      workspaceRoot: workflow.settings.workspace.root,
+    }),
+    endpoint,
+  });
+  if (result.status === "acquired") return result.lock;
+  const owner = result.record
+    ? `pid=${result.record.pid} endpoint=${result.record.endpoint.address}`
+    : "owner=unknown";
+  const stale = result.stale ? " stale=true" : "";
+  throw new Error(`daemon_already_running ${owner}${stale}`);
+}
+
+function daemonEndpointForSettings(settings: Settings): DaemonEndpoint {
+  const port = settings.server.port ?? 0;
+  return { kind: "http", address: `http://${settings.server.host}:${port}` };
+}
+
+function startDaemonHeartbeat(lock: DaemonLock, onLost: () => void): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    lock.heartbeat().catch((error) => {
+      process.stderr.write(`daemon heartbeat failed: ${errorMessage(error)}\n`);
+      onLost();
+    });
+  }, 10_000);
+  timer.unref();
+  return timer;
+}
+
+function daemonServerSource(runtime: LorenzRuntime, lock: DaemonLock | null): RuntimeServerSource {
+  const daemonStatus = () =>
+    lock ? runtimeDaemonStatus(lock.snapshot(), new Date(), 60_000, "local-file") : null;
+  const withDaemon = (snapshot: RuntimeSnapshot): RuntimeSnapshot => {
+    const status = daemonStatus();
+    return status ? { ...snapshot, daemon: status } : snapshot;
+  };
+  return {
+    get workflow() {
+      return runtime.workflow;
+    },
+    snapshot() {
+      return withDaemon(runtime.snapshot());
+    },
+    subscribe(listener) {
+      return runtime.subscribe((snapshot) => listener(withDaemon(snapshot)));
+    },
+    requestRefresh() {
+      return runtime.requestRefresh();
+    },
+    requestStop() {
+      runtime.stop();
+      return { requested_at: new Date().toISOString(), stopping: true };
+    },
+    daemonStatus,
+  };
 }
 
 /**

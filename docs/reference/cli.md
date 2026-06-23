@@ -2,12 +2,15 @@
 
 The exact contract for the `lorenz` binary: every command, flag, argument, exit code, and environment variable it reads. This is the man-page for integrators and operators who need precise behavior. For a guided walkthrough, start at [cli.md](../cli.md).
 
-The binary ships three commands:
+The binary ships six commands:
 
 | Command | Purpose |
 | --- | --- |
 | `lorenz [flags] [workflowPath]` | The default daemon: poll the tracker, dispatch agents, serve the dashboard and TUI. |
 | `lorenz runs [flags]` | Query run history from the observability HTTP API. |
+| `lorenz status [flags] [workflowPath]` | Show the active daemon owner and endpoint. |
+| `lorenz refresh [flags] [workflowPath]` | Ask the active daemon to poll and reconcile now. |
+| `lorenz stop [flags] [workflowPath]` | Ask the active daemon to stop gracefully. |
 | `lorenz doctor [flags] [workflowPath]` | Validate a workflow and local prerequisites without dispatching. |
 
 The `bin` shim at `apps/cli/bin/lorenz.js` imports the built `dist/bin/cli.js`. If the package has not been built, it prints `lorenz has not been built yet. Run pnpm build or mise run build first.` and exits 1.
@@ -15,7 +18,7 @@ The `bin` shim at `apps/cli/bin/lorenz.js` imports the built `dist/bin/cli.js`. 
 ## `lorenz` (daemon)
 
 ```sh
-lorenz [--once] [--dry-run] [--no-tui] [--no-dashboard] [--port <port>] [--logs-root <path>] [workflowPath]
+lorenz [--once] [--dry-run] [--no-tui] [--no-dashboard] [--port <port>] [--logs-root <path>] [--claim-store <backend>] [--claim-store-path <path>] [--claim-store-owner-stale-ms <ms>] [workflowPath]
 ```
 
 The default command. It loads the workflow, validates dispatch config, builds the dispatch coordinator and warm worker pool when enabled, constructs the runtime, starts the observability server and TUI, then polls until interrupted.
@@ -38,6 +41,9 @@ When `workflowPath` is omitted, resolution falls to `LORENZ_WORKFLOW` (an absolu
 | `--no-dashboard` | boolean | dashboard on | Disable the web dashboard and JSON API server. The option key is `dashboard`, default `true`; there is no positive `--dashboard`. |
 | `--port <port>` | non-negative integer | unset | Override `server.port`. Parsed by `parseNonNegativeInteger`. |
 | `--logs-root <path>` | path | unset | Write logs to `<path>/log/lorenz.log` (overrides `logging.log_file`). |
+| `--claim-store <backend>` | `memory`, `sqlite`, or `turso` | `memory` | Select the claim-store backend for this daemon process. |
+| `--claim-store-path <path>` | path | `<workspace.root>/.lorenz/claim-store/claims.db` for durable backends | Database path for `sqlite` and `turso` claim stores. Ignored by `memory`. |
+| `--claim-store-owner-stale-ms <ms>` | positive integer | orchestrator default | Override the owner-heartbeat stale threshold used by durable claim stores. |
 
 Both the web dashboard and the TUI are on by default. The TUI only renders when `process.stdout.isTTY` is true; without a TTY the runtime subscribes and writes pretty-printed JSON snapshots to stdout. Pass `--no-tui` to force the JSON-snapshot path even on a TTY.
 
@@ -50,15 +56,23 @@ CLI overrides are applied to the loaded workflow on every load and reload:
 
 When the observability server binds, its actual port is written back into `server.port` and pinned, so subsequent workflow reloads keep the same port. The server prints `Observability API listening on <url>` to stderr.
 
+Claim-store options are daemon composition choices rather than workflow settings. The default
+backend is `memory`; selecting `sqlite` or `turso` opens a durable store and passes it into the
+runtime. See [durable-claims-and-daemon.md](durable-claims-and-daemon.md).
+
 ### Startup sequence
 
-Startup runs in order: register backends, load and validate the workflow, build the coordinator, gate co-residence, construct the runtime, start the server and TUI, then poll.
+Startup runs in order: register backends, load and validate the workflow, acquire the same-host daemon lease for long-running mode, open the selected claim store, build the coordinator, gate co-residence, construct the runtime, start the server and TUI, then poll.
 
 `registerBuiltinBackends()` runs first and wires every built-in tracker (`linear`, `local`, `memory`, `jira`, `slack`), the tracker tool pack (tool kind `tracker`), the ACP agent executor, and the built-in worker drivers (`fake`, `static-ssh`, `docker`) into the process-wide registries. It is idempotent.
 
 The coordinator anchors at `baseDir = dirname(workflow.path)`, the directory of the workflow file. `assertSlotsPerMachineGate` then runs as a post-construction check (see [Co-residence gate](#co-residence-gate)). `validateDispatchConfig` runs at startup and again as the runtime's per-reload `validateDispatch` hook, so a bad edit to `WORKFLOW.md` is caught on the next poll rather than at dispatch time.
 
 The worker pool and dispatch coordinator are constructed only when `worker.worker_pool.enabled` is set. With the pool disabled both return `undefined` and the daemon takes the byte-identical pre-pool path.
+
+Long-running daemon mode acquires a local leadership lease keyed by workflow path. If another live
+daemon already owns the lease, startup exits with `daemon_already_running` and reports the owner pid
+and endpoint when available. `--once` skips the lease and remains a one-shot poll mode.
 
 ### Shutdown and exit codes
 
@@ -76,6 +90,9 @@ The worker pool and dispatch coordinator are constructed only when `worker.worke
 | --- | --- | --- |
 | `LORENZ_WORKFLOW` | `packages/workflow` | Default workflow path when `workflowPath` is omitted. Absolute used as-is, relative joined to cwd. |
 | `LORENZ_WORKSPACE_ROOT` | `packages/config` | Overrides `workspace.root`. |
+| `LORENZ_CLAIM_STORE` | CLI daemon | Default claim-store backend when `--claim-store` is omitted. Values: `memory`, `sqlite`, `turso`. |
+| `LORENZ_CLAIM_STORE_PATH` | CLI daemon | Durable claim-store database path when `--claim-store-path` is omitted. |
+| `LORENZ_CLAIM_STORE_OWNER_STALE_MS` | CLI daemon | Positive-integer owner-heartbeat stale threshold for durable claim stores. |
 | `LORENZ_SSH_CONFIG` | `packages/ssh` | Path passed to `ssh -F` for remote workers. |
 | `CLAUDE_CODE_EXECUTABLE` | ACP bridges, `doctor` | Override path to the `claude` CLI. |
 | `CODEX_PATH` | ACP bridges, `doctor` | Override path to the `codex` CLI. |
@@ -134,6 +151,47 @@ Views and their columns:
 | `retries` | `--retries` | `ISSUE`, `ATTEMPTS`, `LATEST`, `TOKENS`, `RUN ID`, `FAILURE` |
 
 The query string carries `issue`, `failed`, `cost`, `retries`, `id`, and `limit`; the server decides which view to return. See [run-history.md](../features/run-history.md) for what each view means and [http-api.md](http-api.md) for the endpoint contract.
+
+## `lorenz status`
+
+```sh
+lorenz status [--url <url>] [--port <port>] [--json] [workflowPath]
+```
+
+Reads the daemon lock for the workflow, then asks the owner endpoint for `GET /api/v1/daemon` when
+that endpoint is usable. If the HTTP endpoint is unavailable, the command falls back to the lock
+record so operators can still see the last known owner.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--url <url>` | URL | unset | Daemon control API base URL. Wins over lock discovery and `--port`. |
+| `--port <port>` | non-negative integer | unset | Daemon control localhost port. Used when no usable lock endpoint exists. |
+| `--json` | boolean | `false` | Print the raw JSON response. |
+
+Exit status is `0` when a live HTTP status response is returned or a lock fallback is printable.
+It is `1` when no daemon lock exists, the endpoint returns an HTTP error, or JSON mode cannot reach
+the endpoint.
+
+## `lorenz refresh`
+
+```sh
+lorenz refresh [--url <url>] [--port <port>] [--json] [workflowPath]
+```
+
+Resolves the daemon endpoint the same way as `lorenz status`, then posts to
+`/api/v1/refresh`. On success the daemon queues an out-of-band poll and reconcile pass. A running
+poll is coalesced rather than duplicated. Non-2xx responses exit `1`.
+
+## `lorenz stop`
+
+```sh
+lorenz stop [--url <url>] [--port <port>] [--json] [workflowPath]
+```
+
+Resolves the daemon endpoint the same way as `lorenz status`, then posts to `/api/v1/stop`. The
+daemon calls `runtime.stop()` and returns once the stop request has been accepted; normal shutdown
+then drains workers, stops the server, closes stores, and releases the daemon lease. Non-2xx
+responses exit `1`.
 
 ## `lorenz doctor`
 

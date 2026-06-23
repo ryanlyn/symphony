@@ -5,6 +5,8 @@ import { connect, type Database } from "@tursodatabase/database";
 
 import type { AsyncClaimStoreBackend, ClaimStoreCheckpoint } from "./claimStore.js";
 
+export const CLAIM_STORE_SCHEMA_VERSION = 1;
+
 export interface TursoClaimStoreBackendOptions {
   busyTimeoutMs?: number | undefined;
   maxEventRows?: number | undefined;
@@ -103,6 +105,10 @@ export class TursoClaimStoreBackend implements AsyncClaimStoreBackend {
 
   private async initialize(): Promise<void> {
     await this.db.exec(`
+      CREATE TABLE IF NOT EXISTS claim_store_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS claim_store_snapshot (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         ownerId TEXT NOT NULL,
@@ -123,6 +129,7 @@ export class TursoClaimStoreBackend implements AsyncClaimStoreBackend {
         heartbeatAt TEXT NOT NULL
       );
     `);
+    await this.verifySchemaVersion();
   }
 
   private async writeCheckpoint(checkpoint: ClaimStoreCheckpoint): Promise<void> {
@@ -161,6 +168,25 @@ export class TursoClaimStoreBackend implements AsyncClaimStoreBackend {
         )
       `,
       this.maxEventRows,
+    );
+  }
+
+  private async verifySchemaVersion(): Promise<void> {
+    const row = (await this.db.get(
+      "SELECT value FROM claim_store_meta WHERE key = 'schema_version'",
+    )) as { value: string } | undefined;
+    if (row) {
+      const version = Number(row.value);
+      if (version !== CLAIM_STORE_SCHEMA_VERSION) {
+        throw new Error(
+          `unsupported_claim_store_schema_version: expected=${CLAIM_STORE_SCHEMA_VERSION} actual=${row.value}`,
+        );
+      }
+      return;
+    }
+    await this.db.run(
+      "INSERT INTO claim_store_meta (key, value) VALUES ('schema_version', ?)",
+      String(CLAIM_STORE_SCHEMA_VERSION),
     );
   }
 }

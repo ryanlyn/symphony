@@ -16,7 +16,13 @@ import {
 } from "@lorenz/domain";
 import { createMcpAuthScope, mcpAuthScopeForSettings, mountMcp } from "@lorenz/mcp";
 import type { ToolRegistry } from "@lorenz/tool-sdk";
-import { issuePayload, runsPayload, statePayload, type PresenterParams } from "@lorenz/presenter";
+import {
+  daemonPayload,
+  issuePayload,
+  runsPayload,
+  statePayload,
+  type PresenterParams,
+} from "@lorenz/presenter";
 import type { RuntimeSnapshot } from "@lorenz/runtime-events";
 import type { TraceWatcher } from "@lorenz/traceviz-server";
 
@@ -198,6 +204,21 @@ function buildObservabilityApp(
   });
   app.all("/api/v1/refresh", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
 
+  app.get("/api/v1/daemon", () => {
+    const daemon = runtime.daemonStatus?.() ?? daemonStatusFromSnapshot(runtime);
+    if (!daemon)
+      return errorResponse(503, "daemon_status_unavailable", "Daemon status unavailable");
+    return jsonResponse(daemonPayload(daemon));
+  });
+  app.all("/api/v1/daemon", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
+
+  app.post("/api/v1/stop", () => {
+    if (!runtime.requestStop)
+      return errorResponse(503, "daemon_control_unavailable", "Daemon control unavailable");
+    return jsonResponse(runtime.requestStop(), 202);
+  });
+  app.all("/api/v1/stop", () => errorResponse(405, "method_not_allowed", "Method not allowed"));
+
   // Mount trace routes BEFORE the :identifier catch-all
   let watcher: TraceWatcher | null = null;
   if (options.traceDir && options.issueStore) {
@@ -285,6 +306,11 @@ function observabilityErrorCode(error: unknown): "snapshot_timeout" | "snapshot_
   const message = errorMessage(error);
   if (message === "snapshot_timeout" || message === "timeout") return "snapshot_timeout";
   return "snapshot_unavailable";
+}
+
+function daemonStatusFromSnapshot(runtime: RuntimeServerSource): RuntimeSnapshot["daemon"] | null {
+  const snapshot = snapshotResult(runtime);
+  return snapshot.status === "ok" ? (snapshot.snapshot.daemon ?? null) : null;
 }
 
 function observabilityErrorBody(code: "snapshot_timeout" | "snapshot_unavailable"): {

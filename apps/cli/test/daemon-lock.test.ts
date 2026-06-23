@@ -431,6 +431,7 @@ test("daemon status payload exposes endpoint and heartbeat age", async () => {
       heartbeat_at: "2026-01-01T00:00:00.000Z",
       heartbeat_age_ms: 30_000,
       stale: false,
+      leadership_store_kind: "local-file",
     });
   } finally {
     await rm(root, { recursive: true, force: true });

@@ -135,6 +135,20 @@ export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
     });
   }
 
+  async updateEndpoint(endpoint: DaemonEndpoint, now = new Date()): Promise<DaemonLockRecord> {
+    return this.operationMutex.runExclusive(async () => {
+      return withDaemonLockMutation(this.lockPath, async () => {
+        const current = await readDaemonLock(this.lockPath);
+        if (!current || current.ownerId !== this.record.ownerId) {
+          throw new Error("daemon_lock_lost");
+        }
+        this.record = { ...current, endpoint: { ...endpoint }, heartbeatAt: now.toISOString() };
+        await writeDaemonLockRecord(this.lockPath, this.record);
+        return this.snapshot();
+      });
+    });
+  }
+
   async release(): Promise<boolean> {
     return this.operationMutex.runExclusive(async () => {
       return withDaemonLockMutation(this.lockPath, async () => {

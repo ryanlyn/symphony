@@ -1,4 +1,5 @@
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 
 import { parseConfig } from "@lorenz/config";
 import { afterEach, beforeEach, test, vi } from "vitest";
@@ -141,8 +142,11 @@ async function workflowFixture() {
     {},
   );
 
+  const workflowPath = path.join(root, "WORKFLOW.md");
+  await writeFile(workflowPath, "# Test workflow\n", "utf8");
+
   return {
-    path: path.join(root, "WORKFLOW.md"),
+    path: workflowPath,
     config: {},
     promptTemplate: "Issue {{ issue.identifier }}",
     settings,
@@ -182,12 +186,20 @@ afterEach(() => {
 });
 
 async function waitForRuntimeInstance(): Promise<FakeRuntime> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const runtime = mocks.runtimeInstances[0];
-    if (runtime) return runtime;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  throw new Error("runtime instance was not created");
+  await vi.waitFor(
+    () => {
+      assert.ok(mocks.runtimeInstances[0]);
+    },
+    {
+      timeout: 500,
+      interval: 5,
+      onTimeout(error) {
+        const stderr = stderrWriteSpy.mock.calls.map((call) => String(call[0])).join("");
+        return new Error(`${error.message}: ${stderr}`);
+      },
+    },
+  );
+  return mocks.runtimeInstances[0]!;
 }
 
 test("runDaemon stops gracefully on the first SIGINT and returns success", async () => {
@@ -204,6 +216,7 @@ test("runDaemon stops gracefully on the first SIGINT and returns success", async
     dashboard: false,
     port: null,
     logsRoot: null,
+    claimStore: { backend: null, path: null, ownerStaleMs: null },
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -229,6 +242,46 @@ test("runDaemon stops gracefully on the first SIGINT and returns success", async
   assertNoAddedProcessListeners("SIGTERM", sigtermBaseline);
 });
 
+test("runDaemon rejects a second live daemon for the same workflow", async () => {
+  mocks.loadWorkflow.mockResolvedValue(await workflowFixture());
+
+  const sigintBaseline = process.listeners("SIGINT");
+  const daemonPromise = runDaemon({
+    workflowPath: "WORKFLOW.md",
+    once: false,
+    dryRun: false,
+    tui: true,
+    dashboard: false,
+    port: null,
+    logsRoot: null,
+    claimStore: { backend: null, path: null, ownerStaleMs: null },
+  });
+
+  const runtime = await waitForRuntimeInstance();
+  await runtime.startEntered;
+
+  const secondResult = await runDaemon({
+    workflowPath: "WORKFLOW.md",
+    once: false,
+    dryRun: false,
+    tui: false,
+    dashboard: false,
+    port: null,
+    logsRoot: null,
+    claimStore: { backend: null, path: null, ownerStaleMs: null },
+  });
+
+  assert.equal(secondResult, 1);
+  assert.equal(
+    stderrWriteSpy.mock.calls.some((call) => String(call[0]).includes("daemon_already_running")),
+    true,
+  );
+
+  const [sigintHandler] = addedProcessListeners("SIGINT", sigintBaseline);
+  sigintHandler!();
+  assert.equal(await daemonPromise, 0);
+});
+
 test("runDaemon warns about deprecated config keys once at startup", async () => {
   const fixture = await workflowFixture();
   mocks.loadWorkflow.mockResolvedValue({
@@ -246,6 +299,7 @@ test("runDaemon warns about deprecated config keys once at startup", async () =>
     dashboard: false,
     port: null,
     logsRoot: null,
+    claimStore: { backend: null, path: null, ownerStaleMs: null },
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -280,6 +334,7 @@ test("runDaemon still reports real startup failures", async () => {
     dashboard: true,
     port: 4040,
     logsRoot: null,
+    claimStore: { backend: null, path: null, ownerStaleMs: null },
   });
 
   assert.equal(result, 1);

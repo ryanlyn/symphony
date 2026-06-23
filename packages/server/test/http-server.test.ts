@@ -19,9 +19,14 @@ import { registerLocalTracker } from "@lorenz/local-tracker";
 import { defaultToolRegistry } from "@lorenz/tool-sdk";
 import { createTrackerToolProvider, defaultTrackerRegistry } from "@lorenz/tracker-sdk";
 import { assert } from "@lorenz/test-utils";
+import type { RuntimeSnapshot } from "@lorenz/runtime-events";
 
-import { IssueStore, startObservabilityServer } from "@lorenz/server";
-import { startMcpServer } from "@lorenz/server";
+import {
+  IssueStore,
+  startMcpServer,
+  startObservabilityServer,
+  type RuntimeServerSource,
+} from "@lorenz/server";
 
 // The observability server resolves tool packs and tracker ops through the process-default
 // registries (it offers no injection point), so populate them the same way the CLI
@@ -113,6 +118,55 @@ test("observability HTTP API exposes state, issue, runs, refresh, and errors", a
 
     const notFound = await getJson(server.url("/unknown"), 404);
     assert.deepEqual(notFound, { error: { code: "not_found", message: "Route not found" } });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("observability HTTP API exposes daemon status and stop control", async () => {
+  const workflow = workflowFixture();
+  const requestStop = vi.fn(() => ({ requested_at: "2026-01-01T00:00:00.000Z", stopping: true }));
+  const runtime: RuntimeServerSource = {
+    workflow,
+    snapshot: () => ({
+      ...emptySnapshot(workflow),
+      daemon: {
+        ownerId: "owner-daemon",
+        pid: 123,
+        hostname: "host-a",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        workflowPath: workflow.path,
+        workspaceRoot: workflow.settings.workspace.root,
+        lockPath: "/tmp/lorenz.lock",
+        endpoint: { kind: "http", address: "http://127.0.0.1:4040/" },
+        heartbeatAt: "2026-01-01T00:00:05.000Z",
+        heartbeatAgeMs: 1000,
+        stale: false,
+        leadershipStoreKind: "local-file",
+      },
+    }),
+    subscribe: () => () => {},
+    requestRefresh: () => ({ queued: true }),
+    requestStop,
+  };
+  const server = await startObservabilityServer(runtime, {
+    host: "127.0.0.1",
+    port: 0,
+    staticDir: "/tmp/nonexistent-dashboard-dist",
+  });
+
+  try {
+    const state = await getJson(server.url("/api/v1/state"));
+    assert.equal(state.daemon.owner_id, "owner-daemon");
+    assert.equal(state.daemon.leadership_store_kind, "local-file");
+
+    const daemon = await getJson(server.url("/api/v1/daemon"));
+    assert.equal(daemon.owner_id, "owner-daemon");
+    assert.equal(daemon.endpoint.address, "http://127.0.0.1:4040/");
+
+    const stop = await postJson(server.url("/api/v1/stop"));
+    assert.equal(stop.stopping, true);
+    assert.equal(requestStop.mock.calls.length, 1);
   } finally {
     await server.stop();
   }
@@ -500,6 +554,30 @@ function workflowFixture(): WorkflowDefinition {
     config: {},
     promptTemplate: "Issue {{ issue.identifier }}",
     settings,
+  };
+}
+
+function emptySnapshot(workflow: WorkflowDefinition): RuntimeSnapshot {
+  return {
+    appStatus: "idle",
+    workflowPath: workflow.path,
+    poll: {
+      status: "idle",
+      candidates: 0,
+      eligible: 0,
+      lastPollAt: null,
+      nextPollAt: null,
+      lastError: null,
+    },
+    running: [],
+    reserving: [],
+    retrying: [],
+    blocked: [],
+    runHistory: [],
+    usageTotals: { inputTokens: 0, outputTokens: 0, totalTokens: 0, secondsRunning: 0 },
+    rateLimits: null,
+    logFile: null,
+    recentEvents: [],
   };
 }
 
