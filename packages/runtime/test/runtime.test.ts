@@ -2676,6 +2676,14 @@ function workerPoolWorkflowFixture(
   root = "/tmp/lorenz-runtime-workerpool",
   overrides: Record<string, unknown> = {},
 ): WorkflowDefinition {
+  // Config has no `enabled` key; a disabled pool is the INTERNAL drained shape the reload-drain
+  // produces. Tests that drive the reload-disable path pass `{ enabled: false }` here, which is
+  // applied to the parsed settings object AFTER parse (config rejects the key). All other overrides
+  // flow through config.
+  const { enabled, ...configOverrides } = overrides as { enabled?: boolean } & Record<
+    string,
+    unknown
+  >;
   const settings = parseConfig({
     tracker: {
       kind: "linear",
@@ -2688,14 +2696,16 @@ function workerPoolWorkflowFixture(
     workspace: { root },
     worker: {
       worker_pool: {
-        enabled: true,
         driver: "fake",
         acquire_timeout_ms: 12_345,
         drain_deadline_ms: 9_999,
-        ...overrides,
+        ...configOverrides,
       },
     },
   });
+  if (enabled !== undefined && settings.worker.workerPool) {
+    settings.worker.workerPool = { ...settings.worker.workerPool, enabled };
+  }
   return {
     path: "/tmp/WORKFLOW.md",
     config: {},
@@ -2761,14 +2771,14 @@ test("worker pool: the bound slot's mcpEndpoint is threaded into the runner", as
   const workflow = workerPoolWorkflowFixture();
   workflow.settings.agent.kind = "claude";
 
-  // A concrete-style manager (perRunEndpoint=true) that opens a recognizable
+  // A concrete-style manager (perRunClaimEnforcement=true) that opens a recognizable
   // per-run lease and records its open/release calls so we can assert the
   // coordinator owns the endpoint lifecycle and the runner consumes it.
   const endpointLease = makeFakeEndpointLease();
   const opens: Array<{ workerHost: string; runKey: string }> = [];
   let releaseCalls = 0;
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(req) {
       opens.push({ workerHost: req.workerHost, runKey: req.runKey });
       return endpointLease;
@@ -2844,7 +2854,7 @@ test("worker pool: the FULL workflow Settings (with server.port) is threaded to 
   let openSettings: unknown;
   const endpointLease = makeFakeEndpointLease();
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open(req) {
       openSettings = req.settings;
       return endpointLease;
@@ -2924,6 +2934,7 @@ function makeFakeEndpointLease(): AgentMcpEndpointLease {
   return {
     url: "http://127.0.0.1:46999/claude-mcp",
     token: "run-token",
+    generation: 1,
     acpServer: () => ({ type: "http", name: "threaded_endpoint", url: "", headers: [] }),
     async release() {},
   };
@@ -2953,7 +2964,7 @@ test("worker pool: a codex run is skipped when the per-run endpoint open THROWS 
   // worker_pool_acquire_error and the run never dispatches.
   let openCalls = 0;
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open() {
       openCalls += 1;
       throw new Error("mcp_endpoint_open_failed: remote port-forward restricted");
@@ -3024,7 +3035,7 @@ test("worker pool: an ACP/claude run STILL opens its per-run endpoint (the per-r
   const endpointLease = makeFakeEndpointLease();
   let openCalls = 0;
   const manager: McpEndpointManager = {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open() {
       openCalls += 1;
       return endpointLease;
@@ -4228,12 +4239,18 @@ test("worker pool: reconcile is called on workflow reload with the next worker-p
   assert.equal(workerPool.reconcileCalls[0]?.max, 3);
 });
 
-test("worker pool: a reload that removes the worker_pool block drains the live pool (no leak)", async () => {
+test("worker pool: a reload that removes the worker_pool block reconciles to the default local pool", async () => {
+  // The pool is the single dispatch path, so REMOVING the worker_pool block reconciles to the
+  // DEFAULT enabled `local` pool (min=0/warm=0/max=1), which provisions nothing eagerly. The
+  // "drain to zero on disable" coverage lives in the sibling test that sets an EXPLICIT
+  // `enabled:false`; disabling requires that explicit shape, not deleting the block.
   const issue = issueFixture("issue-bp-remove", "MT-BP-REMOVE");
   const firstWorkflow = workerPoolWorkflowFixture();
-  // The reloaded workflow has NO worker.worker_pool block at all.
+  // The reloaded workflow has NO worker.worker_pool block: it carries the default local pool.
   const secondWorkflow = workflowFixture("/tmp/lorenz-runtime-workerpool-removed");
-  assert.equal(secondWorkflow.settings.worker.workerPool, undefined);
+  assert.equal(secondWorkflow.settings.worker.workerPool?.enabled, true);
+  assert.equal(secondWorkflow.settings.worker.workerPool?.driver, "local");
+  assert.equal(secondWorkflow.settings.worker.workerPool?.warm, 0);
   const workerPool = makeFakeWorkerPool({ canAcquire: false });
   let reloads = 0;
   const runtime = new LorenzRuntime(
@@ -4254,10 +4271,12 @@ test("worker pool: a reload that removes the worker_pool block drains the live p
   await runtime.pollOnce({ dryRun: true });
 
   assert.equal(reloads, 1);
-  // Removing the block must still reconcile the live pool to a disabled-equivalent
-  // so it drains to zero instead of leaking its (paid) workers.
+  // The reload reconciles the live pool to the default local pool: enabled, with warm=0/min=0 so
+  // it holds no idle (paid) workers and the fake pool reconciles exactly once.
   assert.equal(workerPool.reconcileCalls.length, 1);
-  assert.equal(workerPool.reconcileCalls[0]?.enabled, false);
+  assert.equal(workerPool.reconcileCalls[0]?.enabled, true);
+  assert.equal(workerPool.reconcileCalls[0]?.driver, "local");
+  assert.equal(workerPool.reconcileCalls[0]?.warm, 0);
 });
 
 test("worker pool: a reload that disables the worker_pool block drains the live pool (no leak)", async () => {
@@ -4431,7 +4450,10 @@ test("worker pool: a reload that throws the anti-double-capacity guard keeps las
       workflow: firstWorkflow,
       workerPool,
       reloadWorkflow: async () => {
-        throw new Error("worker.worker_pool.enabled cannot be combined with worker.ssh_hosts");
+        // An ambiguous reload (worker_pool.driver + ssh_hosts) throws this message. The test
+        // injects it to drive the throwing-reload path (keep last-good, surface the message); the
+        // throw source is irrelevant to what is asserted here.
+        throw new Error("worker.worker_pool.driver cannot be combined with worker.ssh_hosts");
       },
       client: {
         fetchCandidateIssues: async () => [issue],
@@ -4450,14 +4472,15 @@ test("worker pool: a reload that throws the anti-double-capacity guard keeps las
     .recentEvents.find((event) => event.type === "workflow_reload_failed");
   assert.ok(reloadFailed);
   assert.ok(reloadFailed.message.includes("cannot be combined with worker.ssh_hosts"));
+  assert.ok(reloadFailed.message.includes("worker.worker_pool.driver"));
 });
 
 function perRunEndpointManager(): McpEndpointManager {
-  // A concrete-style manager (perRunEndpoint=true) so the coordinator advertises
+  // A concrete-style manager (perRunClaimEnforcement=true) so the coordinator advertises
   // the per-run-endpoint capability; open() returns null (no real endpoint needed
   // for the reload-gate tests, which never run an agent).
   return {
-    perRunEndpoint: true,
+    perRunClaimEnforcement: true,
     async open() {
       return null;
     },
@@ -4523,7 +4546,7 @@ test("worker pool: a reload to max_in_flight>1 without co_residence is rejected 
 });
 
 test("worker pool: a reload to max_in_flight>1 without the per-run-endpoint capability is rejected (gate)", async () => {
-  // A bare workerPool wraps in a null-endpoint coordinator (perRunEndpoint=false), so
+  // A bare workerPool wraps in a null-endpoint coordinator (perRunClaimEnforcement=false), so
   // even WITH the co_residence opt-in the gate must reject slotsPerMachine>1 for
   // lack of the per-run-endpoint capability - mirroring the startup gate.
   const issue = issueFixture("issue-bp-reload-endpoint", "MT-BP-RELOAD-ENDPOINT");
@@ -4537,7 +4560,7 @@ test("worker pool: a reload to max_in_flight>1 without the per-run-endpoint capa
   const runtime = new LorenzRuntime(
     runtimeOptions({
       workflow: firstWorkflow,
-      // Bare workerPool -> null-endpoint passthrough coordinator (perRunEndpoint=false).
+      // Bare workerPool -> null-endpoint passthrough coordinator (perRunClaimEnforcement=false).
       workerPool,
       reloadWorkflow: async () => {
         reloads += 1;
@@ -4559,7 +4582,7 @@ test("worker pool: a reload to max_in_flight>1 without the per-run-endpoint capa
     .snapshot()
     .recentEvents.find((event) => event.type === "workflow_reload_failed");
   assert.ok(reloadFailed);
-  assert.match(reloadFailed!.message, /per-run.*endpoint|perRunEndpoint/i);
+  assert.match(reloadFailed!.message, /per-run scoped claims|perRunClaimEnforcement/i);
 });
 
 test("worker pool: a reload to max_in_flight>1 WITH co_residence + per-run-endpoint applies and reconciles", async () => {

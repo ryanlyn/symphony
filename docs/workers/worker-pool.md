@@ -2,16 +2,15 @@
 
 The warm worker pool provisions, leases, and reaps the SSH-addressable machines your agent runs execute on. It is a long-lived singleton in `@lorenz/worker-pool` that survives workflow hot-reload, calls a swappable `WorkerDriver` for provision/probe/destroy/list, and owns every lifecycle decision itself: leasing, warm top-up, a reaper, spend caps, a write-ahead ledger, and crash recovery. This page is for operators tuning the pool under `worker.worker_pool`.
 
-The pool is one of two mutually exclusive ways to get a `workerHost`. The other is the legacy static path `worker.ssh_hosts`, a flat list of pre-existing SSH destinations the runtime shards runs across with no provisioning or lifecycle. You cannot combine `worker.ssh_hosts` with `worker.worker_pool` or `worker.kind`; the config parser rejects it. See [static SSH workers](./static-ssh.md) for that path.
+The pool is the single dispatch path for every `workerHost`. The legacy static list `worker.ssh_hosts` folds into a `static-ssh` pool (one machine per host), so it is not a separate model; you cannot name a driver twice for the same hosts, so the parser rejects `worker.ssh_hosts` alongside `worker.worker_pool.driver` or `worker.kind`. See [static SSH workers](./static-ssh.md) for that path.
 
 ## Turning it on
 
-Selecting a `workers.<name>` profile through `worker.kind` auto-enables the pool. A bare `worker.worker_pool` block does not: it needs `enabled: true`, because `enabled` defaults to `false` unless a `worker.kind` profile is selected. The minimum config sets `enabled` and picks a driver:
+The pool is always on - it is the single dispatch path. With no `worker.worker_pool` block and no `worker.ssh_hosts`, the pool defaults to the `local` driver at `max: 1`, which runs agents locally on the daemon's own in-process endpoint (no SSH, no provisioning). To put runs on real machines, set a `driver` (and its sizing knobs); there is no `enabled` flag to set:
 
 ```yaml
 worker:
   worker_pool:
-    enabled: true
     driver: docker
     min: 1
     max: 4
@@ -69,37 +68,36 @@ A lease settles exactly once. `release('healthy')` keeps the worker warm; `fail(
 
 All keys live under `worker.worker_pool`. Write them in snake_case.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `enabled` | `true` when a `worker.kind` profile is selected; otherwise must be set explicitly | Master switch. Disabling it drains the pool. |
-| `driver` | `fake` | Registered driver kind, or an out-of-tree module specifier. |
-| `min` | `0` | Floor the reaper keeps warm. Never reaped below this. |
-| `max` | `1` | Ceiling on total workers. Must be `>= min`. |
-| `warm` | `1` | Target idle workers the top-up maintains. Must be `<= max`. |
-| `max_in_flight` | `1` | Deprecated alias for `slotsPerMachine` (co-residence slots per machine). |
-| `ttl_ms` | `3600000` | Max worker lifetime. A `LEASED` worker past TTL is flagged; an idle one is reaped above `min`. |
-| `idle_reap_ms` | `300000` | Idle duration before a warm worker is eligible for reaping above `min`. |
-| `acquire_timeout_ms` | `30000` | How long a parked waiter waits before `no_capacity:acquire_timeout`. |
-| `reap_interval_ms` | `15000` | Reaper tick cadence. |
-| `stale_heartbeat_ms` | `600000` | Heartbeat staleness threshold. |
-| `drain_deadline_ms` | `30000` | How long drain waits for in-flight leases before force-destroying. |
-| `max_workers_per_issue` | unset | Per-issue fairness cap on concurrent workers. |
-| `co_residence` | unset | Opt-in required for `slotsPerMachine > 1`. |
-| `max_concurrent_tunnels` | unset | Ceiling on concurrent reverse SSH tunnels. |
+| Key                      | Default                                                                           | Meaning                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `driver`                 | `fake` when a block is present, `local` when absent                                | Registered driver kind, or an out-of-tree module specifier. There is no `enabled` key; the pool is always live. |
+| `min`                    | `0`                                                                               | Floor the reaper keeps warm. Never reaped below this.                                              |
+| `max`                    | `1`                                                                               | Ceiling on total workers. Must be `>= min`.                                                        |
+| `warm`                   | `1`                                                                               | Target idle workers the top-up maintains. Must be `<= max`.                                        |
+| `max_in_flight`          | `1`                                                                               | Deprecated alias for `slotsPerMachine` (co-residence slots per machine).                           |
+| `ttl_ms`                 | `3600000`                                                                         | Max worker lifetime. A `LEASED` worker past TTL is flagged; an idle one is reaped above `min`.     |
+| `idle_reap_ms`           | `300000`                                                                          | Idle duration before a warm worker is eligible for reaping above `min`.                            |
+| `acquire_timeout_ms`     | `30000`                                                                           | How long a parked waiter waits before `no_capacity:acquire_timeout`.                               |
+| `reap_interval_ms`       | `15000`                                                                           | Reaper tick cadence.                                                                               |
+| `stale_heartbeat_ms`     | `600000`                                                                          | Heartbeat staleness threshold.                                                                     |
+| `drain_deadline_ms`      | `30000`                                                                           | How long drain waits for in-flight leases before force-destroying.                                 |
+| `max_workers_per_issue`  | unset                                                                             | Per-issue fairness cap on concurrent workers.                                                      |
+| `co_residence`           | unset                                                                             | Opt-in required for `slotsPerMachine > 1`.                                                         |
+| `max_concurrent_tunnels` | unset                                                                             | Ceiling on concurrent reverse SSH tunnels, counted per distinct host (co-resident runs share one). |
 
 ### Co-residence
 
-`max_in_flight` is deprecated. It parses into `slotsPerMachine`, the number of runs that may share one machine. Co-residence (`slotsPerMachine > 1`) requires both a runtime per-run-endpoint capability and an explicit `co_residence: true` opt-in. The CLI enforces this with a post-construction gate; the pool and domain layers do not. If you raise `max_in_flight` without setting `co_residence`, startup fails loud.
+`max_in_flight` is deprecated. It parses into `slotsPerMachine`, the number of runs that may share one machine. Co-residence (`slotsPerMachine > 1`) requires both a runtime per-run-claim-enforcement capability (the MCP gateway re-checks each request's per-run scoped claim server-side, so co-resident runs sharing one host and one reverse tunnel cannot authorize against each other) and an explicit `co_residence: true` opt-in. The CLI enforces this with a post-construction gate; the pool and domain layers do not. If you raise `max_in_flight` without setting `co_residence`, startup fails loud.
 
 ### Spend caps
 
 Keys under `worker.worker_pool.spend` cap paid machine usage.
 
-| Key | Meaning |
-| --- | --- |
-| `max_concurrent_workers` | Hard ceiling on live workers. Blocks growth, surfaced as `spend_cap`. |
-| `max_worker_seconds` | Lifetime worker-seconds budget. Gates acquire entirely (`spend_cap`). |
-| `daily_worker_seconds` | Per-UTC-day worker-seconds budget. Gates acquire, persisted across restart. |
+| Key                      | Meaning                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `max_concurrent_workers` | Hard ceiling on live workers. Blocks growth, surfaced as `spend_cap`.       |
+| `max_worker_seconds`     | Lifetime worker-seconds budget. Gates acquire entirely (`spend_cap`).       |
+| `daily_worker_seconds`   | Per-UTC-day worker-seconds budget. Gates acquire, persisted across restart. |
 
 Worker-seconds are billed per lease from its own acquire timestamp. The daily accumulator rolls on UTC day change and persists to a `spend.json` sidecar next to the ledger file (`dirname(ledgerPath)/spend.json`). Daily spend is recorded fire-and-forget on the hot path; only a clean drain flushes the absolute total, so a crash can lose the last few unpersisted deltas.
 
@@ -137,11 +135,11 @@ A workflow hot-reload that re-enables the pool bumps an internal drain epoch, so
 
 The pool resolves `driver` through a registry keyed on driver kind.
 
-| Kind | Package | SSH-addressable | Ephemeral | Ledger | Notes |
-| --- | --- | --- | --- | --- | --- |
-| `fake` | `@lorenz/worker-sdk` | no | no | no | In-memory. `workerHost` is `fake://worker-<id>`. For tests and dry runs. |
-| `static-ssh` | `@lorenz/static-worker` | yes | no | no | Round-robins a fixed `ssh_hosts` list. `destroy` forgets the address, never deletes a machine. |
-| `docker` | `extensions/docker-worker` | yes | yes | yes | Disposable containers via `docker run -d`. `destroy` is `docker rm -f`. |
+| Kind         | Package                    | SSH-addressable | Ephemeral | Ledger | Notes                                                                                          |
+| ------------ | -------------------------- | --------------- | --------- | ------ | ---------------------------------------------------------------------------------------------- |
+| `fake`       | `@lorenz/worker-sdk`       | no              | no        | no     | In-memory. `workerHost` is `fake://worker-<id>`. For tests and dry runs.                       |
+| `static-ssh` | `@lorenz/static-worker`    | yes             | no        | no     | Round-robins a fixed `ssh_hosts` list. `destroy` forgets the address, never deletes a machine. |
+| `docker`     | `extensions/docker-worker` | yes             | yes       | yes    | Disposable containers via `docker run -d`. `destroy` is `docker rm -f`.                        |
 
 The `static-ssh` driver requires an `ssh_hosts` (or `ssh_hosts`) option, else it throws `static_ssh_hosts_required` at construction. The `docker` driver requires an `image`, else `docker_image_required`. See [Docker workers](./docker.md) for that driver's full setup.
 
@@ -160,6 +158,7 @@ The pool emits structured events for every lifecycle decision. Watch these in [o
 Driver resolution and out-of-tree loading throw fail-loud errors at startup: `worker_pool_driver_unavailable` (unknown kind), `worker_pool_driver_module_invalid`, `worker_pool_driver_sdk_mismatch`, and `worker_pool_driver_invalid_specifier`. See the full list in the [events reference](../reference/events.md).
 
 ## See also
+
 - [Workers overview](./index.md) - how workers fit the run lifecycle
 - [Static SSH workers](./static-ssh.md) - the legacy `worker.ssh_hosts` path and the `static-ssh` driver
 - [Docker workers](./docker.md) - the disposable-container driver

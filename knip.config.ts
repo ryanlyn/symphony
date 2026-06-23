@@ -53,7 +53,14 @@ const config: KnipConfig = {
   },
   ignoreDependencies: ["tsx"],
   ignoreBinaries: ["op", "tar"],
-  ignore: ["sandbox/**"],
+  // Test fixtures consumed by file path (cruised through dependency-cruiser, or
+  // compiled by the TypeScript API) rather than statically imported, so knip's
+  // static graph cannot see them used.
+  ignore: [
+    "sandbox/**",
+    "test/fixtures/extension-import-boundaries/**",
+    "test/fixtures/out-of-tree-extension/**",
+  ],
 };
 
 export default config;

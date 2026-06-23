@@ -241,14 +241,21 @@ export interface TrackerSettings {
 }
 
 /**
- * Configuration for the embedded warm worker/executor worker pool. When present and `enabled`,
- * the runtime leases an SSH-addressable worker per run (producing the run's `workerHost`) instead
- * of selecting from a static {@link WorkerSettings.sshHosts} list. Absent or disabled means the
- * pool is off and behavior is identical to the static-host path. Durations are milliseconds;
- * spend caps are seconds (matching {@link UsageTotals.secondsRunning}).
+ * Configuration for the embedded warm worker/executor worker pool, the single dispatch path. When
+ * `enabled`, the runtime leases a worker per run (producing the run's `workerHost`) through the
+ * configured driver. The `local` driver yields an empty `workerHost` so dispatch executes on acp's
+ * own in-process MCP endpoint; the `static-ssh` driver leases from the
+ * {@link WorkerSettings.sshHosts} static-host model. Durations are milliseconds; spend caps are
+ * seconds (matching {@link UsageTotals.secondsRunning}).
  */
 export interface WorkerPoolSettings {
-  /** Master switch. When false the pool is constructed-but-inert (or not constructed at all). */
+  /**
+   * Internal liveness switch, not an operator-facing config key. A parsed config always produces
+   * `enabled: true`; the reload-drain is the only writer that flips it to `false`, to drain a
+   * removed pool to zero (`reconcile` then skips the driver swap and tears the workers down). When
+   * `false` the pool is constructed-but-inert (or not constructed at all) and `governs()` falls
+   * through to local/static.
+   */
   enabled: boolean;
   /** Worker driver backend that provisions, probes, and destroys workers. */
   driver: WorkerDriverKind;
@@ -379,9 +386,12 @@ export interface WorkerSettings {
    */
   maxConcurrentAgentsPerHost?: number | undefined;
   /**
-   * Optional embedded worker-pool configuration. Absent (the default) leaves the static-host path
-   * unchanged. When `enabled`, the pool leases SSH-addressable workers to produce each run's
-   * `workerHost`; it cannot be combined with a non-empty {@link WorkerSettings.sshHosts}.
+   * Embedded worker-pool configuration; the single dispatch path. {@link parseConfig} always
+   * populates it: an absent `worker_pool` with no hosts defaults to an enabled `local` pool
+   * (slotsPerMachine=1, min=0/warm=0/max=1), and a non-empty {@link WorkerSettings.sshHosts} is
+   * represented by an enabled `static-ssh` pool carrying the hosts in
+   * {@link WorkerPoolSettings.driverOptions}. The field stays optional in the type so non-parse
+   * constructors (tests, fixtures) may omit it.
    */
   workerPool?: WorkerPoolSettings | undefined;
 }
@@ -976,4 +986,116 @@ export interface AgentExecutor {
   }): Promise<AgentSession>;
   /** Sends one prompt to the session and resolves with the updates produced during that turn. */
   runTurn(session: AgentSession, prompt: string, issue?: Issue): Promise<AgentUpdate[]>;
+}
+
+// --- SDK module contracts ---
+
+/** A required function hook an out-of-tree module must expose. */
+export interface SdkRequiredFn {
+  /** Property name to test for `typeof === "function"`. */
+  readonly field: string;
+  /** Signature shown in the error, e.g. `createClient(settings, context)`. */
+  readonly signature: string;
+  /** Article preceding the signature in the error: `"a"` or `"an"`. */
+  readonly article: "a" | "an";
+}
+
+/** The per-axis text and shape an {@link makeSdkModuleContract} call varies on. */
+export interface SdkModuleContractSpec {
+  /** Error-code prefix; errors are `<prefix>_module_invalid`/`<prefix>_sdk_mismatch`. */
+  readonly errorPrefix: string;
+  /**
+   * Module noun phrase in the non-object error, e.g. `a tracker provider module`;
+   * the error appends ` object` to it.
+   */
+  readonly moduleNoun: string;
+  /** Identity-field name the module must carry as a non-empty string. */
+  readonly identityField: string;
+  /** The `define...({ ... })` snippet shown in the non-object error's authoring hint. */
+  readonly defineCall: string;
+  /** Required function hooks, asserted in order after the identity check. */
+  readonly requiredFns: readonly SdkRequiredFn[];
+  /** SDK version this build speaks; a module declaring another version is rejected. */
+  readonly sdkVersion: number;
+}
+
+/** A module carrying the `sdkVersion` an out-of-tree author declares. */
+export interface SdkModule {
+  readonly sdkVersion: number;
+}
+
+/** The assert + define pair {@link makeSdkModuleContract} returns for one axis. */
+export interface SdkModuleContract<TModule extends SdkModule> {
+  /**
+   * Structural check + version handshake for a dynamically loaded module. `source`
+   * names where the value came from (a module specifier, or the `define...` helper
+   * at authoring time) so every error is actionable. Standalone (`this: void`), so
+   * an SDK can re-export it directly under its public name.
+   */
+  readonly assertModule: (
+    this: void,
+    value: unknown,
+    source: string,
+  ) => asserts value is TModule;
+  /**
+   * Authoring sugar: shape-asserts at definition time (so a typo fails in the
+   * author's tests, not the operator's daemon) and returns the module unchanged.
+   * `helperName` names the wrapper for the assertion's `source`.
+   */
+  readonly defineModule: (this: void, module: TModule, helperName: string) => TModule;
+}
+
+/**
+ * Builds the assert/define pair an SDK exposes for OUT-OF-TREE modules of one
+ * extension axis. In-repo extensions register with the composition root (which
+ * vouches for them); a dynamically imported module crosses a version boundary the
+ * daemon cannot type-check, so the explicit `sdkVersion` handshake stands in for
+ * the compiler. Every axis runs the identical 5-check sequence (object, identity,
+ * required hooks, numeric version, version match) and differs only in {@link spec}.
+ */
+export function makeSdkModuleContract<TModule extends SdkModule>(
+  spec: SdkModuleContractSpec,
+): SdkModuleContract<TModule> {
+  function assertModule(value: unknown, source: string): asserts value is TModule {
+    if (!isRecord(value)) {
+      throw new Error(
+        `${spec.errorPrefix}_module_invalid: ${source} did not yield ${spec.moduleNoun} object ` +
+          `(got ${value === null ? "null" : typeof value}); export ${spec.defineCall} ` +
+          `as the default export or a named export`,
+      );
+    }
+    const identity = value[spec.identityField];
+    if (typeof identity !== "string" || identity.trim() === "") {
+      throw new Error(
+        `${spec.errorPrefix}_module_invalid: ${source} is missing a non-empty string \`${spec.identityField}\``,
+      );
+    }
+    for (const fn of spec.requiredFns) {
+      if (typeof value[fn.field] !== "function") {
+        throw new Error(
+          `${spec.errorPrefix}_module_invalid: ${source} (${spec.identityField}: ${identity}) ` +
+            `is missing ${fn.article} \`${fn.signature}\` function`,
+        );
+      }
+    }
+    if (typeof value["sdkVersion"] !== "number") {
+      throw new Error(
+        `${spec.errorPrefix}_module_invalid: ${source} (${spec.identityField}: ${identity}) is missing a numeric \`sdkVersion\` ` +
+          `(declare sdkVersion: ${spec.sdkVersion})`,
+      );
+    }
+    if (value["sdkVersion"] !== spec.sdkVersion) {
+      throw new Error(
+        `${spec.errorPrefix}_sdk_mismatch: ${source} targets SDK v${value["sdkVersion"]}, ` +
+          `this build supports v${spec.sdkVersion}`,
+      );
+    }
+  }
+
+  function defineModule(module: TModule, helperName: string): TModule {
+    assertModule(module, helperName);
+    return module;
+  }
+
+  return { assertModule, defineModule };
 }

@@ -70,7 +70,7 @@ The core tracker bundle. `tracker.kind` selects the provider. There is no defaul
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `tracker.kind` | string | (none) | Selects the provider: `linear`, `jira`, `jira-mcp`, `local`, `slack`, `memory`, or `dispatch`. Required. |
+| `tracker.kind` | string | (none) | Selects the provider: `linear`, `jira`, `jira-mcp`, `local`, `slack`, `memory`, or `dispatch`, or an out-of-tree module specifier. Required. |
 | `tracker.provider` | string | (none) | Provider name when `kind` names a bundle rather than a provider directly. |
 | `tracker.endpoint` | string | provider default | API base URL. Falls back to the provider's `defaultEndpoint`. |
 | `tracker.api_key` | string (secret) | (none) | API credential. Resolves `$VAR` / `op://` / provider env fallback. |
@@ -210,7 +210,7 @@ Where agent runs check out. See [workspace](../workspace.md).
 
 ## `worker`
 
-Where agent runs execute. The legacy static path (`ssh_hosts`) and the warm pool (`worker_pool`) are mutually exclusive: `worker.ssh_hosts` cannot combine with `worker_pool.enabled` or `worker.kind`. See [workers](../workers/index.md).
+Where agent runs execute. The warm pool is the single dispatch path; the legacy `ssh_hosts` list folds into a `static-ssh` pool. You cannot name a driver twice for the same hosts: `worker.ssh_hosts` cannot combine with `worker_pool.driver` or `worker.kind`. See [workers](../workers/index.md).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -225,8 +225,7 @@ The embedded warm pool. See [worker-pool](../workers/worker-pool.md).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `worker_pool.enabled` | boolean | `true` when present | Turns the pool on. |
-| `worker_pool.driver` | string | `fake` | Driver kind (`fake`, `static-ssh`, `docker`) or an out-of-tree module specifier. |
+| `worker_pool.driver` | string | `fake` (block present) / `local` (block absent) | Driver kind (`local`, `fake`, `static-ssh`, `docker`) or an out-of-tree module specifier. The pool is always live; there is no `enabled` key. |
 | `worker_pool.min` | integer | `0` | Minimum machines kept alive. |
 | `worker_pool.max` | integer | `1` | Maximum machines. Must be `>= min`. |
 | `worker_pool.warm` | integer | `1` | Pre-warmed idle machines. Must be `<= max`. |

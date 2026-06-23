@@ -102,11 +102,21 @@ export function parseConfig(
   if (workerRaw.kind !== undefined && settings.worker.sshHosts.length > 0) {
     throw new Error("worker.kind cannot be combined with worker.ssh_hosts");
   }
-  const workerPool = parseWorkerPool(workerRaw.workerPool, workerRaw, parsed.workers ?? {});
-  if (workerPool) settings.worker.workerPool = workerPool;
-  if (workerPool?.enabled && settings.worker.sshHosts.length > 0) {
-    throw new Error("worker.worker_pool.enabled cannot be combined with worker.ssh_hosts");
-  }
+  // The pool is the single dispatch path; parseWorkerPool always returns one. The static-ssh
+  // fold-in caps per-host concurrency at `max_concurrent_agents_per_host ?? agent.max_concurrent_agents`.
+  // The agent override is applied later (parseAgentSettings), so resolve it here from the raw config,
+  // falling back to the value already on settings.agent.
+  const perHostConcurrency =
+    settings.worker.maxConcurrentAgentsPerHost ??
+    parsed.agent?.maxConcurrentAgents ??
+    settings.agent.maxConcurrentAgents;
+  settings.worker.workerPool = parseWorkerPool(
+    workerRaw.workerPool,
+    workerRaw,
+    parsed.workers ?? {},
+    settings.worker.sshHosts,
+    perHostConcurrency,
+  );
 
   settings.hooks = parseHooks(settings.hooks, parsed.hooks ?? {});
   if (settings.workspace.isolation === "none") assertNoWorkspaceHooks(settings.hooks);
@@ -218,6 +228,36 @@ export function validateDispatchConfig(
     }
     executorProvider.validateAgent?.(kind, agent, settings);
   }
+}
+
+/**
+ * The effective tracker selector a raw workflow config resolves to - the value
+ * that becomes `settings.tracker.kind` - WITHOUT running the rest of config
+ * parsing. The out-of-tree extension loader needs this BEFORE {@link parseConfig}
+ * so it can dynamic-import a tracker module named by `tracker.kind` and register
+ * it (under that exact string) into the registry the parser then resolves
+ * `parseOptions`/`validateDispatch` against. Returns undefined when no tracker is
+ * configured (the default tracker applies) or when a `trackers.<name>` bundle is
+ * selected (a bundle is an in-repo composition, never a module specifier).
+ *
+ * Mirrors {@link parseTracker}'s selection: `tracker.kind` is the selector; an
+ * empty/blank value yields undefined. This reads only the selector, so a tracker
+ * module specifier in `tracker.kind` (e.g. `./acme-tracker.mjs`) surfaces here
+ * verbatim for the loader, while a bundle selection is left to the registry's
+ * built-ins.
+ */
+export function trackerSpecifierFromConfig(
+  raw: Record<string, unknown> = {},
+): string | undefined {
+  const parsed = parseWorkflowConfig(raw);
+  const trackersRaw = parsed.trackers ?? {};
+  const selectorRecord = parseTrackerRecord(parsed.tracker ?? {}, "tracker");
+  const selected = trackerKindValue(selectorRecord.kind);
+  if (selected === undefined) return undefined;
+  // A `trackers.<name>` bundle selection composes an in-repo provider via the
+  // bundle's `provider:` key; it is never an out-of-tree module specifier.
+  if (trackersRaw[selected] !== undefined) return undefined;
+  return selected;
 }
 
 export function normalizeStateName(value: string): string {
@@ -427,14 +467,26 @@ function parseWorkerPool(
   raw: WorkerPoolRaw | null | undefined,
   workerRaw: NonNullable<WorkflowConfigRaw["worker"]>,
   workersRaw: WorkersRaw,
-): WorkerPoolSettings | undefined {
+  sshHosts: readonly string[],
+  perHostConcurrency: number,
+): WorkerPoolSettings {
   const selectedWorker = selectedWorkerProfile(workerRaw.kind, workersRaw);
-  if ((raw === undefined || raw === null) && selectedWorker === undefined) return undefined;
+
+  // No explicit worker_pool and no named worker profile: defaultDispatchWorkerPool supplies the
+  // implicit pool (a `local` pool, or a `static-ssh` pool when `ssh_hosts` is set).
+  if ((raw === undefined || raw === null) && selectedWorker === undefined) {
+    return defaultDispatchWorkerPool(sshHosts, perHostConcurrency);
+  }
   if (selectedWorker !== undefined && raw?.driver !== undefined) {
     throw new Error("worker.kind cannot be combined with worker.worker_pool.driver");
   }
+  // The `ssh_hosts` fold-in only auto-selects static-ssh when no driver is named; a named driver
+  // wins, so an explicit `worker_pool.driver` alongside `ssh_hosts` is ambiguous and rejected
+  // rather than dropping the hosts.
+  if (raw?.driver !== undefined && sshHosts.length > 0) {
+    throw new Error("worker.worker_pool.driver cannot be combined with worker.ssh_hosts");
+  }
 
-  const enabled = raw?.enabled ?? selectedWorker !== undefined;
   const driver = selectedWorker?.driver ?? raw?.driver ?? "fake";
   const min = raw?.min ?? 0;
   const max = raw?.max ?? 1;
@@ -451,7 +503,9 @@ function parseWorkerPool(
   // so the constructed object carries exactly ONE own field (`slotsPerMachine`). The config key
   // `worker.worker_pool.max_in_flight` is unchanged; it parses into `slotsPerMachine`.
   const input: WorkerPoolSettingsInput = {
-    enabled,
+    // A configured pool (an explicit worker_pool block or a named worker.kind) is always enabled;
+    // `enabled` is an internal liveness flag the reload-drain flips, not an operator config key.
+    enabled: true,
     driver,
     min,
     max,
@@ -485,6 +539,65 @@ function parseWorkerPool(
   // lives with the registered driver and runs at pool construction - the same
   // fail-loud startup point as an unregistered kind.
   return settings;
+}
+
+/**
+ * The implicit dispatch pool produced when no `worker_pool` and no `worker.kind` are configured:
+ * - empty `sshHosts`  -> an enabled `local` pool, slotsPerMachine=1, min=0/warm=0/max=1 so nothing
+ *   provisions eagerly and the single local worker is minted on first acquire. The local driver
+ *   yields an empty `workerHost`, so the per-run endpoint manager mints no tunnel and acp keeps its
+ *   own in-process MCP endpoint.
+ * - non-empty `sshHosts` -> an enabled `static-ssh` pool whose driverOptions carry the configured
+ *   hosts (the `ssh_hosts` spelling the driver's `readSshHosts` expects). `max` is the host count
+ *   and slotsPerMachine is the per-host cap (`max_concurrent_agents_per_host ??
+ *   agent.max_concurrent_agents`), so total capacity is hosts * perHostConcurrency. `co_residence`
+ *   is auto-enabled when that cap is >1, since each co-resident run owns its own per-run Token B
+ *   claim plus the shared per-host reverse tunnel. The provision policy is round-robin first-free
+ *   (static-ssh `provision`).
+ */
+function defaultDispatchWorkerPool(
+  sshHosts: readonly string[],
+  perHostConcurrency: number,
+): WorkerPoolSettings {
+  if (sshHosts.length > 0) {
+    const slotsPerMachine = Math.max(1, perHostConcurrency);
+    const input: WorkerPoolSettingsInput = {
+      enabled: true,
+      driver: "static-ssh",
+      min: 0,
+      max: sshHosts.length,
+      warm: 0,
+      slotsPerMachine,
+      ttlMs: 3_600_000,
+      idleReapMs: 300_000,
+      acquireTimeoutMs: 30_000,
+      reapIntervalMs: 15_000,
+      staleHeartbeatMs: 600_000,
+      drainDeadlineMs: 30_000,
+      driverOptions: { ssh_hosts: [...sshHosts] },
+    };
+    const settings = withDerivedMaxInFlight(input);
+    // A per-host cap >1 co-resides runs on one host (guarded by the slots-per-machine gate), so
+    // auto-enable the co_residence opt-in. A cap of 1 stays single-tenant and never trips the gate.
+    if (slotsPerMachine > 1) settings.coResidence = true;
+    return settings;
+  }
+
+  const input: WorkerPoolSettingsInput = {
+    enabled: true,
+    driver: "local",
+    min: 0,
+    max: 1,
+    warm: 0,
+    slotsPerMachine: 1,
+    ttlMs: 3_600_000,
+    idleReapMs: 300_000,
+    acquireTimeoutMs: 30_000,
+    reapIntervalMs: 15_000,
+    staleHeartbeatMs: 600_000,
+    drainDeadlineMs: 30_000,
+  };
+  return withDerivedMaxInFlight(input);
 }
 
 function selectedWorkerProfile(
