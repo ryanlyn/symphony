@@ -108,100 +108,51 @@ as Mermaid for inspection.
 | Agent executor | `AgentExecutorProvider` | `@lorenz/agent-sdk` | `defaultAgentExecutorRegistry` | `agents.<kind>.executor` |
 | Worker driver | `WorkerDriverFactory` | `@lorenz/worker-sdk` | `defaultWorkerDriverRegistry` | `worker.worker_pool.driver` |
 
-Each axis has a build recipe page under `extensions/`. The rest of this section is the contract at
-a glance; follow the link for the recipe.
+Each axis has a build recipe page under `extensions/`, and that page is the source of truth for its
+contract: the hook tables, member signatures, lifecycle, and worked examples live there, not here.
+What follows is only the architectural shape the four axes share — one contract, one registry, one
+registration line — and the boundary fact unique to each. Follow the link for the contract itself.
 
 ### Tracker provider
 
-`TrackerProvider` is the single contract between the core and a tracker backend. Only `kind` and
-`createClient` are mandatory; every other hook is optional.
-
-| Hook | Called by | Purpose |
-| --- | --- | --- |
-| `kind` | registry | provider selector |
-| `configAliases` | config | snake_case aliases for provider keys |
-| `envFallbacks` | config | env vars backing shared fields |
-| `defaultEndpoint` | config | endpoint when `tracker.endpoint` is unset |
-| `parseOptions` | config | validate provider keys into `settings.tracker.options` |
-| `validateDispatch` | CLI startup | reject undispatchable settings early |
-| `createClient` | runtime | the client that feeds dispatch |
-| `createToolOps` | neutral tool pack | normalized issue ops behind `tracker_*` tools |
-| `defaultToolPacks` | MCP mount | provider-specific packs mounted by default |
-| `projectUrl` | TUI / dashboard | operator-facing project link |
-
-Provider-specific settings never appear as named fields on `TrackerSettings`. They live in
-`settings.tracker.options`, validated once at parse time by `parseOptions` and read through the
-provider's typed accessor (`linearTrackerOptions(settings)`, `jiraTrackerOptions(settings)`). Core
-code must not read `options` keys directly. The full recipe is in
+`TrackerProvider` is the single contract between the core and a tracker backend. `kind` and
+`createClient` are the only mandatory members; every other hook is optional and the core degrades
+cleanly when one is absent. Provider-specific settings never become named fields on
+`TrackerSettings`; they live in `settings.tracker.options` behind a typed accessor, per the
+options-bag pattern below. Contract and full hook table:
 [extensions/tracker-provider.md](extensions/tracker-provider.md).
 
 ### Tool pack
 
-Agent-facing MCP tools are a separate axis from dispatch. `ToolProvider` is a named pack:
-`toolSpecs(settings)` advertises tools and `executeTool(name, input, context)` runs one. The
-mounting endpoint resolves packs in order: the neutral `tracker` pack, then the dispatch tracker's
-`defaultToolPacks`, then every key of the workflow `tools:` map, de-duplicated by first-seen name.
-
-A mount is one flat namespace. `mountedToolSpecs` throws at mount time on a tool-name collision
-across two different packs. A pack that throws during execution surfaces as a failed `ToolResult`
-(JSON-RPC `isError`), never as a transport error.
-
-The neutral pack is named the literal string `"tracker"`. It serves seven provider-neutral tools
-against `TrackerToolOps`: `tracker_read_issue`, `tracker_query`, `tracker_update_status`,
-`tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, and `tracker_create_issue`.
-Any tracker whose provider implements `createToolOps` gets all seven without writing a pack; a tool
-whose backing op is missing reports itself unavailable rather than failing mid-call.
-Provider-specific packs (`linear`, `local`, `slack`) live in their tracker packages and carry the
-tools only that backend can offer. The recipe is in
-[extensions/tool-pack.md](extensions/tool-pack.md).
+Agent-facing MCP tools are a separate axis from dispatch. `ToolProvider` is a named pack that
+advertises tools and runs them. The mounting endpoint unions the neutral `tracker` pack, the
+dispatch tracker's `defaultToolPacks`, and the workflow `tools:` keys into one flat namespace that
+fails loud on a name collision, and a tracker that implements `createToolOps` gets the seven
+provider-neutral `tracker_*` tools without shipping a pack of its own. Contract:
+[extensions/tool-pack.md](extensions/tool-pack.md); the neutral tools themselves:
+[reference/tracker-tools.md](reference/tracker-tools.md).
 
 ### Agent executor
 
 Agents extend along two independent axes. **Agent kinds** are pure configuration: `Settings.agents`
 is an open record, so adding a kind is a new `agents.<name>` entry in workflow YAML with no code.
-**Executors** are how an agent record runs. `AgentExecutorProvider` is the contract: an `executor`
-selector matched against `agents.<kind>.executor`, optional `configAliases` and `parseOptions` for
-the executor's slice of an `agents.<kind>` record, optional `validateAgent` for startup checks, and
-`createExecutor(kind, settings)` producing the `AgentExecutor` the agent-runner drives.
-`createExecutor` may be synchronous or return a `Promise<AgentExecutor>`.
-
-The built-in `"acp"` executor lives in `@lorenz/acp`; the CLI registers it at startup.
-`AgentConfig` mirrors `TrackerSettings`: only shared fields (`executor`, turn and stall timeouts)
-live on the record, and everything else sits in an executor-owned `options` bag.
-`validateDispatchConfig` rejects records whose executor selector is unregistered, listing the known
-selectors. The recipe is in [extensions/agent-executor.md](extensions/agent-executor.md).
+**Executors** are how an agent record runs: `AgentExecutorProvider` selects on
+`agents.<kind>.executor` and produces the `AgentExecutor` the agent-runner drives. The architectural
+split worth noting is that the `AgentExecutor` runtime contract lives in `domain`, not `agent-sdk`;
+the SDK owns only the build-time provider and registry. The one built-in executor, `acp`, lives in
+`@lorenz/acp`. Contract: [extensions/agent-executor.md](extensions/agent-executor.md).
 
 ### Worker driver
 
 The warm worker pool (`@lorenz/worker-pool`, an engine package) leases SSH-addressable machines per
-run. The machines come from a **worker driver**: the adapter that provisions, probes, destroys, and
-lists workers for one infrastructure. "Driver" is deliberate; "provider" stays reserved for tracker and
-executor providers.
-
-| Hook | Called by | Purpose |
-| --- | --- | --- |
-| `kind` | registry | `worker.worker_pool.driver` selector |
-| `create(options, deps)` | pool construction / driver swap | build the driver from `workers.<name>` options, fail-loud |
-| `provision` | pool grow / warm top-up | create or re-adopt one worker (idempotent on `workerId`) |
-| `probe` | readiness gate, reaper health pass | cheap reachability check |
-| `destroy` | reaper / recycle / drain | tear one worker down (idempotent, tolerant of already-gone) |
-| `list` | hydrate re-adoption, reaper reconcile | the backend's authoritative inventory |
-| `capabilities` | pool | `sshAddressable` / `ephemeral` / `usesLedger` gates |
-
-The pool calls only the four ops `provision`, `probe`, `destroy`, and `list`, and owns every
-lifecycle decision itself: leasing, the FIFO waiter queue, warm top-up, the reaper, spend caps, the
-write-ahead ledger, and crash recovery. Drivers never see pool state and never import engine
-packages: SSH arrives through `DriverDeps.runSsh`, injected by the pool. Options arrive verbatim
-from the selected `workers.<name>` profile minus its `driver` key.
-
-Built-in drivers are `fake` (in-memory, in the SDK), `static-ssh` (`@lorenz/static-worker`), and
-`docker` (`extensions/docker-worker`). A driver can also load **out of tree** by module specifier
-with an `sdkVersion` handshake: `worker.worker_pool.driver` accepts an npm name, `@scope/name`, a
-`./relative` or `/absolute` path, or a `file:` URL with an optional `#exportName` suffix. The loader
-validates the module via `assertWorkerDriverModule` and rejects any `sdkVersion` other than
-`WORKER_DRIVER_SDK_VERSION` (`1`) before it reaches the registry. The conformance kit
-(`@lorenz/worker-sdk/conformance`, `runDriverConformanceSuite`) pins the contract every driver must
-satisfy. Recipes: [extensions/worker-driver.md](extensions/worker-driver.md) and
+run from a **worker driver**: the adapter that provisions, probes, destroys, and lists workers for one
+infrastructure. ("Driver" is deliberate; "provider" stays reserved for tracker and executor
+providers.) The pool owns every lifecycle decision — leasing, the waiter queue, warm top-up, the
+reaper, spend caps, the write-ahead ledger, crash recovery — and calls the driver for only those
+four ops. Drivers never see pool state and never import engine packages: SSH arrives through
+`DriverDeps.runSsh`, injected by the pool. A driver can also load out of tree by module specifier
+behind an `sdkVersion` handshake. Contract:
+[extensions/worker-driver.md](extensions/worker-driver.md) and
 [extensions/out-of-tree.md](extensions/out-of-tree.md).
 
 ## Registries and the options-bag pattern
