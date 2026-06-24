@@ -104,9 +104,8 @@ starting a worker or touching a workspace. Add `--once` to poll a single time an
   clients so workspace cleanup can look an issue up by either.
 - `fetchIssuesByStates(states)` compares case-insensitively after trimming, so `todo` and `Todo`
   match the same issue.
-- No agent tools. `memory` registers no `ToolProvider`, and it declares no `defaultToolPacks`. The
-  provider-neutral `tracker` pack advertises zero tools for it, because `memory` has no
-  `createToolOps`. An agent in a `memory` run has the issue context but no tracker tool to write
+- No agent tools. `memory` registers no `ToolProvider` and declares no `defaultToolPacks`, so it
+  ships no tool pack. An agent in a `memory` run has the issue context but no tracker tool to write
   back.
 
 ## See also

@@ -36,4 +36,3 @@ export type { ThreadState } from "./threadState.js";
 export { slackTrackerProvider } from "./provider.js";
 export { registerSlackTracker } from "./register.js";
 export { executeSlackTool, slackToolSpecs } from "./tools.js";
-export { slackToolOpsWith } from "./toolOps.js";

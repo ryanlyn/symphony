@@ -8,7 +8,6 @@ import {
 
 import { LinearClient } from "./client.js";
 import { LINEAR_DEFAULT_ENDPOINT, linearTrackerOptions } from "./options.js";
-import { linearToolOps } from "./toolOps.js";
 
 /** Linear.app tracker: issues are polled from configured projects over GraphQL. */
 export const linearTrackerProvider: TrackerProvider = {
@@ -58,7 +57,6 @@ export const linearTrackerProvider: TrackerProvider = {
     void client.resolveProjectSlugs().catch(() => {});
     return client;
   },
-  createToolOps: (settings, context) => linearToolOps(settings, context),
   defaultToolPacks: () => ["linear"],
   projectUrl(settings) {
     const slug = linearTrackerOptions(settings).projectSlug?.trim();

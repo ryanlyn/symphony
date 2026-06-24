@@ -17,7 +17,7 @@ Packages stack in dependency order. Each layer depends only on the ones above it
 | Apps | `apps/cli`, `apps/web`, `apps/traceviz` | The `lorenz` binary, the React SPA, the standalone trace viewer |
 | Vendored | `vendor/codex-acp`, `vendor/claude-agent-acp` | Patched ACP bridge subprocesses |
 
-The composition root in `apps/cli/src/daemon.ts` (`registerBuiltinBackends`) is the one place backend identity is hardcoded. It registers every built-in tracker, the tracker tool pack, the ACP executor, and the worker drivers into the four default registries before any config is parsed. See [architecture](architecture.md) for how the layers run as one process and [extensions/index.md](extensions/index.md) for the build recipes.
+The composition root in `apps/cli/src/daemon.ts` (`registerBuiltinBackends`) is the one place backend identity is hardcoded. It registers every built-in tracker along with the tool packs each tracker owns, the ACP executor, and the worker drivers into the four default registries before any config is parsed. See [architecture](architecture.md) for how the layers run as one process and [extensions/index.md](extensions/index.md) for the build recipes.
 
 ## Leaf and domain packages
 
@@ -35,12 +35,12 @@ Four packages, one builder-facing contract each, plus a registry. Every registry
 
 | Package | Contract | First files to open |
 | --- | --- | --- |
-| `@lorenz/tracker-sdk` | `TrackerProvider` + `TrackerToolOps`; the neutral `tracker` tool pack; options helpers | `src/provider.ts`, `src/toolPack.ts`, `src/registry.ts` |
+| `@lorenz/tracker-sdk` | `TrackerProvider` + registry; `TrackerComment`; options helpers | `src/provider.ts`, `src/registry.ts` |
 | `@lorenz/tool-sdk` | `ToolProvider` + `ToolRegistry`; mount-time fan-out; the read-only query/filter DSL | `src/provider.ts`, `src/registry.ts`, `src/filter.ts` |
 | `@lorenz/agent-sdk` | `AgentExecutorProvider` + `AgentExecutorRegistry` (the `AgentExecutor` runtime type lives in `domain`) | `src/provider.ts` |
 | `@lorenz/worker-sdk` | `WorkerDriver` + `WorkerDriverFactory` + registry; the out-of-tree handshake; the reference `FakeWorkerDriver`; the conformance suite | `src/types.ts`, `src/registry.ts`, `src/module.ts` |
 
-`tracker-sdk`'s `src/toolPack.ts` holds `TRACKER_TOOL_NAMES`, the source of truth for the seven `tracker_*` tool names: `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue`. `worker-sdk`'s `src/conformance.ts` lives under `src/` (not `test/`) so it compiles to `dist/` and each driver imports it via the `@lorenz/worker-sdk/conformance` subpath. `worker-sdk`'s `src/fake.ts` ships the `fake` driver in the SDK itself, not as an extension. None of the four SDKs has a README; the authoritative prose is this docs set plus each package's tests. See [extensions/tracker-provider.md](extensions/tracker-provider.md), [extensions/tool-pack.md](extensions/tool-pack.md), [extensions/agent-executor.md](extensions/agent-executor.md), and [extensions/worker-driver.md](extensions/worker-driver.md).
+`extensions/jira-tracker`'s `src/tools.ts` holds the `tracker` pack and the source of truth for the seven `tracker_*` tool names: `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue` (plus the `DEFAULT_SELECT` field set). `worker-sdk`'s `src/conformance.ts` lives under `src/` (not `test/`) so it compiles to `dist/` and each driver imports it via the `@lorenz/worker-sdk/conformance` subpath. `worker-sdk`'s `src/fake.ts` ships the `fake` driver in the SDK itself, not as an extension. None of the four SDKs has a README; the authoritative prose is this docs set plus each package's tests. See [extensions/tracker-provider.md](extensions/tracker-provider.md), [extensions/tool-pack.md](extensions/tool-pack.md), [extensions/agent-executor.md](extensions/agent-executor.md), and [extensions/worker-driver.md](extensions/worker-driver.md).
 
 ## Config and workflow
 
@@ -138,9 +138,9 @@ Concrete backend implementations live under top-level `extensions/`, never under
 | Extension | What it owns |
 | --- | --- |
 | `extensions/linear-tracker` | The `linear` tracker provider plus its `linear` tool pack (`linear_graphql`). |
-| `extensions/jira-tracker` | The `jira` and `jira-mcp` tracker providers; mounts only the neutral `tracker` pack. |
+| `extensions/jira-tracker` | The `jira` and `jira-mcp` tracker providers; owns and mounts the `tracker` pack (the seven `tracker_*` tools) defined in its own `src/tools.ts`. |
 | `extensions/local-tracker` | The `local` file-board tracker plus its `local` tool pack. |
-| `extensions/memory-tracker` | The in-memory fixture tracker for tests and dry runs; registers no tool ops, so it advertises zero tools. |
+| `extensions/memory-tracker` | The in-memory fixture tracker for tests and dry runs; declares no `defaultToolPacks`, so it advertises zero tools. |
 | `extensions/slack-tracker` | The `slack` tracker provider plus its `slack` tool pack. |
 | `extensions/docker-worker` | The `docker` worker driver (disposable containers); ephemeral, uses the ledger. |
 

@@ -127,9 +127,10 @@ the upstream package. Three behaviors are specific to it:
 A Claude session reaches Lorenz tracker tools through the built-in `/mcp` tool endpoint, not a
 separate sidecar. The Codex bridge receives the same tools as an ACP `McpServer` config; Claude
 calls the HTTP `POST /mcp` JSON-RPC endpoint directly. Either way the tool surface is identical: the
-neutral `tracker` pack (`tracker_read_issue`, `tracker_query`, `tracker_update_status`,
-`tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue`), plus
-the dispatch tracker's own packs and any pack named in the workflow `tools:` map.
+dispatch tracker's own packs plus any pack named in the workflow `tools:` map. For a Jira dispatch
+that means the `tracker` pack (`tracker_read_issue`, `tracker_query`, `tracker_update_status`,
+`tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue`); other
+trackers mount their own bespoke packs instead.
 
 The observability server hosts that `/mcp` endpoint, so it starts automatically for Claude workflows
 even when you have not configured a web dashboard port. The ACP bridge needs a reachable endpoint to

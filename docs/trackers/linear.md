@@ -167,18 +167,16 @@ A missing `api_key` fails before any network call with a `missing Linear API key
 
 ## Agent tools
 
-Mounting the Linear backend gives agents two layers of tools over the same Linear credentials.
+Mounting the Linear backend gives agents the `linear` tool pack over the configured Linear
+credentials. The provider's `defaultToolPacks` declares only this pack, so Linear dispatch mounts
+`linear_graphql` and nothing else.
 
-**Provider-neutral `tracker_*` tools.** The neutral `tracker` pack serves seven tools that behave the
-same against any backend, all implemented here over GraphQL. Prefer these for portable workflow
-logic; the tool list and their full contract live in [tracker-tools](../reference/tracker-tools.md).
-
-**The `linear_graphql` escape hatch.** The `linear` tool pack adds one tool, `linear_graphql`, for
-raw GraphQL the neutral tools do not cover: comment edits, attachment and upload flows, schema
-introspection. It accepts a bare query string or a `{ query, variables }` object and reuses Lorenz's
-configured Linear auth. A top-level GraphQL `errors` array on an HTTP 200 returns a failed result
-instead of throwing, and the tool applies the same 429 backoff as the poller. The pack mounts
-automatically for Linear dispatch.
+**The `linear_graphql` escape hatch.** The `linear` tool pack serves one tool, `linear_graphql`, for
+raw GraphQL over the full Linear API: issue reads and queries, status transitions, comment reads and
+edits, attachment and upload flows, schema introspection. It accepts a bare query string or a
+`{ query, variables }` object and reuses Lorenz's configured Linear auth. A top-level GraphQL
+`errors` array on an HTTP 200 returns a failed result instead of throwing, and the tool applies the
+same 429 backoff as the poller. The pack mounts automatically for Linear dispatch.
 
 The `linear` pack also bundles a `lorenz-linear` skill that teaches the agent how to call
 `linear_graphql`: progressive issue lookup (key, then identifier, then internal id), fetching team
@@ -221,7 +219,6 @@ tools:
 
 - [Trackers overview](index.md) - all tracker backends and how dispatch consumes them.
 - [Configuration reference](../reference/configuration.md) - the full key, default, and alias table.
-- [Tracker tools reference](../reference/tracker-tools.md) - the seven `tracker_*` tool contracts.
 - [Dispatch routing](../features/dispatch-routing.md) - route labels and multi-instance gating.
 - [Skills](../agents/skills.md) - the bundled `lorenz-linear` skill and how packs overlay docs.
 - [Tracker provider extension](../extensions/tracker-provider.md) - build your own tracker backend.

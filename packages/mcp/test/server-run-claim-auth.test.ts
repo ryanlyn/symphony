@@ -1,8 +1,8 @@
 import { parseConfig as parseWorkflowConfig } from "@lorenz/config";
 import type { Settings } from "@lorenz/domain";
-import { registerLinearTracker } from "@lorenz/linear-tracker";
+import { registerJiraTrackers } from "@lorenz/jira-tracker";
 import { ToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 import { Hono } from "hono";
 import { test } from "vitest";
 import { assert } from "@lorenz/test-utils";
@@ -17,15 +17,24 @@ import {
   type RunClaim,
 } from "@lorenz/mcp";
 
-// Private registries so the mount is exercised without mutating process defaults.
+// Private registries so the mount is exercised without mutating process defaults. These tests
+// drive `tracker_*` tool NAMES through the per-run claim/allowlist middleware, which authorizes
+// by name before the tool is resolved, so the outcome is independent of which pack is mounted.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
-registerLinearTracker({ trackers, tools });
-tools.register(createTrackerToolProvider(trackers));
+registerJiraTrackers({ trackers, tools });
 
-function linearSettings(): Settings {
+function jiraSettings(): Settings {
   return parseWorkflowConfig(
-    { tracker: { kind: "linear", api_key: "linear-token", project_slug: "mono" } },
+    {
+      tracker: {
+        kind: "jira",
+        base_url: "https://jira.example.com",
+        email: "agent@example.com",
+        api_key: "jira-token",
+        project_keys: ["ENG"],
+      },
+    },
     {},
     {},
     trackers,
@@ -45,7 +54,7 @@ const baseClaim = (overrides: Partial<RunClaim> = {}): RunClaim => ({
 function mountWith(options: Parameters<typeof mountMcp>[2]): { app: Hono; authScope: string } {
   const app = new Hono();
   const authScope = createMcpAuthScope();
-  mountMcp(app, linearSettings(), { authScope, tools, ...options });
+  mountMcp(app, jiraSettings(), { authScope, tools, ...options });
   return { app, authScope };
 }
 

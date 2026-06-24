@@ -151,8 +151,11 @@ possible.
 
 ## The `tracker_*` tools
 
-Both kinds expose the same provider-neutral tool pack from `@lorenz/tracker-sdk`; the Jira extension
-ships no pack of its own. See the [trackers overview](index.md) for the shared read surface and
+Both kinds expose the same `tracker_*` tool pack, owned by the Jira extension and defined in
+`extensions/jira-tracker/src/tools.ts`. The pack registers under the name `"tracker"` and the
+`jira` and `jira-mcp` providers mount it via `defaultToolPacks(): ["tracker"]`. The seven tools
+implement directly over `JiraClient` or `JiraMcpClient`, selected by `settings.tracker.kind`. See
+the [trackers overview](index.md) for the read surface and
 [reference/tracker-tools](../reference/tracker-tools.md) for the seven tools and their contract.
 
 `tracker_query` routes by its arguments: `issueIds` fetches by id, a `query` or `jql` string runs a

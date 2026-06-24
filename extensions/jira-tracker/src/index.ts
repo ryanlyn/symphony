@@ -7,3 +7,9 @@ export {
 } from "./options.js";
 export { jiraMcpTrackerProvider, jiraTrackerProvider } from "./provider.js";
 export { registerJiraTrackers } from "./register.js";
+export {
+  JIRA_TOOL_PACK_NAME,
+  executeJiraTool,
+  jiraToolProvider,
+  trackerToolSpecs,
+} from "./tools.js";

@@ -207,9 +207,8 @@ errors are treated as success. Backoff is exponential, honors `Retry-After`, and
 ## The `slack_*` tools
 
 The `slack` tool pack mounts automatically for the Slack tracker (its `defaultToolPacks` returns
-`["slack"]`). Alongside the seven provider-neutral `tracker_*` tools (see
-[reference/tracker-tools.md](../reference/tracker-tools.md)), it adds Slack-native tools that expose
-the thread model directly: `slack_update_status` and `slack_comment` write the bot's reply,
+`["slack"]`), and it is the only pack the Slack tracker mounts. Its Slack-native tools expose the
+thread model directly: `slack_update_status` and `slack_comment` write the bot's reply,
 `slack_read_thread` returns the authoritative thread-derived state, `slack_query` runs the read-only
 `where` DSL, and `slack_user_info` / `slack_channel_context` resolve people and surrounding
 conversation.
@@ -218,15 +217,13 @@ Every tool enforces the same trust boundary: a configured `bot_user_id`, a watch
 tracked message. `slack_query` rejects `jql` (use the `where` DSL) and always intersects requested
 channels with the configured allow-list, so it cannot become an oracle for arbitrary messages. A
 no-arg `slack_query` returns every tracked root in the configured channels, regardless of state;
-narrow it with `where`, `order_by`, and paging. The candidate-scoped, active-states-only default
-belongs to the neutral `tracker_query` / `queryIssues` path instead.
+narrow it with `where`, `order_by`, and paging.
 
 ### Why there is no `slack_create_issue`
 
-Issues are created only by humans mentioning the bot. The Slack `TrackerToolOps` adapter omits
-`createIssue` deliberately, so the neutral `tracker_create_issue` reports unavailable on Slack.
-There is no agent path to create a Slack issue. The neutral pack still serves `readIssue`,
-`queryIssues`, `updateStatus`, and `addComment` through the same client.
+Issues are created only by humans mentioning the bot. The `slack` pack ships no issue-creation tool
+deliberately, so there is no agent path to create a Slack issue. Agents read and update existing
+threads through `slack_read_thread`, `slack_query`, `slack_update_status`, and `slack_comment`.
 
 ## Workflow example
 
@@ -237,8 +234,7 @@ workflow.
 
 ## See also
 
-- [trackers/index.md](index.md) - the shared read surface and the neutral `tracker_*` pack.
+- [trackers/index.md](index.md) - the shared read surface and per-tracker tool packs.
 - [dispatch.md](../dispatch.md) - the route resolution and eligibility chain.
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - exact schemas for the neutral tools.
 - [reference/configuration.md](../reference/configuration.md) - the full `tracker.*` key reference.
 - [security.md](../security.md) - the agent trust boundary and secret handling.

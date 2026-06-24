@@ -71,8 +71,10 @@ and one Codex backend.
 - **`AgentExecutorProvider`** registered in an `AgentExecutorRegistry`, matched against
   `agents.<kind>.executor`. The shipped provider is `acpExecutorProvider` with selector `acp`. See
   [extensions/agent-executor](../extensions/agent-executor.md).
-- **`ToolProvider`** mounts a tool pack into agent sessions. The neutral tracker pack exposes seven
-  `tracker_*` tools. See [extensions/tool-pack](../extensions/tool-pack.md) and
+- **`ToolProvider`** mounts a tool pack into agent sessions. A tracker exposes agent tools by
+  implementing `defaultToolPacks(settings)`, which names the registered packs it owns. The Jira
+  extension owns the `tracker` pack of seven `tracker_*` tools. See
+  [extensions/tool-pack](../extensions/tool-pack.md) and
   [reference/tracker-tools](tracker-tools.md).
 - **`WorkerDriver`** / `WorkerDriverFactory` (from `@lorenz/worker-sdk`) back the worker pool,
   including out-of-tree module specifiers. The only shipped pool driver is
@@ -433,10 +435,12 @@ worker's turns, and forwards normalized agent updates to the orchestrator. The s
 `agent.max_turns`, profile change ends the session) matches Section 5.1. See
 [agents/acp-bridges](../agents/acp-bridges.md) and [agents/index](../agents/index.md).
 
-Tooling reaches the agent through MCP, not a Codex client-tool channel. The neutral tracker pack
-mounts seven tools: `tracker_read_issue`, `tracker_query`, `tracker_update_status`,
-`tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue`. This
-replaces the draft's single `linear_graphql` tool. Generated MCP config is workspace-local and
+Tooling reaches the agent through MCP, not a Codex client-tool channel. The mounted set is driven by
+the dispatch tracker's `defaultToolPacks()` plus the workflow `tools:` map keys, de-duplicated and
+collision-checked. The Jira extension's `tracker` pack mounts seven tools: `tracker_read_issue`,
+`tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`,
+`tracker_update_comment`, `tracker_create_issue`. This replaces the draft's single `linear_graphql`
+tool. Generated MCP config is workspace-local and
 carries only the Lorenz-issued bearer token for the local endpoint; raw tracker secrets are never
 written to disk. Remote workers reach the local MCP endpoint through an SSH tunnel or equivalent
 forwarding, and acquired tokens and tunnels are released when a session stops. See
