@@ -7,14 +7,33 @@ import { assert, tempDir } from "@lorenz/test-utils";
 import type { WorkflowDefinition } from "@lorenz/domain";
 
 import { buildClaimStoreHandle, defaultClaimStorePath } from "../src/claimStore.js";
+import { resolveAppFlags } from "../src/flags-manifest.js";
+
+test("claim store backend resolves entirely through the flag system", () => {
+  // Default, feature preset, env (via the flag env convention), and a raw flag token all flow
+  // through @lorenz/flags - there is no bespoke claim-store option or env parsing.
+  assert.equal(resolveAppFlags({}, {}, {}).get("claim_store.backend"), "memory");
+  assert.equal(
+    resolveAppFlags({ featureTokens: ["durable_claims"] }, {}, {}).get("claim_store.backend"),
+    "sqlite",
+  );
+  assert.equal(
+    resolveAppFlags({}, {}, { LORENZ_FLAG_CLAIM_STORE__BACKEND: "turso" }).get(
+      "claim_store.backend",
+    ),
+    "turso",
+  );
+  assert.equal(
+    resolveAppFlags({ flagTokens: ["claim_store.backend=turso"] }, {}, {}).get(
+      "claim_store.backend",
+    ),
+    "turso",
+  );
+});
 
 test("claim store builder keeps memory as the default backend", async () => {
   const workflow = workflowFixture(await tempDir("lorenz-claim-store-memory"));
-  const handle = await buildClaimStoreHandle(
-    workflow,
-    { backend: null, path: null, ownerStaleMs: null },
-    {},
-  );
+  const handle = await buildClaimStoreHandle(workflow, { backend: "memory" });
 
   assert.equal(handle.backend, "memory");
   assert.equal(handle.path, null);
@@ -26,11 +45,11 @@ test("claim store builder opens an explicit SQLite backend", async () => {
   const root = await tempDir("lorenz-claim-store-sqlite");
   const workflow = workflowFixture(root);
   const dbPath = path.join(root, "claims.db");
-  const handle = await buildClaimStoreHandle(
-    workflow,
-    { backend: "sqlite", path: dbPath, ownerStaleMs: 60_000 },
-    {},
-  );
+  const handle = await buildClaimStoreHandle(workflow, {
+    backend: "sqlite",
+    path: dbPath,
+    ownerStaleMs: 60_000,
+  });
 
   try {
     assert.equal(handle.backend, "sqlite");
@@ -46,23 +65,19 @@ test("claim store builder opens an explicit SQLite backend", async () => {
   }
 });
 
-test("claim store builder reads explicit backend settings from env", async () => {
-  const root = await tempDir("lorenz-claim-store-env");
+test("claim store builder derives the default path when none is configured", async () => {
+  const root = await tempDir("lorenz-claim-store-default-derive");
   const workflow = workflowFixture(root);
-  const handle = await buildClaimStoreHandle(
-    workflow,
-    { backend: null, path: null, ownerStaleMs: null },
-    {
-      LORENZ_CLAIM_STORE: "sqlite",
-      LORENZ_CLAIM_STORE_PATH: path.join(root, "env-claims.db"),
-      LORENZ_CLAIM_STORE_OWNER_STALE_MS: "120000",
-    },
-  );
+  // Empty path (the flag default) and 0 owner-stale-ms (use the store default).
+  const handle = await buildClaimStoreHandle(workflow, {
+    backend: "sqlite",
+    path: "",
+    ownerStaleMs: 0,
+  });
 
   try {
     assert.equal(handle.backend, "sqlite");
-    assert.equal(handle.path, path.join(root, "env-claims.db"));
-    assert.equal(handle.claimStore?.kind, "sqlite");
+    assert.equal(handle.path, defaultClaimStorePath(workflow));
   } finally {
     await handle.close();
   }

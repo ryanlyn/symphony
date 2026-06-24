@@ -10,7 +10,6 @@ import {
   hasHelpFlag,
   isCommanderHelp,
   parseNonNegativeInteger,
-  parsePositiveInteger,
   parseRequiredValue,
   type ParseResult,
 } from "@lorenz/cli-kit";
@@ -34,12 +33,7 @@ import { errorMessage, type Settings, type WorkflowDefinition } from "@lorenz/do
 import type { RuntimeSnapshot } from "@lorenz/runtime-events";
 import { setDefaultFlags } from "@lorenz/flags";
 
-import {
-  buildClaimStoreHandle,
-  parseClaimStoreBackend,
-  type ClaimStoreHandle,
-  type ClaimStoreCliOptions,
-} from "./claimStore.js";
+import { buildClaimStoreHandle, type ClaimStoreHandle } from "./claimStore.js";
 import {
   acquireDaemonLock,
   createDaemonIdentity,
@@ -94,7 +88,6 @@ export interface CliOptions {
   dashboard: boolean;
   port: number | null;
   logsRoot: string | null;
-  claimStore: ClaimStoreCliOptions;
   // Optional so existing/programmatic callers of the exported runDaemon stay source-compatible;
   // the resolver treats absent arrays as "no CLI overrides".
   flagTokens?: string[];
@@ -108,9 +101,6 @@ interface CliCommanderOptions {
   dashboard?: boolean;
   port?: number;
   logsRoot?: string;
-  claimStore?: ClaimStoreCliOptions["backend"];
-  claimStorePath?: string;
-  claimStoreOwnerStaleMs?: number;
   flag?: string[];
   feature?: string[];
 }
@@ -283,7 +273,12 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     if (getFlags().get("diagnostics.log_flag_resolution")) {
       process.stderr.write(renderFlagDiagnostics(getFlags()));
     }
-    let daemonLock = options.once ? null : await acquireDaemonLeadership(workflow);
+    // The long-lived daemon (single-instance leadership lock, heartbeat, and HTTP control
+    // endpoints) is gated behind the `daemon` feature; without it the orchestrator runs
+    // unmanaged exactly as it did before the daemon work, just like `--once`.
+    const daemonEnabled = getFlags().get("daemon.enabled");
+    let daemonLock =
+      options.once || !daemonEnabled ? null : await acquireDaemonLeadership(workflow);
     let claimStoreHandle: ClaimStoreHandle | null = null;
     let issueStore: IssueStore | null = null;
     let runtime: LorenzRuntime | null = null;
@@ -301,7 +296,12 @@ export async function runDaemon(options: CliOptions): Promise<number> {
     };
     try {
       if (daemonLock) daemonHeartbeat = startDaemonHeartbeat(daemonLock, onDaemonLockLost);
-      claimStoreHandle = await buildClaimStoreHandle(workflow, options.claimStore, process.env);
+      const flags = getFlags();
+      claimStoreHandle = await buildClaimStoreHandle(workflow, {
+        backend: flags.get("claim_store.backend"),
+        path: flags.get("claim_store.path"),
+        ownerStaleMs: flags.get("claim_store.owner_stale_ms"),
+      });
       assertDaemonLockHeld();
       await configureLogFile(workflow.settings.logging.logFile);
       assertDaemonLockHeld();
@@ -468,21 +468,6 @@ function createDaemonCommand(name = "lorenz"): Command {
       "Root directory for Lorenz logs.",
       parseRequiredValue("--logs-root", "path"),
     )
-    .option(
-      "--claim-store <backend>",
-      "Claim store backend: memory, sqlite, or turso.",
-      parseClaimStoreBackend,
-    )
-    .option(
-      "--claim-store-path <path>",
-      "Durable claim store database path.",
-      parseRequiredValue("--claim-store-path", "path"),
-    )
-    .option(
-      "--claim-store-owner-stale-ms <ms>",
-      "Claim owner lease stale threshold.",
-      parsePositiveInteger("--claim-store-owner-stale-ms"),
-    )
     .option("--port <port>", "Observability API port.", parseNonNegativeInteger("--port"))
     .option(
       "--flag <key=value>",
@@ -510,11 +495,6 @@ function cliOptionsFromCommander(parsed: CliCommanderOptions, workflowPath?: str
     dashboard: parsed.dashboard ?? true,
     port: parsed.port ?? null,
     logsRoot: parsed.logsRoot ?? null,
-    claimStore: {
-      backend: parsed.claimStore ?? null,
-      path: parsed.claimStorePath ?? null,
-      ownerStaleMs: parsed.claimStoreOwnerStaleMs ?? null,
-    },
     flagTokens: parsed.flag ?? [],
     featureTokens: parsed.feature ?? [],
   };

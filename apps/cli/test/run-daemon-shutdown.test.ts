@@ -234,7 +234,7 @@ test("runDaemon stops gracefully on the first SIGINT and returns success", async
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -272,7 +272,7 @@ test("runDaemon rejects a second live daemon for the same workflow", async () =>
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -286,7 +286,7 @@ test("runDaemon rejects a second live daemon for the same workflow", async () =>
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   assert.equal(secondResult, 1);
@@ -343,7 +343,7 @@ test("runDaemon publishes no HTTP control endpoint when dashboard is disabled", 
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -397,7 +397,7 @@ test("runDaemon reports failure when the daemon lock is lost during runtime star
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -430,7 +430,7 @@ test("runDaemon warns about deprecated config keys once at startup", async () =>
     dashboard: false,
     port: null,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   const runtime = await waitForRuntimeInstance();
@@ -465,7 +465,7 @@ test("runDaemon still reports real startup failures", async () => {
     dashboard: true,
     port: 4040,
     logsRoot: null,
-    claimStore: { backend: null, path: null, ownerStaleMs: null },
+    featureTokens: ["daemon"],
   });
 
   assert.equal(result, 1);
@@ -475,4 +475,32 @@ test("runDaemon still reports real startup failures", async () => {
   );
   assertNoAddedProcessListeners("SIGINT", sigintBaseline);
   assertNoAddedProcessListeners("SIGTERM", sigtermBaseline);
+});
+
+test("runDaemon skips daemon leadership when the daemon feature is disabled", async () => {
+  mocks.loadWorkflow.mockResolvedValue(await workflowFixture());
+  // Fail loudly if leadership is ever acquired while the feature is off.
+  mocks.acquireDaemonLock = vi.fn(async () => {
+    throw new Error("daemon leadership acquired while gated off");
+  });
+
+  const sigintBaseline = process.listeners("SIGINT");
+  const daemonPromise = runDaemon({
+    workflowPath: "WORKFLOW.md",
+    once: false,
+    dryRun: false,
+    tui: true,
+    dashboard: false,
+    port: null,
+    logsRoot: null,
+    // No daemon feature: the orchestrator runs unmanaged and acquires no lock.
+  });
+
+  const runtime = await waitForRuntimeInstance();
+  await runtime.startEntered;
+  assert.equal(mocks.acquireDaemonLock.mock.calls.length, 0);
+
+  const [sigintHandler] = addedProcessListeners("SIGINT", sigintBaseline);
+  sigintHandler!();
+  assert.equal(await daemonPromise, 0);
 });

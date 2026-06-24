@@ -36,17 +36,16 @@ A missing file fails fast with `missing_workflow_file`. The directory holding th
 
 ### Daemon flags
 
-| Flag | Effect | Reach for it when |
-| --- | --- | --- |
-| `--once` | Poll one tick, act on what is eligible, then exit. | Cron-style scheduling, or a one-shot sweep instead of a long-lived process. |
-| `--dry-run` | Evaluate dispatch candidates and report what would run, without launching any agent. | Checking routing and eligibility against live tracker state before committing. |
-| `--no-tui` | Disable the Ink terminal dashboard. | Logs, CI, or a non-interactive shell where the TUI is noise. |
-| `--no-dashboard` | Disable the web dashboard and its HTTP API server. | You want no listening port at all. |
-| `--port <port>` | Set the observability API port. Overrides `server.port` from the workflow. | Pinning a known port, or avoiding a clash. `0` binds an ephemeral port. |
-| `--logs-root <path>` | Write logs to `<path>/log/lorenz.log` instead of the configured `logging.log_file`. | Redirecting logs to a writable scratch directory. |
-| `--claim-store <backend>` | Select `memory`, `sqlite`, or `turso` claim storage. | Enabling same-host durable claim recovery with an explicit durable backend. |
-| `--claim-store-path <path>` | Set the durable claim-store database path. | Sharing or relocating a durable store intentionally. |
-| `--claim-store-owner-stale-ms <ms>` | Override durable owner-heartbeat staleness. | Tuning crash-recovery handoff for a specific host. |
+| Flag                 | Effect                                                                                               | Reach for it when                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `--once`             | Poll one tick, act on what is eligible, then exit.                                                   | Cron-style scheduling, or a one-shot sweep instead of a long-lived process.    |
+| `--dry-run`          | Evaluate dispatch candidates and report what would run, without launching any agent.                 | Checking routing and eligibility against live tracker state before committing. |
+| `--no-tui`           | Disable the Ink terminal dashboard.                                                                  | Logs, CI, or a non-interactive shell where the TUI is noise.                   |
+| `--no-dashboard`     | Disable the web dashboard and its HTTP API server.                                                   | You want no listening port at all.                                             |
+| `--port <port>`      | Set the observability API port. Overrides `server.port` from the workflow.                           | Pinning a known port, or avoiding a clash. `0` binds an ephemeral port.        |
+| `--logs-root <path>` | Write logs to `<path>/log/lorenz.log` instead of the configured `logging.log_file`.                  | Redirecting logs to a writable scratch directory.                              |
+| `--feature <name>`   | Enable a feature bundle, e.g. `daemon` (long-lived daemon) or `durable_claims` (SQLite claim store). | Turning on an opt-in capability.                                               |
+| `--flag <key=value>` | Set an individual flag, e.g. `claim_store.backend=turso` or `claim_store.path=...`.                  | Tuning gated behavior without a feature bundle.                                |
 
 `--no-tui` and `--no-dashboard` are the only forms; there is no positive `--tui` or `--dashboard` flag. Both surfaces are on by default. The TUI renders only when stdout is a TTY; without a TTY the runtime writes JSON snapshots to stdout on each update instead.
 
@@ -56,8 +55,8 @@ A missing file fails fast with `missing_workflow_file`. The directory holding th
 
 1. Register the built-in trackers, tool pack, agent executor, and worker drivers (idempotent).
 2. Load and parse the workflow, apply `--port` and `--logs-root` overrides, and run [`validateDispatchConfig`](reference/configuration.md).
-3. Acquire the same-host daemon lease for long-running mode. `--once` skips the lease.
-4. Open the selected claim store. The default is in-memory; durable backends are explicit.
+3. Acquire the same-host daemon lease when the `daemon` feature is enabled (long-running mode). The default (feature off) and `--once` skip the lease.
+4. Open the claim store selected by the `claim_store.backend` flag. The default is in-memory; the `durable_claims` feature selects SQLite.
 5. Build the [dispatch coordinator](dispatch.md) and [warm worker pool](workers/worker-pool.md). The pool is the single dispatch path, so it is always built; with no `worker.worker_pool` block it defaults to the `local` driver (runs execute on the daemon host).
 6. Run the `slots_per_machine` blast-radius gate (see below).
 7. Construct the runtime, start the observability server if enabled, then render the TUI or subscribe for JSON snapshots.
@@ -95,16 +94,16 @@ lorenz runs --json             # raw JSON instead of tables
 
 The filters map directly to query parameters on `GET /api/v1/runs` and select which view the server returns:
 
-| Flag | View | Shows |
-| --- | --- | --- |
-| (none) | `runs` | Run history table plus totals by outcome. |
-| `--failed` | `runs` | Runs whose outcome is `failed` or `stalled`. |
-| `--issue <id>` | `runs` | Runs matching an issue identifier or id. |
-| `--id <runId>` | `run` | One run with session, worker, workspace, last event, failure reason, and related attempts. |
-| `--cost` | `cost` | Per-agent token totals and a top-runs table. |
-| `--retries` | `retries` | Attempts, latest outcome, and tokens per issue. |
-| `--limit <n>` | (any) | Caps returned runs. The server defaults to 20 and clamps to 200. |
-| `--json` | (any) | Prints the raw response body, skipping the table renderer. |
+| Flag           | View      | Shows                                                                                      |
+| -------------- | --------- | ------------------------------------------------------------------------------------------ |
+| (none)         | `runs`    | Run history table plus totals by outcome.                                                  |
+| `--failed`     | `runs`    | Runs whose outcome is `failed` or `stalled`.                                               |
+| `--issue <id>` | `runs`    | Runs matching an issue identifier or id.                                                   |
+| `--id <runId>` | `run`     | One run with session, worker, workspace, last event, failure reason, and related attempts. |
+| `--cost`       | `cost`    | Per-agent token totals and a top-runs table.                                               |
+| `--retries`    | `retries` | Attempts, latest outcome, and tokens per issue.                                            |
+| `--limit <n>`  | (any)     | Caps returned runs. The server defaults to 20 and clamps to 200.                           |
+| `--json`       | (any)     | Prints the raw response body, skipping the table renderer.                                 |
 
 Dollar cost is not computed: those fields render as `n/a`, and the `--cost` view reports token totals.
 
@@ -132,16 +131,16 @@ lorenz doctor --no-dashboard   # skip the static-asset check
 
 Doctor uses the same path resolution as the daemon. It runs these checks in order and short-circuits on the first hard error:
 
-| Check id | Meaning | Failure mode |
-| --- | --- | --- |
-| `workflow_file` | The workflow path exists, is a file, and is readable. | `error` (stops here). |
-| `workflow_load` | The workflow parses into valid settings. | `error` (stops here). |
-| `config_deprecations` / `config_deprecation_*` | No deprecated config keys are in use (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options). One `config_deprecation_<key>` check per deprecated key names its replacement. | `warning`. |
-| `dispatch_config` | `validateDispatchConfig` passes against the built-in tracker, executor, and tool registries. | `error`. |
-| `dashboard_assets` | The built dashboard SPA (`server.staticDir`, else the default `dist`) is present. | `warning`. |
-| `log_path` | The nearest existing ancestor of `logging.log_file` exists and is writable. | `warning`. |
-| `agent_bridge_*` | The ACP bridge command for each active and per-state agent is parseable and on `PATH`. | `warning`. |
-| `agent_cli_*` | The underlying agent CLI behind each bridge is discoverable. | `warning`. |
+| Check id                                       | Meaning                                                                                                                                                                                                    | Failure mode          |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `workflow_file`                                | The workflow path exists, is a file, and is readable.                                                                                                                                                      | `error` (stops here). |
+| `workflow_load`                                | The workflow parses into valid settings.                                                                                                                                                                   | `error` (stops here). |
+| `config_deprecations` / `config_deprecation_*` | No deprecated config keys are in use (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options). One `config_deprecation_<key>` check per deprecated key names its replacement. | `warning`.            |
+| `dispatch_config`                              | `validateDispatchConfig` passes against the built-in tracker, executor, and tool registries.                                                                                                               | `error`.              |
+| `dashboard_assets`                             | The built dashboard SPA (`server.staticDir`, else the default `dist`) is present.                                                                                                                          | `warning`.            |
+| `log_path`                                     | The nearest existing ancestor of `logging.log_file` exists and is writable.                                                                                                                                | `warning`.            |
+| `agent_bridge_*`                               | The ACP bridge command for each active and per-state agent is parseable and on `PATH`.                                                                                                                     | `warning`.            |
+| `agent_cli_*`                                  | The underlying agent CLI behind each bridge is discoverable.                                                                                                                                               | `warning`.            |
 
 The overall status is `error` if any check errors, otherwise `warning` if any warns, otherwise `ok`.
 
@@ -149,17 +148,18 @@ Bridge checks run only for the `acp` executor. They inspect the active config an
 
 ## Environment variables
 
-| Variable | Effect |
-| --- | --- |
-| `LORENZ_WORKFLOW` | Workflow file path. Absolute is used as-is; relative joins the current directory. |
-| `LORENZ_WORKSPACE_ROOT` | Overrides `workspace.root`. |
-| `LORENZ_SSH_CONFIG` | Path passed to `ssh -F` for [remote workers](workers/static-ssh.md). |
-| `CLAUDE_CODE_EXECUTABLE` | Overrides the `claude` binary path used by doctor and the ACP bridge. |
-| `CODEX_PATH` | Overrides the `codex` binary path used by doctor and the ACP bridge. |
+| Variable                 | Effect                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `LORENZ_WORKFLOW`        | Workflow file path. Absolute is used as-is; relative joins the current directory. |
+| `LORENZ_WORKSPACE_ROOT`  | Overrides `workspace.root`.                                                       |
+| `LORENZ_SSH_CONFIG`      | Path passed to `ssh -F` for [remote workers](workers/static-ssh.md).              |
+| `CLAUDE_CODE_EXECUTABLE` | Overrides the `claude` binary path used by doctor and the ACP bridge.             |
+| `CODEX_PATH`             | Overrides the `codex` binary path used by doctor and the ACP bridge.              |
 
 Tracker credentials resolve through the workflow config, not generic CLI flags. See [secret resolution](features/secret-resolution.md).
 
 ## See also
+
 - [reference/cli.md](reference/cli.md) - the exhaustive flag, argument, and exit-code reference
 - [getting-started.md](getting-started.md) - first workflow and first run end to end
 - [workflows.md](workflows.md) - what goes in `WORKFLOW.md` and how it is parsed

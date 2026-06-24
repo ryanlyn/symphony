@@ -4,46 +4,48 @@ The exact contract for the `lorenz` binary: every command, flag, argument, exit 
 
 The binary ships these commands:
 
-| Command | Purpose |
-| --- | --- |
-| `lorenz [flags] [workflowPath]` | The default daemon: poll the tracker, dispatch agents, serve the dashboard and TUI. |
-| `lorenz runs [flags]` | Query run history from the observability HTTP API. |
-| `lorenz status [flags] [workflowPath]` | Show the active daemon owner and endpoint. |
-| `lorenz refresh [flags] [workflowPath]` | Ask the active daemon to poll and reconcile now. |
-| `lorenz stop [flags] [workflowPath]` | Ask the active daemon to stop gracefully. |
-| `lorenz doctor [flags] [workflowPath]` | Validate a workflow and local prerequisites without dispatching. |
+| Command                                 | Purpose                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `lorenz [flags] [workflowPath]`         | The default daemon: poll the tracker, dispatch agents, serve the dashboard and TUI. |
+| `lorenz runs [flags]`                   | Query run history from the observability HTTP API.                                  |
+| `lorenz status [flags] [workflowPath]`  | Show the active daemon owner and endpoint.                                          |
+| `lorenz refresh [flags] [workflowPath]` | Ask the active daemon to poll and reconcile now.                                    |
+| `lorenz stop [flags] [workflowPath]`    | Ask the active daemon to stop gracefully.                                           |
+| `lorenz doctor [flags] [workflowPath]`  | Validate a workflow and local prerequisites without dispatching.                    |
 
 The `bin` shim at `apps/cli/bin/lorenz.js` imports the built `dist/bin/cli.js`. If the package has not been built, it prints `lorenz has not been built yet. Run pnpm build or mise run build first.` and exits 1.
 
 ## `lorenz` (daemon)
 
 ```sh
-lorenz [--once] [--dry-run] [--no-tui] [--no-dashboard] [--port <port>] [--logs-root <path>] [--claim-store <backend>] [--claim-store-path <path>] [--claim-store-owner-stale-ms <ms>] [workflowPath]
+lorenz [--once] [--dry-run] [--no-tui] [--no-dashboard] [--port <port>] [--logs-root <path>] [--feature <name>] [--flag <key=value>] [workflowPath]
 ```
 
 The default command. It loads the workflow, validates dispatch config, builds the dispatch coordinator and warm worker pool, constructs the runtime, starts the observability server and TUI, then polls until interrupted.
 
 ### Argument
 
-| Argument | Type | Default | Meaning |
-| --- | --- | --- | --- |
+| Argument       | Type | Default              | Meaning                                                       |
+| -------------- | ---- | -------------------- | ------------------------------------------------------------- |
 | `workflowPath` | path | resolved (see below) | The `WORKFLOW.md` file to run. Excess arguments are rejected. |
 
 When `workflowPath` is omitted, resolution falls to `LORENZ_WORKFLOW` (an absolute value is used as-is, a relative value is joined to the current working directory), and otherwise to `./WORKFLOW.md`.
 
 ### Flags
 
-| Flag | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `--once` | boolean | `false` | Poll once and exit. Passed to `runtime.start({ once: true })`. |
-| `--dry-run` | boolean | `false` | Evaluate dispatch candidates without dispatching agents. |
-| `--no-tui` | boolean | TUI on | Disable the terminal dashboard. The option key is `tui`, default `true`; there is no positive `--tui`. |
-| `--no-dashboard` | boolean | dashboard on | Disable the web dashboard and JSON API server. The option key is `dashboard`, default `true`; there is no positive `--dashboard`. |
-| `--port <port>` | non-negative integer | unset | Override `server.port`. Parsed by `parseNonNegativeInteger`. |
-| `--logs-root <path>` | path | unset | Write logs to `<path>/log/lorenz.log` (overrides `logging.log_file`). |
-| `--claim-store <backend>` | `memory`, `sqlite`, or `turso` | `memory` | Select the claim-store backend for this daemon process. |
-| `--claim-store-path <path>` | path | `<workspace.root>/.lorenz/claim-store/<workflow-sha256>/claims.db` for durable backends | Database path for `sqlite` and `turso` claim stores. Ignored by `memory`. The workflow hash uses the canonical workflow path. |
-| `--claim-store-owner-stale-ms <ms>` | positive integer | orchestrator default | Override the owner-heartbeat stale threshold used by durable claim stores. |
+| Flag                 | Type                 | Default      | Meaning                                                                                                                           |
+| -------------------- | -------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `--once`             | boolean              | `false`      | Poll once and exit. Passed to `runtime.start({ once: true })`.                                                                    |
+| `--dry-run`          | boolean              | `false`      | Evaluate dispatch candidates without dispatching agents.                                                                          |
+| `--no-tui`           | boolean              | TUI on       | Disable the terminal dashboard. The option key is `tui`, default `true`; there is no positive `--tui`.                            |
+| `--no-dashboard`     | boolean              | dashboard on | Disable the web dashboard and JSON API server. The option key is `dashboard`, default `true`; there is no positive `--dashboard`. |
+| `--port <port>`      | non-negative integer | unset        | Override `server.port`. Parsed by `parseNonNegativeInteger`.                                                                      |
+| `--logs-root <path>` | path                 | unset        | Write logs to `<path>/log/lorenz.log` (overrides `logging.log_file`).                                                             |
+| `--feature <name>`   | repeatable string    | none         | Enable a feature bundle from the `@lorenz/flags` manifest (e.g. `daemon`, `durable_claims`).                                      |
+| `--flag <key=value>` | repeatable string    | none         | Set an individual flag (e.g. `claim_store.backend=turso`, `claim_store.path=...`, `claim_store.owner_stale_ms=...`).              |
+
+Claim-store backend, path, and owner-stale threshold are configured through the `claim_store.*`
+flags rather than dedicated options; see [durable-claims-and-daemon.md](durable-claims-and-daemon.md).
 
 Both the web dashboard and the TUI are on by default. The TUI only renders when `process.stdout.isTTY` is true; without a TTY the runtime subscribes and writes pretty-printed JSON snapshots to stdout. Pass `--no-tui` to force the JSON-snapshot path even on a TTY.
 
@@ -56,13 +58,14 @@ CLI overrides are applied to the loaded workflow on every load and reload:
 
 When the observability server binds, its actual port is written back into `server.port` and pinned, so subsequent workflow reloads keep the same port. The daemon lease is then updated with the bound HTTP control endpoint, and the server prints `Observability API listening on <url>` to stderr. With `--no-dashboard`, no HTTP control endpoint is published.
 
-Claim-store options are daemon composition choices rather than workflow settings. The default
-backend is `memory`; selecting `sqlite` or `turso` opens a durable store and passes it into the
-runtime. See [durable-claims-and-daemon.md](durable-claims-and-daemon.md).
+Claim-store configuration comes from the `claim_store.*` flags rather than workflow settings. The
+default backend is `memory`; the `durable_claims` feature (or `claim_store.backend=sqlite|turso`)
+opens a durable store and passes it into the runtime. See
+[durable-claims-and-daemon.md](durable-claims-and-daemon.md).
 
 ### Startup sequence
 
-Startup runs in order: register backends, load and validate the workflow, acquire the same-host daemon lease for long-running mode, open the selected claim store, build the coordinator, gate co-residence, construct the runtime, start the server and TUI, then poll.
+Startup runs in order: register backends, load and validate the workflow, acquire the same-host daemon lease when the `daemon` feature is enabled (long-running mode), open the selected claim store, build the coordinator, gate co-residence, construct the runtime, start the server and TUI, then poll.
 
 `registerBuiltinBackends()` runs first and wires every built-in tracker (`linear`, `local`, `memory`, `jira`, `slack`), the tracker tool pack (tool kind `tracker`), the ACP agent executor, and the built-in worker drivers (`fake`, `static-ssh`, `docker`) into the process-wide registries. It is idempotent.
 
@@ -70,32 +73,32 @@ The coordinator anchors at `baseDir = dirname(workflow.path)`, the directory of 
 
 The worker pool and dispatch coordinator are always constructed - the pool is the single dispatch path. With no `worker.worker_pool` block the pool defaults to the `local` driver at `max: 1`, whose empty worker host keeps runs on the daemon's own in-process endpoint (byte-identical to the pre-pool local path). An internally disabled pool (the drained shape a reload produces) still resolves both to `undefined`.
 
-Long-running daemon mode acquires a local leadership lease keyed by workflow path. If another live
-daemon already owns the lease, startup exits with `daemon_already_running` and reports the owner pid
-and endpoint when available. `--once` skips the lease and remains a one-shot poll mode.
+Long-running daemon mode (the `daemon` feature) acquires a local leadership lease keyed by workflow
+path. If another live daemon already owns the lease, startup exits with `daemon_already_running` and
+reports the owner pid and endpoint when available. With the feature off (the default) or `--once`,
+no lease is acquired.
 
 ### Shutdown and exit codes
 
 `SIGINT` and `SIGTERM` are handled by persistent (`process.on`, not `process.once`) listeners. The first signal sets a `shuttingDown` flag and calls `runtime.stop()`. A second `Ctrl+C` while shutting down unmounts Ink and calls `process.exit(130)`. The `finally` block unmounts the TUI, drains the worker pool (`drainWorkerPool`), stops the server, closes the issue store, closes the claim store, releases the daemon lease, then detaches the handlers.
 
-| Exit code | When |
-| --- | --- |
-| `0` | The daemon ran and stopped cleanly (including `--once` completion). |
-| `1` | A startup or runtime error was caught; the message is written to stderr. |
-| `130` | A second `Ctrl+C` arrived while the daemon was already shutting down. |
+| Exit code | When                                                                     |
+| --------- | ------------------------------------------------------------------------ |
+| `0`       | The daemon ran and stopped cleanly (including `--once` completion).      |
+| `1`       | A startup or runtime error was caught; the message is written to stderr. |
+| `130`     | A second `Ctrl+C` arrived while the daemon was already shutting down.    |
 
 ### Environment variables
 
-| Variable | Read by | Effect |
-| --- | --- | --- |
-| `LORENZ_WORKFLOW` | `packages/workflow` | Default workflow path when `workflowPath` is omitted. Absolute used as-is, relative joined to cwd. |
-| `LORENZ_WORKSPACE_ROOT` | `packages/config` | Overrides `workspace.root`. |
-| `LORENZ_CLAIM_STORE` | CLI daemon | Default claim-store backend when `--claim-store` is omitted. Values: `memory`, `sqlite`, `turso`. |
-| `LORENZ_CLAIM_STORE_PATH` | CLI daemon | Durable claim-store database path when `--claim-store-path` is omitted. |
-| `LORENZ_CLAIM_STORE_OWNER_STALE_MS` | CLI daemon | Positive-integer owner-heartbeat stale threshold for durable claim stores. |
-| `LORENZ_SSH_CONFIG` | `packages/ssh` | Path passed to `ssh -F` for remote workers. |
-| `CLAUDE_CODE_EXECUTABLE` | ACP bridges, `doctor` | Override path to the `claude` CLI. |
-| `CODEX_PATH` | ACP bridges, `doctor` | Override path to the `codex` CLI. |
+| Variable                 | Read by               | Effect                                                                                                 |
+| ------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------ |
+| `LORENZ_WORKFLOW`        | `packages/workflow`   | Default workflow path when `workflowPath` is omitted. Absolute used as-is, relative joined to cwd.     |
+| `LORENZ_WORKSPACE_ROOT`  | `packages/config`     | Overrides `workspace.root`.                                                                            |
+| `LORENZ_FLAG_<KEY>`      | `@lorenz/flags`       | Set a flag from the env, e.g. `LORENZ_FLAG_CLAIM_STORE__BACKEND=turso` (`.` becomes `__`, uppercased). |
+| `LORENZ_FEATURE_<NAME>`  | `@lorenz/flags`       | Enable a feature from the env, e.g. `LORENZ_FEATURE_DURABLE_CLAIMS=1`.                                 |
+| `LORENZ_SSH_CONFIG`      | `packages/ssh`        | Path passed to `ssh -F` for remote workers.                                                            |
+| `CLAUDE_CODE_EXECUTABLE` | ACP bridges, `doctor` | Override path to the `claude` CLI.                                                                     |
+| `CODEX_PATH`             | ACP bridges, `doctor` | Override path to the `codex` CLI.                                                                      |
 
 These are the specific env overrides the CLI consults. There is no generic `LORENZ_<KEY>` settings-override mechanism beyond them.
 
@@ -109,17 +112,17 @@ Fetches `GET {base}/api/v1/runs` from a running daemon's observability API and r
 
 ### Flags
 
-| Flag | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `--issue <id>` | string | unset | Filter by issue identifier (`issue` query param). |
-| `--id <runId>` | string | unset | Show one run and its related attempts (`id` query param, `run` view). |
-| `--failed` | boolean | `false` | Show failed runs (`failed=true`). |
-| `--cost` | boolean | `false` | Show the token and cost summary (`cost` view). |
-| `--retries` | boolean | `false` | Show the retry summary by issue (`retries` view). |
-| `--limit <limit>` | positive integer | unset | Limit returned runs. Parsed by `parsePositiveInteger`. |
-| `--url <url>` | URL | unset | Observability API base URL. Trailing slashes are trimmed. |
-| `--port <port>` | non-negative integer | unset | Observability API localhost port. `0` is treated as unset. |
-| `--json` | boolean | `false` | Print the raw JSON response instead of a rendered table. |
+| Flag              | Type                 | Default | Meaning                                                               |
+| ----------------- | -------------------- | ------- | --------------------------------------------------------------------- |
+| `--issue <id>`    | string               | unset   | Filter by issue identifier (`issue` query param).                     |
+| `--id <runId>`    | string               | unset   | Show one run and its related attempts (`id` query param, `run` view). |
+| `--failed`        | boolean              | `false` | Show failed runs (`failed=true`).                                     |
+| `--cost`          | boolean              | `false` | Show the token and cost summary (`cost` view).                        |
+| `--retries`       | boolean              | `false` | Show the retry summary by issue (`retries` view).                     |
+| `--limit <limit>` | positive integer     | unset   | Limit returned runs. Parsed by `parsePositiveInteger`.                |
+| `--url <url>`     | URL                  | unset   | Observability API base URL. Trailing slashes are trimmed.             |
+| `--port <port>`   | non-negative integer | unset   | Observability API localhost port. `0` is treated as unset.            |
+| `--json`          | boolean              | `false` | Print the raw JSON response instead of a rendered table.              |
 
 ### Base-URL precedence
 
@@ -134,21 +137,21 @@ When precedence falls through to the workflow, the command loads `WORKFLOW.md` t
 
 ### Response handling
 
-| HTTP status | Result |
-| --- | --- |
-| `200` | Render the `run`, `cost`, `retries`, or `runs` view (or raw JSON with `--json`). |
-| `404` | Throw `Run not found` (or the API's error message). |
-| `503` | Throw `Observability API unavailable` (or the API's error message). |
-| other | Throw `Unexpected response status <N>`. |
+| HTTP status | Result                                                                           |
+| ----------- | -------------------------------------------------------------------------------- |
+| `200`       | Render the `run`, `cost`, `retries`, or `runs` view (or raw JSON with `--json`). |
+| `404`       | Throw `Run not found` (or the API's error message).                              |
+| `503`       | Throw `Observability API unavailable` (or the API's error message).              |
+| other       | Throw `Unexpected response status <N>`.                                          |
 
 Views and their columns:
 
-| View | Trigger | Columns |
-| --- | --- | --- |
-| `runs` | no view flag | `ID`, `ISSUE`, `AGENT`, `OUTCOME`, `ATTEMPT`, `TURNS`, `TOKENS`, `DURATION`, `SESSION` |
-| `run` | `--id` | single-run detail plus a `Related runs` table |
-| `cost` | `--cost` | `AGENT`, `RUNS`, `DONE`, `INPUT`, `OUTPUT`, `TOTAL`, `AVG/RUN`, `USD` plus `Top Runs` |
-| `retries` | `--retries` | `ISSUE`, `ATTEMPTS`, `LATEST`, `TOKENS`, `RUN ID`, `FAILURE` |
+| View      | Trigger      | Columns                                                                                |
+| --------- | ------------ | -------------------------------------------------------------------------------------- |
+| `runs`    | no view flag | `ID`, `ISSUE`, `AGENT`, `OUTCOME`, `ATTEMPT`, `TURNS`, `TOKENS`, `DURATION`, `SESSION` |
+| `run`     | `--id`       | single-run detail plus a `Related runs` table                                          |
+| `cost`    | `--cost`     | `AGENT`, `RUNS`, `DONE`, `INPUT`, `OUTPUT`, `TOTAL`, `AVG/RUN`, `USD` plus `Top Runs`  |
+| `retries` | `--retries`  | `ISSUE`, `ATTEMPTS`, `LATEST`, `TOKENS`, `RUN ID`, `FAILURE`                           |
 
 The query string carries `issue`, `failed`, `cost`, `retries`, `id`, and `limit`; the server decides which view to return. See [run-history.md](../features/run-history.md) for what each view means and [http-api.md](http-api.md) for the endpoint contract.
 
@@ -162,11 +165,11 @@ Reads the daemon lock for the workflow, then asks the owner endpoint for `GET /a
 that endpoint is usable. If the HTTP endpoint is unavailable, the command falls back to the lock
 record so operators can still see the last known owner.
 
-| Flag | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `--url <url>` | URL | unset | Daemon control API base URL. Wins over lock discovery and `--port`. |
-| `--port <port>` | non-negative integer | unset | Daemon control localhost port. Used when no usable lock endpoint exists. |
-| `--json` | boolean | `false` | Print the raw JSON response. |
+| Flag            | Type                 | Default | Meaning                                                                  |
+| --------------- | -------------------- | ------- | ------------------------------------------------------------------------ |
+| `--url <url>`   | URL                  | unset   | Daemon control API base URL. Wins over lock discovery and `--port`.      |
+| `--port <port>` | non-negative integer | unset   | Daemon control localhost port. Used when no usable lock endpoint exists. |
+| `--json`        | boolean              | `false` | Print the raw JSON response.                                             |
 
 Exit status is `0` when a live HTTP status response is returned or a lock fallback is printable.
 It is `1` when no daemon lock exists, the endpoint returns an HTTP error, or JSON mode cannot reach
@@ -209,26 +212,26 @@ Validates a workflow and the local runtime prerequisites, then prints a report. 
 
 ### Argument and flags
 
-| Argument / flag | Type | Default | Meaning |
-| --- | --- | --- | --- |
-| `workflowPath` | path | resolved like the daemon | The workflow to validate. |
-| `--no-dashboard` | boolean | dashboard on | Skip the dashboard static-asset check. |
-| `--logs-root <path>` | path | unset | Resolve the `log_path` check against `<path>/log/lorenz.log`. |
+| Argument / flag      | Type    | Default                  | Meaning                                                       |
+| -------------------- | ------- | ------------------------ | ------------------------------------------------------------- |
+| `workflowPath`       | path    | resolved like the daemon | The workflow to validate.                                     |
+| `--no-dashboard`     | boolean | dashboard on             | Skip the dashboard static-asset check.                        |
+| `--logs-root <path>` | path    | unset                    | Resolve the `log_path` check against `<path>/log/lorenz.log`. |
 
 ### Check pipeline
 
 `doctor` runs checks in order. A `workflow_file` or `workflow_load` error short-circuits the report before later checks run.
 
-| Check id | What it verifies | Failure status |
-| --- | --- | --- |
-| `workflow_file` | The workflow path exists, is a file, and is readable. | `error` (short-circuits) |
-| `workflow_load` | The workflow loads and parses. | `error` (short-circuits) |
-| `config_deprecations` / `config_deprecation_<key>` | No deprecated config keys are in use; one warning check per deprecated key (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options) names its replacement. | `warning` |
-| `dispatch_config` | `validateDispatchConfig` passes with the built-in registries. | `error` |
-| `dashboard_assets` | `index.html` and `assets/` exist under `server.static_dir` (or the default). | `warning` |
-| `log_path` | The nearest existing parent of `logging.log_file` is a writable directory. | `warning` |
-| `agent_bridge` / `agent_bridge_<kind>` | The ACP bridge command (and `env`/`exec` wrapper) is on `PATH`, and a node bridge target is readable. | `warning` |
-| `agent_cli_claude` / `agent_cli_codex` | The underlying agent CLI is discoverable. | `warning` |
+| Check id                                           | What it verifies                                                                                                                                                                        | Failure status           |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `workflow_file`                                    | The workflow path exists, is a file, and is readable.                                                                                                                                   | `error` (short-circuits) |
+| `workflow_load`                                    | The workflow loads and parses.                                                                                                                                                          | `error` (short-circuits) |
+| `config_deprecations` / `config_deprecation_<key>` | No deprecated config keys are in use; one warning check per deprecated key (legacy top-level `codex:`/`claude:` sections, flat-shape `tracker` provider options) names its replacement. | `warning`                |
+| `dispatch_config`                                  | `validateDispatchConfig` passes with the built-in registries.                                                                                                                           | `error`                  |
+| `dashboard_assets`                                 | `index.html` and `assets/` exist under `server.static_dir` (or the default).                                                                                                            | `warning`                |
+| `log_path`                                         | The nearest existing parent of `logging.log_file` is a writable directory.                                                                                                              | `warning`                |
+| `agent_bridge` / `agent_bridge_<kind>`             | The ACP bridge command (and `env`/`exec` wrapper) is on `PATH`, and a node bridge target is readable.                                                                                   | `warning`                |
+| `agent_cli_claude` / `agent_cli_codex`             | The underlying agent CLI is discoverable.                                                                                                                                               | `warning`                |
 
 `dashboard_assets` resolves the static dir from `server.static_dir`, falling back to the dashboard `dist` directory bundled with the CLI. Missing assets are a warning, not an error.
 
@@ -250,14 +253,14 @@ The module registers under the exact configured driver string, not the module's 
 
 The loader emits these structured events:
 
-| Event | When |
-| --- | --- |
-| `worker_pool_driver_loaded` | A new module specifier is imported and registered. |
-| `worker_pool_driver_module_pinned` | A reload re-encounters an already-loaded specifier. |
-| `worker_pool_driver_unavailable` | The specifier could not be resolved as a kind or a module. |
-| `worker_pool_driver_invalid_specifier` | The specifier is empty or carries a query string. |
-| `worker_pool_driver_module_invalid` | The module has no usable default or named export. |
-| `worker_pool_driver_sdk_mismatch` | The module's SDK version is incompatible. |
+| Event                                  | When                                                       |
+| -------------------------------------- | ---------------------------------------------------------- |
+| `worker_pool_driver_loaded`            | A new module specifier is imported and registered.         |
+| `worker_pool_driver_module_pinned`     | A reload re-encounters an already-loaded specifier.        |
+| `worker_pool_driver_unavailable`       | The specifier could not be resolved as a kind or a module. |
+| `worker_pool_driver_invalid_specifier` | The specifier is empty or carries a query string.          |
+| `worker_pool_driver_module_invalid`    | The module has no usable default or named export.          |
+| `worker_pool_driver_sdk_mismatch`      | The module's SDK version is incompatible.                  |
 
 See [worker-driver.md](../extensions/worker-driver.md) and [out-of-tree.md](../extensions/out-of-tree.md) for authoring and shipping a driver.
 
@@ -271,6 +274,7 @@ See [worker-driver.md](../extensions/worker-driver.md) and [out-of-tree.md](../e
 The gate is a post-construction check, because the per-run-claim enforcement capability exists only once the coordinator is built. The same rule is enforced on reload via the shared `checkSlotsPerMachineGate` predicate. See [security.md](../security.md) for the blast-radius rationale.
 
 ## See also
+
 - [cli.md](../cli.md) - the tutorial these commands back
 - [configuration.md](configuration.md) - every workflow setting `lorenz` reads
 - [run-history.md](../features/run-history.md) - what the `runs` views report

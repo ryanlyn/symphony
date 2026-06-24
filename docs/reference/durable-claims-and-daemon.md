@@ -1,40 +1,46 @@
 # Durable Claims and Daemon Control
 
-Lorenz keeps the in-memory claim store as the default. Durable claim persistence is an
-explicit operator choice made at daemon startup, and daemon control is exposed through the
-local observability server when that server is enabled.
+Lorenz keeps the in-memory claim store as the default. Durable claim persistence and the
+long-lived daemon are both opt-in, gated behind the `durable_claims` and `daemon` features
+(off by default). Daemon control is exposed through the local observability server when that
+server is enabled.
 
 ## Claim Store Backends
 
 The daemon accepts three claim-store backends:
 
-| Backend | Selection | Persistence | Process sharing | Retry durability |
-| --- | --- | --- | --- | --- |
-| `memory` | default | process lifetime only | no | no |
-| `sqlite` | explicit | local SQLite file | same host | yes |
-| `turso` | explicit | Turso SQLite-compatible file | same host with multiprocess WAL | yes |
+| Backend  | Selection                    | Persistence                  | Process sharing                 | Retry durability |
+| -------- | ---------------------------- | ---------------------------- | ------------------------------- | ---------------- |
+| `memory` | default                      | process lifetime only        | no                              | no               |
+| `sqlite` | `claim_store.backend=sqlite` | local SQLite file            | same host                       | yes              |
+| `turso`  | `claim_store.backend=turso`  | Turso SQLite-compatible file | same host with multiprocess WAL | yes              |
 
-Select a backend with `--claim-store <backend>` or `LORENZ_CLAIM_STORE`.
+The claim store is configured entirely through the `@lorenz/flags` system; there are no bespoke
+claim-store CLI options or environment variables. The `durable_claims` feature is a convenience
+that selects the `sqlite` backend:
 
 ```sh
-lorenz --claim-store memory WORKFLOW.md
-lorenz --claim-store sqlite --claim-store-path .lorenz/claim-store/claims.db WORKFLOW.md
-lorenz --claim-store turso --claim-store-path .lorenz/claim-store/claims.db WORKFLOW.md
+lorenz WORKFLOW.md                                   # memory (default)
+lorenz --feature durable_claims WORKFLOW.md          # sqlite
+lorenz --flag claim_store.backend=turso WORKFLOW.md  # turso
 ```
 
-When a durable backend is selected without `--claim-store-path` or
-`LORENZ_CLAIM_STORE_PATH`, the daemon stores claims at:
+The same values can come from `WORKFLOW.md` front-matter (`flags:` / `features:`) or the
+environment (`LORENZ_FLAG_CLAIM_STORE__BACKEND`, `LORENZ_FEATURE_DURABLE_CLAIMS`), following the
+standard flag precedence (CLI > front-matter > env > default).
+
+When `claim_store.path` is empty (the default), the daemon stores claims at:
 
 ```text
 <workspace.root>/.lorenz/claim-store/<workflow-sha256>/claims.db
 ```
 
 The workflow hash is derived from the canonical workflow file path. This keeps the default
-durable store isolated when multiple workflow files share one workspace root. Operators who
-want a shared store can still provide an explicit path.
+durable store isolated when multiple workflow files share one workspace root. Set
+`claim_store.path` to use a shared or relocated store.
 
 The claim owner stale threshold defaults inside the orchestrator store. Override it with
-`--claim-store-owner-stale-ms <ms>` or `LORENZ_CLAIM_STORE_OWNER_STALE_MS`.
+`claim_store.owner_stale_ms` (`0` uses the store default).
 
 ## Schema Versioning
 
@@ -59,9 +65,11 @@ selection out of the pure dispatch state machine.
 
 ## Daemon Leadership
 
-Long-running daemon startup acquires a local leadership lease before tracker polling,
-worker-pool hydration, server startup, or runtime start. The lease is keyed by canonical
-workflow path under:
+The long-lived daemon is gated behind the `daemon` feature (`--feature daemon`). Without it
+(the default) `lorenz` runs unmanaged with no leadership lease, like `--once`. When enabled,
+daemon startup acquires a local leadership lease before tracker polling, worker-pool
+hydration, server startup, or runtime start. The lease is keyed by canonical workflow path
+under:
 
 ```text
 <workflow-directory>/.lorenz/daemon/<workflow-sha256>.lock.json
@@ -83,11 +91,11 @@ and release operations.
 
 When the dashboard server is enabled, the daemon exposes:
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/v1/daemon` | Return daemon owner, endpoint, heartbeat, workflow path, and leadership store kind |
-| `POST` | `/api/v1/refresh` | Queue an immediate poll and reconcile pass |
-| `POST` | `/api/v1/stop` | Request graceful daemon shutdown |
+| Method | Path              | Purpose                                                                            |
+| ------ | ----------------- | ---------------------------------------------------------------------------------- |
+| `GET`  | `/api/v1/daemon`  | Return daemon owner, endpoint, heartbeat, workflow path, and leadership store kind |
+| `POST` | `/api/v1/refresh` | Queue an immediate poll and reconcile pass                                         |
+| `POST` | `/api/v1/stop`    | Request graceful daemon shutdown                                                   |
 
 The same daemon status is included in `/api/v1/state` under `daemon`.
 

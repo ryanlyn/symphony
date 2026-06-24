@@ -25,7 +25,6 @@ test("CLI accepts workflow path and TS runtime flags", () => {
         dashboard: true,
         port: 4100,
         logsRoot: null,
-        claimStore: { backend: null, path: null, ownerStaleMs: null },
         flagTokens: [],
         featureTokens: [],
       },
@@ -44,7 +43,6 @@ test("CLI defaults to a TUI daemon when only workflow path is supplied", () => {
       dashboard: true,
       port: null,
       logsRoot: null,
-      claimStore: { backend: null, path: null, ownerStaleMs: null },
       flagTokens: [],
       featureTokens: [],
     },
@@ -59,7 +57,6 @@ test("CLI defaults to a TUI daemon when only workflow path is supplied", () => {
       dashboard: true,
       port: 0,
       logsRoot: "tmp/custom-logs",
-      claimStore: { backend: null, path: null, ownerStaleMs: null },
       flagTokens: [],
       featureTokens: [],
     },
@@ -74,40 +71,10 @@ test("CLI defaults to a TUI daemon when only workflow path is supplied", () => {
       dashboard: true,
       port: 0,
       logsRoot: "tmp/custom-logs",
-      claimStore: { backend: null, path: null, ownerStaleMs: null },
       flagTokens: [],
       featureTokens: [],
     },
   });
-});
-
-test("CLI accepts explicit durable claim store options", () => {
-  assert.deepEqual(
-    parseCliArgs([
-      "--claim-store",
-      "turso",
-      "--claim-store-path",
-      "tmp/claims.db",
-      "--claim-store-owner-stale-ms",
-      "90000",
-      "WORKFLOW.md",
-    ]),
-    {
-      status: "ok",
-      options: {
-        workflowPath: "WORKFLOW.md",
-        once: false,
-        dryRun: false,
-        tui: true,
-        dashboard: true,
-        port: null,
-        logsRoot: null,
-        claimStore: { backend: "turso", path: "tmp/claims.db", ownerStaleMs: 90000 },
-        flagTokens: [],
-        featureTokens: [],
-      },
-    },
-  );
 });
 
 test("CLI reports help and invalid arguments", () => {
@@ -126,10 +93,6 @@ test("CLI reports help and invalid arguments", () => {
   assert.deepEqual(parseCliArgs(["--logs-root"]), {
     status: "error",
     message: "--logs-root requires a path",
-  });
-  assert.deepEqual(parseCliArgs(["--claim-store", "postgres"]), {
-    status: "error",
-    message: "claim store backend must be one of: memory, sqlite, turso",
   });
 });
 
