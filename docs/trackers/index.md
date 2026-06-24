@@ -87,14 +87,15 @@ payload. A provider that cannot produce a well-formed issue drops it rather than
 
 ## The agent tools
 
-Agents change issues through MCP tools, not through provider SDKs directly. Two layers exist, kept
-deliberately separate.
+Agents change issues through MCP tools, not through provider SDKs directly. Each tracker owns the
+tool packs it exposes and mounts them through `defaultToolPacks`.
 
-### The provider-neutral `tracker_*` pack
+### The Jira `tracker_*` pack
 
-The pack named exactly `tracker` is built by `createTrackerToolProvider` in `@lorenz/tracker-sdk`
-and mounted for every backend. It serves seven tools with the same names regardless of which tracker
-drives dispatch:
+The Jira extension owns the pack named exactly `tracker`, defined in
+`extensions/jira-tracker/src/tools.ts` as a `ToolProvider`. The `jira` and `jira-mcp` providers
+mount it through their `defaultToolPacks(): ["tracker"]`, so it rides on top of Jira-driven dispatch.
+It serves seven tools:
 
 | Tool | What it does |
 | --- | --- |
@@ -106,44 +107,40 @@ drives dispatch:
 | `tracker_update_comment` | Edit an existing comment. |
 | `tracker_create_issue` | Create a new issue. |
 
-Each tool is backed by one member of the tracker's `TrackerToolOps` (`createToolOps`). When the
-backend does not implement a member, its tool reports itself unavailable rather than fail mid-call:
-the call returns `success: false` with `tracker tools are unavailable for <kind> tracker`. The seven
-names are always present; their support is per-backend. Slack omits `createIssue`, so
-`tracker_create_issue` reports unsupported on Slack. The `memory` tracker registers no ops at all, so
-the neutral pack advertises zero tools for it.
+Each tool maps to a method on the Jira client. The pack selects `JiraClient` for the `jira` kind and
+`JiraMcpClient` for `jira-mcp`, keyed off `settings.tracker.kind`, then calls the client method that
+backs the invoked tool.
 
-`tracker_query` has two paths. If the backend implements `queryRows`, its `{rows, total, skipped?}`
-is returned verbatim with native projection. Otherwise the pack maps issues to records and applies
-the query DSL with `DEFAULT_SELECT = ['id', 'identifier', 'title', 'state', 'stateType', 'labels',
-'url']`. The DSL is total and side-effect-free, capped by `MAX_FILTER_DEPTH = 12`,
-`MAX_FILTER_NODES = 200`, `DEFAULT_LIMIT = 100`, and `MAX_LIMIT = 1000`. Full tool schemas and the
-DSL grammar live in [reference/tracker-tools.md](../reference/tracker-tools.md).
+`tracker_query` maps issues to records and applies the query DSL with `DEFAULT_SELECT = ['id',
+'identifier', 'title', 'state', 'stateType', 'labels', 'url']`. The DSL is total and
+side-effect-free, capped by `MAX_FILTER_DEPTH = 12`, `MAX_FILTER_NODES = 200`,
+`DEFAULT_LIMIT = 100`, and `MAX_LIMIT = 1000`. Full tool schemas and the DSL grammar live in
+[reference/tracker-tools.md](../reference/tracker-tools.md).
 
 ### Provider-specific packs
 
-Some trackers also ship a pack with backend-native tools, mounted automatically through the
-provider's `defaultToolPacks`:
+Every tracker that exposes agent tools owns a pack and mounts it through the provider's
+`defaultToolPacks`:
 
-| Provider | Pack | Native tools |
+| Provider | Pack | Tools |
 | --- | --- | --- |
+| `jira`, `jira-mcp` | `tracker` | `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue` |
 | `linear` | `linear` | `linear_graphql` |
 | `local` | `local` | `local_query`, `local_read_issue`, `local_update_status`, `local_comment`, `local_create_issue` |
 | `slack` | `slack` | `slack_update_status`, `slack_comment`, `slack_read_thread`, `slack_query`, `slack_user_info`, `slack_channel_context` |
 
-`jira` and `jira-mcp` ship no pack of their own; agents use the neutral `tracker_*` tools. The pack
-name (`linear`) stays distinct from the provider kind (`linear`) even when the strings match. Name a
-pack in the workflow `tools:` map to mount it standalone over a different dispatch tracker.
+The `memory` tracker declares no `defaultToolPacks`, so it ships no tools. The pack name (`linear`)
+stays distinct from the provider kind (`linear`) even when the strings match. Name a pack in the
+workflow `tools:` map to mount it standalone over a different dispatch tracker.
 
 ## Mounting and routing
 
 The MCP server (`packages/mcp/src/tools.ts`) decides which packs to mount for the current settings,
 in this order, de-duplicated first-seen:
 
-1. The neutral `tracker` pack, if registered.
-2. The dispatch tracker's `defaultToolPacks(settings)`. If a provider declares none, a fallback
-   mounts a pack whose name equals `tracker.kind`, when one is registered and is not `tracker`.
-3. Every key of the workflow `tools:` map (`settings.toolOptions`). Writing `tools: { local: {...} }`
+1. The dispatch tracker's `defaultToolPacks(settings)`. If a provider declares none, a fallback
+   mounts a pack whose name equals `tracker.kind`, when one is registered.
+2. Every key of the workflow `tools:` map (`settings.toolOptions`). Writing `tools: { local: {...} }`
    mounts the `local` pack.
 
 The mounted packs flatten into one tool namespace. A tool name declared by two different packs is a

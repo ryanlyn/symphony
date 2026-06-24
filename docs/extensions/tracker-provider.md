@@ -9,7 +9,7 @@ backend through a registry, so a new tracker needs no core changes.
 The [linear](../trackers/linear.md) and [jira](../trackers/jira.md) trackers are the worked examples;
 `extensions/linear-tracker/` is the most complete reference. `test/tracker-extension.test.ts` is the
 executable form of this recipe: it builds a fake `notion` provider from SDK surface alone and drives
-config parsing, dispatch validation, client creation, and the MCP tools through it. If a new backend
+config parsing, dispatch validation, and client creation through it. If a new backend
 needs more than the steps below to keep that test green, the provider boundary has regressed.
 
 ## The `TrackerProvider` hook table
@@ -26,19 +26,17 @@ mandatory; every other hook is optional and the core degrades cleanly when it is
 | `parseOptions(options, context)` | config parse | validate and normalize the provider's keys (aliases already applied); the returned record becomes `settings.tracker.options`; throw `tracker.<key> ...` on bad input |
 | `validateDispatch(settings)` | CLI startup (`validateDispatchConfig`) | throw when parsed settings cannot drive dispatch (missing credentials or required options) |
 | `createClient(settings, context)` | runtime | build the `RuntimeTrackerClient` that feeds candidate issues into the dispatch loop |
-| `createToolOps(settings, context)` | neutral `tracker` pack | return the `TrackerToolOps` backing the seven `tracker_*` tools, or `undefined` for a backend with no agent-facing operations |
-| `defaultToolPacks(settings)` | MCP mount | provider-specific tool packs mounted by default when this tracker drives dispatch; the neutral `tracker` pack is always mounted separately |
+| `defaultToolPacks(settings)` | MCP mount | names of the registered `ToolProvider` packs this tracker owns and mounts by default when it drives dispatch; omit it and a registered pack whose name equals `tracker.kind` is mounted as a fallback |
 | `projectUrl(settings)` | TUI / dashboard | operator-facing URL of the tracked project |
 
-Two context objects are passed in. `TrackerContext` (`parseOptions`, `createClient`) carries
-`env: NodeJS.ProcessEnv` and, at parse time only, `resolveSecret(value, fallbackEnvVar?)` for `$VAR`
-and `op://` references. `TrackerOpsContext` (`createToolOps`) carries only `fetchImpl: typeof fetch`.
+`TrackerContext` (`parseOptions`, `createClient`) carries `env: NodeJS.ProcessEnv` and, at parse time
+only, `resolveSecret(value, fallbackEnvVar?)` for `$VAR` and `op://` references.
 
 The hooks fire in distinct phases. At config-parse time, `configAliases` and `envFallbacks` rewrite
 the raw bundle, then `parseOptions` validates it into `settings.tracker.options`. At startup,
 `validateDispatch` runs once to reject undispatchable settings before the loop starts. At runtime,
-`createClient` produces the polling client. When the MCP server mounts tools, `createToolOps` and
-`defaultToolPacks` decide the agent-facing surface. `projectUrl` is read by the dashboards.
+`createClient` produces the polling client. When the MCP server mounts tools, `defaultToolPacks`
+decides the agent-facing surface. `projectUrl` is read by the dashboards.
 
 ## The `RuntimeTrackerClient` contract
 
@@ -114,39 +112,31 @@ only fail at `validateDispatchConfig`, which throws `unsupported tracker.kind: <
 
 ## The agent-facing tools
 
-A tracker backend gets the seven provider-neutral `tracker_*` tools for free by implementing
-`createToolOps`. The neutral pack is named the literal string `"tracker"` and serves
-`tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`,
-`tracker_comment`, `tracker_update_comment`, and `tracker_create_issue` against the `TrackerToolOps`
-your provider returns.
+A tracker exposes agent tools by implementing `defaultToolPacks(settings)`, which returns the names of
+the registered `ToolProvider` packs (each a separate provider in `@lorenz/tool-sdk`) that mount by
+default when this tracker drives dispatch. The tracker owns and registers those packs; mounting is by
+name. A tracker that declares no `defaultToolPacks` ships no tools, unless a registered pack happens to
+share its `tracker.kind`, which the MCP mount falls back to.
 
-`TrackerToolOps` (also in `provider.ts`) is all-optional:
+Each built-in tracker owns its own pack:
 
-```ts
-interface TrackerToolOps {
-  readIssue?(issueId: string): Promise<Issue>;
-  queryIssues?(args: Record<string, unknown>): Promise<Issue[]>;
-  queryRows?(args: Record<string, unknown>): Promise<TrackerQueryResult>;
-  updateStatus?(issueId: string, status: string): Promise<Issue>;
-  listComments?(issueId: string): Promise<TrackerComment[]>;
-  addComment?(issueId: string, body: string): Promise<TrackerComment | void>;
-  updateComment?(issueId: string, commentId: string, body: string): Promise<TrackerComment>;
-  createIssue?(input: TrackerCreateIssueInput): Promise<Issue>;
-}
-```
+- Jira owns the pack named the literal string `"tracker"`, defined in
+  `extensions/jira-tracker/src/tools.ts`. It serves `tracker_read_issue`, `tracker_query`,
+  `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, and
+  `tracker_create_issue` over `JiraClient` or `JiraMcpClient`, selected by `settings.tracker.kind`. The
+  `jira` and `jira-mcp` providers both declare `defaultToolPacks() => ["tracker"]`.
+- Linear declares `defaultToolPacks() => ["linear"]`, mounting the `linear` pack that exposes the
+  single `linear_graphql` tool and bundles the `lorenz-linear` skill.
+- The `local` tracker mounts its `local` pack: `local_update_status`, `local_comment`,
+  `local_create_issue`, `local_read_issue`, and `local_query`.
+- The `slack` tracker mounts its `slack` pack: `slack_update_status`, `slack_comment`,
+  `slack_read_thread`, `slack_query`, `slack_user_info`, and `slack_channel_context`.
+- The `memory` tracker declares no `defaultToolPacks`, so it advertises no tools.
 
-A missing member makes that tool report itself unavailable with the message `tracker tools are
-unavailable for <kind> tracker` rather than failing mid-call. For `tracker_query`, implement
-`queryRows` if your backend projects natively (it takes precedence and its `{rows, total, skipped?}`
-is returned verbatim); otherwise implement `queryIssues` and the pack projects rows in-memory through
-the shared select/filter DSL with `DEFAULT_SELECT = [id, identifier, title, state, stateType, labels,
-url]`. The memory tracker registers no tool ops, so the neutral pack advertises zero tools for it.
-
-`defaultToolPacks` is a separate axis. It declares provider-specific packs (a separate `ToolProvider`
-in `@lorenz/tool-sdk`) that mount by default when your tracker drives dispatch. Linear declares
-`defaultToolPacks() => ["linear"]`, mounting the `linear` pack that exposes the `linear_graphql` tool;
-Jira declares none and relies on the neutral pack alone. Tool packs are their own recipe; see
-[tool-pack.md](tool-pack.md). The neutral `tracker_*` surface is detailed in
+The select/filter projection for `tracker_query` lives alongside the pack in
+`extensions/jira-tracker/src/tools.ts`, where the seven tool-name definitions and
+`DEFAULT_SELECT = [id, identifier, title, state, stateType, labels, url]` are declared. Tool packs are
+their own recipe; see [tool-pack.md](tool-pack.md). The `tracker_*` surface is detailed in
 [reference/tracker-tools.md](../reference/tracker-tools.md).
 
 ## The recipe
@@ -194,6 +184,6 @@ After this, `tracker.kind: <name>` in a workflow selects your backend. No core p
 - [trackers/linear.md](../trackers/linear.md) - the most complete worked example of this contract.
 - [trackers/jira.md](../trackers/jira.md) - a second backend with REST and MCP-proxied variants.
 - [extensions/tool-pack.md](tool-pack.md) - the separate axis for agent-facing tools your tracker can ship.
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - the seven `tracker_*` tools `createToolOps` powers.
+- [reference/tracker-tools.md](../reference/tracker-tools.md) - the seven `tracker_*` tools the Jira `tracker` pack serves.
 - [architecture.md](../architecture.md) - how the four extension points and the composition root fit together.
 - [reference/configuration.md](../reference/configuration.md) - every `tracker.*` config key the registry selects on.

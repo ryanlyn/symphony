@@ -37,7 +37,7 @@ const trackerLoader = createExtensionLoader<TrackerProvider, TrackerProviderModu
   assertModule: assertTrackerProviderModule,
   looksLikeModule: (value) => isRecord(value) && typeof value["createClient"] === "function",
   // Spread the loaded module so every provider hook (createClient, parseOptions,
-  // validateDispatch, createToolOps, ...) is preserved and only `kind` is
+  // validateDispatch, defaultToolPacks, ...) is preserved and only `kind` is
   // overridden to the configured specifier.
   toFactory: (specifier, module) => ({ ...module, kind: specifier }),
   describeModule: (module) => ({ kind: module.kind, sdkVersion: module.sdkVersion }),

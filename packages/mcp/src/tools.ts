@@ -12,13 +12,9 @@ import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sd
 
 export type { ToolResult, ToolSpec } from "@lorenz/tool-sdk";
 
-/** The provider-neutral pack mounted for every tracker backend. */
-const NEUTRAL_PACK = "tracker";
-
 /**
- * Tool packs mounted for the given settings: the neutral tracker pack, the dispatch
- * tracker's declared default packs, plus any extra packs explicitly configured by the
- * workflow's `tools:` map.
+ * Tool packs mounted for the given settings: the dispatch tracker's declared default packs,
+ * plus any extra packs explicitly configured by the workflow's `tools:` map.
  */
 function mountedPacks(
   settings: Settings,
@@ -35,15 +31,16 @@ function mountedPackNames(
   trackers: TrackerRegistry,
 ): string[] {
   const names = new Set<string>();
-  if (registry.get(NEUTRAL_PACK) !== undefined) names.add(NEUTRAL_PACK);
 
   const tracker = trackers.get(settings.tracker.kind);
   const defaultPacks = tracker?.defaultToolPacks?.(settings);
   if (defaultPacks !== undefined) {
     for (const pack of defaultPacks) names.add(pack);
   } else {
+    // A tracker that declares no default packs falls back to a registered pack named after its
+    // kind, so a backend can ship one same-named pack without implementing `defaultToolPacks`.
     const kind = settings.tracker.kind;
-    if (kind !== undefined && kind !== NEUTRAL_PACK && registry.get(kind) !== undefined) {
+    if (kind !== undefined && registry.get(kind) !== undefined) {
       names.add(kind);
     }
   }

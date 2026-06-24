@@ -55,8 +55,9 @@ dependency is `@agentclientprotocol/sdk` types.
 
 **The four SDK packages** each define exactly one builder-facing contract and one registry:
 
-- `tracker-sdk` defines `TrackerProvider` and `TrackerRegistry`, the options-bag helpers, and the
-  provider-neutral `tracker` tool pack (`createTrackerToolProvider`).
+- `tracker-sdk` defines `TrackerProvider` and `TrackerRegistry` and the options-bag helpers. A
+  tracker exposes agent tools by implementing `defaultToolPacks(settings)`, returning the names of
+  the registered `ToolProvider` packs it owns.
 - `tool-sdk` defines `ToolProvider` and `ToolRegistry`, the mount and route helpers
   (`mountedToolSpecs`, `executeMountedTool`), the `ToolResult` builders, and a side-effect-free
   query/filter DSL.
@@ -125,12 +126,13 @@ options-bag pattern below. Contract and full hook table:
 ### Tool pack
 
 Agent-facing MCP tools are a separate axis from dispatch. `ToolProvider` is a named pack that
-advertises tools and runs them. The mounting endpoint unions the neutral `tracker` pack, the
-dispatch tracker's `defaultToolPacks`, and the workflow `tools:` keys into one flat namespace that
-fails loud on a name collision, and a tracker that implements `createToolOps` gets the seven
-provider-neutral `tracker_*` tools without shipping a pack of its own. Contract:
-[extensions/tool-pack.md](extensions/tool-pack.md); the neutral tools themselves:
-[reference/tracker-tools.md](reference/tracker-tools.md).
+advertises tools and runs them. The mounting endpoint unions the dispatch tracker's
+`defaultToolPacks` and the workflow `tools:` keys into one flat namespace that fails loud on a name
+collision. If a tracker declares no `defaultToolPacks`, a registered pack whose name equals
+`tracker.kind` is mounted as a fallback. A tracker owns the tools it exposes: the Jira tracker ships
+the `tracker` pack with the seven `tracker_*` tools, while `linear`, `local`, and `slack` each ship
+their own bespoke pack. Contract: [extensions/tool-pack.md](extensions/tool-pack.md); the Jira
+`tracker_*` tools themselves: [reference/tracker-tools.md](reference/tracker-tools.md).
 
 ### Agent executor
 
@@ -183,9 +185,11 @@ collapses to `undefined`), and `resolveEnvReference("$VAR", env)`. Their errors 
 ## The composition root
 
 `registerBuiltinBackends()` in `apps/cli/src/daemon.ts` is the single place backend identity is
-hardcoded. It registers the `linear`, `local`, `memory`, `jira`, and `slack` trackers, the neutral
-`tracker` tool pack, the `acp` executor provider, and the `fake`, `static-ssh`, and `docker` worker
-drivers into the four default registries. It is idempotent, so calling it more than once is safe.
+hardcoded. It registers the `linear`, `local`, `memory`, `jira`, and `slack` trackers and their tool
+packs (the `jira` pack owns the `tracker_*` tools, `linear` owns `linear_graphql`, `local` owns the
+`local_*` tools, and `slack` owns the `slack_*` tools), the `acp` executor provider, and the `fake`,
+`static-ssh`, and `docker` worker drivers into the four default registries. It is idempotent, so
+calling it more than once is safe.
 
 To add a backend, implement the contract in a new package under `extensions/`, export a
 `register<Name>...(registries?)` function that registers your provider or factory idempotently, and

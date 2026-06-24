@@ -6,17 +6,15 @@ import { executeTool, LinearClient, parseConfig } from "@lorenz/cli";
 import { registerLinearTracker } from "@lorenz/linear-tracker";
 import { assert, tempDir } from "@lorenz/test-utils";
 import { ToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { createFakeLinearHandlers } from "./fake-linear-server.js";
 
-// Private registries with the linear backend and the neutral tracker pack, so config
-// parsing applies the Linear provider's aliases/validation and tool calls mount the
-// default packs.
+// Private registries with the linear backend, so config parsing applies the Linear
+// provider's aliases/validation and tool calls mount the linear pack it declares.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
 registerLinearTracker({ trackers, tools });
-tools.register(createTrackerToolProvider(trackers));
 
 const fakeViewer = { id: "viewer-001", name: "Fake User", email: "fake@example.com" };
 const fakeProject = {

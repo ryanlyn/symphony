@@ -1,6 +1,6 @@
-import type { Issue, Settings } from "@lorenz/domain";
+import type { Settings } from "@lorenz/domain";
 import { isRecord } from "@lorenz/domain";
-import type { TrackerContext, TrackerProvider, TrackerToolOps } from "@lorenz/tracker-sdk";
+import type { TrackerContext, TrackerProvider } from "@lorenz/tracker-sdk";
 import {
   rejectUnknownOptions,
   resolveEnvReference,
@@ -10,6 +10,7 @@ import {
 
 import { JiraClient, JiraMcpClient } from "./client.js";
 import { jiraTrackerOptions, type JiraTrackerOptions } from "./options.js";
+import { JIRA_TOOL_PACK_NAME } from "./tools.js";
 
 const JIRA_OPTION_KEYS = ["baseUrl", "email", "projectKeys", "jql", "issueType", "mcp"];
 const JIRA_MCP_KEYS = new Set(["url", "token", "headers", "tools"]);
@@ -46,8 +47,7 @@ export const jiraTrackerProvider: TrackerProvider = {
     assertJiraScope(options);
   },
   createClient: (settings) => new JiraClient(settings),
-  createToolOps: (settings, { fetchImpl }) =>
-    jiraToolOps(new JiraClient(settings, { fetchImpl }), settings),
+  defaultToolPacks: () => [JIRA_TOOL_PACK_NAME],
   projectUrl: jiraProjectUrl,
 };
 
@@ -62,8 +62,7 @@ export const jiraMcpTrackerProvider: TrackerProvider = {
     assertJiraScope(options);
   },
   createClient: (settings) => new JiraMcpClient(settings),
-  createToolOps: (settings, { fetchImpl }) =>
-    jiraToolOps(new JiraMcpClient(settings, { fetchImpl }), settings),
+  defaultToolPacks: () => [JIRA_TOOL_PACK_NAME],
   projectUrl: jiraProjectUrl,
 };
 
@@ -152,44 +151,6 @@ function assertJiraScope(options: JiraTrackerOptions): void {
   if (!hasJql && !hasProjectKeys) {
     throw new Error("tracker.jql or tracker.project_keys is required for jira trackers");
   }
-}
-
-function jiraToolOps(client: JiraClient | JiraMcpClient, settings: Settings): TrackerToolOps {
-  return {
-    readIssue: async (issueId) => client.readIssue(issueId),
-    queryIssues: async (args) => queryJiraIssues(client, settings, args),
-    updateStatus: async (issueId, status) => client.updateIssueStatus(issueId, status),
-    listComments: async (issueId) => client.listComments(issueId),
-    addComment: async (issueId, body) => client.addComment(issueId, body),
-    updateComment: async (issueId, commentId, body) =>
-      client.updateComment(issueId, commentId, body),
-    createIssue: async (input) => client.createIssue(input),
-  };
-}
-
-async function queryJiraIssues(
-  client: JiraClient | JiraMcpClient,
-  settings: Settings,
-  args: Record<string, unknown>,
-): Promise<Issue[]> {
-  const issueIds = stringArray(args.issueIds);
-  if (issueIds) return client.fetchIssuesByIds(issueIds);
-  const nativeQuery = typeof args.query === "string" ? args.query : args.jql;
-  if (typeof nativeQuery === "string" && nativeQuery.trim() !== "") {
-    return client.searchIssues(nativeQuery);
-  }
-  const states = stringArray(args.states);
-  if (states) return client.fetchIssuesByStates(states);
-  if (settings.tracker.activeStates.length > 0) return client.fetchCandidateIssues();
-  return [];
-}
-
-function stringArray(value: unknown): string[] | null {
-  if (value === undefined || value === null) return null;
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-    throw new Error("expected an array of strings");
-  }
-  return value;
 }
 
 function jiraProjectUrl(settings: Settings): string | undefined {

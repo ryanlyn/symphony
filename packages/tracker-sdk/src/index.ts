@@ -1,12 +1,4 @@
-export type {
-  TrackerContext,
-  TrackerComment,
-  TrackerCreateIssueInput,
-  TrackerOpsContext,
-  TrackerProvider,
-  TrackerQueryResult,
-  TrackerToolOps,
-} from "./provider.js";
+export type { TrackerContext, TrackerComment, TrackerProvider } from "./provider.js";
 export { TrackerRegistry, defaultTrackerRegistry } from "./registry.js";
 export {
   rejectUnknownOptions,
@@ -14,7 +6,6 @@ export {
   stringListOption,
   stringOption,
 } from "./options.js";
-export { createTrackerToolProvider } from "./toolPack.js";
 export {
   TRACKER_SDK_VERSION,
   assertTrackerProviderModule,

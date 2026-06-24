@@ -6,6 +6,7 @@ import { TrackerRegistry } from "@lorenz/tracker-sdk";
 import {
   JiraClient,
   JiraMcpClient,
+  executeJiraTool,
   jiraMcpTrackerProvider,
   jiraTrackerProvider,
 } from "@lorenz/jira-tracker";
@@ -618,6 +619,119 @@ test("Jira MCP client sends the configured assignee when creating issues", async
       assigneeAccountId: "account-1",
     },
   });
+});
+
+test("tracker_read_issue routes a jira tracker to the REST client", async () => {
+  const calls: FetchCall[] = [];
+  const result = await executeJiraTool(
+    "tracker_read_issue",
+    { issueId: "ENG-1" },
+    jiraSettings(),
+    fetchSequence(calls, jsonResponse(jiraIssue())),
+  );
+
+  assert.equal(result.success, true);
+  assert.equal((result.result as { issue: { identifier: string } }).issue.identifier, "ENG-1");
+  // The REST endpoint proves clientFor selected JiraClient, not the MCP transport.
+  assert.match(
+    calls[0]?.url ?? "",
+    /^https:\/\/example\.atlassian\.net\/rest\/api\/3\/issue\/ENG-1/,
+  );
+});
+
+test("tracker_read_issue routes a jira-mcp tracker to the MCP client", async () => {
+  const calls: FetchCall[] = [];
+  const result = await executeJiraTool(
+    "tracker_read_issue",
+    { issueId: "ENG-1" },
+    jiraMcpSettings(),
+    fetchSequence(
+      calls,
+      jsonResponse({
+        jsonrpc: "2.0",
+        id: "1",
+        result: { content: [{ type: "text", text: JSON.stringify({ issue: jiraIssue() }) }] },
+      }),
+    ),
+  );
+
+  assert.equal(result.success, true);
+  assert.equal((result.result as { issue: { identifier: string } }).issue.identifier, "ENG-1");
+  // The JSON-RPC call to the MCP url proves clientFor selected JiraMcpClient, not the REST client.
+  assert.equal(calls[0]?.url, "http://127.0.0.1:5123/mcp");
+  assert.equal(calls[0]?.body.method, "tools/call");
+  assert.equal((calls[0]?.body.params as { name: string }).name, "jira_get_issue");
+});
+
+test("tracker_query projects rows through select against the jira client", async () => {
+  const calls: FetchCall[] = [];
+  const result = await executeJiraTool(
+    "tracker_query",
+    { issueIds: ["ENG-1"], select: ["id", "identifier", "state"] },
+    jiraSettings(),
+    fetchSequence(calls, jsonResponse({ total: 1, issues: [jiraIssue()] })),
+  );
+
+  assert.equal(result.success, true);
+  const { rows, total } = result.result as {
+    rows: Array<Record<string, unknown>>;
+    total: number;
+  };
+  assert.equal(total, 1);
+  assert.deepEqual(rows, [{ id: "10001", identifier: "ENG-1", state: "To Do" }]);
+  assert.equal(calls[0]?.url, "https://example.atlassian.net/rest/api/3/search/jql");
+});
+
+test("tracker_comment returns the created comment when the backend exposes it", async () => {
+  const calls: FetchCall[] = [];
+  const result = await executeJiraTool(
+    "tracker_comment",
+    { issueId: "ENG-1", body: "progress note" },
+    jiraSettings(),
+    fetchSequence(calls, jsonResponse(jiraComment({ id: "c-1", body: "progress note" }))),
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.result as Record<string, unknown>, {
+    ok: true,
+    comment: {
+      id: "c-1",
+      body: "progress note",
+      author: "account-1",
+      createdAt: "2026-06-01T00:00:00.000+0000",
+      updatedAt: "2026-06-01T00:00:00.000+0000",
+      url: "https://example.atlassian.net/rest/api/3/issue/10001/comment/c-1",
+    },
+  });
+});
+
+test("tracker tools validate required args before touching the network", async () => {
+  const result = await executeJiraTool("tracker_read_issue", {}, jiraSettings(), () => {
+    throw new Error("should not fetch when args are invalid");
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /'issueId' is required/);
+});
+
+test("an unknown tracker tool name fails listing the supported tools", async () => {
+  const result = await executeJiraTool("tracker_bogus", {}, jiraSettings(), fetch);
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /Unsupported tool: "tracker_bogus"/);
+});
+
+test("a failing jira request surfaces as a failed tool result, not a thrown error", async () => {
+  const calls: FetchCall[] = [];
+  const result = await executeJiraTool(
+    "tracker_read_issue",
+    { issueId: "ENG-1" },
+    jiraSettings(),
+    fetchSequence(calls, jsonResponse({ errorMessages: ["boom"] }, 500)),
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error ?? "", /jira api status 500/);
 });
 
 function jiraMcpSettings() {

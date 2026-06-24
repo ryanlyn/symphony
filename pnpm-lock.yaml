@@ -532,6 +532,9 @@ importers:
       "@lorenz/issue":
         specifier: workspace:*
         version: link:../../packages/issue
+      "@lorenz/tool-sdk":
+        specifier: workspace:*
+        version: link:../../packages/tool-sdk
       "@lorenz/tracker-sdk":
         specifier: workspace:*
         version: link:../../packages/tracker-sdk

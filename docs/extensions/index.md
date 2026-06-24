@@ -22,9 +22,9 @@ All four sit on top of `@lorenz/domain`, the dependency-free vocabulary. Domain 
 
 ### TrackerProvider
 
-A `TrackerProvider` (`packages/tracker-sdk/src/provider.ts`) connects Lorenz to an issue tracker. The only mandatory members are `kind` (the string selector) and `createClient(settings, ctx)`. The optional hooks cover the rest of the lifecycle: `configAliases`, `envFallbacks`, and `defaultEndpoint` shape config parsing; `parseOptions(options, ctx)` validates the provider-specific `tracker.options.*`; `validateDispatch(settings)` runs once at startup; `createToolOps(settings, ctx)` and `defaultToolPacks(settings)` wire the tracker into the MCP tool surface; `projectUrl(settings)` feeds the UI.
+A `TrackerProvider` (`packages/tracker-sdk/src/provider.ts`) connects Lorenz to an issue tracker. The only mandatory members are `kind` (the string selector) and `createClient(settings, ctx)`. The optional hooks cover the rest of the lifecycle: `configAliases`, `envFallbacks`, and `defaultEndpoint` shape config parsing; `parseOptions(options, ctx)` validates the provider-specific `tracker.options.*`; `validateDispatch(settings)` runs once at startup; `defaultToolPacks(settings)` names the registered `ToolProvider` packs the tracker mounts on the MCP tool surface; `projectUrl(settings)` feeds the UI.
 
-The tracker tools your provider can back are normalized through `TrackerToolOps`, an all-optional interface: `readIssue`, `queryIssues`, `queryRows`, `updateStatus`, `listComments`, `addComment`, `updateComment`, `createIssue`. A missing member makes the corresponding tracker tool report itself unavailable rather than fail mid-call. See [tracker-provider.md](tracker-provider.md).
+A tracker exposes agent tools solely by implementing `defaultToolPacks(settings)`, which returns the names of registered `ToolProvider` packs the tracker owns. The pack itself implements the tools over the tracker's client. See [tracker-provider.md](tracker-provider.md).
 
 A tracker can ship inside the repo or load from an out-of-tree module: `tracker.kind` accepts a module specifier as well as a registered kind, loaded at startup through the same `sdkVersion` handshake (`TRACKER_SDK_VERSION`, checked by `assertTrackerProviderModule`) the worker driver uses. See [out-of-tree.md](out-of-tree.md).
 
@@ -73,11 +73,8 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
   registerLinearTracker({ trackers, tools });
   registerLocalTracker({ trackers, tools });
   registerMemoryTracker({ trackers });
-  registerJiraTrackers({ trackers });
+  registerJiraTrackers({ trackers, tools });
   registerSlackTracker({ trackers, tools });
-  if (tools.get("tracker") === undefined) {
-    tools.register(createTrackerToolProvider(trackers));
-  }
   if (executors.get(acpExecutorProvider.executor) === undefined) {
     executors.register(acpExecutorProvider);
   }
@@ -91,7 +88,7 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
 
 Your new backend follows the same pattern: one `register*` call here. That is the "one registration line" half of the thesis. The function is idempotent, so calling it more than once is safe.
 
-The neutral `tracker` tool pack is registered here through `createTrackerToolProvider(trackers)`. It advertises the seven provider-neutral tools `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, and `tracker_create_issue`, over whatever `TrackerToolOps` the active tracker exposes. When the active tracker has no `createToolOps`, the pack advertises no tools.
+The Jira extension owns the `tracker` tool pack, registered here through `registerJiraTrackers({ trackers, tools })`. The pack (`extensions/jira-tracker/src/tools.ts`) advertises the seven tools `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, and `tracker_create_issue`, implemented directly over `JiraClient` or `JiraMcpClient` selected by `settings.tracker.kind`. The `jira` and `jira-mcp` trackers mount it by returning `["tracker"]` from `defaultToolPacks()`.
 
 ## The directory rule
 
@@ -106,7 +103,7 @@ The worker SDK ships a shared conformance suite and a reference driver, so a new
 - `runDriverConformanceSuite(options)` (`packages/worker-sdk/src/conformance.ts`) is a vitest suite that pins the four-rule worker contract: `provision` is idempotent on `workerId`; `destroy` is idempotent and tolerant of an already-gone worker; `list()` reflects provisioned minus destroyed; and `probe` of a created-but-unreachable worker returns `{ ok: false, reason }`. Ephemeral drivers must surface `POOL_OWNED_LABEL` (`lorenz.pool=worker-pool`) on every `list()` descriptor. It is exported from the `@lorenz/worker-sdk/conformance` subpath. The file lives under `src/` deliberately, so it compiles to `dist/` and each driver's own test can import it.
 - `FakeWorkerDriver` (`packages/worker-sdk/src/fake.ts`) is the reference in-memory driver, `kind` `"fake"`, with all capabilities false and per-worker failure-injection hooks. It ships in the SDK, registered via `registerFakeWorkerDriver`, and is the template to read before writing a real driver.
 
-The other SDKs document their contracts through package tests, for example `packages/tracker-sdk/test/registry.test.ts` and `packages/tracker-sdk/test/tool-pack.test.ts`. Read those alongside the builder page for the kind you are adding.
+The other SDKs document their contracts through package tests, for example `packages/tracker-sdk/test/registry.test.ts` and `packages/mcp/test/tools-contract.test.ts`. Read those alongside the builder page for the kind you are adding.
 
 ## Pick a builder page
 

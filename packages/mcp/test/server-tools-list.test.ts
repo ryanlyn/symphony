@@ -8,7 +8,7 @@ import type { Settings } from "@lorenz/domain";
 import { registerLinearTracker } from "@lorenz/linear-tracker";
 import { registerLocalTracker } from "@lorenz/local-tracker";
 import { ToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 import { test } from "vitest";
 import { assert } from "@lorenz/test-utils";
 
@@ -21,13 +21,11 @@ import {
 } from "@lorenz/mcp";
 
 // Private registries holding the providers this suite exercises (linear and local
-// dispatch, plus the neutral tracker pack), so the server is exercised without mutating
-// the process-default registries.
+// dispatch), so the server is exercised without mutating the process-default registries.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
 registerLinearTracker({ trackers, tools });
 registerLocalTracker({ trackers, tools });
-tools.register(createTrackerToolProvider(trackers));
 
 function parseConfig(raw: Record<string, unknown>, env: NodeJS.ProcessEnv): Settings {
   return parseWorkflowConfig(raw, env, {}, trackers);
@@ -66,13 +64,6 @@ async function toolsListNames(settings: Settings): Promise<string[]> {
 
 test("MCP tools/list advertises the local board tools for a local tracker", async () => {
   assert.deepEqual(await toolsListNames(await localSettings()), [
-    "tracker_read_issue",
-    "tracker_query",
-    "tracker_update_status",
-    "tracker_list_comments",
-    "tracker_comment",
-    "tracker_update_comment",
-    "tracker_create_issue",
     "local_update_status",
     "local_comment",
     "local_create_issue",
@@ -81,18 +72,9 @@ test("MCP tools/list advertises the local board tools for a local tracker", asyn
   ]);
 });
 
-test("MCP tools/list advertises common and legacy tools for a linear tracker", async () => {
+test("MCP tools/list advertises the linear_graphql tool for a linear tracker", async () => {
   const settings = parseConfig({ tracker: { kind: "linear", project_slug: "mono" } }, {});
-  assert.deepEqual(await toolsListNames(settings), [
-    "tracker_read_issue",
-    "tracker_query",
-    "tracker_update_status",
-    "tracker_list_comments",
-    "tracker_comment",
-    "tracker_update_comment",
-    "tracker_create_issue",
-    "linear_graphql",
-  ]);
+  assert.deepEqual(await toolsListNames(settings), ["linear_graphql"]);
 });
 
 test("MCP server rejects bearer tokens issued for another server instance", async () => {

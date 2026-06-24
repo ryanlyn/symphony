@@ -87,8 +87,8 @@ tunnel. The ACP server name shown to an agent is `lorenz_<kind>`. See
 ## P
 
 **Provider** - the extension that backs a tracker. A `TrackerProvider` is registered under a `kind`,
-creates the dispatch client, and optionally supplies tool ops and tool packs; selected by
-`trackers.<name>.provider` (or the flat `tracker.kind`). See
+creates the dispatch client, and declares the tool packs it owns through `defaultToolPacks`; selected
+by `trackers.<name>.provider` (or the flat `tracker.kind`). See
 [../extensions/tracker-provider.md](../extensions/tracker-provider.md) and
 [../trackers/index.md](../trackers/index.md).
 
@@ -139,9 +139,9 @@ for issues in a given tracker state, for example a per-state `agent.max_concurre
 ## T
 
 **Tool pack** - a named bundle of agent-callable tools (a `ToolProvider`) registered under a `name`,
-mounted into the flat MCP namespace, and optionally shipping skills. The neutral `tracker` pack
-serves the seven `tracker_*` tools; provider-specific packs (`linear`, `local`, `slack`) ship in the
-tracker extensions. See [../extensions/tool-pack.md](../extensions/tool-pack.md) and
+mounted into the flat MCP namespace, and optionally shipping skills. The Jira extension's `tracker`
+pack serves the seven `tracker_*` tools; provider-specific packs (`linear`, `local`, `slack`) ship in
+the tracker extensions. See [../extensions/tool-pack.md](../extensions/tool-pack.md) and
 [tracker-tools.md](tracker-tools.md).
 
 **Tracker** - the issue backend that drives dispatch: Linear, Jira, a local board, Slack, or the

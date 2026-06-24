@@ -7,7 +7,7 @@ import type { Settings } from "@lorenz/domain";
 import { registerLinearTracker } from "@lorenz/linear-tracker";
 import { registerLocalTracker } from "@lorenz/local-tracker";
 import { ToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 import { Hono } from "hono";
 import { test } from "vitest";
 import { assert } from "@lorenz/test-utils";
@@ -19,17 +19,6 @@ const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
 registerLinearTracker({ trackers, tools });
 registerLocalTracker({ trackers, tools });
-tools.register(createTrackerToolProvider(trackers));
-
-const NEUTRAL_TOOLS = [
-  "tracker_read_issue",
-  "tracker_query",
-  "tracker_update_status",
-  "tracker_list_comments",
-  "tracker_comment",
-  "tracker_update_comment",
-  "tracker_create_issue",
-];
 
 function linearSettings(): Settings {
   return parseWorkflowConfig(
@@ -69,11 +58,10 @@ test("mountMcp resolves a settings thunk on every request", async () => {
   const token = issueMcpToken(authScope);
 
   try {
-    assert.deepEqual(await toolsListNames(app, token), [...NEUTRAL_TOOLS, "linear_graphql"]);
+    assert.deepEqual(await toolsListNames(app, token), ["linear_graphql"]);
 
     current = await localSettings();
     assert.deepEqual(await toolsListNames(app, token), [
-      ...NEUTRAL_TOOLS,
       "local_update_status",
       "local_comment",
       "local_create_issue",
@@ -92,7 +80,7 @@ test("mountMcp serves plain settings unchanged", async () => {
   const token = issueMcpToken(authScope);
 
   try {
-    assert.deepEqual(await toolsListNames(app, token), [...NEUTRAL_TOOLS, "linear_graphql"]);
+    assert.deepEqual(await toolsListNames(app, token), ["linear_graphql"]);
   } finally {
     revokeMcpToken(token);
   }

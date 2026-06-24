@@ -1,4 +1,4 @@
-import type { Issue, RuntimeTrackerClient, Settings } from "@lorenz/domain";
+import type { RuntimeTrackerClient, Settings } from "@lorenz/domain";
 
 /** Ambient dependencies handed to provider hooks that must not touch process globals directly. */
 export interface TrackerContext {
@@ -10,28 +10,7 @@ export interface TrackerContext {
   resolveSecret?: (value: string | undefined, fallbackEnvVar?: string) => string | undefined;
 }
 
-/** Dependencies for building the normalized tool operations of one tracker. */
-export interface TrackerOpsContext {
-  fetchImpl: typeof fetch;
-}
-
-/** Input accepted by {@link TrackerToolOps.createIssue}. */
-export interface TrackerCreateIssueInput {
-  title: string;
-  body?: string | undefined;
-  status?: string | undefined;
-  /** Tracker user identity to assign the created issue to when the backend supports assignment. */
-  assignee?: string | undefined;
-}
-
-/** Natively projected query payload returned by {@link TrackerToolOps.queryRows}. */
-export interface TrackerQueryResult {
-  rows: Array<Record<string, unknown>>;
-  total: number;
-  skipped?: unknown[] | undefined;
-}
-
-/** Normalized tracker issue comment returned by the provider-neutral comment tools. */
+/** Normalized tracker issue comment returned by tracker clients and their comment tools. */
 export interface TrackerComment {
   id: string;
   body: string;
@@ -42,35 +21,12 @@ export interface TrackerComment {
 }
 
 /**
- * Normalized issue operations backing the provider-neutral `tracker_*` tool pack. Every
- * member is optional: a missing member makes the corresponding tool report itself as
- * unsupported for this tracker instead of failing mid-call.
- *
- * Backends that filter and project natively (e.g. the local board's query DSL) implement
- * {@link queryRows}; backends that return whole issues implement {@link queryIssues} and let
- * the pack project rows with the shared select/filter helpers.
- */
-export interface TrackerToolOps {
-  readIssue?(issueId: string): Promise<Issue>;
-  /** Issues matching generic query args (`issueIds`, `states`, provider-native queries such as `jql`). */
-  queryIssues?(args: Record<string, unknown>): Promise<Issue[]>;
-  /** Pre-projected rows for backends with a native query surface; takes precedence over {@link queryIssues}. */
-  queryRows?(args: Record<string, unknown>): Promise<TrackerQueryResult>;
-  updateStatus?(issueId: string, status: string): Promise<Issue>;
-  listComments?(issueId: string): Promise<TrackerComment[]>;
-  addComment?(issueId: string, body: string): Promise<TrackerComment | void>;
-  updateComment?(issueId: string, commentId: string, body: string): Promise<TrackerComment>;
-  createIssue?(input: TrackerCreateIssueInput): Promise<Issue>;
-}
-
-/**
  * Everything Lorenz needs to know about one issue-tracker backend, bundled as a single
- * extension point. A provider owns its slice of the selected tracker bundle, the runtime
- * client that feeds issues into dispatch, and the normalized operations behind the
- * provider-neutral `tracker_*` tools. Agent-facing tool packs are a separate extension
- * point (`ToolProvider` in `@lorenz/tool-sdk`): a tracker package may ship one, declare
- * it as a default pack for this tracker, and a workflow may still mount other registered
- * packs explicitly through its `tools:` map.
+ * extension point. A provider owns its slice of the selected tracker bundle and the runtime
+ * client that feeds issues into dispatch. Agent-facing tool packs are a separate extension
+ * point (`ToolProvider` in `@lorenz/tool-sdk`): a tracker package may ship one and declare
+ * it through {@link defaultToolPacks} so it mounts when this tracker drives dispatch, and a
+ * workflow may still mount other registered packs explicitly through its `tools:` map.
  *
  * The core (config parsing, runtime, MCP server, CLI) is provider-agnostic and talks to
  * providers exclusively through this contract via a {@link TrackerRegistry}. Adding a new
@@ -106,14 +62,10 @@ export interface TrackerProvider {
   /** Build the runtime client that feeds candidate issues into the dispatch loop. */
   createClient(settings: Settings, context: TrackerContext): RuntimeTrackerClient;
   /**
-   * Normalized operations backing the neutral `tracker_*` pack for this backend; return
-   * `undefined` (or omit the member) when the backend exposes no agent-facing operations.
-   */
-  createToolOps?(settings: Settings, context: TrackerOpsContext): TrackerToolOps | undefined;
-  /**
-   * Provider-specific tool packs mounted by default when this tracker drives dispatch.
-   * The core always mounts the neutral `tracker` pack separately; this hook declares any
-   * additional minimum packs owned by the tracker extension.
+   * Tool packs mounted by default when this tracker drives dispatch. This is how a tracker
+   * extension exposes its agent-facing tools (e.g. Jira's `tracker_*` pack, Linear's
+   * `linear_graphql` pack); return the names of the registered {@link ToolProvider} packs the
+   * backend owns. Omit when the backend ships no agent tools.
    */
   defaultToolPacks?(settings: Settings): readonly string[];
   /** Operator-facing URL of the tracked project, shown in dashboards. */

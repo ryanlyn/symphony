@@ -5,7 +5,6 @@ import { LocalTrackerClient } from "./client.js";
 import { DEFAULT_BOARD_DIR } from "./resolveBoardDir.js";
 import { DEFAULT_ID_PREFIX } from "./boardStore.js";
 import { assertLocalIdPrefix, localTrackerOptions } from "./options.js";
-import { localToolOps } from "./toolOps.js";
 
 /**
  * Issue-id prefixes must be filesystem-safe so `<prefix><n>.md` can never escape the board
@@ -33,6 +32,5 @@ export const localTrackerProvider: TrackerProvider = {
   createClient(settings, context) {
     return new LocalTrackerClient(settings, process.cwd(), context.env);
   },
-  createToolOps: (settings) => localToolOps(settings),
   defaultToolPacks: () => ["local"],
 };
