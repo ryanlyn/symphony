@@ -1031,9 +1031,6 @@ importers:
       "@lorenz/domain":
         specifier: workspace:*
         version: link:../domain
-      "@lorenz/tool-sdk":
-        specifier: workspace:*
-        version: link:../tool-sdk
 
   packages/tui:
     dependencies:

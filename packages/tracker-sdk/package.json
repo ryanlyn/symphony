@@ -16,7 +16,6 @@
     ".": "./dist/index.js"
   },
   "dependencies": {
-    "@lorenz/domain": "workspace:*",
-    "@lorenz/tool-sdk": "workspace:*"
+    "@lorenz/domain": "workspace:*"
   }
 }
