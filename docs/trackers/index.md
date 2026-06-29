@@ -115,7 +115,7 @@ backs the invoked tool.
 'identifier', 'title', 'state', 'stateType', 'labels', 'url']`. The DSL is total and
 side-effect-free, capped by `MAX_FILTER_DEPTH = 12`, `MAX_FILTER_NODES = 200`,
 `DEFAULT_LIMIT = 100`, and `MAX_LIMIT = 1000`. Full tool schemas and the DSL grammar live in
-[reference/tracker-tools.md](../reference/tracker-tools.md).
+[reference/jira-tools.md](../reference/jira-tools.md).
 
 ### Provider-specific packs
 
@@ -156,7 +156,7 @@ see [reference/http-api.md](../reference/http-api.md).
 
 ## See also
 
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - exact schemas for all seven
+- [reference/jira-tools.md](../reference/jira-tools.md) - exact schemas for all seven
   `jira_*` tools and the query DSL grammar.
 - [dispatch.md](../dispatch.md) - the eligibility chain that consumes poll candidates.
 - [reference/configuration.md](../reference/configuration.md) - the full `tracker.*` and `trackers.*`

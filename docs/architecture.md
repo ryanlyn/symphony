@@ -132,7 +132,7 @@ collision. If a tracker declares no `defaultToolPacks`, a registered pack whose 
 `tracker.kind` is mounted as a fallback. A tracker owns the tools it exposes: the Jira tracker ships
 the `jira` pack with the seven `jira_*` tools, while `linear`, `local`, and `slack` each ship
 their own bespoke pack. Contract: [extensions/tool-pack.md](extensions/tool-pack.md); the Jira
-`jira_*` tools themselves: [reference/tracker-tools.md](reference/tracker-tools.md).
+`jira_*` tools themselves: [reference/jira-tools.md](reference/jira-tools.md).
 
 ### Agent executor
 

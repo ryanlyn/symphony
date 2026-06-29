@@ -252,12 +252,12 @@ takes configuration.
 
 For the seven `jira_*` tools the jira extension's `jira` pack ships
 (`extensions/jira-tracker/src/tools.ts`) and their argument shapes, see
-[reference/tracker-tools.md](../reference/tracker-tools.md).
+[reference/jira-tools.md](../reference/jira-tools.md).
 
 ## See also
 
 - [tracker-provider.md](tracker-provider.md) - the dispatch-backend contract a tool pack usually ships alongside
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - the seven `jira_*` tools the jira `jira` pack ships and their inputs
+- [reference/jira-tools.md](../reference/jira-tools.md) - the seven `jira_*` tools the jira `jira` pack ships and their inputs
 - [extensions/index.md](index.md) - the four extension contracts and where they register
 - [reference/http-api.md](../reference/http-api.md) - the `POST /mcp` JSON-RPC endpoint that serves mounted tools
 - [agents/claude.md](../agents/claude.md) - how Claude sessions consume the mounted tool surface

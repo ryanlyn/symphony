@@ -113,7 +113,7 @@ The layer that exposes agent-callable tools over the MCP JSON-RPC endpoint.
 | --- | --- | --- |
 | `@lorenz/mcp` | The Hono MCP server at `POST /mcp`: pack mounting, `tools/list` and `tools/call`, bearer-token auth, per-agent endpoint leasing | `src/server.ts`, `src/tools.ts`, `src/auth.ts` |
 
-The tool and tracker contracts themselves live in `tool-sdk` and `tracker-sdk` (above); `mcp`'s `src/agentEndpoint.ts` leases the endpoint (local, remote tunnel, or per-run tunnel) consumed by sessions. See [reference/tracker-tools.md](reference/tracker-tools.md) and [reference/http-api.md](reference/http-api.md).
+The tool and tracker contracts themselves live in `tool-sdk` and `tracker-sdk` (above); `mcp`'s `src/agentEndpoint.ts` leases the endpoint (local, remote tunnel, or per-run tunnel) consumed by sessions. See [reference/jira-tools.md](reference/jira-tools.md) and [reference/http-api.md](reference/http-api.md).
 
 ## Observability
 

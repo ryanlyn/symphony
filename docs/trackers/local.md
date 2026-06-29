@@ -240,7 +240,7 @@ run. The agent reads the issue, implements the endpoint, appends a comment, and 
 
 - [index.md](index.md) - how trackers plug in, the shared read surface, and per-tracker tool packs.
 - [memory.md](memory.md) - the in-process fixture tracker for tests and dry runs.
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - tracker tool schemas and the query DSL
+- [reference/jira-tools.md](../reference/jira-tools.md) - tracker tool schemas and the query DSL
   grammar.
 - [reference/configuration.md](../reference/configuration.md) - the full `tracker.*` and
   `trackers.*` key reference.
