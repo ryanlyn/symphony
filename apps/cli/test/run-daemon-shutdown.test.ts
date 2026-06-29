@@ -300,7 +300,7 @@ test("runDaemon rejects a second live daemon for the same workflow", async () =>
   assert.equal(await daemonPromise, 0);
 });
 
-test("runDaemon publishes no HTTP control endpoint when dashboard is disabled", async () => {
+test("runDaemon publishes a unix control socket (no TCP) when the dashboard is disabled", async () => {
   mocks.loadWorkflow.mockResolvedValue(await workflowFixture());
   const sigintBaseline = process.listeners("SIGINT");
   const startedAt = "2026-01-01T00:00:00.000Z";
@@ -352,8 +352,15 @@ test("runDaemon publishes no HTTP control endpoint when dashboard is disabled", 
   sigintHandler!();
 
   assert.equal(await daemonPromise, 0);
-  assert.equal(mocks.startObservabilityServer.mock.calls.length, 0);
-  assert.equal(updateEndpoint.mock.calls.length, 0);
+  // The control socket is always-on: the server starts socket-only (httpDisabled) and the lease
+  // records a `socket` control endpoint, even though the TCP dashboard is off.
+  const serverCalls = mocks.startObservabilityServer.mock.calls;
+  assert.equal(serverCalls.length, 1);
+  const serverOptions = serverCalls[0]![1] as { httpDisabled?: boolean; socketPath?: string };
+  assert.equal(serverOptions.httpDisabled, true);
+  assert.match(serverOptions.socketPath ?? "", /\.sock$/);
+  assert.equal(updateEndpoint.mock.calls.length, 1);
+  assert.equal((updateEndpoint.mock.calls[0]![0] as { kind: string }).kind, "socket");
 });
 
 test("runDaemon reports failure when the daemon lock is lost during runtime start", async () => {

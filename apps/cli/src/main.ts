@@ -37,6 +37,7 @@ import { buildClaimStoreHandle, type ClaimStoreHandle } from "./claimStore.js";
 import {
   acquireDaemonLock,
   createDaemonIdentity,
+  daemonControlSocketPath,
   daemonLockPath,
   type DaemonEndpoint,
   type DaemonLock,
@@ -373,7 +374,11 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         process.off("SIGTERM", requestStop);
       };
 
-      if (options.dashboard) {
+      // The daemon always publishes an always-on unix control socket (so status/refresh/stop
+      // self-discover even with --no-dashboard). The TCP server runs only when the dashboard is
+      // enabled. Start the server when either surface is wanted.
+      const controlSocketPath = daemonLock ? daemonControlSocketPath(workflow.path) : undefined;
+      if (options.dashboard || daemonLock) {
         server = await startObservabilityServer(daemonServerSource(runtime, daemonLock), {
           host: workflow.settings.server.host,
           port: workflow.settings.server.port ?? 0,
@@ -386,15 +391,22 @@ export async function runDaemon(options: CliOptions): Promise<number> {
           issueStore,
           tools: defaultToolRegistry,
           controlToken: daemonLock?.snapshot().controlToken ?? undefined,
+          ...(controlSocketPath ? { socketPath: controlSocketPath } : {}),
+          httpDisabled: !options.dashboard,
         });
         assertDaemonLockHeld();
-        workflow.settings.server.port = server.port;
-        boundServerPort = server.port;
+        if (options.dashboard) {
+          workflow.settings.server.port = server.port;
+          boundServerPort = server.port;
+          process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
+        }
         if (daemonLock) {
-          await daemonLock.updateEndpoint({ kind: "http", address: server.url("/") });
+          const endpoint: DaemonEndpoint = controlSocketPath
+            ? { kind: "socket", address: controlSocketPath }
+            : { kind: "http", address: server.url("/") };
+          await daemonLock.updateEndpoint(endpoint);
         }
         assertDaemonLockHeld();
-        process.stderr.write(`Observability API listening on ${server.url("/")}\n`);
       }
 
       instance =

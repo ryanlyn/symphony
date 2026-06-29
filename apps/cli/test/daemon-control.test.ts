@@ -308,7 +308,7 @@ test("daemon control does not fall back to workflow port when the lock has no HT
           controlToken: null,
           json: true,
         }),
-      /Daemon is running without an HTTP control endpoint/,
+      /Daemon is running without a usable control endpoint/,
     );
     assert.equal(fetchSpy.mock.calls.length, 0);
   } finally {

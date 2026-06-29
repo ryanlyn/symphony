@@ -1,9 +1,10 @@
-import { readFile as fsReadFile } from "node:fs/promises";
+import { chmod, readFile as fsReadFile, rm as fsRm } from "node:fs/promises";
+import { createServer, type Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { serve } from "@hono/node-server";
+import { getRequestListener, serve } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
@@ -52,6 +53,13 @@ export interface ObservabilityServerOptions {
   /** Tool packs served on the MCP mount; defaults to the process-wide registry. */
   tools?: ToolRegistry;
   controlToken?: string | undefined;
+  /**
+   * Serve the app on a unix domain socket in addition to (or instead of) TCP. The daemon uses this
+   * as an always-on control endpoint so `status/refresh/stop` self-discover even with no dashboard.
+   */
+  socketPath?: string | undefined;
+  /** Skip the TCP listener entirely (socket-only control, e.g. `--no-dashboard`). */
+  httpDisabled?: boolean | undefined;
 }
 
 export interface ObservabilityServerHandle {
@@ -59,6 +67,7 @@ export interface ObservabilityServerHandle {
   port: number;
   authScope: string;
   controlToken: string | null;
+  socketPath: string | null;
   url(path?: string): string;
   stop(): Promise<void>;
 }
@@ -106,35 +115,79 @@ async function startHonoServer(
   controlToken: string | null,
   internals: HonoServerInternals,
 ): Promise<ObservabilityServerHandle> {
-  let server!: ServerType;
   const bindHost = normalizeHttpBindHost(options.host);
-  await new Promise<void>((resolve, reject) => {
-    server = serve({ fetch: app.fetch, hostname: bindHost, port: options.port }, () => {
-      server.off("error", reject);
-      resolve();
-    });
-    server.once("error", reject);
-  });
-  const activeServer = server;
+  let tcpServer: ServerType | null = null;
+  let port = 0;
+  if (!options.httpDisabled) {
+    tcpServer = await listenTcp(app, bindHost, options.port);
+    // Inject WebSocket support after the TCP server starts listening (browsers connect over TCP).
+    internals.injectWebSocket(tcpServer);
+    const address = tcpServer.address();
+    port = typeof address === "object" && address !== null ? address.port : options.port;
+  }
 
-  // Inject WebSocket support after server starts listening
-  internals.injectWebSocket(activeServer);
+  let socketServer: HttpServer | null = null;
+  const socketPath = options.socketPath ?? null;
+  if (socketPath) socketServer = await listenSocket(app, socketPath);
 
-  const address = activeServer.address();
-  const port = typeof address === "object" && address !== null ? address.port : options.port;
+  if (!tcpServer && !socketServer) {
+    internals.stop();
+    throw new Error("observability server requires an HTTP port or a socket path");
+  }
+
+  const tcp = tcpServer;
   return {
     host: bindHost,
     port,
     authScope,
     controlToken,
+    socketPath,
     url(urlPath = "/"): string {
+      if (!tcp) throw new Error("observability server has no HTTP endpoint");
       return `http://${httpUrlHost(bindHost)}:${port}${urlPath}`;
     },
     stop: async () => {
       internals.stop();
-      await stopServer(activeServer);
+      if (tcp) await stopServer(tcp);
+      if (socketServer) await stopSocketServer(socketServer, socketPath);
     },
   };
+}
+
+async function listenTcp(app: Hono, bindHost: string, port: number): Promise<ServerType> {
+  const server = await new Promise<ServerType>((resolve, reject) => {
+    const started = serve({ fetch: app.fetch, hostname: bindHost, port }, () => {
+      started.off("error", reject);
+      resolve(started);
+    });
+    started.once("error", reject);
+  });
+  return server;
+}
+
+async function listenSocket(app: Hono, socketPath: string): Promise<HttpServer> {
+  // The daemon lease guarantees single-instance, so any socket file at this path is a leftover from
+  // a crashed predecessor; remove it before listen() to avoid EADDRINUSE.
+  await fsRm(socketPath, { force: true });
+  // app.fetch is the async Hono FetchCallback that getRequestListener is designed to drive; the
+  // adapter awaits it internally. This is the same handler `serve()` uses for the TCP listener.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  const server = createServer(getRequestListener(app.fetch));
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen({ path: socketPath }, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  // Restrict the socket to the owner (the .lorenz/daemon dir is already 0700).
+  await chmod(socketPath, 0o600);
+  return server;
+}
+
+async function stopSocketServer(server: HttpServer, socketPath: string | null): Promise<void> {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (socketPath) await fsRm(socketPath, { force: true });
 }
 
 interface BuildResult {

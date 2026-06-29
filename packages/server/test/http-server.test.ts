@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -176,6 +177,82 @@ test("observability HTTP API exposes daemon status and stop control", async () =
     await server.stop();
   }
 });
+
+test("observability server serves daemon control over a unix socket", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "lz-ctl-"));
+  const socketPath = path.join(dir, "c.sock");
+  const workflow = workflowFixture();
+  const daemonStatus = daemonStatusFixture(workflow);
+  const requestStop = vi.fn(() => ({ requested_at: "2026-01-01T00:00:00.000Z", stopping: true }));
+  const runtime: RuntimeServerSource = {
+    workflow,
+    snapshot: () => emptySnapshot(workflow),
+    subscribe: () => () => {},
+    requestRefresh: () => ({ queued: true }),
+    requestStop,
+    daemonStatus: () => daemonStatus,
+  };
+  const server = await startObservabilityServer(runtime, {
+    host: "127.0.0.1",
+    port: 0,
+    socketPath,
+    httpDisabled: true,
+    staticDir: "/tmp/nonexistent-dashboard-dist",
+  });
+
+  try {
+    assert.equal(server.socketPath, socketPath);
+
+    const daemon = await socketJson(socketPath, "/api/v1/daemon", "GET");
+    assert.equal(daemon.status, 200);
+    assert.equal(daemon.body.owner_id, "owner-daemon");
+
+    const unauthorized = await socketJson(socketPath, "/api/v1/stop", "POST");
+    assert.equal(unauthorized.status, 401);
+    assert.equal(requestStop.mock.calls.length, 0);
+
+    const wrongToken = await socketJson(
+      socketPath,
+      "/api/v1/stop",
+      "POST",
+      `${server.controlToken}-x`,
+    );
+    assert.equal(wrongToken.status, 401);
+    assert.equal(requestStop.mock.calls.length, 0);
+
+    const stop = await socketJson(socketPath, "/api/v1/stop", "POST", server.controlToken);
+    assert.equal(stop.status, 202);
+    assert.equal(requestStop.mock.calls.length, 1);
+  } finally {
+    await server.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function socketJson(
+  socketPath: string,
+  requestPath: string,
+  method: "GET" | "POST",
+  token: string | null = null,
+): Promise<{ status: number; body: any }> {
+  const result = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+    const headers: Record<string, string> = { host: "lorenz.local" };
+    if (token) headers.authorization = `Bearer ${token}`;
+    const req = httpRequest({ socketPath, path: requestPath, method, headers }, (res) => {
+      let raw = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        raw += chunk;
+      });
+      res.on("end", () => {
+        resolve({ status: res.statusCode ?? 0, body: raw ? JSON.parse(raw) : {} });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+  return result;
+}
 
 function daemonStatusFixture(workflow: WorkflowDefinition): RuntimeDaemonStatus {
   return {

@@ -93,6 +93,17 @@ export function daemonWorkflowKey(workflowPath: string): string {
   return createHash("sha256").update(canonicalPath(workflowPath)).digest("hex");
 }
 
+/** Unix control socket path, alongside the lock under `.lorenz/daemon/<workflow-sha256>.sock`. */
+export function daemonControlSocketPath(workflowPath: string): string {
+  const suffix = daemonWorkflowKey(workflowPath);
+  return path.join(
+    path.dirname(canonicalPath(workflowPath)),
+    ".lorenz",
+    "daemon",
+    `${suffix}.sock`,
+  );
+}
+
 export function daemonWorkspacePath(workspaceRoot: string, ...segments: string[]): string {
   return path.join(canonicalPath(workspaceRoot), ".lorenz", ...segments);
 }

@@ -1,8 +1,15 @@
+import { request as httpRequest } from "node:http";
+
 import { Command } from "commander";
 import { parseNonNegativeInteger, parseRequiredValue } from "@lorenz/cli-kit";
 import { loadWorkflow, workflowFilePath } from "@lorenz/workflow";
 
-import { daemonLockPath, readDaemonLock, type DaemonLockRecord } from "./daemonLock.js";
+import {
+  daemonLockPath,
+  readDaemonLock,
+  type DaemonEndpoint,
+  type DaemonLockRecord,
+} from "./daemonLock.js";
 import { daemonStatusPayload } from "./daemonStatus.js";
 import {
   apiErrorMessage,
@@ -64,7 +71,7 @@ export async function runDaemonStatusCommand(
 ): Promise<DaemonControlResult> {
   if (options.url || options.port !== null) {
     const url = await resolveDaemonBaseUrl(options);
-    const live = await fetchDaemonPayloadUrl(`${url}/api/v1/daemon`);
+    const live = await fetchDaemonStatus({ kind: "http", baseUrl: trimTrailingSlash(url) });
     return {
       statusCode: live.statusCode === 0 ? 0 : 1,
       output: renderDaemonControlOutput(live.body, options.json),
@@ -87,15 +94,15 @@ export async function runDaemonStatusCommand(
 export async function runDaemonRefreshCommand(
   options: DaemonControlCommandOptions,
 ): Promise<DaemonControlResult> {
-  const { url, controlToken } = await resolveDaemonControl(options);
-  return postDaemonControl(`${url}/api/v1/refresh`, options.json, controlToken);
+  const { target, controlToken } = await resolveDaemonControl(options);
+  return postDaemonControl(target, "/api/v1/refresh", options.json, controlToken);
 }
 
 export async function runDaemonStopCommand(
   options: DaemonControlCommandOptions,
 ): Promise<DaemonControlResult> {
-  const { url, controlToken } = await resolveDaemonControl(options);
-  return postDaemonControl(`${url}/api/v1/stop`, options.json, controlToken);
+  const { target, controlToken } = await resolveDaemonControl(options);
+  return postDaemonControl(target, "/api/v1/stop", options.json, controlToken);
 }
 
 async function resolveDaemonBaseUrl(options: DaemonControlCommandOptions): Promise<string> {
@@ -114,49 +121,52 @@ async function resolveDaemonBaseUrl(options: DaemonControlCommandOptions): Promi
 }
 
 async function resolveDaemonControl(options: DaemonControlCommandOptions): Promise<{
-  url: string;
+  target: DaemonTarget;
   controlToken: string | null;
 }> {
   if (options.url) {
-    return controlTarget(
-      normalizeHttpBaseUrl(options.url),
-      await readOptionalDaemonControlRecord(options),
-      options.controlToken,
-    );
+    const target: DaemonTarget = { kind: "http", baseUrl: normalizeHttpBaseUrl(options.url) };
+    return controlTokenForTarget(target, await readOptionalDaemonControlRecord(options), options);
   }
   const record = await readDaemonRecordForOptions(options);
   if (options.port !== null && options.port > 0) {
     const workflow = await loadDaemonWorkflow(options);
-    return controlTarget(workflowHttpBaseUrl(workflow, options.port), record, options.controlToken);
+    const target: DaemonTarget = {
+      kind: "http",
+      baseUrl: trimTrailingSlash(workflowHttpBaseUrl(workflow, options.port)),
+    };
+    return controlTokenForTarget(target, record, options);
   }
-  if (record?.endpoint.kind === "http" && usableHttpEndpoint(record.endpoint.address)) {
-    return controlTarget(trimTrailingSlash(record.endpoint.address), record, options.controlToken);
-  }
+  // Discovery: use whatever control endpoint the daemon published in its lock (socket or http).
+  const discovered = record ? targetFromEndpoint(record.endpoint) : null;
+  if (discovered) return controlTokenForTarget(discovered, record, options);
   if (record) {
-    throw new Error("Daemon is running without an HTTP control endpoint. Pass --url or --port.");
+    throw new Error("Daemon is running without a usable control endpoint. Pass --url or --port.");
   }
   const workflow = await loadDaemonWorkflow(options);
   const port = workflow.settings.server.port;
   if (typeof port === "number" && port > 0) {
-    return controlTarget(workflowHttpBaseUrl(workflow, port), record, options.controlToken);
+    const target: DaemonTarget = {
+      kind: "http",
+      baseUrl: trimTrailingSlash(workflowHttpBaseUrl(workflow, port)),
+    };
+    return controlTokenForTarget(target, record, options);
   }
   throw new Error("No daemon control endpoint found. Pass --url or --port.");
 }
 
-function controlTarget(
-  url: string,
+function controlTokenForTarget(
+  target: DaemonTarget,
   record: DaemonLockRecord | null,
-  explicitControlToken: string | null = null,
-): { url: string; controlToken: string | null } {
-  const normalizedUrl = trimTrailingSlash(url);
-  if (explicitControlToken) return { url: normalizedUrl, controlToken: explicitControlToken };
-  if (record?.endpoint.kind !== "http" || !usableHttpEndpoint(record.endpoint.address)) {
-    return { url: normalizedUrl, controlToken: null };
+  options: DaemonControlCommandOptions,
+): { target: DaemonTarget; controlToken: string | null } {
+  if (options.controlToken) return { target, controlToken: options.controlToken };
+  const recordTarget = record ? targetFromEndpoint(record.endpoint) : null;
+  // Only attach the lock's token when the resolved target is the one the daemon actually published.
+  if (recordTarget && targetsMatch(target, recordTarget) && record) {
+    return { target, controlToken: record.controlToken };
   }
-  if (sameDaemonBaseUrl(normalizedUrl, record.endpoint.address)) {
-    return { url: normalizedUrl, controlToken: record.controlToken };
-  }
-  return { url: normalizedUrl, controlToken: null };
+  return { target, controlToken: null };
 }
 
 async function readOptionalDaemonControlRecord(
@@ -219,80 +229,160 @@ async function loadDaemonWorkflow(options: DaemonControlCommandOptions): Promise
   return loadWorkflow(options.workflowPath ?? undefined);
 }
 
+// A control endpoint is reached either over HTTP (TCP, the dashboard) or a unix domain socket (the
+// always-on daemon control endpoint). Discovery resolves one of these from the daemon lock.
+type DaemonTarget = { kind: "http"; baseUrl: string } | { kind: "socket"; socketPath: string };
+
+interface DaemonResponse {
+  status: number;
+  body: Record<string, unknown>;
+  requestFailed: boolean;
+}
+
+function targetFromEndpoint(endpoint: DaemonEndpoint): DaemonTarget | null {
+  if (endpoint.kind === "http" && usableHttpEndpoint(endpoint.address)) {
+    return { kind: "http", baseUrl: trimTrailingSlash(endpoint.address) };
+  }
+  if (endpoint.kind === "socket" && endpoint.address.length > 0) {
+    return { kind: "socket", socketPath: endpoint.address };
+  }
+  return null;
+}
+
+function targetsMatch(left: DaemonTarget, right: DaemonTarget): boolean {
+  if (left.kind === "http" && right.kind === "http") {
+    return sameDaemonBaseUrl(left.baseUrl, right.baseUrl);
+  }
+  if (left.kind === "socket" && right.kind === "socket")
+    return left.socketPath === right.socketPath;
+  return false;
+}
+
+async function daemonRequest(
+  target: DaemonTarget,
+  path: string,
+  method: "GET" | "POST",
+  controlToken: string | null,
+): Promise<DaemonResponse> {
+  try {
+    return target.kind === "http"
+      ? await httpDaemonRequest(`${target.baseUrl}${path}`, method, controlToken)
+      : await socketDaemonRequest(target.socketPath, path, method, controlToken);
+  } catch (error) {
+    return { status: 0, body: requestFailedBody(error), requestFailed: true };
+  }
+}
+
+async function httpDaemonRequest(
+  url: string,
+  method: "GET" | "POST",
+  controlToken: string | null,
+): Promise<DaemonResponse> {
+  const headers: Record<string, string> = {};
+  if (controlToken) headers.authorization = `Bearer ${controlToken}`;
+  const response = await fetch(url, { method, headers });
+  const raw = await response.text();
+  return {
+    status: response.status,
+    body: daemonResponseBody(raw, response.status),
+    requestFailed: false,
+  };
+}
+
+async function socketDaemonRequest(
+  socketPath: string,
+  path: string,
+  method: "GET" | "POST",
+  controlToken: string | null,
+): Promise<DaemonResponse> {
+  const response = await new Promise<DaemonResponse>((resolve, reject) => {
+    const headers: Record<string, string> = { host: "lorenz.local" };
+    if (controlToken) headers.authorization = `Bearer ${controlToken}`;
+    const req = httpRequest({ socketPath, path, method, headers }, (res) => {
+      let raw = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        raw += chunk;
+      });
+      res.on("end", () => {
+        const status = res.statusCode ?? 0;
+        resolve({ status, body: daemonResponseBody(raw, status), requestFailed: false });
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+  return response;
+}
+
+// Parse a control response body, synthesizing an error payload when a failed response has no JSON
+// body (preserving the pre-socket behavior of reporting the HTTP status).
+function daemonResponseBody(raw: string, status: number): Record<string, unknown> {
+  const parsed = tryParseObject(raw);
+  if (parsed) return parsed;
+  if (status >= 200 && status < 300) return {};
+  return {
+    error: {
+      code: "daemon_request_failed",
+      message: `Daemon request failed with status ${status}`,
+    },
+  };
+}
+
+function tryParseObject(raw: string): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function requestFailedBody(error: unknown): Record<string, unknown> {
+  return {
+    error: {
+      code: "daemon_request_failed",
+      message: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
 async function fetchDaemonPayload(
   record: DaemonLockRecord,
   options: DaemonControlCommandOptions,
 ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
   const fallback = daemonStatusPayload(record) as unknown as Record<string, unknown>;
-  if (record.endpoint.kind !== "http" || !usableHttpEndpoint(record.endpoint.address)) {
-    return { statusCode: 0, body: fallback };
-  }
-  try {
-    const live = await fetchDaemonPayloadUrl(
-      `${trimTrailingSlash(record.endpoint.address)}/api/v1/daemon`,
-    );
-    if (live.requestFailed) return { statusCode: options.json ? 1 : 0, body: fallback };
-    if (live.statusCode !== 0) return { statusCode: live.statusCode, body: fallback };
-    return { statusCode: 0, body: live.body };
-  } catch {
-    return { statusCode: options.json ? 1 : 0, body: fallback };
-  }
+  const target = targetFromEndpoint(record.endpoint);
+  if (!target) return { statusCode: 0, body: fallback };
+  const live = await fetchDaemonStatus(target);
+  if (live.requestFailed) return { statusCode: options.json ? 1 : 0, body: fallback };
+  if (live.statusCode !== 0) return { statusCode: live.statusCode, body: fallback };
+  return { statusCode: 0, body: live.body };
 }
 
-async function fetchDaemonPayloadUrl(url: string): Promise<{
+async function fetchDaemonStatus(target: DaemonTarget): Promise<{
   statusCode: number;
   body: Record<string, unknown>;
-  requestFailed?: boolean;
+  requestFailed: boolean;
 }> {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      return {
-        statusCode: response.status,
-        body: await responseJsonOrError(response),
-      };
-    }
-    return { statusCode: 0, body: (await response.json()) as Record<string, unknown> };
-  } catch (error) {
-    return {
-      statusCode: 1,
-      body: {
-        error: {
-          code: "daemon_request_failed",
-          message: error instanceof Error ? error.message : String(error),
-        },
-      },
-      requestFailed: true,
-    };
-  }
-}
-
-async function responseJsonOrError(response: Response): Promise<Record<string, unknown>> {
-  try {
-    return (await response.json()) as Record<string, unknown>;
-  } catch {
-    return {
-      error: {
-        code: "daemon_request_failed",
-        message: `Daemon request failed with status ${response.status}`,
-      },
-    };
-  }
+  const res = await daemonRequest(target, "/api/v1/daemon", "GET", null);
+  if (res.requestFailed) return { statusCode: 1, body: res.body, requestFailed: true };
+  if (res.status !== 200) return { statusCode: res.status, body: res.body, requestFailed: false };
+  return { statusCode: 0, body: res.body, requestFailed: false };
 }
 
 async function postDaemonControl(
-  url: string,
+  target: DaemonTarget,
+  path: string,
   json: boolean,
   controlToken: string | null,
 ): Promise<DaemonControlResult> {
-  const headers: Record<string, string> = {};
-  if (controlToken) headers.authorization = `Bearer ${controlToken}`;
-  const response = await fetch(url, { method: "POST", headers });
-  const body = response.ok
-    ? ((await response.json()) as Record<string, unknown>)
-    : await responseJsonOrError(response);
-  if (response.ok) return { statusCode: 0, output: renderDaemonControlOutput(body, json) };
-  return { statusCode: 1, output: renderDaemonControlOutput(body, json) };
+  const res = await daemonRequest(target, path, "POST", controlToken);
+  const ok = !res.requestFailed && res.status >= 200 && res.status < 300;
+  return { statusCode: ok ? 0 : 1, output: renderDaemonControlOutput(res.body, json) };
 }
 
 function createDaemonControlCommand(name: string, description: string): Command {
