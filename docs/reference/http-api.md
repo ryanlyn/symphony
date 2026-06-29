@@ -174,7 +174,7 @@ For the `DisplayEvent` shape and how raw trace lines map to it, see the [events 
 
 ### POST /mcp
 
-The Model Context Protocol endpoint serving the workflow's tool packs. Settings resolve per request, so a [hot-reloaded workflow](../features/workflow-hot-reload.md) updates the served tools without restarting the server. The auth scope derives from settings, host, and port (or random when the port is ephemeral). Any non-`POST` method returns `405 method_not_allowed`. The tool contracts live in the [tracker tools reference](tracker-tools.md).
+The Model Context Protocol endpoint serving the workflow's tool packs. Settings resolve per request, so a [hot-reloaded workflow](../features/workflow-hot-reload.md) updates the served tools without restarting the server. The auth scope derives from settings, host, and port (or random when the port is ephemeral). Any non-`POST` method returns `405 method_not_allowed`. The tool contracts live in the [tracker tools reference](jira-tools.md).
 
 ## The /ws WebSocket
 
@@ -233,5 +233,5 @@ The `OpsStatePayload`, `RunningEntryPayload`, `RetryEntryPayload`, and `BlockedE
 - [Observability](../observability.md) - the dashboards and trace viewer these routes feed
 - [Events reference](events.md) - `DisplayEvent` and runtime event types on the wire
 - [Configuration reference](configuration.md) - `server.*` and `observability.*` keys
-- [Tracker tools reference](tracker-tools.md) - the tools served on `/mcp`
+- [Tracker tools reference](jira-tools.md) - the tools served on `/mcp`
 - [CLI reference](cli.md) - flags that start, bind, and disable the server

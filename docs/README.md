@@ -34,7 +34,7 @@ Pick the path that matches what you came to do.
 4. [CLI reference](reference/cli.md)
 5. [HTTP API](reference/http-api.md)
 6. [Events](reference/events.md)
-7. [Tracker tools](reference/tracker-tools.md)
+7. [Tracker tools](reference/jira-tools.md)
 8. [Spec](reference/spec.md)
 9. [Glossary](reference/glossary.md)
 
@@ -112,7 +112,7 @@ Pick the path that matches what you came to do.
 - [CLI](reference/cli.md) - every command, flag, and exit code
 - [HTTP API](reference/http-api.md) - routes, WebSocket, and MCP mount
 - [Events](reference/events.md) - every event name and when it fires
-- [Tracker tools](reference/tracker-tools.md) - the agent tool surface and query DSL
+- [Tracker tools](reference/jira-tools.md) - the agent tool surface and query DSL
 - [Spec](reference/spec.md) - implementation-neutral contract for the service
 - [Glossary](reference/glossary.md) - the vocabulary defined once
 

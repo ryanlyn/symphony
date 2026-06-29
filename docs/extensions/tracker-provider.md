@@ -137,7 +137,7 @@ The select/filter projection for `jira_query` lives alongside the pack in
 `extensions/jira-tracker/src/tools.ts`, where the seven tool-name definitions and
 `DEFAULT_SELECT = [id, identifier, title, state, stateType, labels, url]` are declared. Tool packs are
 their own recipe; see [tool-pack.md](tool-pack.md). The `jira_*` surface is detailed in
-[reference/tracker-tools.md](../reference/tracker-tools.md).
+[reference/jira-tools.md](../reference/jira-tools.md).
 
 ## The recipe
 
@@ -184,6 +184,6 @@ After this, `tracker.kind: <name>` in a workflow selects your backend. No core p
 - [trackers/linear.md](../trackers/linear.md) - the most complete worked example of this contract.
 - [trackers/jira.md](../trackers/jira.md) - a second backend with REST and MCP-proxied variants.
 - [extensions/tool-pack.md](tool-pack.md) - the separate axis for agent-facing tools your tracker can ship.
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - the seven `jira_*` tools the Jira `jira` pack serves.
+- [reference/jira-tools.md](../reference/jira-tools.md) - the seven `jira_*` tools the Jira `jira` pack serves.
 - [architecture.md](../architecture.md) - how the four extension points and the composition root fit together.
 - [reference/configuration.md](../reference/configuration.md) - every `tracker.*` config key the registry selects on.

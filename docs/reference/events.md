@@ -188,4 +188,4 @@ There is no database. The 20-event and 50-history ring buffers, plus the optiona
 - [Dispatch](../dispatch.md) - the eligibility, cap, and two-phase reservation logic behind the lifecycle events.
 - [Observability](../observability.md) - how the snapshot, dashboards, and traces consume this catalog.
 - [HTTP API reference](http-api.md) - the REST and `/ws` shapes that carry `recentEvents`, run history, and trace deltas.
-- [Tracker tools reference](tracker-tools.md) - the MCP tool surface behind the `tools/call` events.
+- [Tracker tools reference](jira-tools.md) - the MCP tool surface behind the `tools/call` events.

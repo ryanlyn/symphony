@@ -75,7 +75,7 @@ and one Codex backend.
   implementing `defaultToolPacks(settings)`, which names the registered packs it owns. The Jira
   extension owns the `jira` pack of seven `jira_*` tools. See
   [extensions/tool-pack](../extensions/tool-pack.md) and
-  [reference/tracker-tools](tracker-tools.md).
+  [reference/jira-tools](jira-tools.md).
 - **`WorkerDriver`** / `WorkerDriverFactory` (from `@lorenz/worker-sdk`) back the worker pool,
   including out-of-tree module specifiers. The only shipped pool driver is
   `extensions/docker-worker`. See [extensions/worker-driver](../extensions/worker-driver.md).
@@ -444,7 +444,7 @@ tool. Generated MCP config is workspace-local and
 carries only the Lorenz-issued bearer token for the local endpoint; raw tracker secrets are never
 written to disk. Remote workers reach the local MCP endpoint through an SSH tunnel or equivalent
 forwarding, and acquired tokens and tunnels are released when a session stops. See
-[reference/tracker-tools](tracker-tools.md) and [agents/skills](../agents/skills.md).
+[reference/jira-tools](jira-tools.md) and [agents/skills](../agents/skills.md).
 
 Approval, sandbox, and user-input posture is implementation-defined. The contract is that an approval
 or user-input request must not leave a run stalled forever: an implementation satisfies it, surfaces

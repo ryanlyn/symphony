@@ -66,7 +66,7 @@ Agents reach tracker tools over an HTTP MCP endpoint at `POST /mcp`. Every reque
 
 Per-run isolation comes from the Token B claim, not from a distinct network path. Co-resident runs packed onto one worker host (`worker.worker_pool.slots_per_machine > 1`) **share one** SSH reverse tunnel (`ssh -R`, one per host, refcounted by `@lorenz/worker-host-pool`); they are kept apart by their distinct claims rather than by separate ports. A run whose claim cannot be enforced server-side - a local run that owns no remote claim, or a foreign MCP server Lorenz does not own - is refused rather than authorized against the settings-wide token. The token never traverses an open network port.
 
-The endpoint binds to `server.host` (default `127.0.0.1`). A failed tool call is returned as data (`isError: true` inside an HTTP 200 JSON-RPC result), not as a transport error, so a misbehaving tool cannot crash the seam. See the [HTTP API reference](reference/http-api.md) and [tracker tools](reference/tracker-tools.md).
+The endpoint binds to `server.host` (default `127.0.0.1`). A failed tool call is returned as data (`isError: true` inside an HTTP 200 JSON-RPC result), not as a transport error, so a misbehaving tool cannot crash the seam. See the [HTTP API reference](reference/http-api.md) and [tracker tools](reference/jira-tools.md).
 
 ## The Codex sandbox default
 

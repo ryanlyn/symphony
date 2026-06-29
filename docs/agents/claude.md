@@ -136,7 +136,7 @@ The observability server hosts that `/mcp` endpoint, so it starts automatically 
 even when you have not configured a web dashboard port. The ACP bridge needs a reachable endpoint to
 serve tools. For a remote worker the endpoint is leased over an SSH reverse tunnel. The MCP server,
 auth scope, and endpoint leasing live in [observability.md](../observability.md) and
-[../reference/tracker-tools.md](../reference/tracker-tools.md).
+[../reference/jira-tools.md](../reference/jira-tools.md).
 
 ## Binary resolution
 
@@ -172,5 +172,5 @@ This section is `.strict()`: it accepts only those keys. Prefer writing `agents.
 - [index.md](index.md) - the kind/executor model and shared agent record.
 - [acp-bridges.md](acp-bridges.md) - the `acp` executor, vendored bridges, and usage accounting.
 - [../observability.md](../observability.md) - the server that hosts the `/mcp` tool endpoint.
-- [../reference/tracker-tools.md](../reference/tracker-tools.md) - the `jira_*` tools a Claude session can call.
+- [../reference/jira-tools.md](../reference/jira-tools.md) - the `jira_*` tools a Claude session can call.
 - [../reference/configuration.md](../reference/configuration.md) - every config key, default, and alias.

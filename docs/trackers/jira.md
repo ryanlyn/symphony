@@ -156,7 +156,7 @@ Both kinds expose the same `jira_*` tool pack, owned by the Jira extension and d
 `jira` and `jira-mcp` providers mount it via `defaultToolPacks(): ["jira"]`. The seven tools
 implement directly over `JiraClient` or `JiraMcpClient`, selected by `settings.tracker.kind`. See
 the [trackers overview](index.md) for the read surface and
-[reference/tracker-tools](../reference/tracker-tools.md) for the seven tools and their contract.
+[reference/jira-tools](../reference/jira-tools.md) for the seven tools and their contract.
 
 `jira_query` routes by its arguments: `issueIds` fetches by id, a `query` or `jql` string runs a
 native search, `states` fetches by status, and otherwise it returns the candidate set scoped by
@@ -198,13 +198,13 @@ Both kinds use a 30-second request timeout (`JIRA_REQUEST_TIMEOUT_MS = 30_000`).
 response throws `jira api status <n>: <body>` with the body truncated to 500 characters. When every
 MCP argument-shape variant fails, the call throws `jira-mcp <op> failed: <joined failures>`. These
 surface to the agent as tool data, never thrown - see
-[reference/tracker-tools](../reference/tracker-tools.md). See
+[reference/jira-tools](../reference/jira-tools.md). See
 [troubleshooting](../troubleshooting.md) for recovery.
 
 ## See also
 
 - [Trackers overview](index.md) - the tracker contract and the other backends.
 - [Dispatch](../dispatch.md) - how candidate issues become runs.
-- [jira_* tools reference](../reference/tracker-tools.md) - the exact tool input and output shapes.
+- [jira_* tools reference](../reference/jira-tools.md) - the exact tool input and output shapes.
 - [Configuration reference](../reference/configuration.md) - every config key in one table.
 - [Agent skills](../agents/skills.md) - how Lorenz overlays reusable agent playbooks into a workspace.
