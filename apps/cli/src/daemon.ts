@@ -42,11 +42,7 @@ import {
 import { mountedSkillSources } from "@lorenz/mcp";
 import { appendLogEvent } from "@lorenz/log-file";
 import { defaultToolRegistry, type ToolRegistry } from "@lorenz/tool-sdk";
-import {
-  createTrackerToolProvider,
-  defaultTrackerRegistry,
-  type TrackerRegistry,
-} from "@lorenz/tracker-sdk";
+import { defaultTrackerRegistry, type TrackerRegistry } from "@lorenz/tracker-sdk";
 
 import { ensureWorkerDriverLoaded } from "./workerDriverLoader.js";
 import { ensureTrackerProviderLoaded } from "./trackerLoader.js";
@@ -73,11 +69,8 @@ export function registerBuiltinBackends(registries: BackendRegistries = {}): voi
   registerLinearTracker({ trackers, tools });
   registerLocalTracker({ trackers, tools });
   registerMemoryTracker({ trackers });
-  registerJiraTrackers({ trackers });
+  registerJiraTrackers({ trackers, tools });
   registerSlackTracker({ trackers, tools });
-  if (tools.get("tracker") === undefined) {
-    tools.register(createTrackerToolProvider(trackers));
-  }
   if (executors.get(acpExecutorProvider.executor) === undefined) {
     executors.register(acpExecutorProvider);
   }

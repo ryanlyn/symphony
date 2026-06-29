@@ -128,7 +128,7 @@ Direct Jira Cloud REST v3. See [trackers/jira.md](../trackers/jira.md). Requires
 | `api_key` | string (secret) | env `JIRA_API_KEY` | API token. Required. |
 | `project_keys` | string[] | (none) | Project keys for the candidate scope. |
 | `jql` | string | (none) | Provider-native scope, wrapped and AND-ed with the active-states and agent gating. |
-| `issue_type` | string | `Task` | Issue type used by `tracker_create_issue`. |
+| `issue_type` | string | `Task` | Issue type used by `jira_create_issue`. |
 | `assignee` | string | (none) | Unset or `me` resolves to `currentUser()`; otherwise verbatim. |
 
 ### `jira-mcp`
@@ -182,7 +182,9 @@ In-process tracker for tests and dry runs. See [trackers/memory.md](../trackers/
 
 ## `tools.<pack>`
 
-Per-tool-pack options. String values are secret-resolved. Tool packs mount automatically for the dispatch tracker (for example Linear mounts the `linear` pack); these keys override credentials or mount a pack standalone. See [tracker-tools.md](tracker-tools.md).
+Per-tool-pack options. String values are secret-resolved. Tool packs mount automatically for the dispatch tracker (for example Linear mounts the `linear` pack); these keys override credentials or mount a pack standalone. See [jira-tools.md](jira-tools.md).
+
+The Jira pack was renamed from `tracker` to `jira`; the former `tools.tracker` key was removed, so use `tools.jira`.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |

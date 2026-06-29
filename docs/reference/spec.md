@@ -71,9 +71,11 @@ and one Codex backend.
 - **`AgentExecutorProvider`** registered in an `AgentExecutorRegistry`, matched against
   `agents.<kind>.executor`. The shipped provider is `acpExecutorProvider` with selector `acp`. See
   [extensions/agent-executor](../extensions/agent-executor.md).
-- **`ToolProvider`** mounts a tool pack into agent sessions. The neutral tracker pack exposes seven
-  `tracker_*` tools. See [extensions/tool-pack](../extensions/tool-pack.md) and
-  [reference/tracker-tools](tracker-tools.md).
+- **`ToolProvider`** mounts a tool pack into agent sessions. A tracker exposes agent tools by
+  implementing `defaultToolPacks(settings)`, which names the registered packs it owns. The Jira
+  extension owns the `jira` pack of seven `jira_*` tools. See
+  [extensions/tool-pack](../extensions/tool-pack.md) and
+  [reference/jira-tools](jira-tools.md).
 - **`WorkerDriver`** / `WorkerDriverFactory` (from `@lorenz/worker-sdk`) back the worker pool,
   including out-of-tree module specifiers. The only shipped pool driver is
   `extensions/docker-worker`. See [extensions/worker-driver](../extensions/worker-driver.md).
@@ -434,14 +436,16 @@ worker's turns, and forwards normalized agent updates to the orchestrator. The s
 `agent.max_turns`, profile change ends the session) matches Section 5.1. See
 [agents/acp-bridges](../agents/acp-bridges.md) and [agents/index](../agents/index.md).
 
-Tooling reaches the agent through MCP, not a Codex client-tool channel. The neutral tracker pack
-mounts seven tools: `tracker_read_issue`, `tracker_query`, `tracker_update_status`,
-`tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, `tracker_create_issue`. This
-replaces the draft's single `linear_graphql` tool. Generated MCP config is workspace-local and
+Tooling reaches the agent through MCP, not a Codex client-tool channel. The mounted set is driven by
+the dispatch tracker's `defaultToolPacks()` plus the workflow `tools:` map keys, de-duplicated and
+collision-checked. The Jira extension's `jira` pack mounts seven tools: `jira_read_issue`,
+`jira_query`, `jira_update_status`, `jira_list_comments`, `jira_comment`,
+`jira_update_comment`, `jira_create_issue`. This replaces the draft's single `linear_graphql`
+tool. Generated MCP config is workspace-local and
 carries only the Lorenz-issued bearer token for the local endpoint; raw tracker secrets are never
 written to disk. Remote workers reach the local MCP endpoint through an SSH tunnel or equivalent
 forwarding, and acquired tokens and tunnels are released when a session stops. See
-[reference/tracker-tools](tracker-tools.md) and [agents/skills](../agents/skills.md).
+[reference/jira-tools](jira-tools.md) and [agents/skills](../agents/skills.md).
 
 Approval, sandbox, and user-input posture is implementation-defined. The contract is that an approval
 or user-input request must not leave a run stalled forever: an implementation satisfies it, surfaces
@@ -467,7 +471,7 @@ and skips dispatch; on a refresh failure it keeps workers running; on a startup-
 logs and continues startup.
 
 Tracker writes are out of scope for the orchestrator: ticket mutations run through the agent's
-`tracker_*` tools. Built-in providers ship as `extensions/{linear,jira,local,slack,memory}-tracker`.
+`jira_*` tools. Built-in providers ship as `extensions/{linear,jira,local,slack,memory}-tracker`.
 See [trackers/index](../trackers/index.md), [trackers/linear](../trackers/linear.md),
 [trackers/jira](../trackers/jira.md), [trackers/local](../trackers/local.md), and
 [trackers/slack](../trackers/slack.md).
@@ -565,7 +569,7 @@ A conforming implementation ships tests across three profiles.
   the executor client, observability, and CLI lifecycle.
 - **Extension conformance** - required only for optional features an implementation ships: context
   ensembles, per-state `status_overrides`, the worker pool and SSH workers, the HTTP server, and the
-  `tracker_*` tool pack.
+  `jira_*` tool pack.
 - **Real integration profile** - environment-dependent smoke checks recommended before production,
   skippable when credentials or network are unavailable; a skipped check is reported skipped, not
   silently passed.

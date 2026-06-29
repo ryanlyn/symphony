@@ -121,13 +121,10 @@ and `id_prefix`. The board directory key is `path` on the tracker and `tools.loc
 
 ## The agent tools
 
-Two tool surfaces operate on the same board. The provider-neutral `tracker_*` pack works against any
-backend (see [reference/tracker-tools.md](../reference/tracker-tools.md) for the seven neutral tools,
-their schemas, and the query DSL grammar); the `local` pack adds five board-native tools
-(`local_read_issue`, `local_query`, `local_update_status`, `local_comment`, `local_create_issue`).
-Both are mounted automatically for a `local` dispatch tracker (the provider's `defaultToolPacks`
-returns `["local"]`), and the neutral ops map onto the five `local_*` tools through `localToolOps`
-(`toolOps.ts`) so a workflow written against `tracker_*` runs unchanged on the local board.
+The `local` pack provides five board-native tools (`local_read_issue`, `local_query`,
+`local_update_status`, `local_comment`, `local_create_issue`). The pack is mounted automatically for
+a `local` dispatch tracker, because the provider's `defaultToolPacks` returns `["local"]`. Each tool
+operates directly on the board files described above.
 
 A few board-native behaviors worth knowing:
 
@@ -189,8 +186,8 @@ so the seeded ids land in the namespace the tracker polls.
 
 ## A complete example
 
-This board lives in the repo at `.lorenz/local`. The workflow runs against the neutral `tracker_*`
-tools so it could later move to any backend.
+This board lives in the repo at `.lorenz/local`. The workflow runs against the board-native
+`local_*` tools.
 
 `lorenz.yaml`:
 
@@ -224,14 +221,14 @@ Acceptance: a passing test that asserts the status code and body.
 ```md
 You implement one board issue per run.
 
-1. Call `tracker_read_issue` with the dispatched issue id to load the
+1. Call `local_read_issue` with the dispatched issue id to load the
    title, description, and any prior comments. On a continuation turn,
    the comments are your record of what you already did.
 2. Make the change in the workspace and run the tests.
-3. Call `tracker_comment` to record what you did and any follow-ups.
-4. Call `tracker_update_status` to move the issue to `In Review` when
+3. Call `local_comment` to record what you did and any follow-ups.
+4. Call `local_update_status` to move the issue to `In Review` when
    the work is ready, or back to `Todo` if you are blocked.
-5. If you find unrelated work, call `tracker_create_issue` to file a
+5. If you find unrelated work, call `local_create_issue` to file a
    new board issue instead of expanding this one.
 ```
 
@@ -241,10 +238,10 @@ run. The agent reads the issue, implements the endpoint, appends a comment, and 
 
 ## See also
 
-- [index.md](index.md) - how trackers plug in, the shared read surface, and the neutral tool pack.
+- [index.md](index.md) - how trackers plug in, the shared read surface, and per-tracker tool packs.
 - [memory.md](memory.md) - the in-process fixture tracker for tests and dry runs.
-- [reference/tracker-tools.md](../reference/tracker-tools.md) - exact schemas for the `tracker_*`
-  tools and the query DSL grammar.
+- [reference/jira-tools.md](../reference/jira-tools.md) - tracker tool schemas and the query DSL
+  grammar.
 - [reference/configuration.md](../reference/configuration.md) - the full `tracker.*` and
   `trackers.*` key reference.
 - [getting-started.md](../getting-started.md) - a first run, including the local board path.

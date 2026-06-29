@@ -237,6 +237,52 @@ mutation CreateComment($issueId: String!, $body: String!) {
 }
 ```
 
+### Create an issue
+
+Resolve the project's team and a workflow state first, then call `issueCreate`. Look up the
+project by slug to get its `id`, its team `id`, and the team's workflow states:
+
+```graphql
+query ProjectForCreate($slug: String!) {
+  projects(filter: { slugId: { eq: $slug } }, first: 1) {
+    nodes {
+      id
+      teams(first: 1) {
+        nodes {
+          id
+          states(first: 100) {
+            nodes {
+              id
+              name
+              type
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Pick the destination `stateId` by status name when one is requested, otherwise the first
+`unstarted` state, otherwise the first state. Then create the issue:
+
+```graphql
+mutation CreateIssue($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      id
+      identifier
+      url
+    }
+  }
+}
+```
+
+Pass `{ teamId, projectId, stateId, title, description, assigneeId }` in `input`; include
+`assigneeId` only when assigning the issue to a specific user.
+
 ### Move an issue to a different state
 
 Use `issueUpdate` with the destination `stateId`:

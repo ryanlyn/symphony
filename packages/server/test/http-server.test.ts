@@ -17,8 +17,6 @@ import { normalizeIssue } from "@lorenz/issue";
 import type { WorkflowDefinition } from "@lorenz/domain";
 import { registerLinearTracker } from "@lorenz/linear-tracker";
 import { registerLocalTracker } from "@lorenz/local-tracker";
-import { defaultToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, defaultTrackerRegistry } from "@lorenz/tracker-sdk";
 import { assert } from "@lorenz/test-utils";
 import type { RuntimeDaemonStatus, RuntimeSnapshot } from "@lorenz/runtime-events";
 
@@ -32,14 +30,11 @@ import {
 // The observability server resolves tool packs and tracker ops through the process-default
 // registries (it offers no injection point), so populate them the same way the CLI
 // composition root does before serving (in a hook rather than at module scope). This suite
-// dispatches on the linear tracker and mounts the neutral tracker pack plus linear's own;
-// the hot-reload test below switches dispatch to the local tracker and expects its pack.
+// dispatches on the linear tracker and mounts linear's own pack; the hot-reload test below
+// switches dispatch to the local tracker and expects the local board pack.
 beforeAll(() => {
   registerLinearTracker();
   registerLocalTracker();
-  if (defaultToolRegistry.get("tracker") === undefined) {
-    defaultToolRegistry.register(createTrackerToolProvider(defaultTrackerRegistry));
-  }
   if (defaultAgentExecutorRegistry.get(acpExecutorProvider.executor) === undefined) {
     defaultAgentExecutorRegistry.register(acpExecutorProvider);
   }
@@ -541,16 +536,7 @@ test("MCP endpoint authorizes bearer tokens and executes Linear tools", async ()
     );
     assert.deepEqual(
       tools.result.tools.map((tool: { name: string }) => tool.name),
-      [
-        "tracker_read_issue",
-        "tracker_query",
-        "tracker_update_status",
-        "tracker_list_comments",
-        "tracker_comment",
-        "tracker_update_comment",
-        "tracker_create_issue",
-        "linear_graphql",
-      ],
+      ["linear_graphql"],
     );
 
     const toolCall = await postMcp(
@@ -622,15 +608,6 @@ test("observability MCP endpoint uses workflow settings reloaded by the runtime"
   const token = issueMcpToken(server.authScope);
 
   try {
-    const neutralTools = [
-      "tracker_read_issue",
-      "tracker_query",
-      "tracker_update_status",
-      "tracker_list_comments",
-      "tracker_comment",
-      "tracker_update_comment",
-      "tracker_create_issue",
-    ];
     const initialTools = await postMcp(
       server.url("/mcp"),
       { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -639,7 +616,7 @@ test("observability MCP endpoint uses workflow settings reloaded by the runtime"
     );
     assert.deepEqual(
       initialTools.result.tools.map((tool: { name: string }) => tool.name),
-      [...neutralTools, "linear_graphql"],
+      ["linear_graphql"],
     );
 
     const boardDir = await mkdtemp(path.join(tmpdir(), "http-server-reload-local-"));
@@ -662,7 +639,6 @@ test("observability MCP endpoint uses workflow settings reloaded by the runtime"
     assert.deepEqual(
       reloadedTools.result.tools.map((tool: { name: string }) => tool.name),
       [
-        ...neutralTools,
         "local_update_status",
         "local_comment",
         "local_create_issue",

@@ -19,20 +19,19 @@ import { registerLinearTracker } from "@lorenz/linear-tracker";
 import { registerLocalTracker } from "@lorenz/local-tracker";
 import { registerMemoryTracker } from "@lorenz/memory-tracker";
 import { ToolRegistry } from "@lorenz/tool-sdk";
-import { createTrackerToolProvider, TrackerRegistry } from "@lorenz/tracker-sdk";
+import { TrackerRegistry } from "@lorenz/tracker-sdk";
 import { assert, tempDir } from "@lorenz/test-utils";
 
 import type { DefaultSettingsOptions } from "@lorenz/config";
 
 // Private registries keep these tests hermetic: the process-wide default registries belong
-// to the composition root and stay untouched here.
+// to the composition root and stay untouched here. Jira registers the `jira_*` pack.
 const trackers = new TrackerRegistry();
 const tools = new ToolRegistry();
 registerLinearTracker({ trackers, tools });
 registerLocalTracker({ trackers, tools });
 registerMemoryTracker({ trackers });
-registerJiraTrackers({ trackers });
-tools.register(createTrackerToolProvider(trackers));
+registerJiraTrackers({ trackers, tools });
 const executors = new AgentExecutorRegistry();
 executors.register(acpExecutorProvider);
 
@@ -886,18 +885,18 @@ test("tool options for an unknown pack fail with the known pack list", () => {
   });
   assert.throws(
     () => validateDispatchConfig(settings, tools),
-    /unsupported tool pack: gitlab \(known tool packs: linear, local, tracker\)/,
+    /unsupported tool pack: gitlab \(known tool packs: jira, linear, local\)/,
   );
 });
 
 test("tools options for a pack without a validator are rejected rather than silently ignored", () => {
   const settings = parseConfig({
     tracker: { kind: "memory" },
-    tools: { tracker: { surprise: true } },
+    tools: { jira: { surprise: true } },
   });
   assert.throws(
     () => validateDispatchConfig(settings, tools),
-    /tools\.tracker is not supported by the "tracker" pack/,
+    /tools\.jira is not supported by the "jira" pack/,
   );
 });
 

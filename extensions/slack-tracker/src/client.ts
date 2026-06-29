@@ -127,12 +127,11 @@ export function slackMessageToRow(
 }
 
 /**
- * Map a Slack root message onto a normalized tracker {@link Issue}. Shared by the runtime
- * client and the tracker tool operations so candidate discovery and agent tools never drift on
- * how a message becomes an issue. The identifier keeps the channel: Slack ts values are only
- * unique per channel, and workspace directories and cleanup are keyed by identifier downstream.
+ * Map a Slack root message onto a normalized tracker {@link Issue}, used by the runtime client
+ * for candidate discovery. The identifier keeps the channel: Slack ts values are only unique per
+ * channel, and workspace directories and cleanup are keyed by identifier downstream.
  */
-export function slackMessageToIssue(
+function slackMessageToIssue(
   message: SlackMessage,
   settings: Settings,
   context: SlackIssueContext = {},

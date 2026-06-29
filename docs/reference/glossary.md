@@ -82,13 +82,13 @@ a poison outcome recycles the machine on its last lease return. See
 **MCP endpoint** - the HTTP `POST /mcp` JSON-RPC surface that exposes agent-callable tools, mounted
 by `@lorenz/mcp` and leased per agent run as a local server, an SSH reverse tunnel, or a per-run
 tunnel. The ACP server name shown to an agent is `lorenz_<kind>`. See
-[http-api.md](http-api.md) and [tracker-tools.md](tracker-tools.md).
+[http-api.md](http-api.md) and [jira-tools.md](jira-tools.md).
 
 ## P
 
 **Provider** - the extension that backs a tracker. A `TrackerProvider` is registered under a `kind`,
-creates the dispatch client, and optionally supplies tool ops and tool packs; selected by
-`trackers.<name>.provider` (or the flat `tracker.kind`). See
+creates the dispatch client, and declares the tool packs it owns through `defaultToolPacks`; selected
+by `trackers.<name>.provider` (or the flat `tracker.kind`). See
 [../extensions/tracker-provider.md](../extensions/tracker-provider.md) and
 [../trackers/index.md](../trackers/index.md).
 
@@ -139,10 +139,10 @@ for issues in a given tracker state, for example a per-state `agent.max_concurre
 ## T
 
 **Tool pack** - a named bundle of agent-callable tools (a `ToolProvider`) registered under a `name`,
-mounted into the flat MCP namespace, and optionally shipping skills. The neutral `tracker` pack
-serves the seven `tracker_*` tools; provider-specific packs (`linear`, `local`, `slack`) ship in the
-tracker extensions. See [../extensions/tool-pack.md](../extensions/tool-pack.md) and
-[tracker-tools.md](tracker-tools.md).
+mounted into the flat MCP namespace, and optionally shipping skills. The Jira extension's `jira`
+pack serves the seven `jira_*` tools; provider-specific packs (`linear`, `local`, `slack`) ship in
+the tracker extensions. See [../extensions/tool-pack.md](../extensions/tool-pack.md) and
+[jira-tools.md](jira-tools.md).
 
 **Tracker** - the issue backend that drives dispatch: Linear, Jira, a local board, Slack, or the
 in-memory fixture. Lorenz polls the tracker for candidate issues and writes status and comments back

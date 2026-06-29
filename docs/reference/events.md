@@ -135,7 +135,7 @@ The agent-facing tool surface is an HTTP MCP endpoint at `POST /mcp`, not an eve
 | `unauthorized` | 401 error code | Missing or wrong bearer token for the endpoint's auth scope. |
 | `-32700` / `-32601` / `-32602` | JSON-RPC error codes | Parse error / method not found / invalid params. |
 
-Tool failures cross the MCP seam as data, never as thrown errors. The seven provider-neutral tracker tools are `tracker_read_issue`, `tracker_query`, `tracker_update_status`, `tracker_list_comments`, `tracker_comment`, `tracker_update_comment`, and `tracker_create_issue`.
+Tool failures cross the MCP seam as data, never as thrown errors. The seven `jira_*` tools the Jira extension's pack mounts are `jira_read_issue`, `jira_query`, `jira_update_status`, `jira_list_comments`, `jira_comment`, `jira_update_comment`, and `jira_create_issue`.
 
 ## Worker-pool and driver events
 
@@ -199,4 +199,4 @@ Runtime event history is not database-backed. The 20-event and 50-history ring b
 - [Dispatch](../dispatch.md) - the eligibility, cap, and two-phase reservation logic behind the lifecycle events.
 - [Observability](../observability.md) - how the snapshot, dashboards, and traces consume this catalog.
 - [HTTP API reference](http-api.md) - the REST and `/ws` shapes that carry `recentEvents`, run history, and trace deltas.
-- [Tracker tools reference](tracker-tools.md) - the MCP tool surface behind the `tools/call` events.
+- [Tracker tools reference](jira-tools.md) - the MCP tool surface behind the `tools/call` events.
