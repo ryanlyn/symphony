@@ -374,10 +374,11 @@ export async function runDaemon(options: CliOptions): Promise<number> {
         process.off("SIGTERM", requestStop);
       };
 
-      // The daemon always publishes an always-on unix control socket (so status/refresh/stop
-      // self-discover even with --no-dashboard). The TCP server runs only when the dashboard is
-      // enabled. Start the server when either surface is wanted.
-      const controlSocketPath = daemonLock ? daemonControlSocketPath(workflow.path) : undefined;
+      // Daemon control is published over HTTP when the dashboard (TCP) is enabled - the lock records
+      // the dashboard URL, which is discoverable and matches --url/--port. With --no-dashboard the
+      // daemon instead serves control over a unix socket so status/refresh/stop still self-discover.
+      const controlSocketPath =
+        daemonLock && !options.dashboard ? daemonControlSocketPath(workflow.path) : undefined;
       if (options.dashboard || daemonLock) {
         server = await startObservabilityServer(daemonServerSource(runtime, daemonLock), {
           host: workflow.settings.server.host,
@@ -414,7 +415,9 @@ export async function runDaemon(options: CliOptions): Promise<number> {
           ? render(
               React.createElement(RuntimeApp, {
                 runtime,
-                dashboardUrl: server?.url("/") ?? null,
+                // url() throws without a TCP listener (socket-only daemon), so only read it when the
+                // dashboard is enabled.
+                dashboardUrl: options.dashboard && server ? server.url("/") : null,
                 projectUrl: projectUrlForSettings(workflow.settings),
               }),
             )

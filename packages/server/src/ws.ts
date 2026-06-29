@@ -194,10 +194,15 @@ export function createWsHandler(
   // Wire up the runtime to broadcast ops-state updates
   const unsubscribe = subscribeToRuntime(runtime, (snapshot) => {
     if (connections.size === 0) return;
-    broadcast({
-      type: "ops_state",
-      state: statePayload(snapshotWithDaemonStatus(runtime, snapshot)),
-    });
+    let state: OpsStatePayload;
+    try {
+      state = statePayload(snapshotWithDaemonStatus(runtime, snapshot));
+    } catch {
+      // statePayload validates on serialization; a malformed snapshot must drop this one broadcast
+      // rather than throw into the runtime's emit() listener loop.
+      return;
+    }
+    broadcast({ type: "ops_state", state });
   });
 
   return {

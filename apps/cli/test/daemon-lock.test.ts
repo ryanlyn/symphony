@@ -8,6 +8,7 @@ import { assert } from "@lorenz/test-utils";
 import {
   acquireDaemonLock,
   createDaemonIdentity,
+  daemonControlSocketPath,
   daemonLockIsStale,
   daemonLockPath,
   LocalFileDaemonLeadershipStore,
@@ -436,6 +437,17 @@ test("daemon lock removes a just-created file when initial write fails", async (
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("daemon control socket path stays under the OS sun_path limit", () => {
+  const socketPath = daemonControlSocketPath(
+    "/Users/someone/deeply/nested/projects/workspace/repo/checkout/WORKFLOW.md",
+  );
+  assert.ok(
+    Buffer.byteLength(socketPath) <= 103,
+    `socket path too long (${Buffer.byteLength(socketPath)}): ${socketPath}`,
+  );
+  assert.match(socketPath, /\.sock$/);
 });
 
 test("daemon lock recovers a stale mutation guard", async () => {

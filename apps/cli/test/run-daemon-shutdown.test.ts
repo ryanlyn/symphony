@@ -363,6 +363,43 @@ test("runDaemon publishes a unix control socket (no TCP) when the dashboard is d
   assert.equal((updateEndpoint.mock.calls[0]![0] as { kind: string }).kind, "socket");
 });
 
+test("runDaemon renders without crashing for a socket-only daemon (url() has no TCP endpoint)", async () => {
+  mocks.loadWorkflow.mockResolvedValue(await workflowFixture());
+  // A socket-only handle: url() throws because there is no TCP listener. The TUI render must not
+  // call url() when the dashboard is disabled, or startup would crash.
+  mocks.startObservabilityServer.mockResolvedValue({
+    host: "127.0.0.1",
+    port: 0,
+    authScope: "scope",
+    controlToken: "token",
+    socketPath: "/tmp/lorenz-test.sock",
+    url: () => {
+      throw new Error("observability server has no HTTP endpoint");
+    },
+    stop: async () => {},
+  });
+
+  const sigintBaseline = process.listeners("SIGINT");
+  const daemonPromise = runDaemon({
+    workflowPath: "WORKFLOW.md",
+    once: false,
+    dryRun: false,
+    tui: true,
+    dashboard: false,
+    port: null,
+    logsRoot: null,
+    featureTokens: ["daemon"],
+  });
+
+  const runtime = await waitForRuntimeInstance();
+  await runtime.startEntered;
+  const [sigintHandler] = addedProcessListeners("SIGINT", sigintBaseline);
+  sigintHandler!();
+
+  assert.equal(await daemonPromise, 0);
+  assert.equal(mocks.render.mock.calls.length, 1);
+});
+
 test("runDaemon reports failure when the daemon lock is lost during runtime start", async () => {
   mocks.loadWorkflow.mockResolvedValue(await workflowFixture());
   let rejectHeartbeat!: (error: Error) => void;

@@ -529,7 +529,9 @@ function limitParam(value: string | boolean | number | undefined): number {
 }
 
 function durationSince(startedAt: string): number {
-  return Math.max(0, Date.now() - new Date(startedAt).getTime());
+  const startedMs = new Date(startedAt).getTime();
+  if (!Number.isFinite(startedMs)) return 0;
+  return Math.max(0, Date.now() - startedMs);
 }
 
 function sum<T>(values: T[], callback: (value: T) => number): number {

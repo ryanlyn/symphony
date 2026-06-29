@@ -304,6 +304,7 @@ async function socketDaemonRequest(
       res.on("data", (chunk) => {
         raw += chunk;
       });
+      res.on("error", reject);
       res.on("end", () => {
         const status = res.statusCode ?? 0;
         resolve({ status, body: daemonResponseBody(raw, status), requestFailed: false });

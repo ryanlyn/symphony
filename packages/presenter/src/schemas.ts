@@ -284,19 +284,3 @@ export const issuePayloadSchema = z.object({
   tracked: z.record(z.string(), z.unknown()),
 });
 export type IssuePayload = z.infer<typeof issuePayloadSchema>;
-
-// --- Daemon control responses (server -> CLI client) ---
-
-export const refreshResultSchema = z.looseObject({
-  queued: z.boolean(),
-  operations: z.array(z.string()),
-});
-
-export const stopResultSchema = z.looseObject({
-  requested_at: z.string(),
-  stopping: z.boolean(),
-});
-
-export const errorBodySchema = z.object({
-  error: z.union([z.string(), z.object({ code: z.string().optional(), message: z.string() })]),
-});

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -225,6 +225,37 @@ test("observability server serves daemon control over a unix socket", async () =
     assert.equal(requestStop.mock.calls.length, 1);
   } finally {
     await server.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("observability server refuses a world-accessible control socket directory", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "lz-bad-"));
+  const runtimeDir = path.join(dir, "rt");
+  await mkdir(runtimeDir, { recursive: true });
+  await chmod(runtimeDir, 0o777); // a co-tenant could write here -> must be refused
+  const socketPath = path.join(runtimeDir, "c.sock");
+  const workflow = workflowFixture();
+  const runtime: RuntimeServerSource = {
+    workflow,
+    snapshot: () => emptySnapshot(workflow),
+    subscribe: () => () => {},
+    requestRefresh: () => ({ queued: true }),
+  };
+
+  try {
+    await assert.rejects(
+      () =>
+        startObservabilityServer(runtime, {
+          host: "127.0.0.1",
+          port: 0,
+          socketPath,
+          httpDisabled: true,
+          staticDir: "/tmp/nonexistent-dashboard-dist",
+        }),
+      /non-private daemon runtime directory/,
+    );
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

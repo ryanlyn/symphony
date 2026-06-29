@@ -93,15 +93,19 @@ export function daemonWorkflowKey(workflowPath: string): string {
   return createHash("sha256").update(canonicalPath(workflowPath)).digest("hex");
 }
 
-/** Unix control socket path, alongside the lock under `.lorenz/daemon/<workflow-sha256>.sock`. */
+/**
+ * Unix control socket path. Kept well under the OS sun_path limit (~104 bytes) by living in a short
+ * per-user runtime dir rather than next to the (possibly deeply nested) workflow file. The lease
+ * records this absolute path, so the client discovers it from the lock instead of re-deriving it.
+ */
 export function daemonControlSocketPath(workflowPath: string): string {
-  const suffix = daemonWorkflowKey(workflowPath);
-  return path.join(
-    path.dirname(canonicalPath(workflowPath)),
-    ".lorenz",
-    "daemon",
-    `${suffix}.sock`,
-  );
+  const suffix = daemonWorkflowKey(workflowPath).slice(0, 16);
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  // Prefer the OS per-user runtime dir (XDG_RUNTIME_DIR is 0700 and owned by the user, so a
+  // co-tenant cannot squat the path). Fall back to tmpdir, which the server hardens by verifying
+  // the runtime dir's ownership and mode before binding (tmpdir is world-writable on Linux).
+  const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
+  return path.join(base, `lorenz-${uid}`, `${suffix}.sock`);
 }
 
 export function daemonWorkspacePath(workspaceRoot: string, ...segments: string[]): string {

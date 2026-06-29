@@ -79,9 +79,10 @@ A second long-running daemon for the same workflow exits with `daemon_already_ru
 and reports the owner pid and endpoint when available. `--once` remains an isolated
 single-poll mode and does not acquire the long-lived daemon lease.
 
-When the dashboard server is disabled, the lease records that no HTTP control endpoint is
-published. `lorenz status` can still report the lease owner, while `lorenz refresh` and
-`lorenz stop` need `--url` or `--port` for an external control endpoint.
+When the dashboard server is disabled, the daemon still serves its control endpoints over a unix
+domain socket in a per-user runtime directory, and the lease records that `socket` endpoint. So
+`lorenz status`, `lorenz refresh`, and `lorenz stop` still self-discover the running daemon with no
+`--url`/`--port`. Those flags remain a cross-host fallback.
 
 The initial leadership store is local-file backed and same-host only. The interface is
 generic so another provider can later supply the same acquire, read, heartbeat, stale,
@@ -89,7 +90,9 @@ and release operations.
 
 ## Control Endpoints
 
-When the dashboard server is enabled, the daemon exposes:
+The daemon exposes the same control routes over whichever transport is active - HTTP (TCP) when the
+dashboard is enabled, and a unix domain socket when it is not (`--no-dashboard`). The lease records
+the active endpoint (`http` or `socket`) as its `endpoint`.
 
 | Method | Path              | Purpose                                                                            |
 | ------ | ----------------- | ---------------------------------------------------------------------------------- |
@@ -97,9 +100,9 @@ When the dashboard server is enabled, the daemon exposes:
 | `POST` | `/api/v1/refresh` | Queue an immediate poll and reconcile pass                                         |
 | `POST` | `/api/v1/stop`    | Request graceful daemon shutdown                                                   |
 
-The same daemon status is included in `/api/v1/state` under `daemon`.
+The same daemon status is included in `/api/v1/state` under `daemon` (HTTP only).
 
-CLI attach commands use the daemon lock to discover the owner endpoint:
+CLI attach commands use the daemon lock to discover the owner endpoint (HTTP or socket):
 
 ```sh
 lorenz status WORKFLOW.md

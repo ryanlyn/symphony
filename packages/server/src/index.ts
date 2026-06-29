@@ -1,4 +1,4 @@
-import { chmod, readFile as fsReadFile, rm as fsRm } from "node:fs/promises";
+import { chmod, readFile as fsReadFile, lstat, mkdir, rm as fsRm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -166,6 +166,13 @@ async function listenTcp(app: Hono, bindHost: string, port: number): Promise<Ser
 }
 
 async function listenSocket(app: Hono, socketPath: string): Promise<HttpServer> {
+  // Bind paths over the OS sun_path limit (~104 bytes) are silently truncated by libuv: listen()
+  // "succeeds" at a different path while the requested inode is never created. Fail loudly instead.
+  if (Buffer.byteLength(socketPath) > 103) {
+    throw new Error(`daemon control socket path too long (${Buffer.byteLength(socketPath)} bytes)`);
+  }
+  // Ensure the per-user runtime dir exists and is private to this user before binding inside it.
+  await ensurePrivateDir(path.dirname(socketPath));
   // The daemon lease guarantees single-instance, so any socket file at this path is a leftover from
   // a crashed predecessor; remove it before listen() to avoid EADDRINUSE.
   await fsRm(socketPath, { force: true });
@@ -180,14 +187,32 @@ async function listenSocket(app: Hono, socketPath: string): Promise<HttpServer> 
       resolve();
     });
   });
-  // Restrict the socket to the owner (the .lorenz/daemon dir is already 0700).
-  await chmod(socketPath, 0o600);
+  // Best-effort owner-only perms; the 0700 parent dir is the primary boundary, so a chmod failure
+  // must not crash the daemon.
+  try {
+    await chmod(socketPath, 0o600);
+  } catch {
+    // Parent dir perms still protect the socket.
+  }
   return server;
 }
 
 async function stopSocketServer(server: HttpServer, socketPath: string | null): Promise<void> {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   if (socketPath) await fsRm(socketPath, { force: true });
+}
+
+// Create the socket's runtime dir and verify it is genuinely private to this user before binding.
+// On Linux the tmpdir fallback (/tmp) is world-writable, so a co-tenant could pre-create the
+// deterministic path as a symlink or a dir they own and MITM the control socket; reject that and
+// refuse to bind rather than leak the bearer control token a client sends.
+async function ensurePrivateDir(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const stat = await lstat(dir);
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0 || (uid !== undefined && stat.uid !== uid)) {
+    throw new Error(`refusing to use a non-private daemon runtime directory: ${dir}`);
+  }
 }
 
 interface BuildResult {
