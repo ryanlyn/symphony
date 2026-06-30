@@ -126,7 +126,6 @@ test("Jira REST client adds comments as Atlassian document format", async () => 
       version: 1,
       content: [
         { type: "paragraph", content: [{ type: "text", text: "First line" }] },
-        { type: "paragraph", content: [] },
         { type: "paragraph", content: [{ type: "text", text: "Second line" }] },
       ],
     },
@@ -176,7 +175,6 @@ test("Jira REST client updates comments as Atlassian document format", async () 
       version: 1,
       content: [
         { type: "paragraph", content: [{ type: "text", text: "Updated workpad" }] },
-        { type: "paragraph", content: [] },
         { type: "paragraph", content: [{ type: "text", text: "Proof" }] },
       ],
     },
