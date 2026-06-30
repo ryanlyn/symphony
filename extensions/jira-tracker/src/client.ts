@@ -10,6 +10,7 @@ import {
 import { defaultStateType, normalizeIssue } from "@lorenz/issue";
 import type { TrackerComment } from "@lorenz/tracker-sdk";
 
+import { markdownToAdf } from "./adf.js";
 import { jiraTrackerOptions, type JiraMcpToolMap } from "./options.js";
 
 const JIRA_REQUEST_TIMEOUT_MS = 30_000;
@@ -106,7 +107,7 @@ export class JiraClient implements RuntimeTrackerClient {
       `/rest/api/3/issue/${encodeURIComponent(issueIdOrKey)}/comment`,
       {
         method: "POST",
-        body: JSON.stringify({ body: adfDocument(body) }),
+        body: JSON.stringify({ body: markdownToAdf(body) }),
       },
     );
     return normalizeJiraComment(raw);
@@ -140,7 +141,7 @@ export class JiraClient implements RuntimeTrackerClient {
       `/rest/api/3/issue/${encodeURIComponent(issueIdOrKey)}/comment/${encodeURIComponent(commentId)}`,
       {
         method: "PUT",
-        body: JSON.stringify({ body: adfDocument(body) }),
+        body: JSON.stringify({ body: markdownToAdf(body) }),
       },
     );
     return normalizeJiraComment(raw);
@@ -163,7 +164,7 @@ export class JiraClient implements RuntimeTrackerClient {
             name: jiraTrackerOptions(this.settings).issueType ?? DEFAULT_JIRA_ISSUE_TYPE,
           },
           summary: input.title,
-          ...(input.body !== undefined ? { description: adfDocument(input.body) } : {}),
+          ...(input.body !== undefined ? { description: markdownToAdf(input.body) } : {}),
           assignee,
         },
       }),
@@ -840,17 +841,6 @@ function adfToText(value: unknown): string {
   const children = Array.isArray(value.content) ? value.content.map(adfToText).filter(Boolean) : [];
   const separator = value.type === "paragraph" || value.type === "listItem" ? " " : "\n";
   return children.join(separator);
-}
-
-function adfDocument(text: string): Record<string, unknown> {
-  return {
-    type: "doc",
-    version: 1,
-    content: text.split(/\r?\n/).map((line) => ({
-      type: "paragraph",
-      content: line === "" ? [] : [{ type: "text", text: line }],
-    })),
-  };
 }
 
 function normalizeStateNames(stateNames: unknown[]): string[] {
