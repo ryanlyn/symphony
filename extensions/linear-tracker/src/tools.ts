@@ -17,7 +17,7 @@ import {
   type ToolSpec,
 } from "@lorenz/tool-sdk";
 
-import { linearErrorContext } from "./diagnostics.js";
+import { linearErrorBodySummary, linearErrorContext } from "./diagnostics.js";
 import { linearToolPackOptions, validateLinearToolOptions } from "./options.js";
 
 /**
@@ -110,6 +110,7 @@ export async function executeLinearTool(
         logStatusError(logger, normalizedInput.query, response.status, bodyResult.rawBody);
         return toolFailure(`Linear GraphQL request failed with HTTP ${response.status}.`, {
           status: response.status,
+          body: linearErrorBodySummary(bodyResult.rawBody),
         });
       }
       return toolFailure(`linear_invalid_json: ${errorMessage(bodyResult.error)}`);
@@ -119,6 +120,7 @@ export async function executeLinearTool(
       logStatusError(logger, normalizedInput.query, response.status, body);
       return toolFailure(`Linear GraphQL request failed with HTTP ${response.status}.`, {
         status: response.status,
+        body: linearErrorBodySummary(body),
       });
     }
     if (isRecord(body) && Array.isArray(body.errors) && body.errors.length > 0) {
