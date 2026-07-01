@@ -51,7 +51,9 @@ Hook subprocesses are spawned detached in their own process group. On timeout (`
 
 When work runs on a remote worker host, hooks and the agent execute over SSH (`packages/ssh/src/index.ts`). SSH inherits the host's own trust: Lorenz runs `cd <workspace> && <command>` on the worker under whatever credentials the SSH config provides.
 
-- The `LORENZ_SSH_CONFIG` environment variable is passed to `ssh` as `-F <path>`, letting you pin host keys, identities, jump hosts, and `ProxyCommand` per deployment without touching the workflow.
+- Lorenz always runs SSH in strict non-interactive mode: batch mode is enabled, password and keyboard-interactive authentication are disabled, password prompts are capped at zero, connection setup is bounded, and reverse tunnels require forward success before continuing.
+- Host-key handling is explicit. New hosts are accepted with OpenSSH `StrictHostKeyChecking=accept-new`; changed keys for existing hosts fail closed instead of prompting.
+- The `LORENZ_SSH_CONFIG` environment variable is passed to `ssh` as `-F <path>`, letting you pin host keys, identities, jump hosts, and `ProxyCommand` per deployment without touching the workflow. Lorenz's strict command-line options are applied before this config, so the config can add connection details but cannot re-enable prompts.
 - Remote commands run in a detached process group; on timeout (`worker.ssh_timeout_ms`, default `60000`) the entire group is `SIGTERM`ed then `SIGKILL`ed after `5000ms`.
 - Remote workspace root resolution expands `~` / `$HOME` against the worker's `$HOME` over SSH, not the local one, so a remote root cannot be aliased to a local path by accident.
 

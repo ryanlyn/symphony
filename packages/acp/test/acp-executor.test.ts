@@ -993,8 +993,13 @@ eval "$last_arg"
 function tunnelTraceCount(trace: string): number {
   return trace
     .split("\n")
-    .filter((line) => line.includes("-N -o ExitOnForwardFailure=yes") && line.includes("-R "))
-    .length;
+    .filter(
+      (line) =>
+        line.includes("-o BatchMode=yes") &&
+        line.includes("-o ExitOnForwardFailure=yes") &&
+        /(?:^| )-N(?: |$)/.test(line) &&
+        line.includes("-R "),
+    ).length;
 }
 
 function acpAuthHeader(server: unknown): string | undefined {

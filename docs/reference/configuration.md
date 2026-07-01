@@ -52,7 +52,7 @@ These are read directly, outside the front matter.
 | --- | --- |
 | `LORENZ_WORKFLOW` | Path to the workflow file. Absolute kept as-is; relative joined to the current directory. Defaults to `<cwd>/WORKFLOW.md`. |
 | `LORENZ_WORKSPACE_ROOT` | Overrides `workspace.root`. |
-| `LORENZ_SSH_CONFIG` | Passed to `ssh` as `-F <path>` for all SSH execution and tunnels. |
+| `LORENZ_SSH_CONFIG` | Passed to `ssh` as `-F <path>` for all SSH execution and tunnels. Lorenz applies strict non-interactive options before this config: batch mode, no password or keyboard-interactive prompts, `StrictHostKeyChecking=accept-new`, bounded connect setup, and forward-failure enforcement for tunnels. |
 | `LINEAR_API_KEY` | Env fallback for `tracker.api_key` when `kind: linear`. |
 | `LINEAR_ASSIGNEE` | Env fallback for `tracker.assignee` when `kind: linear`. |
 | `JIRA_API_KEY` | Env fallback for `tracker.api_key` when `kind: jira`. |

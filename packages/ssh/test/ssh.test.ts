@@ -15,12 +15,30 @@ import {
   reverseTunnelArgs,
   runSsh,
   shellEscape,
+  startSshProcess,
   sshArgs,
   waitForRemoteTcpPort,
   writeRemoteFile,
 } from "@lorenz/ssh";
 
 let savedEnv: { PATH: string | undefined; LORENZ_SSH_CONFIG: string | undefined };
+
+const strictSshArgs = [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  "NumberOfPasswordPrompts=0",
+  "-o",
+  "PasswordAuthentication=no",
+  "-o",
+  "KbdInteractiveAuthentication=no",
+  "-o",
+  "StrictHostKeyChecking=accept-new",
+  "-o",
+  "ConnectTimeout=10",
+  "-o",
+  "ExitOnForwardFailure=yes",
+];
 
 beforeEach(() => {
   savedEnv = {
@@ -44,6 +62,7 @@ test("SSH target parsing and command args match host:port behavior", () => {
   assert.deepEqual(parseSshTarget("::1:2200"), { destination: "::1:2200", port: null });
   assert.equal(remoteShellCommand("printf 'hello'"), "bash -lc 'printf '\"'\"'hello'\"'\"''");
   assert.deepEqual(sshArgs("localhost:2222", "echo ready"), [
+    ...strictSshArgs,
     "-T",
     "-p",
     "2222",
@@ -52,10 +71,9 @@ test("SSH target parsing and command args match host:port behavior", () => {
     "bash -lc 'echo ready'",
   ]);
   assert.deepEqual(reverseTunnelArgs("localhost:2222", 9000, "127.0.0.1", 4040), [
+    ...strictSshArgs,
     "-T",
     "-N",
-    "-o",
-    "ExitOnForwardFailure=yes",
     "-p",
     "2222",
     "-R",
@@ -101,7 +119,10 @@ exit 7
   assert.equal(result.stdout, "out\nerr\n");
   assert.equal(result.stderr, "");
   const traceText = await fs.readFile(trace, "utf8");
-  assert.match(traceText, /-F \/tmp\/lorenz-test-ssh-config -T -p 2222 -- localhost bash -lc/);
+  assert.match(
+    traceText,
+    /-o BatchMode=yes .* -o StrictHostKeyChecking=accept-new .* -F \/tmp\/lorenz-test-ssh-config -T -p 2222 -- localhost bash -lc/,
+  );
   assert.match(traceText, /echo ready/);
 
   const emptyPath = await tempDir("lorenz-ssh-empty-path");
@@ -122,6 +143,32 @@ exit 0
     () => runSsh("localhost", "printf ok", { sshExecutablePath, timeoutMs: 20 }),
     /ssh_timeout: localhost 20/,
   );
+});
+
+test("SSH startSshProcess uses the strict non-interactive contract", async () => {
+  const root = await tempDir("lorenz-ssh-process");
+  const trace = path.join(root, "ssh.trace");
+
+  await installFakeSsh(
+    root,
+    trace,
+    `#!/bin/sh
+printf 'ARGV:%s\\n' "$*" >> ${shellEscape(trace)}
+exit 0
+`,
+  );
+  process.env.LORENZ_SSH_CONFIG = "/tmp/lorenz-test-ssh-config";
+
+  const remote = startSshProcess("localhost:2222", "echo ready");
+  const exitCode = await waitForChildClose(remote);
+
+  assert.equal(exitCode, 0);
+  const traceText = await fs.readFile(trace, "utf8");
+  assert.match(
+    traceText,
+    /-o BatchMode=yes .* -o StrictHostKeyChecking=accept-new .* -F \/tmp\/lorenz-test-ssh-config -T -p 2222 -- localhost bash -lc/,
+  );
+  assert.match(traceText, /echo ready/);
 });
 
 test("SSH timeout rejects near the caller deadline when a child keeps pipes open", async () => {
@@ -267,7 +314,7 @@ esac
   });
 
   const traceText = await fs.readFile(trace, "utf8");
-  assert.match(traceText, /-T -p 2222 -- localhost bash -lc/);
+  assert.match(traceText, /-o BatchMode=yes .* -T -p 2222 -- localhost bash -lc/);
   assert.match(traceText, /\/dev\/tcp\/127\.0\.0\.1\/46000/);
 });
 
@@ -354,6 +401,15 @@ async function waitForProcessExit(pid: number, timeoutMs: number): Promise<void>
     await settle(50);
   }
   throw new Error(`process ${pid} still running after ${timeoutMs}ms`);
+}
+
+async function waitForChildClose(
+  process: ReturnType<typeof startSshProcess>,
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    process.once("close", (code) => resolve(code));
+    process.once("error", reject);
+  });
 }
 
 async function assertMissing(filePath: string, message: string): Promise<void> {

@@ -1,8 +1,9 @@
 import EventEmitter from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { PassThrough } from "node:stream";
 
 import { beforeEach, test, vi } from "vitest";
-import { startReverseTunnel } from "@lorenz/ssh";
+import { startReverseTunnel, waitForRemoteTcpPort } from "@lorenz/ssh";
 import { assert } from "@lorenz/test-utils";
 
 import { WorkerHostPool } from "@lorenz/worker-host-pool";
@@ -16,13 +17,20 @@ vi.mock("@lorenz/ssh", () => ({
 }));
 
 const mockStartReverseTunnel = vi.mocked(startReverseTunnel);
+const mockWaitForRemoteTcpPort = vi.mocked(waitForRemoteTcpPort);
 
 interface FakeProcess extends EventEmitter {
   kill: ReturnType<typeof vi.fn>;
+  stdin: PassThrough;
+  stdout: PassThrough;
+  stderr: PassThrough;
 }
 
 function makeFakeProcess(processes: FakeProcess[]): ChildProcessWithoutNullStreams {
   const emitter = new EventEmitter() as FakeProcess;
+  emitter.stdin = new PassThrough();
+  emitter.stdout = new PassThrough();
+  emitter.stderr = new PassThrough();
   // Port recycling is deferred until the ssh child actually ends, so the fake
   // child ends (emits close) as soon as it is killed.
   emitter.kill = vi.fn(() => {
@@ -36,6 +44,8 @@ function makeFakeProcess(processes: FakeProcess[]): ChildProcessWithoutNullStrea
 
 beforeEach(() => {
   mockStartReverseTunnel.mockReset();
+  mockWaitForRemoteTcpPort.mockReset();
+  mockWaitForRemoteTcpPort.mockImplementation(async () => {});
 });
 
 // ---------------------------------------------------------------------------
@@ -65,6 +75,29 @@ test("openForRun coalesces two runs on ONE host onto a SINGLE shared tunnel/port
   assert.equal(mockStartReverseTunnel.mock.calls.length, 1);
   // Distinct refcount leases on the one shared entry.
   assert.ok(a.leaseId !== b.leaseId);
+});
+
+test("openForRun reports reverse tunnel startup stderr when setup fails", async () => {
+  const processes: FakeProcess[] = [];
+  mockStartReverseTunnel.mockImplementation(() => makeFakeProcess(processes));
+  mockWaitForRemoteTcpPort.mockImplementation(
+    () =>
+      new Promise<void>(() => {
+        // Keep readiness pending so the process-end watcher owns the setup error.
+      }),
+  );
+  const pool = new WorkerHostPool();
+
+  const opened = pool.openForRun("worker-1", "0", "127.0.0.1", 3000);
+  processes[0]!.stderr.write(
+    "Host key verification failed. Update LORENZ_SSH_CONFIG known_hosts for worker-1.\n",
+  );
+  processes[0]!.emit("close", 255, null);
+
+  await assert.rejects(
+    () => opened,
+    /remote_mcp_tunnel_setup_failed: worker-1 46000 .*reverse_tunnel_closed: 255 null .*Host key verification failed/,
+  );
 });
 
 test("openForRun is per-run hold keyed: re-opening the SAME run reuses its hold (no extra refcount)", async () => {

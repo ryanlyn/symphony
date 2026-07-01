@@ -7,6 +7,23 @@ import { shellEscape, sshArgs, remoteShellCommand, parseSshTarget } from "@loren
 
 // --- Helper arbitraries ---
 
+const strictSshArgs = [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  "NumberOfPasswordPrompts=0",
+  "-o",
+  "PasswordAuthentication=no",
+  "-o",
+  "KbdInteractiveAuthentication=no",
+  "-o",
+  "StrictHostKeyChecking=accept-new",
+  "-o",
+  "ConnectTimeout=10",
+  "-o",
+  "ExitOnForwardFailure=yes",
+];
+
 /** Arbitrary strings that include shell-dangerous characters. */
 const shellDangerousString = fc.oneof(
   fc.string(),
@@ -201,6 +218,16 @@ describe("INVARIANT: When shellEscape is applied, the output SHALL be reversible
       fc.property(sshTargetAny, shellDangerousString, (host, command) => {
         const args = sshArgs(host, command);
         assert.equal(args.includes("-T"), true);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  test("sshArgs always starts with the strict no-prompt policy", () => {
+    fc.assert(
+      fc.property(sshTargetAny, shellDangerousString, (host, command) => {
+        const args = sshArgs(host, command);
+        assert.deepEqual(args.slice(0, strictSshArgs.length), strictSshArgs);
       }),
       { numRuns: 500 },
     );
