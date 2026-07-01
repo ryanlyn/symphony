@@ -842,6 +842,16 @@ export class Orchestrator {
     return this.claimStore.read(() => this.snapshotInTransaction());
   }
 
+  retryingForIssue(issueId: string): RetryEntry[] {
+    if (isAsyncClaimStore(this.claimStore)) return this.retryingForIssueInTransaction(issueId);
+    return this.syncClaimStore().read(() => this.retryingForIssueInTransaction(issueId));
+  }
+
+  retryingByIssueIds(issueIds: readonly string[]): Map<string, RetryEntry> {
+    if (isAsyncClaimStore(this.claimStore)) return this.retryingByIssueIdsInTransaction(issueIds);
+    return this.syncClaimStore().read(() => this.retryingByIssueIdsInTransaction(issueIds));
+  }
+
   private snapshotInTransaction(): OrchestratorSnapshot {
     return {
       running: [...this.state.running.values()],
@@ -859,6 +869,22 @@ export class Orchestrator {
       rateLimits: this.state.rateLimits,
       claimStore: this.claimStore.status(),
     };
+  }
+
+  private retryingForIssueInTransaction(issueId: string): RetryEntry[] {
+    return this.retryEntriesForIssue(issueId).map(([, entry]) => ({ ...entry }));
+  }
+
+  private retryingByIssueIdsInTransaction(issueIds: readonly string[]): Map<string, RetryEntry> {
+    const requested = new Set(issueIds);
+    const retryByIssueId = new Map<string, RetryEntry>();
+    for (const retry of this.state.retryAttempts.values()) {
+      if (!requested.has(retry.issueId)) continue;
+      const current = retryByIssueId.get(retry.issueId);
+      if (current && retrySlotIndex(current) <= retrySlotIndex(retry)) continue;
+      retryByIssueId.set(retry.issueId, { ...retry });
+    }
+    return retryByIssueId;
   }
 
   private applyUsageUpdate(key: string, entry: RunningEntry, update: AgentUpdate): void {
