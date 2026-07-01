@@ -1,4 +1,7 @@
+import { errorMessage } from "@lorenz/domain";
 import { startReverseTunnel, waitForRemoteTcpPort } from "@lorenz/ssh";
+
+const REMOTE_MCP_TUNNEL_SETUP_STDERR_MAX_CHARS = 2_000;
 
 export interface RemoteMcpTunnelLease {
   leaseId: string;
@@ -16,6 +19,8 @@ interface RemoteMcpTunnelEntry {
   readyPromise: Promise<void>;
   processEnded: boolean;
   recyclePortOnProcessEnd: boolean;
+  setupStderr: string;
+  setupStderrTruncated: boolean;
   /**
    * Monotonic generation for this host:port tunnel slot. Bumped each time a
    * brand-new entry replaces a fully torn-down one (a host:port recycle - e.g.
@@ -67,7 +72,12 @@ export class WorkerHostPool {
     localPort: number,
   ): Promise<RemoteMcpTunnelLease> {
     const endpointKey = this.remoteMcpTunnelEndpointKey(workerHost, localHost, localPort);
-    const entry = await this.ensureRemoteMcpTunnelEntry(workerHost, localHost, localPort, endpointKey);
+    const entry = await this.ensureRemoteMcpTunnelEntry(
+      workerHost,
+      localHost,
+      localPort,
+      endpointKey,
+    );
     return this.createRemoteMcpTunnelLease(entry);
   }
 
@@ -121,7 +131,12 @@ export class WorkerHostPool {
       this.releasePerRunHold(holdKey);
     }
 
-    const entry = await this.ensureRemoteMcpTunnelEntry(workerHost, localHost, localPort, endpointKey);
+    const entry = await this.ensureRemoteMcpTunnelEntry(
+      workerHost,
+      localHost,
+      localPort,
+      endpointKey,
+    );
     const lease = this.createRemoteMcpTunnelLease(entry);
     this.perRunTunnelHolds.set(holdKey, {
       leaseId: lease.leaseId,
@@ -201,12 +216,15 @@ export class WorkerHostPool {
       processEnded: false,
       recyclePortOnProcessEnd: false,
       generation,
+      setupStderr: "",
+      setupStderrTruncated: false,
     };
     this.remoteMcpTunnelsByEndpoint.set(endpointKey, entry);
     process.on("close", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
     process.on("exit", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
     process.on("error", () => this.handleRemoteMcpTunnelProcessEnd(entry, endpointKey));
-    entry.readyPromise = this.confirmRemoteMcpTunnelReady(entry);
+    const stderrCapture = this.captureRemoteMcpTunnelSetupStderr(entry);
+    entry.readyPromise = this.confirmRemoteMcpTunnelReady(entry).finally(stderrCapture.dispose);
     await this.waitForRemoteMcpTunnelReady(entry);
     return entry;
   }
@@ -311,10 +329,35 @@ export class WorkerHostPool {
     return { promise, dispose };
   }
 
+  private captureRemoteMcpTunnelSetupStderr(entry: RemoteMcpTunnelEntry): { dispose: () => void } {
+    const stderr = (entry.process as Partial<Pick<RemoteMcpTunnelEntry["process"], "stderr">>)
+      .stderr;
+    if (!stderr) return { dispose: () => {} };
+    const onData = (chunk: Buffer | string): void => {
+      const captured = appendBoundedText(entry.setupStderr, chunk.toString());
+      entry.setupStderr = captured.text;
+      entry.setupStderrTruncated ||= captured.truncated;
+    };
+    stderr.setEncoding("utf8");
+    stderr.on("data", onData);
+    return {
+      dispose: () => {
+        stderr.off("data", onData);
+      },
+    };
+  }
+
   private remoteMcpTunnelSetupError(entry: RemoteMcpTunnelEntry, cause: unknown): Error {
-    return new Error(`remote_mcp_tunnel_setup_failed: ${entry.workerHost} ${entry.remotePort}`, {
-      cause,
-    });
+    const causeMessage = errorMessage(cause);
+    const stderr = entry.setupStderr.trim();
+    const details = [
+      `remote_mcp_tunnel_setup_failed: ${entry.workerHost} ${entry.remotePort}`,
+      causeMessage,
+      stderr
+        ? `${entry.setupStderrTruncated ? "stderr_tail" : "stderr"}=${JSON.stringify(stderr)}`
+        : null,
+    ].filter((part) => part !== null);
+    return new Error(details.join(" "), { cause });
   }
 
   private recycleRemoteMcpPort(remotePort: number): void {
@@ -346,6 +389,25 @@ export class WorkerHostPool {
 
 function perRunKey(workerHost: string, runKey: string): string {
   return `${workerHost}#${runKey}`;
+}
+
+function appendBoundedText(current: string, chunk: string): { text: string; truncated: boolean } {
+  const incoming =
+    chunk.length > REMOTE_MCP_TUNNEL_SETUP_STDERR_MAX_CHARS
+      ? chunk.slice(chunk.length - REMOTE_MCP_TUNNEL_SETUP_STDERR_MAX_CHARS)
+      : chunk;
+  const availableCurrentChars = REMOTE_MCP_TUNNEL_SETUP_STDERR_MAX_CHARS - incoming.length;
+  const currentTail =
+    availableCurrentChars > 0
+      ? current.slice(Math.max(0, current.length - availableCurrentChars))
+      : "";
+  return {
+    text: `${currentTail}${incoming}`,
+    truncated:
+      chunk.length > incoming.length ||
+      current.length > currentTail.length ||
+      current.length + chunk.length > REMOTE_MCP_TUNNEL_SETUP_STDERR_MAX_CHARS,
+  };
 }
 
 export const workerHostPool = new WorkerHostPool();

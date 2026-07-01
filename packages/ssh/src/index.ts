@@ -11,10 +11,21 @@ const FORCE_KILL_DELAY_MS = 5_000;
 const DEFAULT_REMOTE_TCP_PORT_READY_TIMEOUT_MS = 10_000;
 const DEFAULT_REMOTE_TCP_PORT_READY_INTERVAL_MS = 200;
 const DEFAULT_REMOTE_TCP_PORT_READY_ATTEMPT_TIMEOUT_MS = 1_000;
+const DEFAULT_SSH_CONNECT_TIMEOUT_SECONDS = 10;
 const TCP_PORT_MAX = 65_535;
 const NUMERIC_CHMOD_MODE = /^[0-7]{3,4}$/;
 const SYMBOLIC_CHMOD_MODE =
   /^(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*)))(?:,(?:[ugoa]*(?:(?:[+-][rwxXstugo]+)|(?:=[rwxXstugo]*))))*$/;
+const STRICT_SSH_OPTIONS: ReadonlyArray<readonly [string, string]> = [
+  ["BatchMode", "yes"],
+  ["NumberOfPasswordPrompts", "0"],
+  ["PasswordAuthentication", "no"],
+  ["KbdInteractiveAuthentication", "no"],
+  ["StrictHostKeyChecking", "accept-new"],
+  ["ConnectTimeout", String(DEFAULT_SSH_CONNECT_TIMEOUT_SECONDS)],
+  ["ExitOnForwardFailure", "yes"],
+];
+const STRICT_SSH_ARGS = STRICT_SSH_OPTIONS.flatMap(([key, value]) => ["-o", `${key}=${value}`]);
 
 function requireSshExecutable(): string {
   const pathValue = process.env.PATH ?? "";
@@ -244,6 +255,7 @@ export async function writeRemoteFile(
 export function sshArgs(host: string, command: string): string[] {
   const target = parseSshTarget(host);
   return [
+    ...STRICT_SSH_ARGS,
     ...sshConfigArgs(),
     "-T",
     ...(target.port ? ["-p", target.port] : []),
@@ -261,11 +273,10 @@ export function reverseTunnelArgs(
 ): string[] {
   const target = parseSshTarget(host);
   return [
+    ...STRICT_SSH_ARGS,
     ...sshConfigArgs(),
     "-T",
     "-N",
-    "-o",
-    "ExitOnForwardFailure=yes",
     ...(target.port ? ["-p", target.port] : []),
     "-R",
     `${remotePort}:${localHost}:${localPort}`,

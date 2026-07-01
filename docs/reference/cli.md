@@ -76,7 +76,7 @@ The worker pool and dispatch coordinator are always constructed - the pool is th
 | --- | --- | --- |
 | `LORENZ_WORKFLOW` | `packages/workflow` | Default workflow path when `workflowPath` is omitted. Absolute used as-is, relative joined to cwd. |
 | `LORENZ_WORKSPACE_ROOT` | `packages/config` | Overrides `workspace.root`. |
-| `LORENZ_SSH_CONFIG` | `packages/ssh` | Path passed to `ssh -F` for remote workers. |
+| `LORENZ_SSH_CONFIG` | `packages/ssh` | Path passed to `ssh -F` for remote workers after Lorenz's strict no-prompt SSH options. |
 | `CLAUDE_CODE_EXECUTABLE` | ACP bridges, `doctor` | Override path to the `claude` CLI. |
 | `CODEX_PATH` | ACP bridges, `doctor` | Override path to the `codex` CLI. |
 

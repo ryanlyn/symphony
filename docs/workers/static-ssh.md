@@ -37,6 +37,8 @@ These keys live under `worker` in your `WORKFLOW.md` front matter.
 | `worker.ssh_timeout_ms` | `60000` | Timeout in ms for the SSH commands it bounds: skill-overlay sync and host discovery probing. Workspace cleanup and remote hook execution use `hooks.timeout_ms` instead. |
 | `worker.max_concurrent_agents_per_host` | falls back to `agent.max_concurrent_agents` | Per-host cap on concurrent runs. When every host is at this cap, dispatch waits instead of running locally. |
 
+All static SSH worker connections use Lorenz's strict SSH policy. Commands, remote bridge processes, probes, and reverse tunnels run with batch mode, password authentication disabled, keyboard-interactive authentication disabled, zero password prompts, `StrictHostKeyChecking=accept-new`, and a bounded connect timeout. A first connection to a new host records the host key without prompting; a changed key for an existing host fails closed and must be fixed in the operator's known-hosts configuration.
+
 A minimal config:
 
 ```yaml
