@@ -1,6 +1,7 @@
 import { LinearGraphQLClient } from "@linear/sdk";
 export { LinearGraphQLClient } from "@linear/sdk";
 import { normalizeIssue } from "@lorenz/issue";
+import { createTrackerPaginationGuard, type TrackerPaginationLimits } from "@lorenz/tracker-sdk";
 import {
   errorMessage,
   isRecord,
@@ -15,6 +16,7 @@ import { linearErrorContext } from "./diagnostics.js";
 import { linearEndpoint, linearTrackerOptions } from "./options.js";
 
 const LINEAR_REQUEST_TIMEOUT_MS = 30_000;
+const LINEAR_CONNECTION_PAGE_SIZE = 50;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -59,11 +61,19 @@ export interface LinearState {
   type: IssueStateType | null;
 }
 
+export interface LinearDegradedConnection {
+  source: string;
+  connection: string;
+  reason: string;
+  cursor?: string | null | undefined;
+}
+
 export interface LinearTeam {
   id: string;
   key: string;
   name: string;
   states: LinearState[];
+  degradedConnections?: LinearDegradedConnection[] | undefined;
 }
 
 export interface LinearProject {
@@ -71,6 +81,7 @@ export interface LinearProject {
   name: string;
   slugId: string;
   teams: LinearTeam[];
+  degradedConnections?: LinearDegradedConnection[] | undefined;
 }
 
 interface LinearPageInfo {
@@ -85,6 +96,11 @@ interface LinearRetryOptions {
   requestTimeoutMs?: number | undefined;
   sleep?: ((delayMs: number) => Promise<void>) | undefined;
   now?: (() => Date) | undefined;
+}
+
+interface CompleteConnectionResult {
+  nodes: unknown[];
+  degradedConnections: LinearDegradedConnection[];
 }
 
 interface ResolvedLinearRetryOptions {
@@ -105,6 +121,7 @@ export interface LinearClientDeps {
   fetchImpl?: typeof fetch | undefined;
   graphqlClient?: LinearGraphQLClient | undefined;
   logger?: LinearClientLogger | undefined;
+  paginationLimits?: TrackerPaginationLimits | undefined;
 }
 
 export class LinearClient {
@@ -115,6 +132,7 @@ export class LinearClient {
   private readonly settings: Settings;
   private readonly fetchImpl: typeof fetch | undefined;
   private readonly logger: LinearClientLogger;
+  private readonly paginationLimits: TrackerPaginationLimits | undefined;
 
   constructor(
     settings: Settings,
@@ -137,6 +155,7 @@ export class LinearClient {
       warn: (message) => console.warn(message),
       error: (message) => console.error(message),
     };
+    this.paginationLimits = deps.paginationLimits;
 
     if (deps.graphqlClient) {
       this.gqlClient = deps.graphqlClient;
@@ -282,7 +301,7 @@ export class LinearClient {
     );
     const project = data.projects.nodes[0];
     if (!project) throw new Error(`linear project not found: ${projectSlug}`);
-    return parseProject(project);
+    return this.parseProject(project);
   }
 
   async fetchCandidateIssues(): Promise<Issue[]> {
@@ -297,8 +316,14 @@ export class LinearClient {
     const issues: Issue[] = [];
     const assignee = await this.assigneeFilterValue();
     const projectSlugs = await this.resolveProjectSlugs();
+    const pagination = createTrackerPaginationGuard({
+      tracker: "linear",
+      resource: "issues",
+      limits: this.paginationLimits,
+    });
 
     for (;;) {
+      pagination.recordPage();
       const data: {
         issues: {
           nodes: Array<Record<string, unknown>>;
@@ -319,16 +344,21 @@ export class LinearClient {
         },
       );
 
-      appendNormalizedIssues(issues, data.issues.nodes, assignee);
+      pagination.recordItems(data.issues.nodes.length);
+      await this.appendNormalizedIssues(issues, data.issues.nodes, assignee);
       if (!data.issues.pageInfo.hasNextPage) return issues;
-      if (!data.issues.pageInfo.endCursor) throw new Error("linear_missing_end_cursor");
-      after = data.issues.pageInfo.endCursor;
+      after = pagination.nextCursor(data.issues.pageInfo.endCursor, "endCursor");
     }
   }
 
   async fetchIssuesByIds(ids: string[]): Promise<Issue[]> {
     const uniqueIds = [...new Set(ids)];
     if (uniqueIds.length === 0) return [];
+    createTrackerPaginationGuard({
+      tracker: "linear",
+      resource: "issuesByIds",
+      limits: this.paginationLimits,
+    }).recordItems(uniqueIds.length);
     const assignee = await this.assigneeFilterValue();
 
     const issueOrder = new Map(uniqueIds.map((id, index) => [id, index]));
@@ -346,7 +376,7 @@ export class LinearClient {
           }`,
           { ids: batchIds, first: batchIds.length },
         );
-        appendNormalizedIssues(issues, data.issues.nodes, assignee);
+        await this.appendNormalizedIssues(issues, data.issues.nodes, assignee);
       } catch (error) {
         // Identifier-shaped inputs ("MT-32" from workspace directory names) can make
         // the id filter reject the whole batch; those resolve via the fallback below.
@@ -371,7 +401,7 @@ export class LinearClient {
           }`,
           { id },
         );
-        if (data.issue) appendNormalizedIssues(issues, [data.issue], assignee);
+        if (data.issue) await this.appendNormalizedIssues(issues, [data.issue], assignee);
       } catch {
         // Best-effort identifier resolution.
       }
@@ -418,10 +448,12 @@ export class LinearClient {
     );
     if (!data.issueCreate.success || !data.issueCreate.issue)
       throw new Error("linear issueCreate failed");
-    return normalizeIssue(
-      linearIssuePayload(data.issueCreate.issue),
+    const normalized = await this.normalizeLinearIssue(
+      data.issueCreate.issue,
       await this.assigneeFilterValue(),
     );
+    if (!normalized) throw new Error("linear issueCreate returned malformed issue");
+    return normalized;
   }
 
   async updateIssueState(issueId: string, stateId: string): Promise<Issue> {
@@ -438,10 +470,12 @@ export class LinearClient {
     );
     if (!data.issueUpdate.success || !data.issueUpdate.issue)
       throw new Error("linear issueUpdate failed");
-    return normalizeIssue(
-      linearIssuePayload(data.issueUpdate.issue),
+    const normalized = await this.normalizeLinearIssue(
+      data.issueUpdate.issue,
       await this.assigneeFilterValue(),
     );
+    if (!normalized) throw new Error("linear issueUpdate returned malformed issue");
+    return normalized;
   }
 
   async archiveIssue(issueId: string): Promise<void> {
@@ -485,7 +519,13 @@ export class LinearClient {
   private async resolveProjectSlugsByLabels(labels: string[]): Promise<string[]> {
     let after: string | null = null;
     const slugs: string[] = [];
+    const pagination = createTrackerPaginationGuard({
+      tracker: "linear",
+      resource: "projectsByLabels",
+      limits: this.paginationLimits,
+    });
     for (;;) {
+      pagination.recordPage();
       const data: {
         projects: {
           nodes: Array<{ slugId: string }>;
@@ -500,15 +540,293 @@ export class LinearClient {
         }`,
         { labels, first: 100, after },
       );
+      pagination.recordItems(data.projects.nodes.length);
       slugs.push(...data.projects.nodes.map((p) => p.slugId));
       if (!data.projects.pageInfo?.hasNextPage) break;
-      if (!data.projects.pageInfo.endCursor)
-        throw new Error("linear_missing_end_cursor: projectsByLabels");
-      after = data.projects.pageInfo.endCursor;
+      after = pagination.nextCursor(data.projects.pageInfo.endCursor, "endCursor");
     }
     if (slugs.length === 0)
       throw new Error(`no linear projects found for labels: ${labels.join(", ")}`);
     return slugs;
+  }
+
+  private async appendNormalizedIssues(
+    target: Issue[],
+    nodes: unknown[],
+    assignee: string | undefined,
+  ): Promise<void> {
+    for (const issue of nodes) {
+      const normalized = await this.normalizeLinearIssue(issue, assignee);
+      if (normalized) target.push(normalized);
+    }
+  }
+
+  private async normalizeLinearIssue(
+    issue: unknown,
+    assignee: string | undefined,
+  ): Promise<Issue | null> {
+    if (!isRecord(issue)) return null;
+    try {
+      return normalizeIssue(await this.linearIssuePayload(issue), assignee);
+    } catch {
+      return null;
+    }
+  }
+
+  private async linearIssuePayload(
+    issue: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const source = issueSource(issue);
+    const issueId = stringField(issue, "id");
+    const [labels, inverseRelations] = await Promise.all([
+      this.completePagedConnection({
+        source,
+        connection: "issue.labels",
+        initial: issue.labels,
+        fetchPage: async (after) => this.fetchIssueLabelsPage(issueId, after),
+      }),
+      this.completePagedConnection({
+        source,
+        connection: "issue.inverseRelations",
+        initial: issue.inverseRelations,
+        fetchPage: async (after) => this.fetchIssueInverseRelationsPage(issueId, after),
+      }),
+    ]);
+    const degradedConnections = [
+      ...labels.degradedConnections,
+      ...inverseRelations.degradedConnections,
+    ];
+    if (degradedConnections.length > 0) this.logDegradedConnections(degradedConnections);
+
+    return linearIssuePayload(
+      {
+        ...issue,
+        labels: connectionFromNodes(labels.nodes),
+        inverseRelations: connectionFromNodes(inverseRelations.nodes),
+      },
+      degradedConnections,
+    );
+  }
+
+  private async fetchIssueLabelsPage(issueId: string, after: string): Promise<unknown> {
+    const data = await this.graphql<{ issue: { labels: unknown } | null }>(
+      `query LorenzTsIssueLabels($id: String!, $first: Int!, $after: String) {
+        issue(id: $id) {
+          labels(first: $first, after: $after) {
+            nodes { name }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: issueId, first: LINEAR_CONNECTION_PAGE_SIZE, after },
+    );
+    if (!data.issue) throw new Error(`linear issue not found: ${issueId}`);
+    return data.issue.labels;
+  }
+
+  private async fetchIssueInverseRelationsPage(issueId: string, after: string): Promise<unknown> {
+    const data = await this.graphql<{ issue: { inverseRelations: unknown } | null }>(
+      `query LorenzTsIssueInverseRelations($id: String!, $first: Int!, $after: String) {
+        issue(id: $id) {
+          inverseRelations(first: $first, after: $after) {
+            nodes {
+              type
+              issue {
+                id
+                identifier
+                state { name type }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: issueId, first: LINEAR_CONNECTION_PAGE_SIZE, after },
+    );
+    if (!data.issue) throw new Error(`linear issue not found: ${issueId}`);
+    return data.issue.inverseRelations;
+  }
+
+  private async parseProject(project: Record<string, unknown>): Promise<LinearProject> {
+    const id = stringField(project, "id");
+    const name = stringField(project, "name");
+    const slugId = stringField(project, "slugId");
+    const teams = await this.completePagedConnection({
+      source: projectSource(project),
+      connection: "project.teams",
+      initial: project.teams,
+      fetchPage: async (after) => this.fetchProjectTeamsPage(id, after),
+    });
+    const parsedTeams = await Promise.all(
+      teams.nodes.map(async (team) => this.parseTeam(asRecord(team))),
+    );
+    const degradedConnections = [
+      ...teams.degradedConnections,
+      ...parsedTeams.flatMap((team) => team.degradedConnections ?? []),
+    ];
+    if (degradedConnections.length > 0) this.logDegradedConnections(degradedConnections);
+    return {
+      id,
+      name,
+      slugId,
+      teams: parsedTeams,
+      ...(degradedConnections.length > 0 ? { degradedConnections } : {}),
+    };
+  }
+
+  private async fetchProjectTeamsPage(projectId: string, after: string): Promise<unknown> {
+    const data = await this.graphql<{ project: { teams: unknown } | null }>(
+      `query LorenzTsProjectTeams($id: String!, $first: Int!, $after: String) {
+        project(id: $id) {
+          teams(first: $first, after: $after) {
+            nodes {
+              id
+              key
+              name
+              states(first: $first) {
+                nodes { id name type }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: projectId, first: LINEAR_CONNECTION_PAGE_SIZE, after },
+    );
+    if (!data.project) throw new Error(`linear project not found: ${projectId}`);
+    return data.project.teams;
+  }
+
+  private async parseTeam(team: Record<string, unknown>): Promise<LinearTeam> {
+    const id = stringField(team, "id");
+    const key = stringField(team, "key");
+    const name = stringField(team, "name");
+    const states = await this.completePagedConnection({
+      source: teamSource(team),
+      connection: "project.team.states",
+      initial: team.states,
+      fetchPage: async (after) => this.fetchTeamStatesPage(id, after),
+    });
+    const degradedConnections = states.degradedConnections;
+    return {
+      id,
+      key,
+      name,
+      states: states.nodes.map((state) => {
+        const stateRecord = asRecord(state);
+        return {
+          id: stringField(stateRecord, "id"),
+          name: stringField(stateRecord, "name"),
+          type: normalizeStateType(stringField(stateRecord, "type")),
+        };
+      }),
+      ...(degradedConnections.length > 0 ? { degradedConnections } : {}),
+    };
+  }
+
+  private async fetchTeamStatesPage(teamId: string, after: string): Promise<unknown> {
+    const data = await this.graphql<{ team: { states: unknown } | null }>(
+      `query LorenzTsTeamStates($id: String!, $first: Int!, $after: String) {
+        team(id: $id) {
+          states(first: $first, after: $after) {
+            nodes { id name type }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { id: teamId, first: LINEAR_CONNECTION_PAGE_SIZE, after },
+    );
+    if (!data.team) throw new Error(`linear team not found: ${teamId}`);
+    return data.team.states;
+  }
+
+  private async completePagedConnection(input: {
+    source: string;
+    connection: string;
+    initial: unknown;
+    fetchPage: (after: string) => Promise<unknown>;
+  }): Promise<CompleteConnectionResult> {
+    const pagination = createTrackerPaginationGuard({
+      tracker: "linear",
+      resource: input.connection,
+      limits: this.paginationLimits,
+    });
+    const initial = connectionSnapshot(input.initial);
+    const nodes = [...initial.nodes];
+    try {
+      pagination.recordPage();
+      pagination.recordItems(initial.nodes.length);
+    } catch (error) {
+      return {
+        nodes: [],
+        degradedConnections: [degradedConnection(input, errorMessage(error))],
+      };
+    }
+    if (!initial.pageInfo?.hasNextPage) return { nodes, degradedConnections: [] };
+
+    let after: string;
+    try {
+      after = pagination.nextCursor(initial.pageInfo.endCursor, "endCursor");
+    } catch (error) {
+      return {
+        nodes,
+        degradedConnections: [
+          degradedConnection(input, errorMessage(error), initial.pageInfo.endCursor),
+        ],
+      };
+    }
+
+    for (;;) {
+      let page: unknown;
+      try {
+        pagination.recordPage();
+        page = await input.fetchPage(after);
+      } catch (error) {
+        return {
+          nodes,
+          degradedConnections: [degradedConnection(input, errorMessage(error), after)],
+        };
+      }
+
+      const next = connectionSnapshot(page);
+      if (!next.isConnection) {
+        return {
+          nodes,
+          degradedConnections: [
+            degradedConnection(input, "linear_invalid_connection_payload", after),
+          ],
+        };
+      }
+      try {
+        pagination.recordItems(next.nodes.length);
+      } catch (error) {
+        return {
+          nodes,
+          degradedConnections: [degradedConnection(input, errorMessage(error), after)],
+        };
+      }
+      nodes.push(...next.nodes);
+      if (!next.pageInfo?.hasNextPage) return { nodes, degradedConnections: [] };
+      try {
+        after = pagination.nextCursor(next.pageInfo.endCursor, "endCursor");
+      } catch (error) {
+        return {
+          nodes,
+          degradedConnections: [
+            degradedConnection(input, errorMessage(error), next.pageInfo.endCursor),
+          ],
+        };
+      }
+    }
+  }
+
+  private logDegradedConnections(degradedConnections: LinearDegradedConnection[]): void {
+    for (const degraded of degradedConnections) {
+      this.logger.warn(
+        `linear tracker degraded connection source=${degraded.source} connection=${degraded.connection} reason=${degraded.reason}${degraded.cursor ? ` cursor=${degraded.cursor}` : ""}`,
+      );
+    }
   }
 
   private requiredProjectSlug(): string {
@@ -565,81 +883,50 @@ function resolveDeps(fetchImplOrDeps?: typeof fetch | LinearClientDeps): {
   fetchImpl: typeof fetch | undefined;
   graphqlClient: LinearGraphQLClient | undefined;
   logger: LinearClientLogger | undefined;
+  paginationLimits: TrackerPaginationLimits | undefined;
 } {
   if (!fetchImplOrDeps)
-    return { fetchImpl: undefined, graphqlClient: undefined, logger: undefined };
+    return {
+      fetchImpl: undefined,
+      graphqlClient: undefined,
+      logger: undefined,
+      paginationLimits: undefined,
+    };
   if (typeof fetchImplOrDeps === "function")
-    return { fetchImpl: fetchImplOrDeps, graphqlClient: undefined, logger: undefined };
+    return {
+      fetchImpl: fetchImplOrDeps,
+      graphqlClient: undefined,
+      logger: undefined,
+      paginationLimits: undefined,
+    };
   return {
     fetchImpl: fetchImplOrDeps.fetchImpl ?? undefined,
     graphqlClient: fetchImplOrDeps.graphqlClient ?? undefined,
     logger: fetchImplOrDeps.logger ?? undefined,
+    paginationLimits: fetchImplOrDeps.paginationLimits ?? undefined,
   };
 }
 
-function linearIssuePayload(issue: Record<string, unknown>): Record<string, unknown> {
+function linearIssuePayload(
+  issue: Record<string, unknown>,
+  degradedConnections: LinearDegradedConnection[] = [],
+): Record<string, unknown> {
   return {
     ...issue,
     state: issue.state,
     state_type: isRecord(issue.state) ? issue.state.type : null,
     branch_name: issue.branchName,
     assignee_id: isRecord(issue.assignee) ? issue.assignee.id : null,
-    labels: nodesFromConnection(issue.labels, "issue.labels"),
-    relations: nodesFromConnection(issue.inverseRelations, "issue.inverseRelations"),
+    labels: connectionSnapshot(issue.labels).nodes,
+    relations: connectionSnapshot(issue.inverseRelations).nodes,
     created_at: issue.createdAt,
     updated_at: issue.updatedAt,
+    ...(degradedConnections.length > 0 ? { linear_degraded_connections: degradedConnections } : {}),
   };
-}
-
-function appendNormalizedIssues(
-  target: Issue[],
-  nodes: unknown[],
-  assignee: string | undefined,
-): void {
-  for (const issue of nodes) {
-    const normalized = normalizeLinearIssue(issue, assignee);
-    if (normalized) target.push(normalized);
-  }
-}
-
-function normalizeLinearIssue(issue: unknown, assignee: string | undefined): Issue | null {
-  if (!isRecord(issue)) return null;
-  try {
-    return normalizeIssue(linearIssuePayload(issue), assignee);
-  } catch (error) {
-    if (isLinearConnectionTruncatedError(error)) throw error;
-    return null;
-  }
 }
 
 function normalizeStateNames(stateNames: unknown[]): string[] {
   return [...new Set(stateNames.map((stateName) => String(stateName)))];
-}
-
-function parseProject(project: Record<string, unknown>): LinearProject {
-  const teams = nodesFromConnection(project.teams, "project.teams");
-  return {
-    id: stringField(project, "id"),
-    name: stringField(project, "name"),
-    slugId: stringField(project, "slugId"),
-    teams: teams.map((team) => {
-      const teamRecord = asRecord(team);
-      const states = nodesFromConnection(teamRecord.states, "project.team.states");
-      return {
-        id: stringField(teamRecord, "id"),
-        key: stringField(teamRecord, "key"),
-        name: stringField(teamRecord, "name"),
-        states: states.map((state) => {
-          const stateRecord = asRecord(state);
-          return {
-            id: stringField(stateRecord, "id"),
-            name: stringField(stateRecord, "name"),
-            type: normalizeStateType(stringField(stateRecord, "type")),
-          };
-        }),
-      };
-    }),
-  };
 }
 
 function isRateLimitError(error: unknown): boolean {
@@ -683,27 +970,61 @@ function redactedLinearCause(error: unknown): Error {
   return new Error(redactDiagnosticText(errorMessage(error)));
 }
 
-class LinearConnectionTruncatedError extends Error {
-  constructor(connectionName: string) {
-    super(`linear_truncated_connection: ${connectionName}`);
-    this.name = "LinearConnectionTruncatedError";
-  }
-}
-
-function isLinearConnectionTruncatedError(error: unknown): error is LinearConnectionTruncatedError {
-  return error instanceof LinearConnectionTruncatedError;
-}
-
-function nodesFromConnection(value: unknown, connectionName: string): unknown[] {
-  if (!isConnection(value)) return [];
-  if (isRecord(value.pageInfo) && value.pageInfo.hasNextPage === true) {
-    throw new LinearConnectionTruncatedError(connectionName);
-  }
-  return value.nodes;
-}
-
 function isConnection(value: unknown): value is { nodes: unknown[]; pageInfo?: unknown } {
   return isRecord(value) && Array.isArray(value.nodes);
+}
+
+function connectionSnapshot(value: unknown): {
+  nodes: unknown[];
+  pageInfo: LinearPageInfo | null;
+  isConnection: boolean;
+} {
+  if (!isConnection(value)) return { nodes: [], pageInfo: null, isConnection: false };
+  return { nodes: value.nodes, pageInfo: connectionPageInfo(value.pageInfo), isConnection: true };
+}
+
+function connectionPageInfo(value: unknown): LinearPageInfo | null {
+  if (!isRecord(value) || typeof value.hasNextPage !== "boolean") return null;
+  return {
+    hasNextPage: value.hasNextPage,
+    endCursor:
+      typeof value.endCursor === "string" || value.endCursor === null ? value.endCursor : null,
+  };
+}
+
+function connectionFromNodes(nodes: unknown[]): { nodes: unknown[]; pageInfo: LinearPageInfo } {
+  return { nodes, pageInfo: { hasNextPage: false, endCursor: null } };
+}
+
+function degradedConnection(
+  input: { source: string; connection: string },
+  reason: string,
+  cursor?: string | null,
+): LinearDegradedConnection {
+  return {
+    source: input.source,
+    connection: input.connection,
+    reason,
+    ...(cursor !== undefined ? { cursor } : {}),
+  };
+}
+
+function issueSource(issue: Record<string, unknown>): string {
+  const identifier = typeof issue.identifier === "string" ? issue.identifier : "unknown";
+  const id = typeof issue.id === "string" ? issue.id : "unknown";
+  return `issue ${identifier} (${id})`;
+}
+
+function projectSource(project: Record<string, unknown>): string {
+  const slug = typeof project.slugId === "string" ? project.slugId : "unknown";
+  const id = typeof project.id === "string" ? project.id : "unknown";
+  return `project ${slug} (${id})`;
+}
+
+function teamSource(team: Record<string, unknown>): string {
+  const key = typeof team.key === "string" ? team.key : "unknown";
+  const id = typeof team.id === "string" ? team.id : "unknown";
+  return `team ${key} (${id})`;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string {

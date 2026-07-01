@@ -16,6 +16,7 @@ import {
   withDerivedMaxInFlight,
   type ClockPort,
   type TimerHandle,
+  type UsageTotals,
 } from "@lorenz/domain";
 import type {
   RuntimeAppStatus,
@@ -358,6 +359,7 @@ export class LorenzRuntime {
 
   snapshot(): RuntimeSnapshot {
     const orchestration = this.orchestrator.snapshot();
+    const now = this.clock.now();
     return this.projection.snapshot({
       appStatus: this.appStatus,
       workflowPath: this.workflow.path,
@@ -380,7 +382,7 @@ export class LorenzRuntime {
       reserving: orchestration.reserving.map((entry) => ({ ...entry })),
       retrying: orchestration.retrying.map(runtimeRetryEntry),
       blocked: orchestration.blocked.map((entry) => ({ ...entry })),
-      usageTotals: orchestration.usageTotals,
+      usageTotals: liveSnapshotUsageTotals(orchestration.usageTotals, orchestration.running, now),
       rateLimits: orchestration.rateLimits,
       claimStore: orchestration.claimStore,
       logFile: this.workflow.settings.logging.logFile,
@@ -1622,6 +1624,21 @@ function runtimeRunningEntry(entry: RunningEntry, runId: string | undefined): Ru
     workspacePath: entry.workspacePath,
     usageTotals: { ...entry.usageTotals },
     retryAttempt: entry.retryAttempt,
+  };
+}
+
+function liveSnapshotUsageTotals(
+  usageTotals: UsageTotals,
+  running: RunningEntry[],
+  now: Date,
+): UsageTotals {
+  const activeSeconds = running.reduce(
+    (total, entry) => total + Math.max(0, (now.getTime() - entry.startedAt.getTime()) / 1000),
+    0,
+  );
+  return {
+    ...usageTotals,
+    secondsRunning: usageTotals.secondsRunning + activeSeconds,
   };
 }
 
