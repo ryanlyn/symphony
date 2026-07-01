@@ -90,6 +90,50 @@ test("claim — preferred slot honored on retry", () => {
   assert.equal(claimed?.retryAttempt, 1);
 });
 
+test("retry projection returns cloned entries for requested issues only", () => {
+  const orchestrator = new Orchestrator(parseConfig({ agent: { ensemble_size: 3 } }));
+  const issue = makeIssue();
+  const other = makeIssue({ id: "other", identifier: "MT-OTHER" });
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 2), {
+    issueId: issue.id,
+    identifier: issue.identifier,
+    attempt: 1,
+    monotonicDeadlineMs: 200,
+    dueAtIso: "2026-01-01T00:00:00.200Z",
+    slotIndex: 2,
+    error: "failed",
+  });
+  orchestrator.state.retryAttempts.set(slotKey(issue.id, 0), {
+    issueId: issue.id,
+    identifier: issue.identifier,
+    attempt: 2,
+    monotonicDeadlineMs: 100,
+    dueAtIso: "2026-01-01T00:00:00.100Z",
+    slotIndex: 0,
+    error: "failed again",
+  });
+  orchestrator.state.retryAttempts.set(slotKey(other.id, 0), {
+    issueId: other.id,
+    identifier: other.identifier,
+    attempt: 1,
+    monotonicDeadlineMs: 300,
+    dueAtIso: "2026-01-01T00:00:00.300Z",
+    slotIndex: 0,
+  });
+
+  const issueRetries = orchestrator.retryingForIssue(issue.id);
+  assert.deepEqual(
+    issueRetries.map((retry) => retry.slotIndex),
+    [0, 2],
+  );
+  issueRetries[0]!.attempt = 99;
+  assert.equal(orchestrator.retryingForIssue(issue.id)[0]?.attempt, 2);
+
+  const retryByIssue = orchestrator.retryingByIssueIds([issue.id]);
+  assert.deepEqual([...retryByIssue.keys()], [issue.id]);
+  assert.equal(retryByIssue.get(issue.id)?.slotIndex, 0);
+});
+
 test("claim — non-existent retry does not interfere with fresh claim", () => {
   const settings = parseConfig();
   const orchestrator = new Orchestrator(settings);
