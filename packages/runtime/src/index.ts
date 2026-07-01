@@ -10,6 +10,8 @@ import { workflowFileChanged, workflowStampsEqual } from "@lorenz/workflow";
 import {
   durationMs,
   errorMessage,
+  redactDiagnosticText,
+  redactDiagnosticValue,
   systemClock,
   withDerivedMaxInFlight,
   type ClockPort,
@@ -603,7 +605,7 @@ export class LorenzRuntime {
     } catch (error) {
       this.pollStatus = "error";
       this.appStatus = "error";
-      this.lastError = errorMessage(error);
+      this.lastError = redactDiagnosticText(errorMessage(error));
       this.addEvent("poll_error", this.lastError);
       throw error;
     } finally {
@@ -718,7 +720,7 @@ export class LorenzRuntime {
     const message = `claim_owner_heartbeat_failed ${errorMessage(error)}`;
     this.stopped = true;
     this.appStatus = "error";
-    this.lastError = message;
+    this.lastError = redactDiagnosticText(message);
     for (const handle of [...this.activeRuns.values()]) {
       this.markStoppedClaimSettlementPending(handle);
       handle.finishExternally(null, { abandonClaimOnSettlement: true });
@@ -910,7 +912,7 @@ export class LorenzRuntime {
     const message = `claim_cancel_failed ${errorMessage(cancelError)}`;
     if (this.appStatus !== "error") {
       this.appStatus = "error";
-      this.lastError = message;
+      this.lastError = redactDiagnosticText(message);
     }
     this.addEvent("poll_error", message);
   }
@@ -1107,7 +1109,7 @@ export class LorenzRuntime {
       const message = `claim_abandon_failed ${errorMessage(error)}`;
       if (this.appStatus !== "error") {
         this.appStatus = "error";
-        this.lastError = message;
+        this.lastError = redactDiagnosticText(message);
       }
       this.addEvent("poll_error", message);
     } finally {
@@ -1443,7 +1445,7 @@ export class LorenzRuntime {
   }
 
   private recordHistory(entry: RuntimeRunHistoryEntry): void {
-    this.projection.recordRunHistory(entry);
+    this.projection.recordRunHistory(redactDiagnosticValue(entry));
   }
 
   private recordRetryTimerError(error: unknown): void {
@@ -1472,17 +1474,18 @@ export class LorenzRuntime {
   private markRuntimeError(message: string): void {
     if (this.appStatus !== "error") {
       this.appStatus = "error";
-      this.lastError = message;
+      this.lastError = redactDiagnosticText(message);
     }
   }
 
   private addEvent(type: RuntimeEventType, message: string): void {
-    const event = { type, message, at: this.clock.now().toISOString() };
+    const safeMessage = redactDiagnosticText(message);
+    const event = { type, message: safeMessage, at: this.clock.now().toISOString() };
     this.projection.recordEvent(event);
     void this.appendLogEvent(this.workflow.settings.logging.logFile, {
       at: event.at,
       event: type,
-      message,
+      message: safeMessage,
     }).catch((err) => {
       process.stderr.write(`appendLogEvent failed: ${err}\n`);
     });
@@ -1535,7 +1538,7 @@ export class LorenzRuntime {
     const coalesced = this.pollStatus === "checking";
     if (!coalesced) {
       this.pollOnce().catch((error) => {
-        this.lastError = errorMessage(error);
+        this.lastError = redactDiagnosticText(errorMessage(error));
         this.addEvent("refresh_error", this.lastError);
       });
     }
@@ -1589,9 +1592,9 @@ function buildRunHistoryEntry(input: BuildRunHistoryEntryInput): RuntimeRunHisto
     startedAt: input.startedAt,
     endedAt: input.endedAt,
     durationMs: input.durationMs,
-    ...(input.error !== undefined ? { error: input.error } : {}),
+    ...(input.error !== undefined ? { error: redactDiagnosticText(input.error) } : {}),
     lastEvent: entry?.lastAgentEvent ?? input.fallbackLastEvent,
-    lastMessage: entry?.lastAgentMessage,
+    lastMessage: redactDiagnosticValue(entry?.lastAgentMessage),
     lastEventAt: entry?.lastAgentTimestamp?.toISOString() ?? null,
     retryAttempt: entry?.retryAttempt,
   };
@@ -1614,7 +1617,7 @@ function runtimeRunningEntry(entry: RunningEntry, runId: string | undefined): Ru
     turnCount: entry.turnCount,
     startedAt: entry.startedAt.toISOString(),
     lastEvent: entry.lastAgentEvent,
-    lastMessage: entry.lastAgentMessage,
+    lastMessage: redactDiagnosticValue(entry.lastAgentMessage),
     lastEventAt: entry.lastAgentTimestamp?.toISOString() ?? null,
     workspacePath: entry.workspacePath,
     usageTotals: { ...entry.usageTotals },
@@ -1641,7 +1644,7 @@ function runtimeRetryEntry(entry: {
     attempt: entry.attempt,
     dueAtIso: entry.dueAtIso,
     monotonicDeadlineMs: entry.monotonicDeadlineMs,
-    ...(entry.error !== undefined ? { error: entry.error } : {}),
+    ...(entry.error !== undefined ? { error: redactDiagnosticText(entry.error) } : {}),
     ...(entry.slotIndex !== undefined ? { slotIndex: entry.slotIndex } : {}),
     ...(entry.workerHost !== undefined ? { workerHost: entry.workerHost } : {}),
     ...(entry.workspacePath !== undefined ? { workspacePath: entry.workspacePath } : {}),
