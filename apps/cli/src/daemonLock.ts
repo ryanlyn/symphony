@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { isOneOf, isRecord } from "@lorenz/domain";
+import { createOpaqueBearerToken } from "@lorenz/mcp";
 import { createMutex, type Mutex } from "@lorenz/worker-pool";
 
 import type {
@@ -23,7 +24,7 @@ const MUTATION_LOCK_RETRY_MS = 10;
 const MUTATION_LOCK_MAX_RETRY_MS = 250;
 const MUTATION_LOCK_STALE_MS = 30_000;
 const MUTATION_LOCK_TIMEOUT_MS = 120_000;
-const DAEMON_ENDPOINT_KINDS = ["http", "socket"] as const;
+const DAEMON_ENDPOINT_KINDS = ["http", "socket", "none"] as const;
 
 /** @beta */
 export type DaemonEndpoint = LeadershipEndpoint;
@@ -34,6 +35,7 @@ export interface DaemonLockRecord extends DaemonIdentity, LeadershipLeaseRecord 
   version: typeof DAEMON_LOCK_VERSION;
   lockPath: string;
   endpoint: DaemonEndpoint;
+  controlToken: string | null;
   heartbeatAt: string;
 }
 
@@ -50,7 +52,9 @@ export interface AcquireDaemonLockOptions {
   lockPath: string;
   identity: DaemonIdentity;
   endpoint: DaemonEndpoint;
+  controlToken?: string | undefined;
   now?: Date | undefined;
+  replaceStale?: boolean | undefined;
   staleAfterMs?: number | undefined;
 }
 
@@ -75,10 +79,41 @@ export function createDaemonIdentity(options: CreateDaemonIdentityOptions): Daem
   };
 }
 
-export function daemonLockPath(workspaceRoot: string, workflowPath: string): string {
-  const normalizedWorkflow = canonicalPath(workflowPath);
-  const suffix = createHash("sha256").update(normalizedWorkflow).digest("hex");
-  return path.join(canonicalPath(workspaceRoot), ".lorenz", "daemon", `${suffix}.lock.json`);
+export function daemonLockPath(workflowPath: string): string {
+  const suffix = daemonWorkflowKey(workflowPath);
+  return path.join(
+    path.dirname(canonicalPath(workflowPath)),
+    ".lorenz",
+    "daemon",
+    `${suffix}.lock.json`,
+  );
+}
+
+export function daemonWorkflowKey(workflowPath: string): string {
+  return createHash("sha256").update(canonicalPath(workflowPath)).digest("hex");
+}
+
+/**
+ * Unix control socket path. Kept well under the OS sun_path limit (~104 bytes) by living in a short
+ * per-user runtime dir rather than next to the (possibly deeply nested) workflow file. The lease
+ * records this absolute path, so the client discovers it from the lock instead of re-deriving it.
+ */
+export function daemonControlSocketPath(workflowPath: string): string {
+  const suffix = daemonWorkflowKey(workflowPath).slice(0, 16);
+  const uid = typeof process.getuid === "function" ? process.getuid() : 0;
+  // Prefer the OS per-user runtime dir (XDG_RUNTIME_DIR is 0700 and owned by the user, so a
+  // co-tenant cannot squat the path). Fall back to tmpdir, which the server hardens by verifying
+  // the runtime dir's ownership and mode before binding (tmpdir is world-writable on Linux).
+  const base = process.env.XDG_RUNTIME_DIR || os.tmpdir();
+  return path.join(base, `lorenz-${uid}`, `${suffix}.sock`);
+}
+
+export function daemonWorkspacePath(workspaceRoot: string, ...segments: string[]): string {
+  return path.join(canonicalPath(workspaceRoot), ".lorenz", ...segments);
+}
+
+function createDaemonControlToken(): string {
+  return createOpaqueBearerToken();
 }
 
 export async function acquireDaemonLock(
@@ -135,6 +170,20 @@ export class DaemonLock implements LeadershipLease<DaemonLockRecord> {
     });
   }
 
+  async updateEndpoint(endpoint: DaemonEndpoint, now = new Date()): Promise<DaemonLockRecord> {
+    return this.operationMutex.runExclusive(async () => {
+      return withDaemonLockMutation(this.lockPath, async () => {
+        const current = await readDaemonLock(this.lockPath);
+        if (!current || current.ownerId !== this.record.ownerId) {
+          throw new Error("daemon_lock_lost");
+        }
+        this.record = { ...current, endpoint: { ...endpoint }, heartbeatAt: now.toISOString() };
+        await writeDaemonLockRecord(this.lockPath, this.record);
+        return this.snapshot();
+      });
+    });
+  }
+
   async release(): Promise<boolean> {
     return this.operationMutex.runExclusive(async () => {
       return withDaemonLockMutation(this.lockPath, async () => {
@@ -160,7 +209,13 @@ export class LocalFileDaemonLeadershipStore implements LeadershipStore<
     options: AcquireDaemonLockOptions,
   ): Promise<AcquireLocalFileDaemonLeadershipResult> {
     const now = options.now ?? new Date();
-    const record = daemonLockRecord(options.lockPath, options.identity, options.endpoint, now);
+    const record = daemonLockRecord(
+      options.lockPath,
+      options.identity,
+      options.endpoint,
+      options.controlToken ?? createDaemonControlToken(),
+      now,
+    );
     await fs.mkdir(path.dirname(options.lockPath), { recursive: true, mode: 0o700 });
     return withDaemonLockMutation(options.lockPath, async () => {
       const created = await writeExclusiveJsonFile(options.lockPath, record);
@@ -168,10 +223,18 @@ export class LocalFileDaemonLeadershipStore implements LeadershipStore<
         return { status: "acquired", lease: new DaemonLock(options.lockPath, record) };
       }
       const existing = await readDaemonLock(options.lockPath);
+      const stale = existing ? this.isStale(existing, now, options.staleAfterMs ?? 60_000) : true;
+      if (stale && options.replaceStale && existing && staleOwnerCanBeReplaced(existing)) {
+        await fs.rm(options.lockPath, { force: true });
+        const replaced = await writeExclusiveJsonFile(options.lockPath, record);
+        if (replaced) {
+          return { status: "acquired", lease: new DaemonLock(options.lockPath, record) };
+        }
+      }
       return {
         status: "conflict",
         record: existing,
-        stale: existing ? this.isStale(existing, now, options.staleAfterMs ?? 60_000) : true,
+        stale,
       };
     });
   }
@@ -185,10 +248,22 @@ export class LocalFileDaemonLeadershipStore implements LeadershipStore<
   }
 }
 
+function staleOwnerCanBeReplaced(record: DaemonLockRecord): boolean {
+  if (record.hostname !== os.hostname()) return false;
+  if (!Number.isInteger(record.pid) || record.pid <= 0) return false;
+  try {
+    process.kill(record.pid, 0);
+    return false;
+  } catch (error) {
+    return isNodeError(error) && error.code === "ESRCH";
+  }
+}
+
 function daemonLockRecord(
   lockPath: string,
   identity: DaemonIdentity,
   endpoint: DaemonEndpoint,
+  controlToken: string,
   now: Date,
 ): DaemonLockRecord {
   return {
@@ -196,6 +271,7 @@ function daemonLockRecord(
     ...identity,
     lockPath,
     endpoint,
+    controlToken,
     heartbeatAt: now.toISOString(),
   };
 }
@@ -278,6 +354,7 @@ function parseDaemonLockRecord(raw: string, lockPath: string): DaemonLockRecord 
     workspaceRoot: record.workspaceRoot,
     lockPath,
     endpoint: { kind: record.endpoint.kind, address: record.endpoint.address },
+    controlToken: typeof record.controlToken === "string" ? record.controlToken : null,
     heartbeatAt: record.heartbeatAt,
   };
 }
@@ -324,14 +401,13 @@ async function withDaemonLockMutation<T>(
 }
 
 async function tryAcquireMutationLock(mutationPath: string, token: string): Promise<boolean> {
-  return writeExclusiveJsonFile(mutationPath, {
-    token,
-    pid: process.pid,
-    createdAt: new Date().toISOString(),
-  });
+  return writeExclusiveJsonFile(mutationPath, mutationLockValue(token));
 }
 
 async function releaseMutationLock(mutationPath: string, token: string): Promise<boolean> {
+  // Only ever remove an entry that still carries our token: check first, then unlink. Stale
+  // takeover (a foreign token) is serialized by the recovery lock in removeStaleMutationLock so
+  // two contenders cannot both reach this unlink for the same stale entry.
   const record = await readMutationLock(mutationPath);
   if (record?.token !== token) return false;
   await fs.rm(mutationPath, { force: true });
@@ -342,22 +418,95 @@ async function removeStaleMutationLock(mutationPath: string, now = new Date()): 
   const record = await readMutationLock(mutationPath);
   if (!record) return removeMalformedMutationLockIfStale(mutationPath, now);
   if (!mutationLockRecordIsStale(record, now)) return false;
-  return releaseMutationLock(mutationPath, record.token);
+  // Serialize stale takeover through the recovery lock - the same guard the malformed path
+  // uses - so two contenders cannot both observe one stale entry and race their unlink against
+  // a fresh acquirer's O_EXCL create (which would let two processes hold the mutation lock and
+  // split-brain daemon leadership). Re-read under the lock before removing: the entry may have
+  // been cleared (ENOENT) or legitimately reacquired (no longer stale) while we waited.
+  //
+  // Residual: a holder that keeps the mutation lock past MUTATION_LOCK_STALE_MS (a hung or
+  // suspended process) can still race its own unlink against this recovery. That window is
+  // irreducible for an O_EXCL lockfile and would need an OS advisory lock (flock/fcntl) to
+  // close; mutation operations are short file writes, so exceeding the stale window is itself
+  // the crash/hang signal this recovery exists to handle.
+  return withMutationRecoveryLock(mutationPath, async () => {
+    const current = await readMutationLock(mutationPath);
+    if (!current) return true;
+    if (!mutationLockRecordIsStale(current, now)) return false;
+    return releaseMutationLock(mutationPath, current.token);
+  });
 }
 
 async function removeMalformedMutationLockIfStale(
   mutationPath: string,
   now = new Date(),
 ): Promise<boolean> {
+  return withMutationRecoveryLock(mutationPath, async () => {
+    try {
+      const stat = await fs.stat(mutationPath);
+      if (now.getTime() - stat.mtimeMs <= MUTATION_LOCK_STALE_MS) return false;
+      if (await readMutationLock(mutationPath)) return false;
+      await fs.rm(mutationPath, { force: true });
+      return true;
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT") return true;
+      throw error;
+    }
+  });
+}
+
+async function withMutationRecoveryLock<T>(
+  mutationPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const recoveryPath = `${mutationPath}.recovery`;
+  const token = randomUUID();
+  const startedAt = Date.now();
+  let retryDelayMs = MUTATION_LOCK_RETRY_MS;
+  while (!(await writeExclusiveJsonFile(recoveryPath, mutationLockValue(token)))) {
+    if (await removeStaleMutationRecoveryLock(recoveryPath)) {
+      retryDelayMs = MUTATION_LOCK_RETRY_MS;
+      continue;
+    }
+    if (Date.now() - startedAt > MUTATION_LOCK_TIMEOUT_MS) {
+      throw new Error("daemon_lock_mutation_recovery_timeout");
+    }
+    await sleep(retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, MUTATION_LOCK_MAX_RETRY_MS);
+  }
   try {
-    const stat = await fs.stat(mutationPath);
+    return await operation();
+  } finally {
+    await releaseMutationLock(recoveryPath, token);
+  }
+}
+
+async function removeStaleMutationRecoveryLock(
+  recoveryPath: string,
+  now = new Date(),
+): Promise<boolean> {
+  const record = await readMutationLock(recoveryPath);
+  if (record) {
+    if (!mutationLockRecordIsStale(record, now)) return false;
+    return releaseMutationLock(recoveryPath, record.token);
+  }
+  try {
+    const stat = await fs.stat(recoveryPath);
     if (now.getTime() - stat.mtimeMs <= MUTATION_LOCK_STALE_MS) return false;
-    if (await readMutationLock(mutationPath)) return false;
-    throw new Error("daemon_lock_mutation_guard_malformed");
+    await fs.rm(recoveryPath, { force: true });
+    return true;
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") return true;
     throw error;
   }
+}
+
+function mutationLockValue(token: string): { token: string; pid: number; createdAt: string } {
+  return {
+    token,
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function mutationLockRecordIsStale(record: { createdAt: string }, now = new Date()): boolean {
