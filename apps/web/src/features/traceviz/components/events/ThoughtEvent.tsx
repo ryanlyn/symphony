@@ -29,18 +29,18 @@ export function ThoughtEvent({ event }: ThoughtEventProps) {
   };
 
   return (
-    <div className="border-l-4 border-accent-purple rounded-r-md bg-background/50 p-3">
+    <div className="border-l-2 border-accent/40 rounded-r-lg bg-background/50 p-3">
       {isLong ? (
         <div
           role="button"
           tabIndex={0}
-          className="flex w-full cursor-pointer items-start gap-2 bg-transparent p-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-purple/60"
+          className="flex w-full cursor-pointer items-start gap-2 bg-transparent p-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           aria-expanded={expanded}
           aria-label="Toggle thought details"
           onClick={handleToggleClick}
           onKeyDown={handleToggleKeyDown}
         >
-          <Brain aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent-purple" />
+          <Brain aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent/60" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
@@ -55,7 +55,7 @@ export function ThoughtEvent({ event }: ThoughtEventProps) {
         </div>
       ) : (
         <div className="flex items-start gap-2">
-          <Brain aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent-purple" />
+          <Brain aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent/60" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>

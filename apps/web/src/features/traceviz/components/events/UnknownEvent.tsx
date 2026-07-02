@@ -24,7 +24,7 @@ function formatRawPayload(raw: Record<string, unknown>): string {
 
 export function UnknownEvent({ event }: UnknownEventProps) {
   return (
-    <div className="border-l-4 border-muted rounded-r-md bg-background/50 p-3">
+    <div className="border-l-2 border-faint rounded-r-lg bg-background/50 p-3">
       <div className="flex items-start gap-2">
         <CircleHelp aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
         <div className="min-w-0 flex-1">

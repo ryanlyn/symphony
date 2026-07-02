@@ -19,19 +19,21 @@ interface StatCardProps {
   label: string;
   value: string;
   icon: ReactNode;
-  color: string;
+  tint: string;
 }
 
-function StatCard({ label, value, icon, color }: StatCardProps) {
+function StatCard({ label, value, icon, tint }: StatCardProps) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center gap-2">
-        <div className={cn("text-sm", color)} aria-hidden="true">
+    <div className="rounded-2xl border border-border bg-gradient-to-b from-card-2 to-card p-4">
+      <div className="flex items-center gap-2.5">
+        <span className={cn("grid h-7 w-7 place-items-center rounded-lg", tint)} aria-hidden="true">
           {icon}
-        </div>
-        <span className="text-xs text-muted">{label}</span>
+        </span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">
+          {label}
+        </span>
       </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
+      <div className="mt-2.5 text-2xl font-semibold tracking-tight tabular-nums">{value}</div>
     </div>
   );
 }
@@ -45,42 +47,42 @@ export function TraceSummary({ stats }: TraceSummaryProps) {
       label: "Duration",
       value: formatDuration(stats.durationMs),
       icon: <Clock className="h-4 w-4" />,
-      color: "text-accent-blue",
+      tint: "bg-accent-cyan/10 text-accent-cyan",
     },
     {
       label: "Turns",
       value: stats.totalTurns.toString(),
       icon: <RotateCcw className="h-4 w-4" />,
-      color: "text-accent-purple",
+      tint: "bg-accent/10 text-accent",
     },
     {
-      label: "Input Tokens",
+      label: "Input tokens",
       value: formatNumber(stats.tokenUsage.inputTokens),
       icon: <ArrowDownToLine className="h-4 w-4" />,
-      color: "text-accent-green",
+      tint: "bg-accent/10 text-accent",
     },
     {
-      label: "Output Tokens",
+      label: "Output tokens",
       value: formatNumber(stats.tokenUsage.outputTokens),
       icon: <ArrowUpFromLine className="h-4 w-4" />,
-      color: "text-accent-orange",
+      tint: "bg-accent-amber/10 text-accent-amber",
     },
     {
-      label: "Tool Calls",
+      label: "Tool calls",
       value: totalToolCalls.toString(),
       icon: <Wrench className="h-4 w-4" />,
-      color: "text-foreground",
+      tint: "bg-surface text-muted",
     },
     {
       label: "Errors",
       value: totalErrors.toString(),
       icon: <AlertTriangle className="h-4 w-4" />,
-      color: totalErrors > 0 ? "text-accent-red" : "text-muted",
+      tint: totalErrors > 0 ? "bg-accent-coral/10 text-accent-coral" : "bg-surface text-faint",
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-6">
       {cards.map((card) => (
         <StatCard key={card.label} {...card} />
       ))}

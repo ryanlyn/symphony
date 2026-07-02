@@ -9,13 +9,13 @@ interface TurnCompletedEventProps {
 
 export function TurnCompletedEvent({ event }: TurnCompletedEventProps) {
   return (
-    <div className="border-l-4 border-accent-green rounded-r-md bg-background/50 p-3">
+    <div className="border-l-2 border-accent rounded-r-lg bg-background/50 p-3">
       <div className="flex items-start gap-2">
-        <CheckCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent-green" />
+        <CheckCircle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted">{formatTimestamp(event.timestamp)}</span>
-            <span className="text-xs font-medium text-accent-green">Turn completed</span>
+            <span className="text-xs font-medium text-accent">Turn completed</span>
           </div>
           <div className="mt-1 flex items-center gap-3 text-xs text-muted">
             {event.usage && (

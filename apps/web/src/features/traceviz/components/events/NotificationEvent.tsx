@@ -12,13 +12,13 @@ export function NotificationEvent({ event }: NotificationEventProps) {
   return (
     <div
       className={cn(
-        "border-l-4 rounded-r-md bg-background/50 p-3",
-        isFailed ? "border-accent-red" : "border-muted",
+        "border-l-2 rounded-r-lg bg-background/50 p-3",
+        isFailed ? "border-accent-coral" : "border-faint",
       )}
     >
       <div className="flex items-start gap-2">
         {isFailed ? (
-          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent-red" />
+          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-accent-coral" />
         ) : (
           <Info aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
         )}

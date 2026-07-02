@@ -27,8 +27,8 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
   return (
     <div
       className={cn(
-        "border-l-4 rounded-r-md bg-background/50 p-3",
-        event.isError ? "border-accent-red" : "border-accent-orange",
+        "border-l-2 rounded-r-lg bg-background/50 p-3",
+        event.isError ? "border-accent-coral" : "border-accent-amber",
       )}
     >
       <div
@@ -37,8 +37,8 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
         className={cn(
           "flex w-full cursor-pointer items-start gap-2 bg-transparent p-0 text-left focus:outline-none focus-visible:ring-2",
           event.isError
-            ? "focus-visible:ring-accent-red/60"
-            : "focus-visible:ring-accent-orange/60",
+            ? "focus-visible:ring-accent-coral/60"
+            : "focus-visible:ring-accent-amber/60",
         )}
         aria-expanded={expanded}
         aria-label={`Toggle ${event.toolName} details`}
@@ -49,7 +49,7 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
           aria-hidden="true"
           className={cn(
             "mt-0.5 h-4 w-4 shrink-0",
-            event.isError ? "text-accent-red" : "text-accent-orange",
+            event.isError ? "text-accent-coral" : "text-accent-amber",
           )}
         />
         <div className="min-w-0 flex-1">
@@ -60,7 +60,7 @@ export function ToolCallEvent({ event }: ToolCallEventProps) {
               <span className="text-xs text-muted">{formatDuration(event.durationMs)}</span>
             )}
             {event.isError && (
-              <span className="rounded-full bg-accent-red/20 px-1.5 py-0.5 text-xs text-accent-red">
+              <span className="rounded-full bg-accent-coral/20 px-1.5 py-0.5 text-xs text-accent-coral">
                 error
               </span>
             )}
