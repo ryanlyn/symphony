@@ -4,6 +4,78 @@ import { cn } from "../../lib/utils";
 
 import { SafeExternalLink } from "./SafeExternalLink";
 
+/** Miniature line chart rendered from a plain series of values. */
+export function Sparkline({ values, className }: { values: number[]; className?: string }) {
+  if (values.length < 2) return null;
+  const width = 84;
+  const height = 28;
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const span = max - min || 1;
+  const points = values
+    .map((v, i) => {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - 3 - ((v - min) / span) * (height - 6);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox={`0 0 ${width} ${height}`}
+      className={cn("h-7 w-[84px]", className)}
+      fill="none"
+    >
+      <polyline
+        points={points}
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Unboxed hero figure with a color-keyed label, optional caption and chart. */
+export function HeroStat({
+  label,
+  value,
+  sub,
+  dotClass,
+  chart,
+  valueClass = "text-[34px]",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  dotClass: string;
+  chart?: React.ReactNode;
+  valueClass?: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-xs text-muted">
+        <span className={cn("h-2 w-2 rounded-[3px]", dotClass)} />
+        {label}
+      </div>
+      <div className="mt-1 flex items-end gap-3">
+        <div className={cn("font-semibold leading-none tracking-tight tabular-nums", valueClass)}>
+          {value}
+        </div>
+        {chart}
+      </div>
+      {sub && <div className="mt-1.5 text-xs text-faint">{sub}</div>}
+    </div>
+  );
+}
+
+export function HeroDivider() {
+  return (
+    <div className="w-px self-stretch bg-gradient-to-b from-transparent via-border-strong to-transparent" />
+  );
+}
+
 /** Bordered section container with a colored marker, title, and count badge. */
 export function SectionCard({
   title,
@@ -17,8 +89,8 @@ export function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-border bg-card">
-      <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+    <section className="overflow-hidden rounded-2xl border border-border bg-card/70 backdrop-blur-md">
+      <div className="flex items-center gap-2.5 border-b border-border px-4 py-2.5">
         <span className={cn("h-2 w-2 rounded-[3px]", dotClass)} />
         <h3 className="text-[13px] font-semibold text-foreground">{title}</h3>
         <span className="rounded-full bg-surface px-2 py-px text-[11px] tabular-nums text-muted">
@@ -32,7 +104,7 @@ export function SectionCard({
 
 export function Th({ children }: { children: React.ReactNode }) {
   return (
-    <th className="bg-surface/40 px-4 py-2 text-left text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">
+    <th className="bg-surface/40 px-4 py-1.5 text-left text-[10.5px] font-semibold uppercase tracking-[0.09em] text-faint">
       {children}
     </th>
   );

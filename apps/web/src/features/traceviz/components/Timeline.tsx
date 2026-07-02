@@ -5,7 +5,6 @@ import {
   ChevronRight,
   ArrowUpDown,
   ArrowUp,
-  ChevronUp,
   Loader2,
 } from "lucide-react";
 
@@ -201,59 +200,49 @@ export function Timeline({ events, loading }: TimelineProps) {
         </div>
       </div>
 
-      {grouped.map((group) => {
-        const isExpanded = expandedTurns.has(group.turnIndex);
-        return (
-          <div
-            key={group.turnIndex}
-            className="rounded-2xl border border-border bg-card overflow-hidden"
-          >
-            <button
-              onClick={() => toggleTurn(group.turnIndex)}
-              aria-expanded={isExpanded}
-              className={cn(
-                "flex w-full items-center gap-3 px-4 py-2.5 text-left",
-                "hover:bg-accent/[0.04] transition-colors",
-              )}
-            >
-              <span className="grid h-6 min-w-6 place-items-center rounded-md bg-accent/10 px-1.5 font-mono text-[11px] font-medium text-accent">
-                {group.turnIndex}
-              </span>
-              <span className="text-sm font-medium">Turn {group.turnIndex}</span>
-              <span className="rounded-full bg-surface px-2 py-px text-[11px] tabular-nums text-faint">
-                {group.events.length} events
-              </span>
-              <ChevronRight
+      <div className="overflow-hidden rounded-2xl border border-border bg-card/70 backdrop-blur-md">
+        {grouped.map((group) => {
+          const isExpanded = expandedTurns.has(group.turnIndex);
+          return (
+            <div key={group.turnIndex} className="border-b border-border/80 last:border-b-0">
+              <button
+                onClick={() => toggleTurn(group.turnIndex)}
+                aria-expanded={isExpanded}
                 className={cn(
-                  "ml-auto h-4 w-4 text-muted transition-transform",
-                  isExpanded && "rotate-90",
+                  "flex w-full items-center gap-2.5 bg-surface/30 px-4 py-1.5 text-left",
+                  "hover:bg-accent/[0.05] transition-colors",
                 )}
-              />
-            </button>
-            <div
-              className={cn(
-                "grid transition-[grid-template-rows,opacity] duration-200",
-                isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-              )}
-            >
-              <div className="overflow-hidden">
-                <div className="space-y-2 px-4 pb-3">
+              >
+                <span className="grid h-5 min-w-5 place-items-center rounded-md bg-accent/10 px-1.5 font-mono text-[11px] font-medium text-accent">
+                  {group.turnIndex}
+                </span>
+                <span className="text-[13px] font-medium">Turn {group.turnIndex}</span>
+                <span className="rounded-full bg-surface px-2 py-px text-[11px] tabular-nums text-faint">
+                  {group.events.length} events
+                </span>
+                <ChevronRight
+                  className={cn(
+                    "ml-auto h-3.5 w-3.5 text-muted transition-transform",
+                    isExpanded && "rotate-90",
+                  )}
+                />
+              </button>
+              <div
+                className={cn(
+                  "grid transition-[grid-template-rows,opacity] duration-200",
+                  isExpanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+                )}
+              >
+                <div className="overflow-hidden">
                   {group.events.map((item) => (
                     <TimelineEventRow key={eventKey(item)} event={item.event} />
                   ))}
-                  <button
-                    onClick={() => toggleTurn(group.turnIndex)}
-                    className="flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1 text-xs text-muted transition-colors hover:border-border-strong hover:text-foreground"
-                  >
-                    <ChevronUp className="h-3 w-3" />
-                    Collapse turn
-                  </button>
                 </div>
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

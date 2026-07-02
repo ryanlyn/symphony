@@ -10,9 +10,9 @@ function NavLink({ href, active, children }: { href: string; active: boolean; ch
     <a
       href={href}
       className={cn(
-        "rounded-lg px-3.5 py-1.5 text-sm transition-colors",
+        "rounded-full px-4 py-1.5 text-[13px] transition-colors",
         active
-          ? "bg-accent/10 text-accent shadow-[inset_0_0_0_1px_rgba(45,212,168,0.25)]"
+          ? "bg-gradient-to-br from-accent to-[#57c7b0] font-semibold text-[#071310]"
           : "text-muted hover:text-foreground",
       )}
     >
@@ -28,40 +28,35 @@ export function App() {
   return (
     <div className="min-h-screen text-foreground">
       <div className="h-0.5 bg-gradient-to-r from-[#0e7d64] via-30% via-accent to-[#1c5f74]" />
-      <header className="sticky top-0 z-50 border-b border-border bg-background/90 backdrop-blur">
-        <div className="bg-gradient-to-b from-accent/[0.05] to-transparent">
-          <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
-            <a href="#/" className="flex items-center gap-2.5">
-              <img src={lorenzLogo} alt="" className="h-6 w-auto" />
-              <h1 className="text-base font-semibold tracking-tight">Lorenz</h1>
-              <span className="rounded-full border border-border px-2 py-px text-[11px] text-faint">
-                observability
-              </span>
-            </a>
-            <nav className="flex items-center gap-1">
-              <NavLink href="#/" active={route.view === "overview"}>
-                Overview
-              </NavLink>
-              <NavLink href="#/trace/" active={route.view === "trace"}>
-                Issues
-              </NavLink>
-            </nav>
-            <div
+      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-7xl items-center gap-7 px-4">
+          <a href="#/" className="flex items-center gap-2.5">
+            <img src={lorenzLogo} alt="" className="h-7 w-auto" />
+            <h1 className="text-[17px] font-semibold tracking-tight">Lorenz</h1>
+          </a>
+          <nav className="flex items-center gap-0.5 rounded-full border border-border bg-card/60 p-[3px]">
+            <NavLink href="#/" active={route.view === "overview"}>
+              Overview
+            </NavLink>
+            <NavLink href="#/trace/" active={route.view === "trace"}>
+              Issues
+            </NavLink>
+          </nav>
+          <div
+            className={cn(
+              "ml-auto flex items-center gap-2 text-xs",
+              opsConnected ? "text-muted" : "text-accent-amber",
+            )}
+          >
+            <span
               className={cn(
-                "ml-auto flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs",
-                opsConnected ? "text-muted" : "text-accent-amber",
+                "h-2 w-2 rounded-full",
+                opsConnected
+                  ? "bg-accent shadow-[0_0_10px_var(--color-accent)]"
+                  : "animate-pulse bg-accent-amber",
               )}
-            >
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  opsConnected
-                    ? "bg-accent shadow-[0_0_8px_var(--color-accent)]"
-                    : "animate-pulse bg-accent-amber",
-                )}
-              />
-              {opsConnected ? "Live stream" : "Connecting…"}
-            </div>
+            />
+            {opsConnected ? "Streaming live" : "Connecting…"}
           </div>
         </div>
       </header>

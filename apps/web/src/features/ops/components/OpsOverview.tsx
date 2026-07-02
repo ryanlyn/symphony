@@ -1,5 +1,4 @@
 import { useMemo, useRef } from "react";
-import { Activity, RefreshCw, AlertOctagon, Coins } from "lucide-react";
 
 import { cn, formatNumber, formatTimestamp } from "../../../lib/utils";
 import {
@@ -9,6 +8,9 @@ import {
   IssueLink,
   AgentChip,
   Pill,
+  HeroStat,
+  HeroDivider,
+  Sparkline,
 } from "../../../shared/components/ui";
 import type { OpsState, OpsRunningEntry, OpsRetryEntry, OpsBlockedEntry } from "../api/types";
 
@@ -25,61 +27,33 @@ interface SparkSample {
   tokens: number;
 }
 
-function Sparkline({ values, className }: { values: number[]; className: string }) {
-  if (values.length < 2) return null;
-  const width = 72;
-  const height = 24;
-  const max = Math.max(...values, 1);
-  const min = Math.min(...values, 0);
-  const span = max - min || 1;
-  const points = values
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * width;
-      const y = height - 3 - ((v - min) / span) * (height - 6);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+/** Two-segment input/output token split with a 2px surface gap between fills. */
+function TokenSplitBar({ input, output }: { input: number; output: number }) {
+  const total = input + output;
+  if (total === 0) return null;
+  const inPct = (input / total) * 100;
   return (
-    <svg
+    <div
+      className="flex h-1.5 w-full gap-[2px] overflow-hidden rounded-full"
       aria-hidden="true"
-      viewBox={`0 0 ${width} ${height}`}
-      className={cn("absolute right-4 bottom-4 h-6 w-[72px]", className)}
-      fill="none"
+      title={`${formatNumber(input)} in · ${formatNumber(output)} out`}
     >
-      <polyline
-        points={points}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+      <span className="rounded-full bg-accent-cyan" style={{ width: `${inPct}%` }} />
+      <span className="rounded-full bg-accent-cyan/35" style={{ width: `${100 - inPct}%` }} />
+    </div>
   );
 }
 
-interface MetricCardProps {
-  label: string;
-  value: string;
-  sub: string;
-  icon: React.ReactNode;
-  tint: string;
-  spark: number[];
-  sparkColor: string;
-}
-
-function MetricCard({ label, value, sub, icon, tint, spark, sparkColor }: MetricCardProps) {
+/** Thin proportional meter for comparing magnitudes within a table column. */
+function MiniMeter({ value, max, className }: { value: number; max: number; className: string }) {
+  const pct = max > 0 ? Math.max((value / max) * 100, 4) : 0;
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card-2 to-card p-4 transition-colors hover:border-border-strong">
-      <div className="flex items-center gap-2.5">
-        <span className={cn("grid h-7 w-7 place-items-center rounded-lg", tint)}>{icon}</span>
-        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-faint">
-          {label}
-        </span>
-      </div>
-      <div className="mt-2.5 text-3xl font-semibold tracking-tight tabular-nums">{value}</div>
-      <div className="mt-0.5 text-xs text-faint">{sub}</div>
-      <Sparkline values={spark} className={sparkColor} />
-    </div>
+    <span
+      className="mt-1 block h-[3px] w-16 overflow-hidden rounded-full bg-surface"
+      aria-hidden="true"
+    >
+      <span className={cn("block h-full rounded-full", className)} style={{ width: `${pct}%` }} />
+    </span>
   );
 }
 
@@ -105,9 +79,10 @@ function AttemptDots({ attempt }: { attempt: number }) {
 }
 
 const rowClass = "border-b border-border/60 last:border-b-0 hover:bg-accent/[0.03]";
-const cellClass = "px-4 py-2.5 align-middle";
+const cellClass = "px-4 py-2 align-middle";
 
 function RunningTable({ sessions }: { sessions: OpsRunningEntry[] }) {
+  const maxTokens = Math.max(...sessions.map((s) => s.tokens.total_tokens), 0);
   return (
     <SectionCard title="Running sessions" count={sessions.length} dotClass="bg-accent">
       {sessions.length === 0 ? (
@@ -145,6 +120,11 @@ function RunningTable({ sessions }: { sessions: OpsRunningEntry[] }) {
                   </td>
                   <td className={cn(cellClass, "font-mono text-[12.5px] tabular-nums")}>
                     {formatNumber(s.tokens.total_tokens)}
+                    <MiniMeter
+                      value={s.tokens.total_tokens}
+                      max={maxTokens}
+                      className="bg-accent-cyan/70"
+                    />
                   </td>
                   <td className={cn(cellClass, "font-mono text-[12.5px] text-faint")}>
                     {s.session_id ?? "n/a"}
@@ -281,7 +261,7 @@ export function OpsOverview({ state }: OpsOverviewProps) {
   const counts = state?.counts ?? { running: 0, retrying: 0, blocked: 0 };
   const usageTotals = state?.usage_totals ?? { input_tokens: 0, output_tokens: 0, total_tokens: 0 };
 
-  // Rolling client-side history of stream samples backing the KPI sparklines.
+  // Rolling client-side history of stream samples backing the hero sparklines.
   const historyRef = useRef<SparkSample[]>([]);
   const history = useMemo(() => {
     const samples = historyRef.current;
@@ -302,57 +282,55 @@ export function OpsOverview({ state }: OpsOverviewProps) {
   const due = nextDue(retrying);
   const blockedReason = topBlockedReason(state);
 
-  const metrics: MetricCardProps[] = [
-    {
-      label: "Running",
-      value: counts.running.toString(),
-      sub: counts.running > 0 ? `across ${workers} worker${workers === 1 ? "" : "s"}` : "all quiet",
-      icon: <Activity className="h-4 w-4" />,
-      tint: "bg-accent/10 text-accent",
-      spark: history.map((s) => s.running),
-      sparkColor: "text-accent",
-    },
-    {
-      label: "Retrying",
-      value: counts.retrying.toString(),
-      sub: due ? `next due ${due}` : "queue empty",
-      icon: <RefreshCw className="h-4 w-4" />,
-      tint: "bg-accent-amber/10 text-accent-amber",
-      spark: history.map((s) => s.retrying),
-      sparkColor: "text-accent-amber",
-    },
-    {
-      label: "Blocked",
-      value: counts.blocked.toString(),
-      sub: blockedReason ?? "nothing held",
-      icon: <AlertOctagon className="h-4 w-4" />,
-      tint: "bg-accent-coral/10 text-accent-coral",
-      spark: history.map((s) => s.blocked),
-      sparkColor: "text-accent-coral",
-    },
-    {
-      label: "Total tokens",
-      value: formatNumber(usageTotals.total_tokens),
-      sub: `${formatNumber(usageTotals.input_tokens)} in · ${formatNumber(usageTotals.output_tokens)} out`,
-      icon: <Coins className="h-4 w-4" />,
-      tint: "bg-accent-cyan/10 text-accent-cyan",
-      spark: history.map((s) => s.tokens),
-      sparkColor: "text-accent-cyan",
-    },
-  ];
-
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        {metrics.map((m) => (
-          <MetricCard key={m.label} {...m} />
-        ))}
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-stretch gap-x-10 gap-y-5 px-1 py-2">
+        <HeroStat
+          label="Running"
+          value={counts.running.toString()}
+          sub={
+            counts.running > 0 ? `across ${workers} worker${workers === 1 ? "" : "s"}` : "all quiet"
+          }
+          dotClass="bg-accent"
+          chart={<Sparkline values={history.map((s) => s.running)} className="text-accent" />}
+        />
+        <HeroDivider />
+        <HeroStat
+          label="Retrying"
+          value={counts.retrying.toString()}
+          sub={due ? `next due ${due}` : "queue empty"}
+          dotClass="bg-accent-amber"
+          chart={
+            <Sparkline values={history.map((s) => s.retrying)} className="text-accent-amber" />
+          }
+        />
+        <HeroDivider />
+        <HeroStat
+          label="Blocked"
+          value={counts.blocked.toString()}
+          sub={blockedReason ?? "nothing held"}
+          dotClass="bg-accent-coral"
+          chart={<Sparkline values={history.map((s) => s.blocked)} className="text-accent-coral" />}
+        />
+        <HeroDivider />
+        <div className="min-w-52">
+          <HeroStat
+            label="Total tokens"
+            value={formatNumber(usageTotals.total_tokens)}
+            sub={`${formatNumber(usageTotals.input_tokens)} in · ${formatNumber(usageTotals.output_tokens)} out`}
+            dotClass="bg-accent-cyan"
+            chart={<Sparkline values={history.map((s) => s.tokens)} className="text-accent-cyan" />}
+          />
+          <div className="mt-2">
+            <TokenSplitBar input={usageTotals.input_tokens} output={usageTotals.output_tokens} />
+          </div>
+        </div>
       </div>
 
       <RunningTable sessions={running} />
       <RetryTable entries={retrying} />
 
-      <div className="grid items-start gap-5 lg:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-2">
         <BlockedTable entries={blocked} />
         <RecentIssues />
       </div>
